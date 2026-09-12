@@ -334,7 +334,10 @@ pub fn get_most_recent_threads(codex_home: &std::path::Path, limit: usize) -> Ve
     if !state_sqlite.exists() {
         return Vec::new();
     }
-    let query = format!("SELECT id FROM threads WHERE archived = 0 ORDER BY updated_at DESC LIMIT {};", limit);
+    let query = format!(
+        "SELECT id FROM threads WHERE archived = 0 AND (thread_source = 'user' OR thread_source IS NULL OR thread_source = '') ORDER BY updated_at DESC LIMIT {};",
+        limit
+    );
     if let Ok(output) = Command::new("/usr/bin/sqlite3")
         .arg(state_sqlite.to_str().unwrap_or(""))
         .arg(&query)
@@ -349,6 +352,31 @@ pub fn get_most_recent_threads(codex_home: &std::path::Path, limit: usize) -> Ve
         }
     }
     Vec::new()
+}
+
+/// Helper to check if a thread is a user-level thread (not a spawned sub-agent)
+pub fn is_user_thread(codex_home: &std::path::Path, thread_id: &str) -> bool {
+    let state_sqlite = codex_home.join("state_5.sqlite");
+    if !state_sqlite.exists() {
+        return true;
+    }
+    let query = format!(
+        "SELECT thread_source FROM threads WHERE id = '{}' LIMIT 1;",
+        thread_id
+    );
+    if let Ok(output) = Command::new("/usr/bin/sqlite3")
+        .arg(state_sqlite.to_str().unwrap_or(""))
+        .arg(&query)
+        .output()
+    {
+        if output.status.success() {
+            let src = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if src == "subagent" {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Detects active threads in progress by inspecting lock files in ~/.codex/thread-writer-locks/
@@ -368,7 +396,7 @@ pub fn detect_in_progress_threads() -> Vec<String> {
             }
 
             let thread_id = &fname[..fname.len() - 5];
-            if thread_id.is_empty() {
+            if thread_id.is_empty() || !is_user_thread(&codex_home, thread_id) {
                 continue;
             }
 
