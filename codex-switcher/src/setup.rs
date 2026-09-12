@@ -809,6 +809,32 @@ pub fn set_config_auto_switch_enabled(enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Updates the auto_switch_business_only setting in accounts.json.
+pub fn set_config_auto_switch_business_only(enabled: bool) -> Result<(), String> {
+    let mut file = load_accounts()?;
+    file.settings.auto_switch_business_only = enabled;
+    if enabled {
+        file.settings.auto_switch_business_priority = false;
+        file.settings.auto_switch_enabled = true;
+    }
+    save_accounts(&file)?;
+    println!("✅ Setting updated: auto_switch_business_only = {}", enabled);
+    Ok(())
+}
+
+/// Updates the auto_switch_business_priority setting in accounts.json.
+pub fn set_config_auto_switch_business_priority(enabled: bool) -> Result<(), String> {
+    let mut file = load_accounts()?;
+    file.settings.auto_switch_business_priority = enabled;
+    if enabled {
+        file.settings.auto_switch_business_only = false;
+        file.settings.auto_switch_enabled = true;
+    }
+    save_accounts(&file)?;
+    println!("✅ Setting updated: auto_switch_business_priority = {}", enabled);
+    Ok(())
+}
+
 /// Manually sets a multiplier override for an account.
 pub fn set_account_multiplier(account_id: &str, multiplier: f64) -> Result<(), String> {
     if multiplier <= 0.0 {

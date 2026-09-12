@@ -259,6 +259,8 @@ pub fn run_daemon_tick_with_state(
         reset_after_seconds: active_acc.and_then(|a| a.last_reset_after_seconds),
         credits: active_acc.and_then(|a| a.last_credits).unwrap_or(0),
         auto_switch_enabled: accounts_file.settings.auto_switch_enabled,
+        auto_switch_business_only: accounts_file.settings.auto_switch_business_only,
+        auto_switch_business_priority: accounts_file.settings.auto_switch_business_priority,
         plan_multiplier: active_acc.map(|a| a.effective_multiplier()).unwrap_or(1.0),
         accounts: status_entries,
     };
@@ -279,6 +281,8 @@ pub fn run_daemon_tick_with_state(
                     &accounts_file.accounts,
                     threshold,
                     &accounts_file.settings.strategy,
+                    accounts_file.settings.auto_switch_business_only,
+                    accounts_file.settings.auto_switch_business_priority,
                 ) {
                     let now = Instant::now();
                     let switch_cooldown = Duration::from_secs(120);

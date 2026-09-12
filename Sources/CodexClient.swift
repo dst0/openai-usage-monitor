@@ -129,6 +129,8 @@ public final class CodexClient: @unchecked Sendable {
         let resetAfterSec = json["reset_after_seconds"] as? Int
         let credits = json["credits"] as? Int ?? 0
         let autoSwitch = json["auto_switch_enabled"] as? Bool ?? true
+        let autoSwitchBizOnly = json["auto_switch_business_only"] as? Bool ?? false
+        let autoSwitchBizPriority = json["auto_switch_business_priority"] as? Bool ?? false
         let activeMultiplier = json["plan_multiplier"] as? Double ?? 1.0
 
         var accountsList: [AccountQuota] = []
@@ -180,6 +182,8 @@ public final class CodexClient: @unchecked Sendable {
             resetAfterSeconds: resetAfterSec,
             credits: credits,
             autoSwitchEnabled: autoSwitch,
+            autoSwitchBusinessOnly: autoSwitchBizOnly,
+            autoSwitchBusinessPriority: autoSwitchBizPriority,
             isAppRunning: appRunning,
             activeModelName: activeModel,
             planMultiplier: activeMultiplier,
@@ -433,6 +437,70 @@ public final class CodexClient: @unchecked Sendable {
               let settings = json["settings"] as? [String: Any],
               let enabled = settings["auto_switch_enabled"] as? Bool else {
             return true // Default is true
+        }
+        return enabled
+    }
+
+    public func setAutoSwitchBusinessOnly(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let bin = Self.cliExecutableURL.path
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: bin)
+            proc.arguments = ["config", "--auto-switch-business-only", enabled ? "true" : "false"]
+            do {
+                try proc.run()
+                proc.waitUntilExit()
+                let success = proc.terminationStatus == 0
+                DispatchQueue.main.async {
+                    completion?(success)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion?(false)
+                }
+            }
+        }
+    }
+
+    public func getAutoSwitchBusinessOnly() -> Bool {
+        let accountsPath = Self.codexHome.appendingPathComponent("accounts.json").path
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: accountsPath)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let settings = json["settings"] as? [String: Any],
+              let enabled = settings["auto_switch_business_only"] as? Bool else {
+            return false // Default is false
+        }
+        return enabled
+    }
+
+    public func setAutoSwitchBusinessPriority(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let bin = Self.cliExecutableURL.path
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: bin)
+            proc.arguments = ["config", "--auto-switch-business-priority", enabled ? "true" : "false"]
+            do {
+                try proc.run()
+                proc.waitUntilExit()
+                let success = proc.terminationStatus == 0
+                DispatchQueue.main.async {
+                    completion?(success)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion?(false)
+                }
+            }
+        }
+    }
+
+    public func getAutoSwitchBusinessPriority() -> Bool {
+        let accountsPath = Self.codexHome.appendingPathComponent("accounts.json").path
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: accountsPath)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let settings = json["settings"] as? [String: Any],
+              let enabled = settings["auto_switch_business_priority"] as? Bool else {
+            return false // Default is false
         }
         return enabled
     }

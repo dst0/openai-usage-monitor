@@ -23,6 +23,8 @@ pub fn run_codex_with_auto_switch(args: &[String]) -> Result<(), String> {
                     &accounts_file.accounts,
                     threshold,
                     &accounts_file.settings.strategy,
+                    accounts_file.settings.auto_switch_business_only,
+                    accounts_file.settings.auto_switch_business_priority,
                 ) {
                     eprintln!("[codex-mon] 🔄 Switching to '{}'...", next_id);
                     let _ = switch_to_account(

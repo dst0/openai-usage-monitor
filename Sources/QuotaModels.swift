@@ -104,6 +104,23 @@ public struct AccountQuota: Identifiable, Sendable {
         }
     }
 
+    public var isBusiness: Bool {
+        let plan = planType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if plan == "business" || plan == "team" || plan == "enterprise" {
+            return true
+        }
+        if let n = name?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            if n == "business" || n == "team" || n.contains("business") || n.contains("corporate") {
+                return true
+            }
+        }
+        let idLower = id.lowercased()
+        if idLower.contains("business") || idLower.contains("-[business]") {
+            return true
+        }
+        return false
+    }
+
     public var isReady: Bool {
         let tankPct = planMultiplier > 0.0 ? (fiveHourPercentage / planMultiplier) : fiveHourPercentage
         return tankPct > 15.0
@@ -143,6 +160,8 @@ public struct MultiAccountSnapshot: Sendable {
     public let resetAfterSeconds: Int?
     public let credits: Int
     public let autoSwitchEnabled: Bool
+    public let autoSwitchBusinessOnly: Bool
+    public let autoSwitchBusinessPriority: Bool
     public let isAppRunning: Bool
     public let activeModelName: String?
     public let planMultiplier: Double
@@ -161,6 +180,8 @@ public struct MultiAccountSnapshot: Sendable {
         resetAfterSeconds: Int?,
         credits: Int,
         autoSwitchEnabled: Bool = true,
+        autoSwitchBusinessOnly: Bool = false,
+        autoSwitchBusinessPriority: Bool = false,
         isAppRunning: Bool = true,
         activeModelName: String? = nil,
         planMultiplier: Double = 1.0,
@@ -178,6 +199,8 @@ public struct MultiAccountSnapshot: Sendable {
         self.resetAfterSeconds = resetAfterSeconds
         self.credits = credits
         self.autoSwitchEnabled = autoSwitchEnabled
+        self.autoSwitchBusinessOnly = autoSwitchBusinessOnly
+        self.autoSwitchBusinessPriority = autoSwitchBusinessPriority
         self.isAppRunning = isAppRunning
         self.activeModelName = activeModelName
         self.planMultiplier = max(0.1, planMultiplier)

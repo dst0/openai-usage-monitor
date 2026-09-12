@@ -239,40 +239,71 @@ fn stop_codex_app_gracefully() -> Result<(), String> {
         .output();
 
     // 2. Wait up to 3 seconds for graceful process exit
-    if wait_for_app_exit_with(
+    let exited = wait_for_app_exit_with(
         is_codex_app_running,
         CODEX_EXIT_GRACE_PERIOD,
         CODEX_EXIT_POLL_INTERVAL,
-    ) {
-        return Ok(());
+    );
+
+    if !exited {
+        // 3. Fallback: if not exited within 3s, terminate so account switch does not stall
+        let _ = Command::new("pkill")
+            .arg("-KILL")
+            .arg("-f")
+            .arg("/Applications/ChatGPT.app/Contents/MacOS/ChatGPT")
+            .output();
+
+        let _ = wait_for_app_exit_with(
+            is_codex_app_running,
+            Duration::from_secs(2),
+            CODEX_EXIT_POLL_INTERVAL,
+        );
     }
 
-    // 3. Fallback: if not exited within 3s, terminate so account switch does not stall
-    let _ = Command::new("pkill")
-        .arg("-KILL")
-        .arg("-f")
-        .arg("/Applications/ChatGPT.app/Contents/MacOS/ChatGPT")
-        .output();
-
-    let _ = wait_for_app_exit_with(
-        is_codex_app_running,
-        Duration::from_secs(2),
-        CODEX_EXIT_POLL_INTERVAL,
-    );
+    // Cooldown: allow LaunchServices, loginwindow, and Chromium auxiliary helpers
+    // to cleanly deregister the old app ASN before any relaunch attempt.
+    sleep(Duration::from_millis(600));
 
     Ok(())
 }
 
 fn launch_codex_app() -> Result<(), String> {
-    let status = Command::new("open")
-        .arg("-a")
-        .arg("/Applications/ChatGPT.app")
-        .status()
-        .map_err(|error| format!("Account switched, but Codex could not be relaunched: {error}"))?;
-    if !status.success() {
-        return Err("Account switched, but Codex could not be relaunched".to_string());
+    // Attempt launching with verification that the application process actually appears.
+    // LaunchServices can sometimes ignore an open request if it was issued while
+    // the previous process teardown was still registering, so retry with backoff.
+    for attempt in 1..=3 {
+        let status = Command::new("open")
+            .arg("-a")
+            .arg("/Applications/ChatGPT.app")
+            .status()
+            .map_err(|error| format!("Account switched, but Codex could not be relaunched: {error}"))?;
+
+        if !status.success() {
+            if attempt == 3 {
+                return Err("Account switched, but Codex could not be relaunched".to_string());
+            }
+            sleep(Duration::from_millis(500));
+            continue;
+        }
+
+        // Wait up to 3 seconds to verify the process actually appeared
+        let deadline = Instant::now() + Duration::from_millis(3000);
+        while Instant::now() < deadline {
+            if is_codex_app_running() {
+                return Ok(());
+            }
+            sleep(Duration::from_millis(200));
+        }
+
+        println!("⚠️ Codex app did not appear after attempt {}, retrying launch...", attempt);
+        sleep(Duration::from_millis(500));
     }
-    Ok(())
+
+    if is_codex_app_running() {
+        Ok(())
+    } else {
+        Err("Codex app launch was requested, but process did not start".to_string())
+    }
 }
 
 fn wait_for_app_exit_with<F>(mut is_running: F, timeout: Duration, poll_interval: Duration) -> bool

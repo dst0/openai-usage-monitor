@@ -162,9 +162,22 @@ impl AccountConfig {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn effective_percentage(&self) -> f64 {
-        self.last_primary_percentage * self.effective_multiplier()
+    pub fn is_business(&self) -> bool {
+        let plan = self.plan_type.trim().to_lowercase();
+        if plan == "business" || plan == "team" || plan == "enterprise" {
+            return true;
+        }
+        if let Some(ref n) = self.name {
+            let n_lower = n.trim().to_lowercase();
+            if n_lower == "business" || n_lower == "team" || n_lower.contains("business") || n_lower.contains("corporate") {
+                return true;
+            }
+        }
+        let id_lower = self.id.to_lowercase();
+        if id_lower.contains("business") || id_lower.contains("-[business]") {
+            return true;
+        }
+        false
     }
 }
 
@@ -192,6 +205,10 @@ pub struct Settings {
     pub strategy: String,
     #[serde(default = "default_true")]
     pub auto_switch_enabled: bool,
+    #[serde(default)]
+    pub auto_switch_business_only: bool,
+    #[serde(default)]
+    pub auto_switch_business_priority: bool,
 }
 
 fn default_poll_interval() -> u64 {
@@ -210,6 +227,8 @@ impl Default for Settings {
             notify_on_switch: true,
             strategy: "reset-first".to_string(),
             auto_switch_enabled: true,
+            auto_switch_business_only: false,
+            auto_switch_business_priority: false,
         }
     }
 }
@@ -260,6 +279,10 @@ pub struct StatusFile {
     pub reset_after_seconds: Option<i64>,
     pub credits: u32,
     pub auto_switch_enabled: bool,
+    #[serde(default)]
+    pub auto_switch_business_only: bool,
+    #[serde(default)]
+    pub auto_switch_business_priority: bool,
     #[serde(default = "default_1_0")]
     pub plan_multiplier: f64,
     pub accounts: Vec<AccountStatusEntry>,

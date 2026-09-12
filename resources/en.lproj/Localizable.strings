@@ -41,3 +41,6 @@
 "switch_to_account" = "Switch to this account";
 "refreshing" = "🔄 Refreshing...";
 "stack_percentages" = "Stack Percentages (2-Row)";
+"auto_switch_on_limit" = "🔄 Auto-Switch on Limit Depletion";
+"auto_switch_business_only" = "🏢 Auto-Switch Business Accounts Only";
+"auto_switch_business_priority" = "⚡ Auto-Switch with Business Account Priority";

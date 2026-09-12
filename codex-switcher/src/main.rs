@@ -62,6 +62,12 @@ enum Commands {
         /// Enable or disable automatic account switching on quota exhaustion
         #[arg(long)]
         auto_switch_enabled: Option<bool>,
+        /// Enable or disable auto-switch only across business accounts
+        #[arg(long)]
+        auto_switch_business_only: Option<bool>,
+        /// Enable or disable auto-switch prioritizing business accounts first
+        #[arg(long)]
+        auto_switch_business_priority: Option<bool>,
     },
     /// Set custom multiplier override for an account (e.g. 20 for Pro 20x, 5 for Pro 5x / Business Premium)
     SetMultiplier {
@@ -288,17 +294,34 @@ fn main() {
             let target = if clear { None } else { Some(new_name.as_str()) };
             setup::rename_account(&account, target)
         }
-        Some(Commands::Config { restart_app_on_switch, auto_switch_enabled }) => (|| {
+        Some(Commands::Config {
+            restart_app_on_switch,
+            auto_switch_enabled,
+            auto_switch_business_only,
+            auto_switch_business_priority,
+        }) => (|| {
             if let Some(val) = restart_app_on_switch {
                 setup::set_config_restart_app_on_switch(val)?;
             }
             if let Some(val) = auto_switch_enabled {
                 setup::set_config_auto_switch_enabled(val)?;
             }
-            if restart_app_on_switch.is_none() && auto_switch_enabled.is_none() {
+            if let Some(val) = auto_switch_business_only {
+                setup::set_config_auto_switch_business_only(val)?;
+            }
+            if let Some(val) = auto_switch_business_priority {
+                setup::set_config_auto_switch_business_priority(val)?;
+            }
+            if restart_app_on_switch.is_none()
+                && auto_switch_enabled.is_none()
+                && auto_switch_business_only.is_none()
+                && auto_switch_business_priority.is_none()
+            {
                 let accounts = storage::load_accounts().unwrap_or_default();
                 println!("restart_app_on_switch: {}", accounts.settings.restart_app_on_switch);
                 println!("auto_switch_enabled: {}", accounts.settings.auto_switch_enabled);
+                println!("auto_switch_business_only: {}", accounts.settings.auto_switch_business_only);
+                println!("auto_switch_business_priority: {}", accounts.settings.auto_switch_business_priority);
             }
             Ok(())
         })(),

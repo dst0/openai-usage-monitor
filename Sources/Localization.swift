@@ -144,7 +144,9 @@ public final class LocalizationManager: @unchecked Sendable {
             "clear_btn": "Сбросить",
             "restart_app_on_switch": "🚀 Перезапускать Codex App при смене",
             "stack_percentages": "Компактный стек процентов (2 строки)",
-            "auto_switch_on_limit": "🔄 Автопереключение при исчерпании лимита"
+            "auto_switch_on_limit": "🔄 Автопереключение при исчерпании лимита",
+            "auto_switch_business_only": "🏢 Автопереход только по бизнес-аккаунтам",
+            "auto_switch_business_priority": "⚡ Автопереход с приоритетом бизнес-аккаунтов"
         ],
         .en: [
             "menu_title": "OpenAI Codex Quota Monitor",
@@ -192,7 +194,9 @@ public final class LocalizationManager: @unchecked Sendable {
             "clear_btn": "Clear",
             "restart_app_on_switch": "🚀 Restart Codex App on Switch",
             "stack_percentages": "Stack Percentages (2-Row)",
-            "auto_switch_on_limit": "🔄 Auto-Switch on Limit Depletion"
+            "auto_switch_on_limit": "🔄 Auto-Switch on Limit Depletion",
+            "auto_switch_business_only": "🏢 Auto-Switch Business Accounts Only",
+            "auto_switch_business_priority": "⚡ Auto-Switch with Business Account Priority"
         ],
         .uk: [
             "menu_title": "OpenAI Codex Quota Monitor",
@@ -237,7 +241,9 @@ public final class LocalizationManager: @unchecked Sendable {
             "cli_update_available": "🚀 Оновити Codex CLI (до v%@)",
             "cli_not_found": "⚠️ Codex CLI не знайдено",
             "stack_percentages": "Компактний стек відсотків (2 рядки)",
-            "auto_switch_on_limit": "🔄 Автоперемикання при вичерпанні ліміту"
+            "auto_switch_on_limit": "🔄 Автоперемикання при вичерпанні ліміту",
+            "auto_switch_business_only": "🏢 Автоперемикання тільки по бізнес-акаунтах",
+            "auto_switch_business_priority": "⚡ Автоперемикання з пріоритетом бізнес-акаунтів"
         ],
         .de: [
             "menu_title": "OpenAI Codex Quota Monitor",
@@ -273,7 +279,9 @@ public final class LocalizationManager: @unchecked Sendable {
             "cli_update_available": "🚀 Codex CLI aktualisieren (auf v%@)",
             "cli_not_found": "⚠️ Codex CLI nicht gefunden",
             "stack_percentages": "Kompakter Prozent-Stapel (2 Zeilen)",
-            "auto_switch_on_limit": "🔄 Automatischer Wechsel bei Limit-Erschöpfung"
+            "auto_switch_on_limit": "🔄 Automatischer Wechsel bei Limit-Erschöpfung",
+            "auto_switch_business_only": "🏢 Automatischer Wechsel nur für Business-Konten",
+            "auto_switch_business_priority": "⚡ Automatischer Wechsel mit Business-Konto-Priorität"
         ],
         .fr: [
             "menu_title": "OpenAI Codex Quota Monitor",
@@ -309,7 +317,9 @@ public final class LocalizationManager: @unchecked Sendable {
             "cli_update_available": "🚀 Mettre à jour Codex CLI (vers v%@)",
             "cli_not_found": "⚠️ Codex CLI introuvable",
             "stack_percentages": "Empiler les pourcentages (2 lignes)",
-            "auto_switch_on_limit": "🔄 Basculement automatique en cas d'épuisement"
+            "auto_switch_on_limit": "🔄 Basculement automatique en cas d'épuisement",
+            "auto_switch_business_only": "🏢 Basculement automatique uniquement sur comptes Business",
+            "auto_switch_business_priority": "⚡ Basculement automatique prioritaire sur comptes Business"
         ],
         .es: [
             "menu_title": "OpenAI Codex Quota Monitor",
@@ -354,7 +364,9 @@ public final class LocalizationManager: @unchecked Sendable {
             "cli_update_available": "🚀 Actualizar Codex CLI (a v%@)",
             "cli_not_found": "⚠️ Codex CLI no encontrado",
             "stack_percentages": "Apilar porcentajes (2 filas)",
-            "auto_switch_on_limit": "🔄 Cambio automático al agotar el límite"
+            "auto_switch_on_limit": "🔄 Cambio automático al agotar el límite",
+            "auto_switch_business_only": "🏢 Cambio automático solo en cuentas de empresa",
+            "auto_switch_business_priority": "⚡ Cambio automático con prioridad de cuentas de empresa"
         ],
         .it: [
             "menu_title": "OpenAI Codex Quota Monitor",
@@ -390,7 +402,9 @@ public final class LocalizationManager: @unchecked Sendable {
             "cli_update_available": "🚀 Aggiorna Codex CLI (a v%@)",
             "cli_not_found": "⚠️ Codex CLI non trovato",
             "stack_percentages": "Impila percentuali (2 righe)",
-            "auto_switch_on_limit": "🔄 Cambio automatico all'esaurimento del limite"
+            "auto_switch_on_limit": "🔄 Cambio automatico all'esaurimento del limite",
+            "auto_switch_business_only": "🏢 Cambio automatico solo account aziendali",
+            "auto_switch_business_priority": "⚡ Cambio automatico con priorità account aziendali"
         ],
         .pt: [
             "menu_title": "OpenAI Codex Quota Monitor",
@@ -426,7 +440,9 @@ public final class LocalizationManager: @unchecked Sendable {
             "cli_update_available": "🚀 Atualizar Codex CLI (para v%@)",
             "cli_not_found": "⚠️ Codex CLI não encontrado",
             "stack_percentages": "Empilhar percentagens (2 linhas)",
-            "auto_switch_on_limit": "🔄 Alternância automática ao esgotar o limite"
+            "auto_switch_on_limit": "🔄 Alternância automática ao esgotar o limite",
+            "auto_switch_business_only": "🏢 Alternância automática apenas contas empresariais",
+            "auto_switch_business_priority": "⚡ Alternância automática com prioridade para contas de negócios"
         ],
         .pl: [
             "menu_title": "OpenAI Codex Quota Monitor",
@@ -471,7 +487,9 @@ public final class LocalizationManager: @unchecked Sendable {
             "cli_update_available": "🚀 Zaktualizuj Codex CLI (do v%@)",
             "cli_not_found": "⚠️ Nie znaleziono Codex CLI",
             "stack_percentages": "Kompaktowy stos procentów (2 wiersze)",
-            "auto_switch_on_limit": "🔄 Automatyczne przełączanie po wyczerpaniu limitu"
+            "auto_switch_on_limit": "🔄 Automatyczne przełączanie po wyczerpaniu limitu",
+            "auto_switch_business_only": "🏢 Automatyczne przełączanie tylko na konta biznesowe",
+            "auto_switch_business_priority": "⚡ Automatyczne przełączanie z priorytetem kont biznesowych"
         ],
         .nl: [
             "menu_title": "OpenAI Codex Quota Monitor",
@@ -507,7 +525,9 @@ public final class LocalizationManager: @unchecked Sendable {
             "cli_update_available": "🚀 Codex CLI bijwerken (naar v%@)",
             "cli_not_found": "⚠️ Codex CLI niet gevonden",
             "stack_percentages": "Compacte procentstapel (2 rijen)",
-            "auto_switch_on_limit": "🔄 Automatisch overschakelen bij limietuitputting"
+            "auto_switch_on_limit": "🔄 Automatisch overschakelen bij limietuitputting",
+            "auto_switch_business_only": "🏢 Alleen automatisch overschakelen tussen zakelijke accounts",
+            "auto_switch_business_priority": "⚡ Automatisch overschakelen met voorrang voor zakelijke accounts"
         ]
     ]
 }
@@ -605,5 +625,7 @@ public enum L10n {
     public static var clearBtn: String { tr("clear_btn") }
     public static var restartAppOnSwitch: String { tr("restart_app_on_switch") }
     public static var autoSwitchOnLimit: String { tr("auto_switch_on_limit") }
+    public static var autoSwitchBusinessOnly: String { tr("auto_switch_business_only") }
+    public static var autoSwitchBusinessPriority: String { tr("auto_switch_business_priority") }
     public static var stackPercentages: String { tr("stack_percentages") }
 }

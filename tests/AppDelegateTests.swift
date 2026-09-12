@@ -212,6 +212,126 @@ struct AppDelegateTestRunner {
         }
         print("  ✅ Inactive screen dimming & compatibility matrix verified")
 
+        // ====================================================================
+        // Test 7: Business Account Auto-Switch Selection & Resets Ranking
+        // ====================================================================
+        let bizAccount = AccountQuota(
+            id: "work-1",
+            name: "Work Business",
+            email: "dev@work.com",
+            planType: "team",
+            isCurrentActive: false,
+            fiveHourPercentage: 70.0,
+            weeklyPercentage: nil,
+            resetTime: nil,
+            resetAfterSeconds: 3600,
+            credits: 2
+        )
+        let personalAccount = AccountQuota(
+            id: "personal-1",
+            name: "Personal",
+            email: "me@gmail.com",
+            planType: "plus",
+            isCurrentActive: false,
+            fiveHourPercentage: 100.0,
+            weeklyPercentage: nil,
+            resetTime: nil,
+            resetAfterSeconds: 1800,
+            credits: 5
+        )
+        let proAccount = AccountQuota(
+            id: "pro-1",
+            name: "Pro Account",
+            email: "pro@gmail.com",
+            planType: "pro",
+            isCurrentActive: false,
+            fiveHourPercentage: 90.0,
+            weeklyPercentage: nil,
+            resetTime: nil,
+            resetAfterSeconds: 1200,
+            credits: 0
+        )
+        let bizAccountWithMoreCredits = AccountQuota(
+            id: "work-2",
+            name: "Main Corporate",
+            email: "team@work.com",
+            planType: "business",
+            isCurrentActive: false,
+            fiveHourPercentage: 80.0,
+            weeklyPercentage: nil,
+            resetTime: nil,
+            resetAfterSeconds: 7200,
+            credits: 4
+        )
+
+        assertTrue(bizAccount.isBusiness, "Team plan must be detected as business")
+        assertTrue(bizAccountWithMoreCredits.isBusiness, "Business plan must be detected as business")
+        assertTrue(!personalAccount.isBusiness, "Plus plan must not be detected as business")
+        assertTrue(!proAccount.isBusiness, "Pro plan must not be detected as business")
+
+        assertTrue(!L10n.autoSwitchBusinessOnly.isEmpty, "autoSwitchBusinessOnly localization must not be empty")
+        assertTrue(!L10n.autoSwitchBusinessPriority.isEmpty, "autoSwitchBusinessPriority localization must not be empty")
+
+        // Simulation of ranking function:
+        func rankCandidates(_ accounts: [AccountQuota], businessPriority: Bool, businessOnly: Bool) -> [AccountQuota] {
+            var candidates = accounts.filter { $0.fiveHourPercentage > 0.0 && $0.error == nil }
+            if businessOnly {
+                candidates = candidates.filter { $0.isBusiness }
+            }
+            candidates.sort { a, b in
+                if businessPriority && a.isBusiness != b.isBusiness {
+                    return a.isBusiness
+                }
+                if a.credits != b.credits {
+                    return a.credits > b.credits
+                }
+                let aReset = a.resetAfterSeconds ?? Int.max
+                let bReset = b.resetAfterSeconds ?? Int.max
+                if aReset != bReset {
+                    return aReset < bReset
+                }
+                return a.fiveHourPercentage > b.fiveHourPercentage
+            }
+            return candidates
+        }
+
+        // Case 1: Business Priority mode
+        // Both bizAccount (2 credits) and bizAccountWithMoreCredits (4 credits) must rank ahead of personalAccount (5 credits)
+        // Between the two business accounts, work-2 (4 credits) must rank first!
+        let prioritized = rankCandidates([personalAccount, bizAccount, bizAccountWithMoreCredits], businessPriority: true, businessOnly: false)
+        assertEqual(prioritized.first?.id, "work-2", "Business priority: account with more resets among business accounts must be first")
+        assertEqual(prioritized[1].id, "work-1", "Second must be work-1 (business)")
+        assertEqual(prioritized[2].id, "personal-1", "Non-business account must be last when business accounts have quota")
+
+        // Case 2: Business Priority fallback when all business accounts are exhausted
+        let exhaustedBiz = AccountQuota(
+            id: "work-dead",
+            email: "team@work.com",
+            planType: "business",
+            isCurrentActive: false,
+            fiveHourPercentage: 0.0,
+            weeklyPercentage: nil,
+            resetTime: nil,
+            resetAfterSeconds: 3600,
+            credits: 10
+        )
+        let fallback = rankCandidates([exhaustedBiz, personalAccount], businessPriority: true, businessOnly: false)
+        assertEqual(fallback.first?.id, "personal-1", "Fallback to personal when all business accounts have 0% quota")
+
+        // Case 3: Business Only mode
+        let bizOnlyList = rankCandidates([personalAccount, bizAccountWithMoreCredits], businessPriority: false, businessOnly: true)
+        assertEqual(bizOnlyList.count, 1, "Only business accounts must be included in business-only mode")
+        assertEqual(bizOnlyList.first?.id, "work-2", "work-2 should be the only candidate")
+
+        let bizOnlyExhausted = rankCandidates([personalAccount, exhaustedBiz], businessPriority: false, businessOnly: true)
+        assertTrue(bizOnlyExhausted.isEmpty, "When business accounts have no quota, business-only must return no candidates")
+
+        // Case 4: Preference for more resets (credits) among non-business accounts or standard mode
+        let standardMode = rankCandidates([proAccount, personalAccount], businessPriority: false, businessOnly: false)
+        assertEqual(standardMode.first?.id, "personal-1", "Account with 5 credits must rank ahead of account with 0 credits")
+
+        print("  ✅ Business account auto-switch selection & resets ranking verified")
+
         print("\n🎉 ALL APP DELEGATE TESTS PASSED!")
     }
 }

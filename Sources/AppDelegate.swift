@@ -259,6 +259,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var launchAtLoginItem: NSMenuItem?
     private var stackPercentagesItem: NSMenuItem?
     private var autoSwitchItem: NSMenuItem?
+    private var autoSwitchBusinessOnlyItem: NSMenuItem?
+    private var autoSwitchBusinessPriorityItem: NSMenuItem?
     private var lastAutoSwitchTime: Date?
     private var isAutoSwitching = false
     private var isRefreshing: Bool = false
@@ -957,6 +959,30 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         self.autoSwitchItem = autoSwitchItem
         menu.addItem(autoSwitchItem)
 
+        // Auto-switch: Business Accounts Only Toggle
+        let autoSwitchBusinessOnly = client.getAutoSwitchBusinessOnly()
+        let autoSwitchBusinessOnlyItem = NSMenuItem(
+            title: L10n.autoSwitchBusinessOnly,
+            action: #selector(toggleAutoSwitchBusinessOnly(_:)),
+            keyEquivalent: ""
+        )
+        autoSwitchBusinessOnlyItem.target = self
+        autoSwitchBusinessOnlyItem.state = (autoSwitch && autoSwitchBusinessOnly) ? .on : .off
+        self.autoSwitchBusinessOnlyItem = autoSwitchBusinessOnlyItem
+        menu.addItem(autoSwitchBusinessOnlyItem)
+
+        // Auto-switch: Business Accounts Priority Toggle
+        let autoSwitchBusinessPriority = client.getAutoSwitchBusinessPriority()
+        let autoSwitchBusinessPriorityItem = NSMenuItem(
+            title: L10n.autoSwitchBusinessPriority,
+            action: #selector(toggleAutoSwitchBusinessPriority(_:)),
+            keyEquivalent: ""
+        )
+        autoSwitchBusinessPriorityItem.target = self
+        autoSwitchBusinessPriorityItem.state = (autoSwitch && autoSwitchBusinessPriority) ? .on : .off
+        self.autoSwitchBusinessPriorityItem = autoSwitchBusinessPriorityItem
+        menu.addItem(autoSwitchBusinessPriorityItem)
+
         // Help Guide
         let helpItem = NSMenuItem(title: L10n.helpGuide, action: #selector(openHelpPage), keyEquivalent: "?")
         helpItem.target = self
@@ -1014,6 +1040,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     private func updateUI(with snapshot: MultiAccountSnapshot) {
         updateStatusBar(with: snapshot)
+
+        autoSwitchItem?.state = snapshot.autoSwitchEnabled ? .on : .off
+        autoSwitchBusinessOnlyItem?.state = (snapshot.autoSwitchEnabled && snapshot.autoSwitchBusinessOnly) ? .on : .off
+        autoSwitchBusinessPriorityItem?.state = (snapshot.autoSwitchEnabled && snapshot.autoSwitchBusinessPriority) ? .on : .off
 
         guard let menu = statusItem?.menu else { return }
 
@@ -1657,6 +1687,39 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let newState = sender.state != .on
         sender.state = newState ? .on : .off
         client.setAutoSwitchEnabled(newState)
+        if !newState {
+            autoSwitchBusinessOnlyItem?.state = .off
+            autoSwitchBusinessPriorityItem?.state = .off
+        } else {
+            let bizOnly = client.getAutoSwitchBusinessOnly()
+            let bizPriority = client.getAutoSwitchBusinessPriority()
+            autoSwitchBusinessOnlyItem?.state = bizOnly ? .on : .off
+            autoSwitchBusinessPriorityItem?.state = bizPriority ? .on : .off
+        }
+    }
+
+    @objc private func toggleAutoSwitchBusinessOnly(_ sender: NSMenuItem) {
+        let newState = sender.state != .on
+        sender.state = newState ? .on : .off
+        if newState {
+            autoSwitchBusinessPriorityItem?.state = .off
+            autoSwitchItem?.state = .on
+            client.setAutoSwitchEnabled(true)
+            client.setAutoSwitchBusinessPriority(false)
+        }
+        client.setAutoSwitchBusinessOnly(newState)
+    }
+
+    @objc private func toggleAutoSwitchBusinessPriority(_ sender: NSMenuItem) {
+        let newState = sender.state != .on
+        sender.state = newState ? .on : .off
+        if newState {
+            autoSwitchBusinessOnlyItem?.state = .off
+            autoSwitchItem?.state = .on
+            client.setAutoSwitchEnabled(true)
+            client.setAutoSwitchBusinessOnly(false)
+        }
+        client.setAutoSwitchBusinessPriority(newState)
     }
 
     private func checkAutoSwitchQuotaDepletion(snapshot: MultiAccountSnapshot) {
@@ -1676,19 +1739,49 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
         guard isDepleted else { return }
 
+        let businessOnly = client.getAutoSwitchBusinessOnly()
+        let businessPriority = client.getAutoSwitchBusinessPriority()
+
         // Find candidate reserve accounts with available quota (> 0%)
-        let candidates = snapshot.accounts.filter { acc in
+        var candidates = snapshot.accounts.filter { acc in
             acc.id != activeAcc.id && acc.fiveHourPercentage > 0.0 && acc.error == nil
         }
 
-        guard let bestCandidate = candidates.max(by: { $0.fiveHourPercentage < $1.fiveHourPercentage }) else {
+        if businessOnly {
+            candidates = candidates.filter { $0.isBusiness }
+        }
+
+        guard !candidates.isEmpty else { return }
+
+        // Sort candidates:
+        // 1. If businessPriority: business accounts first
+        // 2. More resets (credits) first
+        // 3. Reset time (soonest reset) first
+        // 4. Higher fiveHourPercentage
+        candidates.sort { a, b in
+            if businessPriority && a.isBusiness != b.isBusiness {
+                return a.isBusiness // true comes before false
+            }
+            if a.credits != b.credits {
+                return a.credits > b.credits // more credits first
+            }
+            let aReset = a.resetAfterSeconds ?? Int.max
+            let bReset = b.resetAfterSeconds ?? Int.max
+            if aReset != bReset {
+                return aReset < bReset
+            }
+            return a.fiveHourPercentage > b.fiveHourPercentage
+        }
+
+        guard let bestCandidate = candidates.first else {
             return
         }
 
         self.isAutoSwitching = true
         self.lastAutoSwitchTime = Date()
 
-        NSLog("[CodexMonitor] Auto-switching from %@ (0%%) to %@ (%.0f%%)", activeAcc.email, bestCandidate.email, bestCandidate.fiveHourPercentage)
+        NSLog("[CodexMonitor] Auto-switching from %@ (0%%) to %@ (%.0f%%, %d credits, biz=%@)",
+              activeAcc.email, bestCandidate.email, bestCandidate.fiveHourPercentage, bestCandidate.credits, bestCandidate.isBusiness ? "yes" : "no")
 
         self.executeSwitchAccount(id: bestCandidate.id)
         DispatchQueue.main.asyncAfter(deadline: .now() + 15.0) { [weak self] in
@@ -1732,6 +1825,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 resetAfterSeconds: targetAcc?.resetAfterSeconds ?? currentSnapshot.resetAfterSeconds,
                 credits: targetAcc?.credits ?? currentSnapshot.credits,
                 autoSwitchEnabled: currentSnapshot.autoSwitchEnabled,
+                autoSwitchBusinessOnly: currentSnapshot.autoSwitchBusinessOnly,
+                autoSwitchBusinessPriority: currentSnapshot.autoSwitchBusinessPriority,
                 isAppRunning: currentSnapshot.isAppRunning,
                 activeModelName: currentSnapshot.activeModelName,
                 accounts: updatedAccounts,
