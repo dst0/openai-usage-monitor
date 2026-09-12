@@ -189,14 +189,23 @@ pub fn switch_to_account(account_id: &str, restart_app: bool, notify: bool) -> R
             sleep(Duration::from_secs(2));
         }
 
-        // Navigate ChatGPT UI directly to the active thread so it doesn't open on a blank chat
+        // Cycle through all running threads in the UI to trigger Accessibility Resume on each
+        if running_threads.len() > 1 {
+            println!("🔄 Cycling UI through {} threads to unpause any interrupted states...", running_threads.len());
+            for tid in &running_threads {
+                open_thread_in_codex(tid);
+                sleep(Duration::from_millis(400));
+                let _ = poll_and_trigger_ui_resume(3, Duration::from_millis(200));
+            }
+        }
+
+        // Navigate ChatGPT UI directly to the primary thread so it is visible to the user
         if let Some(ref tid) = primary_thread {
             open_thread_in_codex(tid);
             sleep(Duration::from_millis(500));
+            // Final check on primary thread UI
+            poll_and_trigger_ui_resume(6, Duration::from_millis(400));
         }
-
-        // Unpause any interrupted turn or queue via Accessibility UI Resume
-        poll_and_trigger_ui_resume(10, Duration::from_millis(500));
     }
 
     // 6. Send macOS user notification
@@ -549,25 +558,34 @@ pub fn resume_threads(thread_ids: &[String], message: &str) {
 /// and unpauses any paused UI elements.
 pub fn resume_thread_interactive(thread_id: Option<&str>) -> Result<(), String> {
     let codex_home = crate::storage::codex_home();
-    let target_tid = match thread_id {
-        Some(tid) if !tid.trim().is_empty() => clean_thread_id(tid),
+    let target_tids = match thread_id {
+        Some(tid) if !tid.trim().is_empty() => vec![clean_thread_id(tid)],
         _ => {
             let active = detect_in_progress_threads();
-            if let Some(first) = active.first() {
-                first.clone()
+            if !active.is_empty() {
+                active
             } else if let Some(recent) = get_most_recent_threads(&codex_home, 1).into_iter().next() {
-                recent
+                vec![recent]
             } else {
                 return Err("No active or recent thread found to resume.".to_string());
             }
         }
     };
 
-    println!("🚀 Resuming thread '{}'...", target_tid);
-    open_thread_in_codex(&target_tid);
-    resume_threads(&[target_tid.clone()], "continue");
-    sleep(Duration::from_millis(500));
-    poll_and_trigger_ui_resume(5, Duration::from_millis(500));
+    println!("🚀 Resuming {} thread(s): {:?}", target_tids.len(), target_tids);
+    resume_threads(&target_tids, "continue");
+
+    // Cycle through all target threads to ensure UI unpauses on each
+    for tid in &target_tids {
+        open_thread_in_codex(tid);
+        sleep(Duration::from_millis(400));
+        let _ = poll_and_trigger_ui_resume(3, Duration::from_millis(200));
+    }
+
+    if let Some(primary) = target_tids.first() {
+        open_thread_in_codex(primary);
+        poll_and_trigger_ui_resume(5, Duration::from_millis(400));
+    }
     Ok(())
 }
 
