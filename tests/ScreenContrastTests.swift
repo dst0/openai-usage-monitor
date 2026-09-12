@@ -157,7 +157,7 @@ struct ScreenContrastTestRunner {
         )
         assertTrue(attachment.image != nil, "Attachment must contain an NSImage")
         assertEqual(attachment.bounds.origin.x, 0.0, "Attachment x origin must be 0")
-        assertEqual(attachment.bounds.origin.y, -6.5, "Attachment y origin must be -6.5 for baseline centering")
+        assertEqual(attachment.bounds.origin.y, -6.0, "Attachment y origin must be -6.0 for baseline centering")
         assertEqual(attachment.bounds.size.height, 20.5, "Attachment height must be 20.5")
         assertEqual(attachment.bounds.size.width, activeSize.width, "Attachment width must match image width")
 

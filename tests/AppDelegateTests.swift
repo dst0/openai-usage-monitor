@@ -77,8 +77,8 @@ struct AppDelegateTestRunner {
         }
         assertEqual(att22List[0].bounds, CGRect(x: 0, y: -7.0, width: 22, height: 22), "22x22 icon must have bounds y=-7.0, w=22, h=22")
 
-        // Attachment 1: 2-row stacked values (bounds height=20.5, y=-6.5)
-        assertEqual(stackedAttachments[1].bounds.origin.y, -6.5, "Stacked values attachment y origin must be -6.5")
+        // Attachment 1: 2-row stacked values (bounds height=20.5, y=-6.0)
+        assertEqual(stackedAttachments[1].bounds.origin.y, -6.0, "Stacked values attachment y origin must be -6.0")
         assertEqual(stackedAttachments[1].bounds.size.height, 20.5, "Stacked values attachment height must be 20.5")
         assertTrue(stackedAttachments[1].bounds.size.width > 20.0, "Stacked values attachment width must be > 20.0")
 
@@ -465,6 +465,43 @@ struct AppDelegateTestRunner {
         assertTrue(abs(badgeCenter - 10.5) <= 1.0, "Badge vertical center must optically align with 10.5pt image center within 1.0pt (got \(badgeCenter))")
 
         print("  ✅ Composite NSImage rendering (anti-vibrancy & vertical centering invariant) verified")
+
+        // ====================================================================
+        // Test 9: Multilingual Support (13 Languages, Japanese, Chinese, Vietnamese)
+        // ====================================================================
+        assertEqual(AppLanguage.allCases.count, 13, "Expected 13 languages in AppLanguage.allCases")
+        assertEqual(AppLanguage.ja.displayName, "日本語")
+        assertEqual(AppLanguage.zhHans.displayName, "简体中文")
+        assertEqual(AppLanguage.vi.displayName, "Tiếng Việt")
+
+        // Test language detection fallbacks
+        assertEqual(LocalizationManager.detectSystemLanguage(preferences: ["ja-JP", "ja"]), .ja)
+        assertEqual(LocalizationManager.detectSystemLanguage(preferences: ["zh-Hans-CN", "zh-CN"]), .zhHans)
+        assertEqual(LocalizationManager.detectSystemLanguage(preferences: ["zh-TW"]), .zhHans)
+        assertEqual(LocalizationManager.detectSystemLanguage(preferences: ["vi-VN", "vi"]), .vi)
+
+        // Test localized helps URLs
+        let jaURL = HelpsDocHelper.localizedHelpsHTMLURL(languageCode: "ja")
+        assertTrue(jaURL?.absoluteString.contains("lang=ja") == true, "Helps URL for Japanese must contain lang=ja")
+
+        let zhURL = HelpsDocHelper.localizedHelpsHTMLURL(languageCode: "zh-Hans")
+        assertTrue(zhURL?.absoluteString.contains("lang=zh-Hans") == true, "Helps URL for zh-Hans must contain lang=zh-Hans")
+
+        let zhAliasURL = HelpsDocHelper.localizedHelpsHTMLURL(languageCode: "zh")
+        assertTrue(zhAliasURL?.absoluteString.contains("lang=zh-Hans") == true, "Helps URL for zh alias must resolve to lang=zh-Hans")
+
+        let viURL = HelpsDocHelper.localizedHelpsHTMLURL(languageCode: "vi")
+        assertTrue(viURL?.absoluteString.contains("lang=vi") == true, "Helps URL for Vietnamese must contain lang=vi")
+
+        // Test that all 13 languages have translations in LocalizationManager.translations
+        for lang in AppLanguage.allCases {
+            let dict = LocalizationManager.translations[lang]
+            assertTrue(dict != nil, "Translations dictionary must exist for \(lang.rawValue)")
+            assertTrue(dict?["menu_title"] != nil, "menu_title must exist for \(lang.rawValue)")
+            assertTrue(dict?["auto_switch_on_limit"] != nil, "auto_switch_on_limit must exist for \(lang.rawValue)")
+        }
+
+        print("  ✅ Multilingual support (13 languages: JA, ZH-Hans, VI) verified")
 
         print("\n🎉 ALL APP DELEGATE TESTS PASSED!")
     }

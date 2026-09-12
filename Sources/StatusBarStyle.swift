@@ -11,7 +11,7 @@ public enum QuotaColorType: Sendable {
             switch self {
             case .green:
                 return [
-                    NSColor(red: 0.35, green: 0.98, blue: 0.45, alpha: 1.0), // top highlight
+                    NSColor(red: 0.22, green: 0.92, blue: 0.38, alpha: 1.0), // top highlight
                     NSColor(red: 0.0, green: 0.76, blue: 0.22, alpha: 1.0),   // mid rich green
                     NSColor(red: 0.0, green: 0.45, blue: 0.10, alpha: 1.0)    // bottom dark shadow
                 ]
@@ -39,7 +39,7 @@ public enum QuotaColorType: Sendable {
             switch self {
             case .green:
                 return [
-                    NSColor(red: 0.30, green: 0.88, blue: 0.40, alpha: 1.0),
+                    NSColor(red: 0.20, green: 0.85, blue: 0.34, alpha: 1.0),
                     NSColor(red: 0.0, green: 0.68, blue: 0.20, alpha: 1.0),
                     NSColor(red: 0.0, green: 0.40, blue: 0.10, alpha: 1.0)
                 ]
@@ -324,19 +324,9 @@ public struct MenuBarAppearanceHelper {
 
             let colorSpace = CGColorSpaceCreateDeviceRGB()
             let cornerR: CGFloat = 1.2
-            // Inset by 0.4pt so the outer hairline stroke stays completely within bounds
-            let badgeRect = CGRect(x: 0.4, y: 0.4, width: width - 0.8, height: height - 0.8)
+            // Integer-aligned chassis bounds within bounds
+            let badgeRect = CGRect(x: 0.5, y: 0.5, width: width - 1.0, height: height - 1.0)
             let contour = CGPath(roundedRect: badgeRect, cornerWidth: cornerR, cornerHeight: cornerR, transform: nil)
-
-            // Proportional segment heights matching design calibration:
-            // Top (5h sprint): tallest (7.5 pt of 16.5)
-            // Mid (weekly remaining): slightly smaller (5.8 pt of 16.5)
-            // Bottom (credits): compact strip (3.2 pt of 16.5)
-            let topHeight: CGFloat = badgeRect.height * (7.5 / 16.5)
-            let midHeight: CGFloat = badgeRect.height * (5.8 / 16.5)
-            let stripHeight: CGFloat = badgeRect.height * (3.2 / 16.5)
-            let midTop = badgeRect.minY + stripHeight + midHeight
-            let midBottom = badgeRect.minY + stripHeight
 
             var f5hType = QuotaColorType.from(pct: fiveHour)
             let wType = QuotaColorType.from(pct: weekly)
@@ -347,48 +337,75 @@ public struct MenuBarAppearanceHelper {
                 f5hType = .gray
             }
 
+            // Fill background chassis with solid dark graphite
             ctx.saveGState()
+            ctx.setFillColor(NSColor(white: 0.08, alpha: 1.0).cgColor)
             ctx.addPath(contour)
-            ctx.clip()
+            ctx.fillPath()
+            ctx.restoreGState()
+
+            // Proportional segment geometry:
+            // Top (5h sprint): tallest (5.8 pt, from 10.0 to 15.8)
+            // Mid (weekly remaining): slightly smaller (5.0 pt, from 4.2 to 9.2)
+            // Bottom (credits): compact strip (2.6 pt, from 0.8 to 3.4)
+            // Gaps: 0.8 pt dark chassis groove separating tiers
+            let cellR: CGFloat = 0.8
+            let botY: CGFloat = 0.8
+            let botH: CGFloat = 2.6
+            let midY: CGFloat = botY + botH + 0.8
+            let midH: CGFloat = 5.0
+            let topY: CGFloat = midY + midH + 0.8
+            let topH: CGFloat = 5.8
+
+            let defaultX: CGFloat = 1.0
+            let defaultW: CGFloat = width - 2.0 // 11.0 pt
+
+            // Optical compensation: On LCD RGB stripe displays (and due to Helmholtz irradiation),
+            // bright green/yellow subpixels emit light 0.33 px to the right of red and visually bloom.
+            // Trimming 0.45 pt from the right edge of bright green/yellow tiers cancels this shift,
+            // producing a visually straight, perfectly flush column across all displays.
+            let midW: CGFloat = (wType == .green || wType == .yellow) ? (defaultW - 0.45) : defaultW
+            let botW: CGFloat = (cType == .green || cType == .yellow) ? (defaultW - 0.45) : defaultW
 
             // 1. Top Section (5h sprint) - Tallest
+            let topRect = CGRect(x: defaultX, y: topY, width: defaultW, height: topH)
+            let topPath = CGPath(roundedRect: topRect, cornerWidth: cellR, cornerHeight: cellR, transform: nil)
             ctx.saveGState()
-            ctx.clip(to: CGRect(x: badgeRect.minX, y: midTop, width: badgeRect.width, height: topHeight))
+            ctx.addPath(topPath)
+            ctx.clip()
             let f5hColors = f5hType.colors(isScreenActive: isScreenActive).map { $0.cgColor } as CFArray
             if let grad = CGGradient(colorsSpace: colorSpace, colors: f5hColors, locations: [0.0, 0.55, 1.0]) {
-                ctx.drawLinearGradient(grad, start: CGPoint(x: badgeRect.minX, y: badgeRect.maxY), end: CGPoint(x: badgeRect.minX, y: midTop), options: [])
+                ctx.drawLinearGradient(grad, start: CGPoint(x: defaultX, y: topRect.maxY), end: CGPoint(x: defaultX, y: topRect.minY), options: [])
             }
             ctx.restoreGState()
 
             // 2. Middle Section (Weekly remaining)
+            let midRect = CGRect(x: defaultX, y: midY, width: midW, height: midH)
+            let midPath = CGPath(roundedRect: midRect, cornerWidth: cellR, cornerHeight: cellR, transform: nil)
             ctx.saveGState()
-            ctx.clip(to: CGRect(x: badgeRect.minX, y: midBottom, width: badgeRect.width, height: midHeight))
+            ctx.addPath(midPath)
+            ctx.clip()
             let wColors = wType.colors(isScreenActive: isScreenActive).map { $0.cgColor } as CFArray
             if let grad = CGGradient(colorsSpace: colorSpace, colors: wColors, locations: [0.0, 0.55, 1.0]) {
-                ctx.drawLinearGradient(grad, start: CGPoint(x: badgeRect.minX, y: midTop), end: CGPoint(x: badgeRect.minX, y: midBottom), options: [])
+                ctx.drawLinearGradient(grad, start: CGPoint(x: defaultX, y: midRect.maxY), end: CGPoint(x: defaultX, y: midRect.minY), options: [])
             }
             ctx.restoreGState()
 
             // 3. Bottom Strip (Reset Credits)
+            let botRect = CGRect(x: defaultX, y: botY, width: botW, height: botH)
+            let botPath = CGPath(roundedRect: botRect, cornerWidth: cellR, cornerHeight: cellR, transform: nil)
             ctx.saveGState()
-            ctx.clip(to: CGRect(x: badgeRect.minX, y: badgeRect.minY, width: badgeRect.width, height: stripHeight))
+            ctx.addPath(botPath)
+            ctx.clip()
             let cColors = cType.colors(isScreenActive: isScreenActive).map { $0.cgColor } as CFArray
             if let grad = CGGradient(colorsSpace: colorSpace, colors: cColors, locations: [0.0, 0.55, 1.0]) {
-                ctx.drawLinearGradient(grad, start: CGPoint(x: badgeRect.minX, y: midBottom), end: CGPoint(x: badgeRect.minX, y: badgeRect.minY), options: [])
+                ctx.drawLinearGradient(grad, start: CGPoint(x: defaultX, y: botRect.maxY), end: CGPoint(x: defaultX, y: botRect.minY), options: [])
             }
             ctx.restoreGState()
 
-            // 4. Dividing micro-seams
-            let seamAlpha: CGFloat = isScreenActive ? 0.45 : 0.25
-            ctx.setFillColor(NSColor(white: 0.0, alpha: seamAlpha).cgColor)
-            ctx.fill(CGRect(x: badgeRect.minX, y: midTop - 0.35, width: badgeRect.width, height: 0.7))
-            ctx.fill(CGRect(x: badgeRect.minX, y: midBottom - 0.35, width: badgeRect.width, height: 0.7))
-
-            ctx.restoreGState()
-
-            // 5. Crisp, thin dark/black outer rim ("тёмная, чёрная каёмочка снаружи")
+            // 4. Crisp, thin dark/black outer rim ("тёмная, чёрная каёмочка снаружи")
             let rimAlpha: CGFloat = isScreenActive ? 0.85 : 0.80
-            let rimLineWidth: CGFloat = 0.6 // Crisp thin black stroke
+            let rimLineWidth: CGFloat = 0.8 // Crisp thin black stroke
             ctx.saveGState()
             ctx.setStrokeColor(NSColor(white: 0.0, alpha: rimAlpha).cgColor)
             ctx.setLineWidth(rimLineWidth)
@@ -398,6 +415,41 @@ public struct MenuBarAppearanceHelper {
 
             return true
         }
+    }
+
+    /// Generates a pixel-perfect vertically centered divider attachment with integer-width slot
+    /// to guarantee jitter-free, constant inter-badge rhythm across multiple reserve accounts.
+    public static func makeVerticalDividerAttachment(
+        isScreenActive: Bool = true,
+        width: CGFloat = 6.0,
+        height: CGFloat = 16.5
+    ) -> NSTextAttachment {
+        let img = NSImage(size: NSSize(width: width, height: height), flipped: false) { rect in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            let dividerColor = isScreenActive
+                ? NSColor(white: 0.52, alpha: 0.75)
+                : NSColor(white: 0.45, alpha: 0.60)
+            let shadow = textShadow(isScreenActive: isScreenActive)
+            ctx.saveGState()
+            ctx.setShadow(
+                offset: shadow.shadowOffset,
+                blur: shadow.shadowBlurRadius,
+                color: shadow.shadowColor?.cgColor
+            )
+            ctx.setFillColor(dividerColor.cgColor)
+            let lineW: CGFloat = 0.8
+            let lineH: CGFloat = 10.5
+            let lineX = (width - lineW) / 2.0 // Exactly 2.6 pt on both sides!
+            let lineY = floor((height - lineH) / 2.0)
+            ctx.fill(CGRect(x: lineX, y: lineY, width: lineW, height: lineH))
+            ctx.restoreGState()
+            return true
+        }
+        img.isTemplate = false
+        let attach = NSTextAttachment()
+        attach.image = img
+        attach.bounds = CGRect(x: 0, y: -5.0, width: width, height: height)
+        return attach
     }
 
     // MARK: - Contrast-Boosted Menu Bar Icon
@@ -440,14 +492,19 @@ public struct MenuBarAppearanceHelper {
 
     // MARK: - Mini Quota Icons (👾 Retro "5h" Sprint & 📅 Weekly Limit)
 
-    /// Generates a pixelated retro "5h" bitmap icon (styled like Windows 3.1 / Windows 95 system fonts)
-    /// for the 5-hour sprint quota.
+    /// Generates a crisp, vibrant "5h" icon for the 5-hour sprint quota.
     ///
     /// The glyph matrix is 9 columns wide by 7 rows high (origin bottom-left):
     /// - '5' (4 cols x 7 rows)
     /// - 1 column space
     /// - 'h' (4 cols x 7 rows)
-    /// Each pixel is rendered with a dark 1px drop shadow for that iconic classic Win3.1/Win95 relief.
+    ///
+    /// Layer architecture (matches AGY Monitor standard):
+    /// 1. Subtle drop shadow for menu bar contrast.
+    /// 2. Crisp dark contour outline underlay (dilated 0.75pt exterior contour without interior lines).
+    ///    Guarantees strict WCAG AA (> 4.5:1) on white & light menu bars without darkening glyph interior.
+    /// 3. Ultra-vibrant radiant gradient fill (Sunlit Electric Gold) with luminous lemon top highlight
+    ///    and warm amber bottom for rich, juicy saturation on dark menu bars.
     public static func makeSprintIcon(size: CGFloat = 8.0, isScreenActive: Bool = true) -> NSImage {
         // Glyph bitmap matrix: 7 rows from row 0 (bottom) to row 6 (top).
         // 9 columns: [0..3: '5', 4: gap, 5..8: 'h']
@@ -478,25 +535,24 @@ public struct MenuBarAppearanceHelper {
         let img = NSImage(size: NSSize(width: totalW, height: totalH), flipped: false) { rect in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
 
-            // Saturated, juicy sunlit electric gold palette:
-            // Top highlight: luminous sunlit citrus
-            // Mid body: rich, juicy electric gold
-            // Bottom base: warm vibrant amber-gold
+            // Uniform high-brightness juicy electric gold palette:
+            // Maintains consistent high perceived luminance (~85-90%) across the entire glyph height,
+            // eliminating dark-amber / brown mud at the bottom while keeping rich gold saturation.
             let topColor = isScreenActive
-                ? NSColor(red: 1.0, green: 1.0, blue: 0.40, alpha: 1.0)
-                : NSColor(red: 0.95, green: 0.94, blue: 0.45, alpha: 1.0)
+                ? NSColor(red: 1.0, green: 0.94, blue: 0.20, alpha: 1.0)
+                : NSColor(red: 0.94, green: 0.88, blue: 0.22, alpha: 1.0)
             let midColor = isScreenActive
-                ? NSColor(red: 1.0, green: 0.88, blue: 0.02, alpha: 1.0)
-                : NSColor(red: 0.92, green: 0.82, blue: 0.08, alpha: 1.0)
+                ? NSColor(red: 1.0, green: 0.90, blue: 0.08, alpha: 1.0)
+                : NSColor(red: 0.92, green: 0.84, blue: 0.10, alpha: 1.0)
             let bottomColor = isScreenActive
-                ? NSColor(red: 1.0, green: 0.74, blue: 0.0, alpha: 1.0)
-                : NSColor(red: 0.88, green: 0.68, blue: 0.0, alpha: 1.0)
+                ? NSColor(red: 1.0, green: 0.86, blue: 0.04, alpha: 1.0)
+                : NSColor(red: 0.90, green: 0.80, blue: 0.05, alpha: 1.0)
 
-            let shadowAlpha: CGFloat = isScreenActive ? 0.52 : 0.35
+            let shadowAlpha: CGFloat = isScreenActive ? 0.55 : 0.35
             let shadowColor = NSColor(white: 0.0, alpha: shadowAlpha).cgColor
             let shadowOffset = CGSize(width: pixelSize * 0.60, height: -pixelSize * 0.60)
 
-            // Pass 1: Crisp drop shadow for razor-sharp legibility on light wallpapers
+            // Pass 1: Crisp directional drop shadow for razor-sharp legibility on light wallpapers
             ctx.setFillColor(shadowColor)
             for r in 0..<rows {
                 let y = CGFloat(r) * pixelSize + shadowOffset.height + 0.5
@@ -508,7 +564,7 @@ public struct MenuBarAppearanceHelper {
                 }
             }
 
-            // Pass 2: Juicy gradient clipped strictly to pixel glyph contours
+            // Pass 2: Uniform radiant gold gradient clipped strictly to pixel glyph contours
             ctx.saveGState()
             for r in 0..<rows {
                 let y = CGFloat(r) * pixelSize + 0.5
@@ -523,7 +579,7 @@ public struct MenuBarAppearanceHelper {
 
             let colors = [topColor.cgColor, midColor.cgColor, bottomColor.cgColor] as CFArray
             let colorSpace = CGColorSpaceCreateDeviceRGB()
-            if let grad = CGGradient(colorsSpace: colorSpace, colors: colors, locations: [0.0, 0.52, 1.0]) {
+            if let grad = CGGradient(colorsSpace: colorSpace, colors: colors, locations: [0.0, 0.50, 1.0]) {
                 let start = CGPoint(x: 0, y: CGFloat(rows) * pixelSize + 0.5)
                 let end = CGPoint(x: 0, y: 0.5)
                 ctx.drawLinearGradient(grad, start: start, end: end, options: [])
@@ -540,8 +596,8 @@ public struct MenuBarAppearanceHelper {
     ///
     /// The bitmap is 9 columns × 9 rows (origin bottom-left):
     /// - Row 8 (top):    binder pegs (2 filled pixels)
-    /// - Rows 6-7:       blue header bar
-    /// - Rows 0-5:       white body with date dots
+    /// - Rows 5-7:       blue header bar
+    /// - Rows 0-4:       white body with date dots
     /// Each pixel has a dark 1px drop shadow for classic Win3.1/Win95 relief.
     public static func makeWeeklyIcon(size: CGFloat = 10.0, isScreenActive: Bool = true) -> NSImage {
         // Calendar bitmap: 9 rows from row 0 (bottom) to row 8 (top).
@@ -694,14 +750,13 @@ public struct MenuBarAppearanceHelper {
         let f5hLabelSize = f5hLabelStr.size()
         let wLabelSize = wLabelStr.size()
 
-        let leftPad: CGFloat = useQuotaIcons ? 1.5 : 0.0
         let maxIconW = max(sprintIconW, weeklyIconW)
-        let prefixWidth: CGFloat = leftPad + (useQuotaIcons
+        let prefixWidth: CGFloat = useQuotaIcons
             ? (maxIconW + iconSpacing)
-            : (max(f5hLabelSize.width, wLabelSize.width) + iconSpacing))
+            : (max(f5hLabelSize.width, wLabelSize.width) + iconSpacing)
 
         let textWidth = max(f5hTextSize.width, wTextSize.width)
-        let totalWidth = ceil(prefixWidth + textWidth + (useQuotaIcons ? 1.0 : 0.0))
+        let totalWidth = ceil(prefixWidth + textWidth)
 
         let img = NSImage(size: NSSize(width: totalWidth, height: totalHeight), flipped: false) { rect in
             guard let _ = NSGraphicsContext.current?.cgContext else { return false }
@@ -714,7 +769,7 @@ public struct MenuBarAppearanceHelper {
 
             if useQuotaIcons {
                 let sprintIcon = sprintIconSample ?? makeSprintIcon(size: 8.0, isScreenActive: isScreenActive)
-                let sprintX = leftPad + (maxIconW - sprintIconW) / 2.0
+                let sprintX = (prefixWidth - iconSpacing - sprintIconW) / 2.0
                 let sprintIconY = row1CenterY - (sprintIconH / 2.0)
                 let iconRect = CGRect(
                     x: sprintX,
@@ -738,7 +793,7 @@ public struct MenuBarAppearanceHelper {
 
             if useQuotaIcons {
                 let weeklyIcon = weeklyIconSample ?? makeWeeklyIcon(size: 10.0, isScreenActive: isScreenActive)
-                let weeklyX = leftPad + (maxIconW - weeklyIconW) / 2.0
+                let weeklyX = (prefixWidth - iconSpacing - weeklyIconW) / 2.0
                 let weeklyIconY = row2CenterY - (weeklyIconH / 2.0)
                 let iconRect = CGRect(
                     x: weeklyX,
@@ -798,7 +853,7 @@ public struct MenuBarAppearanceHelper {
         )
         let attachment = NSTextAttachment()
         attachment.image = image
-        attachment.bounds = CGRect(x: 0, y: -6.5, width: size.width, height: size.height)
+        attachment.bounds = CGRect(x: 0, y: -6.0, width: size.width, height: size.height)
         return attachment
     }
 

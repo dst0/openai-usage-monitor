@@ -708,16 +708,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             ]))
 
             // Reserve accounts outside brackets with stylized gray vertical dividers between account blocks
-            let dividerColor = isScreenActive ? NSColor(white: 0.52, alpha: 0.75) : NSColor(white: 0.45, alpha: 0.60)
+            let dividerAttachment = MenuBarAppearanceHelper.makeVerticalDividerAttachment(isScreenActive: isScreenActive)
             for acc in reserveAccs {
-                attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 3.0)]))
-                attributed.append(NSAttributedString(string: "│", attributes: [
-                    .font: NSFont.systemFont(ofSize: 10.5, weight: .regular),
-                    .foregroundColor: dividerColor,
-                    .shadow: textShadow,
-                    .baselineOffset: 0.0
-                ]))
-                attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 3.0)]))
+                attributed.append(NSAttributedString(attachment: dividerAttachment))
 
                 let r5h = acc.fiveHourPercentage
                 let rW = acc.weeklyPercentage ?? r5h
@@ -838,12 +831,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let titleSize = attributedTitle.size()
         let compositeWidth = max(1.0, ceil(titleSize.width))
         let compositeHeight: CGFloat = 22.0
-        // When titleSize.height exceeds compositeHeight (due to font ascenders/descenders & attachments),
-        // drawing at y = 0 aligns the bottom baseline/attachment extent with y = 0.
-        // Never subtract (compositeHeight - titleSize.height) when negative, as that pushes the content into the floor!
-        let drawY = max(0.0, (compositeHeight - titleSize.height) / 2.0)
         let compositeImage = NSImage(size: NSSize(width: compositeWidth, height: compositeHeight), flipped: false) { rect in
-            attributedTitle.draw(at: NSPoint(x: 0, y: drawY))
+            // Draw at (0, 0.0) so the baseline established by AppKit (y = 6.0pt) preserves
+            // the calibrated bounds of all attachments (icon, stacked numbers, brackets, badges).
+            attributedTitle.draw(at: NSPoint(x: 0, y: 0.0))
             return true
         }
         compositeImage.isTemplate = false
