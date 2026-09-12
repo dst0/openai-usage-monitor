@@ -129,6 +129,7 @@ public final class CodexClient: @unchecked Sendable {
         let resetAfterSec = json["reset_after_seconds"] as? Int
         let credits = json["credits"] as? Int ?? 0
         let autoSwitch = json["auto_switch_enabled"] as? Bool ?? true
+        let activeMultiplier = json["plan_multiplier"] as? Double ?? 1.0
 
         var accountsList: [AccountQuota] = []
         if let rawAccs = json["accounts"] as? [[String: Any]] {
@@ -145,6 +146,7 @@ public final class CodexClient: @unchecked Sendable {
                 let rSec = a["reset_after_seconds"] as? Int
                 let cr = a["credits"] as? Int ?? 0
                 let err = a["error"] as? String
+                let mult = a["plan_multiplier"] as? Double ?? 1.0
 
                 accountsList.append(AccountQuota(
                     id: id,
@@ -158,7 +160,8 @@ public final class CodexClient: @unchecked Sendable {
                     resetTime: rTime,
                     resetAfterSeconds: rSec,
                     credits: cr,
-                    error: err
+                    error: err,
+                    planMultiplier: mult
                 ))
             }
         }
@@ -179,6 +182,7 @@ public final class CodexClient: @unchecked Sendable {
             autoSwitchEnabled: autoSwitch,
             isAppRunning: appRunning,
             activeModelName: activeModel,
+            planMultiplier: activeMultiplier,
             accounts: accountsList
         )
     }

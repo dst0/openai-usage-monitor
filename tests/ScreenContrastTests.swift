@@ -37,7 +37,8 @@ struct ScreenContrastTestRunner {
 
         let greenInactiveColors = QuotaColorType.green.colors(isScreenActive: false)
         let inactiveGreenTop = greenInactiveColors[0].usingColorSpace(.sRGB)!
-        assertTrue(inactiveGreenTop.greenComponent >= 0.90, "Inactive green top highlight green too low")
+        assertTrue(inactiveGreenTop.greenComponent >= 0.75, "Inactive green top highlight green tone")
+        assertTrue(inactiveGreenTop.greenComponent <= 0.90, "Inactive green top must not be neon oversaturated")
 
         let grayActiveColors = QuotaColorType.gray.colors(isScreenActive: true)
         let grayInactiveColors = QuotaColorType.gray.colors(isScreenActive: false)
@@ -71,7 +72,7 @@ struct ScreenContrastTestRunner {
         assertTrue(abs(grayActive.redComponent - grayActive.greenComponent) < 0.05, "Exhausted weekly color must be slate gray")
         assertTrue(greenActive.greenComponent > greenActive.redComponent + 0.3, "Healthy weekly color must be bright green")
         assertEqual(grayActive.redComponent, grayRemnant.redComponent, "Remnant weekly should yield identical gray to 0.0%")
-        assertTrue(grayInactive.redComponent > grayActive.redComponent, "Inactive gray must be brighter than active gray")
+        assertTrue(grayInactive.redComponent <= grayActive.redComponent, "Inactive gray must not be brighter than active gray")
 
         print("  ✅ isWeeklyExhausted and gray color override verified")
 
@@ -89,8 +90,10 @@ struct ScreenContrastTestRunner {
 
         let tiffSprint = sprintIcon.tiffRepresentation
         assertTrue(tiffSprint != nil && tiffSprint!.count > 100, "Sprint icon must rasterize cleanly")
-        let tiffWeekly = weeklyIcon.tiffRepresentation
-        assertTrue(tiffWeekly != nil && tiffWeekly!.count > 100, "Weekly icon must rasterize cleanly")
+        let weeklyDefault = MenuBarAppearanceHelper.makeWeeklyIcon(isScreenActive: true)
+        assertEqual(weeklyDefault.size.width, 11.0, "Default weekly icon width must be 11.0")
+        assertEqual(weeklyDefault.size.height, 11.0, "Default weekly icon height must be 11.0")
+        assertTrue(weeklyDefault.tiffRepresentation != nil, "Default weekly icon must rasterize cleanly")
 
         print("  ✅ Mini Quota Icons generation and rasterization verified")
 
@@ -182,6 +185,30 @@ struct ScreenContrastTestRunner {
         assertTrue(topColor.greenComponent < topColor.redComponent + 0.12, "Top sprint quota over exhausted weekly must NOT be green")
 
         print("  ✅ 3-Row Hybrid Shield Badge with exhausted weekly verified")
+
+        // ====================================================================
+        // Test 6: Inactive Screen Typography Consistency & Drop Shadow Softness
+        // ====================================================================
+        let activeNumFont = MenuBarAppearanceHelper.numberFont(isScreenActive: true)
+        let inactiveNumFont = MenuBarAppearanceHelper.numberFont(isScreenActive: false)
+        let activeTraits = activeNumFont.fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any]
+        let inactiveTraits = inactiveNumFont.fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any]
+        let activeWeight = activeTraits?[.weight] as? CGFloat ?? 0.0
+        let inactiveWeight = inactiveTraits?[.weight] as? CGFloat ?? 0.0
+        assertTrue(inactiveWeight <= activeWeight, "Inactive font weight must not exceed active font weight")
+
+        let activeShadow = MenuBarAppearanceHelper.textShadow(isScreenActive: true)
+        let inactiveShadow = MenuBarAppearanceHelper.textShadow(isScreenActive: false)
+        let activeShadowCol = (activeShadow.shadowColor ?? .black).usingColorSpace(.sRGB)!
+        let inactiveShadowCol = (inactiveShadow.shadowColor ?? .black).usingColorSpace(.sRGB)!
+        assertTrue(inactiveShadowCol.alphaComponent <= activeShadowCol.alphaComponent, "Inactive shadow must be softer than active to eliminate lantern glow")
+        assertEqual(inactiveShadow.shadowBlurRadius, 1.0)
+
+        let activeSepColor = MenuBarAppearanceHelper.separatorColor(isScreenActive: true).usingColorSpace(.sRGB)!
+        let inactiveSepColor = MenuBarAppearanceHelper.separatorColor(isScreenActive: false).usingColorSpace(.sRGB)!
+        assertTrue(inactiveSepColor.redComponent <= activeSepColor.redComponent, "Inactive separator must not be brighter than active")
+
+        print("  ✅ Inactive Screen Typography & Shadow Softness verified")
 
         print("\n🎉 ALL SCREEN CONTRAST & STACKED TESTS PASSED!")
     }

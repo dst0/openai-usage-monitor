@@ -142,6 +142,9 @@ pub fn load_accounts() -> Result<AccountsFile, String> {
                     last_credits: None,
                     last_error: None,
                     last_checked: None,
+                    plan_multiplier: None,
+                    multiplier_is_manual: None,
+                    last_multiplier_checked: None,
                 };
                 let accounts_file = AccountsFile {
                     active_account_id: Some(canonical_id),

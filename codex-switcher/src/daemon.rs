@@ -239,6 +239,7 @@ pub fn run_daemon_tick_with_state(
             reset_after_seconds: acc.last_reset_after_seconds,
             credits: acc.last_credits.unwrap_or(0),
             error: acc.last_error.clone(),
+            plan_multiplier: acc.effective_multiplier(),
         });
     }
 
@@ -258,6 +259,7 @@ pub fn run_daemon_tick_with_state(
         reset_after_seconds: active_acc.and_then(|a| a.last_reset_after_seconds),
         credits: active_acc.and_then(|a| a.last_credits).unwrap_or(0),
         auto_switch_enabled: accounts_file.settings.auto_switch_enabled,
+        plan_multiplier: active_acc.map(|a| a.effective_multiplier()).unwrap_or(1.0),
         accounts: status_entries,
     };
     write_status_file(&status)?;
@@ -453,6 +455,9 @@ mod tests {
             last_credits: None,
             last_error: Some("HTTP 401 Unauthorized".to_string()),
             last_checked: None,
+            plan_multiplier: None,
+            multiplier_is_manual: None,
+            last_multiplier_checked: None,
         }
     }
 

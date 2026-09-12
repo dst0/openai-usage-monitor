@@ -41,6 +41,7 @@ public struct AccountQuota: Identifiable, Sendable {
     public let resetAfterSeconds: Int?
     public let credits: Int
     public let error: String?
+    public let planMultiplier: Double
 
     public init(
         id: String,
@@ -54,20 +55,22 @@ public struct AccountQuota: Identifiable, Sendable {
         resetTime: Date?,
         resetAfterSeconds: Int?,
         credits: Int,
-        error: String? = nil
+        error: String? = nil,
+        planMultiplier: Double = 1.0
     ) {
         self.id = id
         self.name = name
         self.email = email
         self.planType = planType
         self.isCurrentActive = isCurrentActive
-        self.fiveHourPercentage = max(0.0, min(100.0, fiveHourPercentage))
-        self.weeklyPercentage = weeklyPercentage.map { max(0.0, min(100.0, $0)) }
+        self.fiveHourPercentage = max(0.0, fiveHourPercentage)
+        self.weeklyPercentage = weeklyPercentage.map { max(0.0, $0) }
         self.models = models
         self.resetTime = resetTime
         self.resetAfterSeconds = resetAfterSeconds
         self.credits = credits
         self.error = error
+        self.planMultiplier = max(0.1, planMultiplier)
     }
 
     public var displayName: String {
@@ -78,14 +81,23 @@ public struct AccountQuota: Identifiable, Sendable {
         return prefix.isEmpty ? email : prefix
     }
 
+    public var planBadgeString: String {
+        let cleanPlan = planType.capitalized
+        if planMultiplier > 1.0 {
+            return String(format: "%@ %.0fx", cleanPlan, planMultiplier)
+        }
+        return cleanPlan
+    }
+
     public var percentageString: String {
         return String(format: "%.0f%%", fiveHourPercentage)
     }
 
     public var statusEmoji: String {
-        if fiveHourPercentage > 50.0 {
+        let tankPct = planMultiplier > 0.0 ? (fiveHourPercentage / planMultiplier) : fiveHourPercentage
+        if tankPct > 50.0 {
             return "🟢"
-        } else if fiveHourPercentage > 15.0 {
+        } else if tankPct > 15.0 {
             return "🟡"
         } else {
             return "🔴"
@@ -93,7 +105,8 @@ public struct AccountQuota: Identifiable, Sendable {
     }
 
     public var isReady: Bool {
-        return fiveHourPercentage > 15.0
+        let tankPct = planMultiplier > 0.0 ? (fiveHourPercentage / planMultiplier) : fiveHourPercentage
+        return tankPct > 15.0
     }
 
     public var bulletChar: String {
@@ -132,6 +145,7 @@ public struct MultiAccountSnapshot: Sendable {
     public let autoSwitchEnabled: Bool
     public let isAppRunning: Bool
     public let activeModelName: String?
+    public let planMultiplier: Double
     public let accounts: [AccountQuota]
     public let appAccount: AccountQuota?
     public let cliAccount: AccountQuota?
@@ -149,6 +163,7 @@ public struct MultiAccountSnapshot: Sendable {
         autoSwitchEnabled: Bool = true,
         isAppRunning: Bool = true,
         activeModelName: String? = nil,
+        planMultiplier: Double = 1.0,
         accounts: [AccountQuota] = [],
         appAccount: AccountQuota? = nil,
         cliAccount: AccountQuota? = nil
@@ -165,6 +180,7 @@ public struct MultiAccountSnapshot: Sendable {
         self.autoSwitchEnabled = autoSwitchEnabled
         self.isAppRunning = isAppRunning
         self.activeModelName = activeModelName
+        self.planMultiplier = max(0.1, planMultiplier)
         self.accounts = accounts
 
         let primary = cliAccount ?? accounts.first(where: { $0.isCurrentActive }) ?? accounts.first
@@ -173,9 +189,11 @@ public struct MultiAccountSnapshot: Sendable {
     }
 
     public var statusEmoji: String {
-        if fiveHourPercentage > 50.0 {
+        let mult = cliAccount?.planMultiplier ?? planMultiplier
+        let tankPct = mult > 0.0 ? (fiveHourPercentage / mult) : fiveHourPercentage
+        if tankPct > 50.0 {
             return "🟢"
-        } else if fiveHourPercentage > 15.0 {
+        } else if tankPct > 15.0 {
             return "🟡"
         } else {
             return "🔴"

@@ -124,6 +124,12 @@ pub struct AccountConfig {
     pub last_error: Option<String>,
     #[serde(default)]
     pub last_checked: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_multiplier: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multiplier_is_manual: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_multiplier_checked: Option<String>,
 }
 
 impl AccountConfig {
@@ -139,6 +145,26 @@ impl AccountConfig {
         } else {
             &self.id
         }
+    }
+
+    pub fn effective_multiplier(&self) -> f64 {
+        if let Some(m) = self.plan_multiplier {
+            if m > 0.0 {
+                return m;
+            }
+        }
+        match self.plan_type.to_lowercase().as_str() {
+            "pro" => 20.0,
+            "team" | "business" => 1.0,
+            "plus" => 1.0,
+            "free" => 0.2,
+            _ => 1.0,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn effective_percentage(&self) -> f64 {
+        self.last_primary_percentage * self.effective_multiplier()
     }
 }
 
@@ -215,6 +241,8 @@ pub struct AccountStatusEntry {
     pub credits: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default = "default_1_0")]
+    pub plan_multiplier: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,5 +260,11 @@ pub struct StatusFile {
     pub reset_after_seconds: Option<i64>,
     pub credits: u32,
     pub auto_switch_enabled: bool,
+    #[serde(default = "default_1_0")]
+    pub plan_multiplier: f64,
     pub accounts: Vec<AccountStatusEntry>,
+}
+
+fn default_1_0() -> f64 {
+    1.0
 }

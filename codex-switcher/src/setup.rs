@@ -477,6 +477,9 @@ pub fn add_account_to_accounts_file(
             last_credits: None,
             last_error: None,
             last_checked: None,
+            plan_multiplier: None,
+            multiplier_is_manual: None,
+            last_multiplier_checked: None,
         };
         accounts_file.accounts.push(acc);
         canonical_id
@@ -806,6 +809,45 @@ pub fn set_config_auto_switch_enabled(enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Manually sets a multiplier override for an account.
+pub fn set_account_multiplier(account_id: &str, multiplier: f64) -> Result<(), String> {
+    if multiplier <= 0.0 {
+        return Err("Multiplier must be greater than 0".to_string());
+    }
+    let mut file = load_accounts()?;
+    let acc = file.accounts.iter_mut().find(|a| {
+        a.id == account_id
+            || a.name.as_deref().map(|n| n.eq_ignore_ascii_case(account_id)).unwrap_or(false)
+            || a.email.eq_ignore_ascii_case(account_id)
+    }).ok_or_else(|| format!("Account '{}' not found", account_id))?;
+
+    acc.plan_multiplier = Some(multiplier);
+    acc.multiplier_is_manual = Some(true);
+    let name = acc.display_name().to_string();
+    save_accounts(&file)?;
+    println!("✅ Account '{}' multiplier manually set to {:.1}x", name, multiplier);
+    Ok(())
+}
+
+/// Clears manual multiplier override and re-runs auto-detection.
+pub fn reset_account_multiplier(account_id: &str) -> Result<(), String> {
+    let mut file = load_accounts()?;
+    let acc = file.accounts.iter_mut().find(|a| {
+        a.id == account_id
+            || a.name.as_deref().map(|n| n.eq_ignore_ascii_case(account_id)).unwrap_or(false)
+            || a.email.eq_ignore_ascii_case(account_id)
+    }).ok_or_else(|| format!("Account '{}' not found", account_id))?;
+
+    acc.multiplier_is_manual = None;
+    acc.plan_multiplier = None;
+    acc.last_multiplier_checked = None;
+    let detected = crate::quota::detect_account_multiplier(acc);
+    let name = acc.display_name().to_string();
+    save_accounts(&file)?;
+    println!("✅ Account '{}' multiplier reset and auto-detected as {:.1}x", name, detected);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -839,6 +881,9 @@ mod tests {
             last_credits: None,
             last_error: None,
             last_checked: None,
+            plan_multiplier: None,
+            multiplier_is_manual: None,
+            last_multiplier_checked: None,
         }
     }
 

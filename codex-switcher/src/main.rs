@@ -63,6 +63,18 @@ enum Commands {
         #[arg(long)]
         auto_switch_enabled: Option<bool>,
     },
+    /// Set custom multiplier override for an account (e.g. 20 for Pro 20x, 5 for Pro 5x / Business Premium)
+    SetMultiplier {
+        /// Current account ID, nickname, or email
+        account: String,
+        /// Multiplier value (e.g. 20.0 or 5.0)
+        multiplier: f64,
+    },
+    /// Reset multiplier to automatic detection based on account plan and entitlement
+    ResetMultiplier {
+        /// Current account ID, nickname, or email
+        account: String,
+    },
     /// Interactive account setup wizard
     Setup,
     /// Log in via browser and add as a named account
@@ -118,25 +130,27 @@ fn print_status_table(refresh: bool) -> Result<(), String> {
 
     println!();
     println!("📊 OpenAI Codex Accounts & Rate Limits (Strategy: {})", accounts_file.settings.strategy);
-    println!("--------------------------------------------------------------------------------------------------");
-    println!("{:<4} {:<12} {:<28} {:<8} {:<18} {:<12} {:<10} {:<7}", 
-        "", "ACCOUNT", "EMAIL", "PLAN", "5H SPRINT", "RESET IN", "7D LIMIT", "CREDITS");
-    println!("--------------------------------------------------------------------------------------------------");
+    println!("---------------------------------------------------------------------------------------------------------");
+    println!("{:<4} {:<12} {:<26} {:<11} {:<20} {:<12} {:<10} {:<7}", 
+        "", "ACCOUNT", "EMAIL", "PLAN (MULT)", "5H SPRINT (EQ)", "RESET IN", "7D LIMIT", "CREDITS");
+    println!("---------------------------------------------------------------------------------------------------------");
 
     for acc in &accounts_file.accounts {
         let is_active = acc.id == active_id;
         let prefix = if is_active { "→" } else { " " };
         
         let pct = acc.last_primary_percentage;
-        let dot = if pct > 50.0 {
+        let mult = acc.effective_multiplier();
+        let tank_pct = if mult > 0.0 { (pct / mult).clamp(0.0, 100.0) } else { pct };
+        let dot = if tank_pct > 50.0 {
             "🟢"
-        } else if pct > 15.0 {
+        } else if tank_pct > 15.0 {
             "🟡"
         } else {
             "🔴"
         };
 
-        let bar = format_progress_bar(pct);
+        let bar = format_progress_bar(tank_pct);
         let reset_str = acc.last_reset_after_seconds
             .map(format_reset_duration)
             .unwrap_or_else(|| "--".to_string());
@@ -151,12 +165,14 @@ fn print_status_table(refresh: bool) -> Result<(), String> {
 
         let active_indicator = if is_active { format!("{} {}", prefix, dot) } else { format!("  {}", dot) };
 
-        println!("{:<4} {:<12} {:<28} {:<8} {:<18} {:<12} {:<10} {:<7}",
+        let plan_str = format!("{:<5} {:>2.0}x", acc.plan_type, mult);
+
+        println!("{:<4} {:<12} {:<26} {:<11} {:<20} {:<12} {:<10} {:<7}",
             active_indicator,
             truncate_str(acc.display_name(), 12),
-            truncate_str(&acc.email, 27),
-            acc.plan_type,
-            format!("{} {:>3.0}%", bar, pct),
+            truncate_str(&acc.email, 25),
+            plan_str,
+            format!("{} {:>5.0}%", bar, pct),
             reset_str,
             weekly_str,
             credits_str
@@ -167,8 +183,8 @@ fn print_status_table(refresh: bool) -> Result<(), String> {
         }
     }
 
-    println!("--------------------------------------------------------------------------------------------------");
-    println!("💡 Switch account: `codex-mon switch <name|id>` | Run daemon: `codex-mon daemon`");
+    println!("---------------------------------------------------------------------------------------------------------");
+    println!("💡 Switch account: `codex-mon switch <name|id>` | Set multiplier: `codex-mon set-multiplier <name> <val>`");
     println!();
     Ok(())
 }
@@ -286,6 +302,12 @@ fn main() {
             }
             Ok(())
         })(),
+        Some(Commands::SetMultiplier { account, multiplier }) => {
+            setup::set_account_multiplier(&account, multiplier)
+        }
+        Some(Commands::ResetMultiplier { account }) => {
+            setup::reset_account_multiplier(&account)
+        }
         Some(Commands::Setup) => setup::run_interactive_setup(),
         Some(Commands::Add { account_id }) => setup::login_and_add_account(&account_id),
         Some(Commands::SaveCurrent { account_id }) => setup::save_current_as(&account_id),

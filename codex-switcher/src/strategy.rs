@@ -105,6 +105,9 @@ mod tests {
             last_credits: None,
             last_error: None,
             last_checked: None,
+            plan_multiplier: None,
+            multiplier_is_manual: None,
+            last_multiplier_checked: None,
         }
     }
 

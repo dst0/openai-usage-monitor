@@ -115,7 +115,7 @@ public final class AccountRowView: NSView {
             .font: isCurrentActive ? NSFont.boldSystemFont(ofSize: 13) : NSFont.systemFont(ofSize: 13),
             .foregroundColor: NSColor.labelColor
         ]))
-        let planLabel = tier?.capitalized ?? "Team"
+        let planLabel = tier ?? "Team"
         rich.append(NSAttributedString(string: "  \(statusTag)  \(planLabel)", attributes: [
             .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
             .foregroundColor: isCurrentActive ? NSColor.systemGreen : NSColor.secondaryLabelColor
@@ -283,6 +283,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.imagePosition = .imageLeading
+        statusItem.button?.alphaValue = isCurrentScreenActive() ? 1.0 : 0.55
 
         buildMenu()
         setupScreenObservers()
@@ -366,8 +367,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         if let icon = menuBarIcon {
             icon.size = NSSize(width: 22, height: 22)
             icon.isTemplate = false
-            menuBarIconActive = MenuBarAppearanceHelper.makeBoostedIcon(from: icon, isScreenActive: true)
-            menuBarIconInactive = MenuBarAppearanceHelper.makeBoostedIcon(from: icon, isScreenActive: false)
+            menuBarIconActive = icon
+            menuBarIconInactive = icon
         }
     }
 
@@ -392,6 +393,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let currentActive = isCurrentScreenActive()
         if currentActive != lastKnownScreenActive {
             lastKnownScreenActive = currentActive
+            statusItem?.button?.alphaValue = currentActive ? 1.0 : 0.55
             if let snap = lastSnapshot {
                 updateStatusBar(with: snap)
             }
@@ -403,6 +405,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private func updateStatusBar(with snapshot: MultiAccountSnapshot) {
         let isScreenActive = isCurrentScreenActive()
 
+        let cliMult = snapshot.cliAccount?.planMultiplier ?? snapshot.planMultiplier
         let cli5h = snapshot.fiveHourPercentage
         let cliW = snapshot.weeklyPercentage ?? cli5h
         let cli5hStr = String(format: "%.0f%%", cli5h)
@@ -410,12 +413,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let cli5hColor = MenuBarAppearanceHelper.menuBarColor(
             forPercentage: cli5h,
             weeklyPercentage: snapshot.weeklyPercentage,
-            isScreenActive: isScreenActive
+            isScreenActive: isScreenActive,
+            planMultiplier: cliMult
         )
         let cliWColor = MenuBarAppearanceHelper.menuBarColor(
             forPercentage: cliW,
             weeklyPercentage: nil,
-            isScreenActive: isScreenActive
+            isScreenActive: isScreenActive,
+            planMultiplier: cliMult
         )
 
         let cliSession = (
@@ -427,6 +432,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
         var appSession: (fiveHPct: String, fiveHColor: NSColor, weeklyPct: String, weeklyColor: NSColor)? = nil
         if snapshot.isAppRunning, let app = snapshot.appAccount {
+            let appMult = app.planMultiplier
             let app5h = app.fiveHourPercentage
             let appW = app.weeklyPercentage ?? app5h
             let app5hStr = String(format: "%.0f%%", app5h)
@@ -434,12 +440,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             let app5hColor = MenuBarAppearanceHelper.menuBarColor(
                 forPercentage: app5h,
                 weeklyPercentage: app.weeklyPercentage,
-                isScreenActive: isScreenActive
+                isScreenActive: isScreenActive,
+                planMultiplier: appMult
             )
             let appWColor = MenuBarAppearanceHelper.menuBarColor(
                 forPercentage: appW,
                 weeklyPercentage: nil,
-                isScreenActive: isScreenActive
+                isScreenActive: isScreenActive,
+                planMultiplier: appMult
             )
             appSession = (
                 fiveHPct: app5hStr,
@@ -450,6 +458,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
 
         guard let button = statusItem?.button else { return }
+        button.alphaValue = isScreenActive ? 1.0 : 0.55
         let currentIcon = isScreenActive ? (menuBarIconActive ?? menuBarIcon) : (menuBarIconInactive ?? menuBarIcon)
         let stackPercentages = UserDefaults.standard.object(forKey: "stackPercentages") as? Bool ?? true
 
@@ -580,10 +589,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 ]))
 
                 if useQuotaIcons {
-                    let weeklyIcon = MenuBarAppearanceHelper.makeWeeklyIcon(size: 8.0, isScreenActive: isScreenActive)
+                    let weeklyIcon = MenuBarAppearanceHelper.makeWeeklyIcon(size: 9.5, isScreenActive: isScreenActive)
                     let attach = NSTextAttachment()
                     attach.image = weeklyIcon
-                    attach.bounds = CGRect(x: 0, y: -0.5, width: 8.0, height: 8.0)
+                    attach.bounds = CGRect(x: 0, y: -0.5, width: 9.5, height: 9.5)
                     attributed.append(NSAttributedString(attachment: attach))
                     attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 2.5)]))
                 } else {
@@ -608,10 +617,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
         let appTagColor = isScreenActive
             ? NSColor(red: 0.35, green: 0.85, blue: 1.0, alpha: 1.0)
-            : NSColor(red: 0.55, green: 0.92, blue: 1.0, alpha: 1.0)
+            : NSColor(red: 0.30, green: 0.75, blue: 0.90, alpha: 1.0)
         let cliTagColor = isScreenActive
             ? NSColor(red: 0.65, green: 0.95, blue: 0.65, alpha: 1.0)
-            : NSColor(red: 0.80, green: 1.0, blue: 0.80, alpha: 1.0)
+            : NSColor(red: 0.55, green: 0.82, blue: 0.55, alpha: 1.0)
 
         if let app = appSession {
             appendSession("APP ", appTagColor, app.fiveHPct, app.fiveHColor, app.weeklyPct, app.weeklyColor)
@@ -818,6 +827,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         isScreenActive: Bool = true
     ) {
         guard let button = statusItem?.button else { return }
+        button.alphaValue = isScreenActive ? 1.0 : 0.55
         let currentIcon = isScreenActive ? (menuBarIconActive ?? menuBarIcon) : (menuBarIconInactive ?? menuBarIcon)
         let stackPref = UserDefaults.standard.object(forKey: "stackPercentages") as? Bool ?? true
         button.image = nil
@@ -1036,7 +1046,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 .font: NSFont.boldSystemFont(ofSize: 13),
                 .foregroundColor: NSColor.labelColor
             ]))
-            rich.append(NSAttributedString(string: "  \(appStatusTag)  \(appAcc.planType)", attributes: [
+            rich.append(NSAttributedString(string: "  \(appStatusTag)  \(appAcc.planBadgeString)", attributes: [
                 .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
                 .foregroundColor: NSColor.systemTeal
             ]))
@@ -1048,8 +1058,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             // 5-Hour sprint bar
             let pPct = appAcc.fiveHourPercentage
             let pStr = String(format: "%.0f%%", pPct)
-            let pColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: pPct)
-            let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    ⚡ 5h Sprint: \(pStr) ", percentage: pPct, fillColor: pColor)
+            let pColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: pPct, planMultiplier: appAcc.planMultiplier)
+            let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    ⚡ 5h Sprint: \(pStr) ", percentage: pPct, maxPercentage: 100.0 * appAcc.planMultiplier, fillColor: pColor)
             let resetDesc = appAcc.timeUntilResetString
             if !resetDesc.isEmpty && resetDesc != L10n.resetNow {
                 pRich.append(NSAttributedString(string: " (\(resetDesc))", attributes: [
@@ -1067,8 +1077,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             // Weekly bar
             if let wPct = appAcc.weeklyPercentage {
                 let wStr = String(format: "%.0f%%", wPct)
-                let wColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: wPct)
-                let wRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    🗓️ Weekly: \(wStr) ", percentage: wPct, fillColor: wColor)
+                let wColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: wPct, planMultiplier: appAcc.planMultiplier)
+                let wRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    🗓️ Weekly: \(wStr) ", percentage: wPct, maxPercentage: 100.0 * appAcc.planMultiplier, fillColor: wColor)
                 let weekItem = NSMenuItem(title: "    🗓️ Weekly: \(wStr)", action: #selector(noop), keyEquivalent: "")
                 weekItem.target = self
                 weekItem.attributedTitle = wRich
@@ -1149,7 +1159,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let cliPrimary = snapshot.cliAccount ?? snapshot.accounts.first(where: { $0.isCurrentActive }) ?? snapshot.accounts.first
         if let activeAcc = cliPrimary {
             let statusTag = L10n.activeInCli
-            let dotColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: activeAcc.fiveHourPercentage)
+            let dotColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: activeAcc.fiveHourPercentage, planMultiplier: activeAcc.planMultiplier)
 
             let accItem = NSMenuItem(title: "● \(activeAcc.email)  \(statusTag)", action: #selector(noop), keyEquivalent: "")
             accItem.target = self
@@ -1159,7 +1169,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 accountId: activeAcc.id,
                 accountName: activeAcc.displayName,
                 email: activeAcc.email,
-                tier: activeAcc.planType,
+                tier: activeAcc.planBadgeString,
                 isCurrentActive: true,
                 dotColor: dotColor,
                 statusTag: statusTag,
@@ -1179,8 +1189,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             // 5h Sprint bar
             let pPct = activeAcc.fiveHourPercentage
             let pStr = String(format: "%.0f%%", pPct)
-            let pColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: pPct)
-            let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    ⚡ 5h Sprint: \(pStr) ", percentage: pPct, fillColor: pColor)
+            let pColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: pPct, planMultiplier: activeAcc.planMultiplier)
+            let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    ⚡ 5h Sprint: \(pStr) ", percentage: pPct, maxPercentage: 100.0 * activeAcc.planMultiplier, fillColor: pColor)
             let resetDesc = activeAcc.timeUntilResetString
             if !resetDesc.isEmpty && resetDesc != L10n.resetNow {
                 pRich.append(NSAttributedString(string: " (\(resetDesc))", attributes: [
@@ -1198,8 +1208,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             // Weekly bar
             if let wPct = activeAcc.weeklyPercentage {
                 let wStr = String(format: "%.0f%%", wPct)
-                let wColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: wPct)
-                let wRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    🗓️ Weekly: \(wStr) ", percentage: wPct, fillColor: wColor)
+                let wColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: wPct, planMultiplier: activeAcc.planMultiplier)
+                let wRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    🗓️ Weekly: \(wStr) ", percentage: wPct, maxPercentage: 100.0 * activeAcc.planMultiplier, fillColor: wColor)
                 let weekItem = NSMenuItem(title: "    🗓️ Weekly: \(wStr)", action: #selector(noop), keyEquivalent: "")
                 weekItem.target = self
                 weekItem.attributedTitle = wRich
@@ -1281,7 +1291,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
             for (index, acc) in reserveAccs.enumerated() {
                 let statusTag = L10n.reserveSlot(index: index + 1)
-                let dotColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: acc.fiveHourPercentage)
+                let dotColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: acc.fiveHourPercentage, planMultiplier: acc.planMultiplier)
 
                 if index > 0 {
                     let sep = AppDelegate.makeInsetSeparatorItem()
@@ -1298,7 +1308,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                     accountId: acc.id,
                     accountName: acc.displayName,
                     email: acc.email,
-                    tier: acc.planType,
+                    tier: acc.planBadgeString,
                     isCurrentActive: false,
                     dotColor: dotColor,
                     statusTag: statusTag,
@@ -1320,8 +1330,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 // 5h Sprint bar for reserve
                 let pPct = acc.fiveHourPercentage
                 let pStr = String(format: "%.0f%%", pPct)
-                let pColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: pPct)
-                let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    ⚡ 5h Sprint: \(pStr) ", percentage: pPct, fillColor: pColor)
+                let pColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: pPct, planMultiplier: acc.planMultiplier)
+                let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    ⚡ 5h Sprint: \(pStr) ", percentage: pPct, maxPercentage: 100.0 * acc.planMultiplier, fillColor: pColor)
                 let resetDesc = acc.timeUntilResetString
                 if !resetDesc.isEmpty && resetDesc != L10n.resetNow {
                     pRich.append(NSAttributedString(string: " (\(resetDesc))", attributes: [

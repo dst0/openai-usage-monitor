@@ -35,31 +35,31 @@ public enum QuotaColorType: Sendable {
                 ]
             }
         } else {
-            // High-contrast profile for inactive screen to compensate for WindowServer dimming
+            // Natural harmonious tones for inactive screen, avoiding neon oversaturation
             switch self {
             case .green:
                 return [
-                    NSColor(red: 0.10, green: 0.95, blue: 0.25, alpha: 1.0),
-                    NSColor(red: 0.0, green: 0.85, blue: 0.18, alpha: 1.0),
-                    NSColor(red: 0.0, green: 0.48, blue: 0.08, alpha: 1.0)
+                    NSColor(red: 0.30, green: 0.88, blue: 0.40, alpha: 1.0),
+                    NSColor(red: 0.0, green: 0.68, blue: 0.20, alpha: 1.0),
+                    NSColor(red: 0.0, green: 0.40, blue: 0.10, alpha: 1.0)
                 ]
             case .yellow:
                 return [
-                    NSColor(red: 1.0, green: 0.88, blue: 0.05, alpha: 1.0),
-                    NSColor(red: 1.0, green: 0.62, blue: 0.0, alpha: 1.0),
-                    NSColor(red: 0.80, green: 0.35, blue: 0.0, alpha: 1.0)
+                    NSColor(red: 0.95, green: 0.85, blue: 0.30, alpha: 1.0),
+                    NSColor(red: 0.90, green: 0.58, blue: 0.0, alpha: 1.0),
+                    NSColor(red: 0.68, green: 0.38, blue: 0.0, alpha: 1.0)
                 ]
             case .red:
                 return [
-                    NSColor(red: 1.0, green: 0.15, blue: 0.18, alpha: 1.0),
-                    NSColor(red: 0.95, green: 0.02, blue: 0.05, alpha: 1.0),
-                    NSColor(red: 0.60, green: 0.0, blue: 0.02, alpha: 1.0)
+                    NSColor(red: 0.92, green: 0.38, blue: 0.38, alpha: 1.0),
+                    NSColor(red: 0.80, green: 0.08, blue: 0.12, alpha: 1.0),
+                    NSColor(red: 0.50, green: 0.02, blue: 0.04, alpha: 1.0)
                 ]
             case .gray:
                 return [
-                    NSColor(red: 0.82, green: 0.83, blue: 0.85, alpha: 1.0),
                     NSColor(red: 0.65, green: 0.66, blue: 0.68, alpha: 1.0),
-                    NSColor(red: 0.45, green: 0.46, blue: 0.48, alpha: 1.0)
+                    NSColor(red: 0.48, green: 0.49, blue: 0.52, alpha: 1.0),
+                    NSColor(red: 0.30, green: 0.31, blue: 0.33, alpha: 1.0)
                 ]
             }
         }
@@ -90,36 +90,39 @@ public struct MenuBarAppearanceHelper {
     public static func menuBarColor(
         forPercentage pct: Double,
         weeklyPercentage: Double? = nil,
-        isScreenActive: Bool = true
+        isScreenActive: Bool = true,
+        planMultiplier: Double = 1.0
     ) -> NSColor {
         if isWeeklyExhausted(weeklyPercentage) {
             // Slate gray clearly indicates unusable state when weekly quota is exhausted
             return isScreenActive
                 ? NSColor(white: 0.60, alpha: 1.0)
-                : NSColor(white: 0.78, alpha: 1.0)
+                : NSColor(white: 0.55, alpha: 1.0)
         }
+        let tankPct = planMultiplier > 0.0 ? (pct / planMultiplier) : pct
         if isScreenActive {
-            if pct > 50.0 {
+            if tankPct > 50.0 {
                 return NSColor(red: 0.0, green: 0.88, blue: 0.35, alpha: 1.0)
-            } else if pct > 15.0 {
+            } else if tankPct > 15.0 {
                 return NSColor(red: 1.0, green: 0.78, blue: 0.0, alpha: 1.0)
             } else {
                 return NSColor(red: 1.0, green: 0.18, blue: 0.22, alpha: 1.0)
             }
         } else {
-            if pct > 50.0 {
-                return NSColor(red: 0.0, green: 0.95, blue: 0.25, alpha: 1.0)
-            } else if pct > 15.0 {
-                return NSColor(red: 1.0, green: 0.70, blue: 0.0, alpha: 1.0)
+            if tankPct > 50.0 {
+                return NSColor(red: 0.0, green: 0.80, blue: 0.32, alpha: 1.0)
+            } else if tankPct > 15.0 {
+                return NSColor(red: 0.92, green: 0.70, blue: 0.0, alpha: 1.0)
             } else {
-                return NSColor(red: 1.0, green: 0.05, blue: 0.10, alpha: 1.0)
+                return NSColor(red: 0.92, green: 0.18, blue: 0.20, alpha: 1.0)
             }
         }
     }
 
     public static func dropdownColor(
         forPercentage pct: Double,
-        weeklyPercentage: Double? = nil
+        weeklyPercentage: Double? = nil,
+        planMultiplier: Double = 1.0
     ) -> NSColor {
         if isWeeklyExhausted(weeklyPercentage) {
             return NSColor(name: nil) { appearance in
@@ -129,13 +132,14 @@ public struct MenuBarAppearanceHelper {
                     : NSColor(white: 0.45, alpha: 1.0)
             }
         }
+        let tankPct = planMultiplier > 0.0 ? (pct / planMultiplier) : pct
         return NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            if pct > 50.0 {
+            if tankPct > 50.0 {
                 return isDark
                     ? NSColor(red: 0.0, green: 0.88, blue: 0.38, alpha: 1.0)
                     : NSColor(red: 0.05, green: 0.62, blue: 0.22, alpha: 1.0)
-            } else if pct > 15.0 {
+            } else if tankPct > 15.0 {
                 return isDark
                     ? NSColor(red: 1.0, green: 0.80, blue: 0.0, alpha: 1.0)
                     : NSColor(red: 0.82, green: 0.52, blue: 0.0, alpha: 1.0)
@@ -148,36 +152,32 @@ public struct MenuBarAppearanceHelper {
     }
 
     public static func numberFont(isScreenActive: Bool = true) -> NSFont {
-        let weight: NSFont.Weight = isScreenActive ? .semibold : .bold
-        return NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: weight)
+        return NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)
     }
 
     public static func labelFont(isScreenActive: Bool = true) -> NSFont {
-        let weight: NSFont.Weight = isScreenActive ? .semibold : .bold
-        return NSFont.systemFont(ofSize: 11.5, weight: weight)
+        return NSFont.systemFont(ofSize: 11.5, weight: .semibold)
     }
 
     public static func separatorFont(isScreenActive: Bool = true) -> NSFont {
-        let weight: NSFont.Weight = isScreenActive ? .regular : .medium
-        return NSFont.systemFont(ofSize: 11.5, weight: weight)
+        return NSFont.systemFont(ofSize: 11.5, weight: .regular)
     }
 
     public static func bracketFont(isScreenActive: Bool = true) -> NSFont {
-        let weight: NSFont.Weight = isScreenActive ? .bold : .heavy
-        return NSFont.systemFont(ofSize: 12.0, weight: weight)
+        return NSFont.systemFont(ofSize: 12.0, weight: .bold)
     }
 
     public static func separatorColor(isScreenActive: Bool = true) -> NSColor {
         return isScreenActive
             ? NSColor(white: 0.65, alpha: 1.0)
-            : NSColor(white: 0.85, alpha: 1.0)
+            : NSColor(white: 0.55, alpha: 1.0)
     }
 
     public static func textShadow(isScreenActive: Bool = true) -> NSShadow {
         let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(isScreenActive ? 0.55 : 0.95)
+        shadow.shadowColor = NSColor.black.withAlphaComponent(isScreenActive ? 0.55 : 0.30)
         shadow.shadowOffset = NSSize(width: 0, height: -0.5)
-        shadow.shadowBlurRadius = isScreenActive ? 1.0 : 1.5
+        shadow.shadowBlurRadius = 1.0
         return shadow
     }
 
@@ -248,7 +248,7 @@ public struct MenuBarAppearanceHelper {
             ctx.restoreGState()
 
             // 4. Subtle vertical micro-seam
-            let seamAlpha: CGFloat = isScreenActive ? 0.35 : 0.55
+            let seamAlpha: CGFloat = isScreenActive ? 0.35 : 0.20
             ctx.setFillColor(NSColor(white: 0.0, alpha: seamAlpha).cgColor)
             ctx.fill(CGRect(x: (diameter / 2.0) - 0.35, y: 0, width: 0.7, height: diameter))
 
@@ -268,8 +268,8 @@ public struct MenuBarAppearanceHelper {
             ctx.restoreGState()
 
             // 6. Deep 3D outer rim
-            let rimAlpha: CGFloat = isScreenActive ? 0.65 : 0.90
-            let rimLineWidth: CGFloat = isScreenActive ? 0.7 : 0.85
+            let rimAlpha: CGFloat = isScreenActive ? 0.65 : 0.40
+            let rimLineWidth: CGFloat = 0.7
             ctx.setStrokeColor(NSColor(white: 0.0, alpha: rimAlpha).cgColor)
             ctx.setLineWidth(rimLineWidth)
             ctx.strokeEllipse(in: rect.insetBy(dx: 0.35, dy: 0.35))
@@ -354,7 +354,7 @@ public struct MenuBarAppearanceHelper {
             ctx.restoreGState()
 
             // 4. Dividing micro-seams
-            let seamAlpha: CGFloat = isScreenActive ? 0.45 : 0.65
+            let seamAlpha: CGFloat = isScreenActive ? 0.45 : 0.25
             ctx.setFillColor(NSColor(white: 0.0, alpha: seamAlpha).cgColor)
             ctx.fill(CGRect(x: 0, y: midTop - 0.35, width: width, height: 0.7))
             ctx.fill(CGRect(x: 0, y: midBottom - 0.35, width: width, height: 0.7))
@@ -375,8 +375,8 @@ public struct MenuBarAppearanceHelper {
             ctx.restoreGState()
 
             // 6. Deep 3D outer rim stroke
-            let rimAlpha: CGFloat = isScreenActive ? 0.70 : 0.92
-            let rimLineWidth: CGFloat = isScreenActive ? 0.75 : 0.90
+            let rimAlpha: CGFloat = isScreenActive ? 0.70 : 0.45
+            let rimLineWidth: CGFloat = 0.75
             ctx.saveGState()
             ctx.setStrokeColor(NSColor(white: 0.0, alpha: rimAlpha).cgColor)
             ctx.setLineWidth(rimLineWidth)
@@ -390,24 +390,12 @@ public struct MenuBarAppearanceHelper {
 
     // MARK: - Contrast-Boosted Menu Bar Icon
     public static func makeBoostedIcon(from baseImage: NSImage, isScreenActive: Bool = true) -> NSImage {
-        let size = baseImage.size.width > 0 ? baseImage.size : NSSize(width: 22, height: 22)
-        if isScreenActive {
-            baseImage.isTemplate = false
-            return baseImage
-        } else {
-            let dimmed = NSImage(size: size, flipped: false) { rect in
-                guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-                ctx.interpolationQuality = .high
-                baseImage.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 0.65)
-                return true
-            }
-            dimmed.isTemplate = false
-            return dimmed
-        }
+        baseImage.isTemplate = false
+        return baseImage
     }
 
     // High-contrast dual-color progress bar
-    public static func makeColoredProgressBar(label: String, percentage: Double, fillColor: NSColor) -> NSMutableAttributedString {
+    public static func makeColoredProgressBar(label: String, percentage: Double, maxPercentage: Double = 100.0, fillColor: NSColor) -> NSMutableAttributedString {
         let result = NSMutableAttributedString()
 
         result.append(NSAttributedString(string: label, attributes: [
@@ -416,7 +404,8 @@ public struct MenuBarAppearanceHelper {
         ]))
 
         let total = 10
-        let filled = max(0, min(total, Int(round((percentage / 100.0) * Double(total)))))
+        let denom = max(1.0, maxPercentage)
+        let filled = max(0, min(total, Int(round((percentage / denom) * Double(total)))))
         let empty = total - filled
 
         let barFont = NSFont.systemFont(ofSize: 10, weight: .bold)
@@ -479,8 +468,8 @@ public struct MenuBarAppearanceHelper {
 
             let fgColor = isScreenActive
                 ? NSColor(red: 1.0, green: 0.85, blue: 0.20, alpha: 1.0).cgColor
-                : NSColor(red: 1.0, green: 0.93, blue: 0.40, alpha: 1.0).cgColor
-            let shadowColor = NSColor(white: 0.0, alpha: isScreenActive ? 0.75 : 0.90).cgColor
+                : NSColor(red: 0.90, green: 0.78, blue: 0.20, alpha: 1.0).cgColor
+            let shadowColor = NSColor(white: 0.0, alpha: isScreenActive ? 0.65 : 0.35).cgColor
 
             let shadowOffset = CGSize(width: pixelSize * 0.75, height: -pixelSize * 0.75)
 
@@ -521,7 +510,7 @@ public struct MenuBarAppearanceHelper {
     /// - Rows 6-7:       blue header bar
     /// - Rows 0-5:       white body with date dots
     /// Each pixel has a dark 1px drop shadow for classic Win3.1/Win95 relief.
-    public static func makeWeeklyIcon(size: CGFloat = 9.0, isScreenActive: Bool = true) -> NSImage {
+    public static func makeWeeklyIcon(size: CGFloat = 10.0, isScreenActive: Bool = true) -> NSImage {
         // Calendar bitmap: 9 rows from row 0 (bottom) to row 8 (top).
         // 0 = empty, 1 = body (white/light), 2 = header (blue), 3 = peg (dark), 4 = date dot (dark on body)
         let bitmapRows: [[UInt8]] = [
@@ -557,17 +546,17 @@ public struct MenuBarAppearanceHelper {
             // Colors
             let bodyColor = isScreenActive
                 ? NSColor(white: 0.92, alpha: 1.0).cgColor
-                : NSColor(white: 0.98, alpha: 1.0).cgColor
+                : NSColor(white: 0.82, alpha: 1.0).cgColor
             let headerColor = isScreenActive
                 ? NSColor(red: 0.25, green: 0.65, blue: 1.0, alpha: 1.0).cgColor
-                : NSColor(red: 0.40, green: 0.78, blue: 1.0, alpha: 1.0).cgColor
+                : NSColor(red: 0.22, green: 0.55, blue: 0.85, alpha: 1.0).cgColor
             let pegColor = isScreenActive
                 ? NSColor(white: 0.35, alpha: 1.0).cgColor
-                : NSColor(white: 0.20, alpha: 1.0).cgColor
+                : NSColor(white: 0.30, alpha: 1.0).cgColor
             let dotColor = isScreenActive
                 ? NSColor(white: 0.30, alpha: 1.0).cgColor
-                : NSColor(white: 0.15, alpha: 1.0).cgColor
-            let shadowColor = NSColor(white: 0.0, alpha: isScreenActive ? 0.75 : 0.90).cgColor
+                : NSColor(white: 0.25, alpha: 1.0).cgColor
+            let shadowColor = NSColor(white: 0.0, alpha: isScreenActive ? 0.65 : 0.35).cgColor
 
             let shadowOffset = CGSize(width: pixelSize * 0.75, height: -pixelSize * 0.75)
 
@@ -624,7 +613,7 @@ public struct MenuBarAppearanceHelper {
     ) -> (image: NSImage, size: NSSize) {
         let font = NSFont.monospacedDigitSystemFont(
             ofSize: 10.5,
-            weight: isScreenActive ? .bold : .heavy
+            weight: .bold
         )
         let shadow = textShadow(isScreenActive: isScreenActive)
         let kern: CGFloat = 0.2
@@ -632,7 +621,7 @@ public struct MenuBarAppearanceHelper {
         let sprintIconSample = useQuotaIcons ? makeSprintIcon(size: 8.0, isScreenActive: isScreenActive) : nil
         let sprintIconW: CGFloat = sprintIconSample?.size.width ?? 10.0
         let sprintIconH: CGFloat = sprintIconSample?.size.height ?? 8.0
-        let weeklyIconSample = useQuotaIcons ? makeWeeklyIcon(size: 9.0, isScreenActive: isScreenActive) : nil
+        let weeklyIconSample = useQuotaIcons ? makeWeeklyIcon(size: 10.0, isScreenActive: isScreenActive) : nil
         let weeklyIconW: CGFloat = weeklyIconSample?.size.width ?? 10.0
         let weeklyIconH: CGFloat = weeklyIconSample?.size.height ?? 10.0
         let iconSpacing: CGFloat = 1.5
@@ -659,7 +648,7 @@ public struct MenuBarAppearanceHelper {
         let wTextSize = wStr.size()
 
         // Text fallback labels ("5h: ", "Wk: ") when useQuotaIcons is false
-        let labelF = NSFont.systemFont(ofSize: 8.5, weight: isScreenActive ? .bold : .heavy)
+        let labelF = NSFont.systemFont(ofSize: 8.5, weight: .bold)
         let labelAttrs: [NSAttributedString.Key: Any] = [
             .font: labelF,
             .foregroundColor: NSColor.white,
@@ -705,7 +694,7 @@ public struct MenuBarAppearanceHelper {
             // Row 2: Weekly quota (Bottom tier: y in [0.0, rowHeight])
             let row2Y: CGFloat = 0.0
             if useQuotaIcons {
-                let weeklyIcon = weeklyIconSample ?? makeWeeklyIcon(size: 9.0, isScreenActive: isScreenActive)
+                let weeklyIcon = weeklyIconSample ?? makeWeeklyIcon(size: 10.0, isScreenActive: isScreenActive)
                 let weeklyX = leftPad + (maxIconW - weeklyIconW) / 2.0
                 let iconRect = CGRect(
                     x: weeklyX,
