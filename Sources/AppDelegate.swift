@@ -283,7 +283,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.imagePosition = .imageLeading
-        statusItem.button?.alphaValue = isCurrentScreenActive() ? 1.0 : 0.55
 
         buildMenu()
         setupScreenObservers()
@@ -393,7 +392,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let currentActive = isCurrentScreenActive()
         if currentActive != lastKnownScreenActive {
             lastKnownScreenActive = currentActive
-            statusItem?.button?.alphaValue = currentActive ? 1.0 : 0.55
             if let snap = lastSnapshot {
                 updateStatusBar(with: snap)
             }
@@ -458,7 +456,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
 
         guard let button = statusItem?.button else { return }
-        button.alphaValue = isScreenActive ? 1.0 : 0.55
         let currentIcon = isScreenActive ? (menuBarIconActive ?? menuBarIcon) : (menuBarIconInactive ?? menuBarIcon)
         let stackPercentages = UserDefaults.standard.object(forKey: "stackPercentages") as? Bool ?? true
 
@@ -827,7 +824,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         isScreenActive: Bool = true
     ) {
         guard let button = statusItem?.button else { return }
-        button.alphaValue = isScreenActive ? 1.0 : 0.55
         let currentIcon = isScreenActive ? (menuBarIconActive ?? menuBarIcon) : (menuBarIconInactive ?? menuBarIcon)
         let stackPref = UserDefaults.standard.object(forKey: "stackPercentages") as? Bool ?? true
         button.image = nil

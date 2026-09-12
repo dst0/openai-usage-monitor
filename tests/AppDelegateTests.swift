@@ -168,11 +168,9 @@ struct AppDelegateTestRunner {
         // ====================================================================
         // Test 6: Inactive Screen Dimming & Compatibility Matrix
         // ====================================================================
-        // 1. Verify button alphaValue logic matches macOS system dimming (~0.55 alpha)
-        let activeAlpha: CGFloat = true ? 1.0 : 0.55
-        let inactiveAlpha: CGFloat = false ? 1.0 : 0.55
-        assertEqual(activeAlpha, 1.0, "Active screen alpha must be 1.0")
-        assertEqual(inactiveAlpha, 0.55, "Inactive screen alpha must be 0.55 matching macOS system dimming")
+        // 1. Verify button alphaValue remains 1.0 (full opacity) to prevent macOS vibrancy wash-out
+        let activeAlpha: CGFloat = 1.0
+        assertEqual(activeAlpha, 1.0, "Button alphaValue must remain 1.0 to prevent macOS vibrancy wash-out")
 
         // 2. Verify attributed string generation does not bloom on inactive screen
         let activeFull = AppDelegate.buildStatusBarAttributedString(

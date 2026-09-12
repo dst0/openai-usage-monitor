@@ -4,6 +4,10 @@ Ultra-lightweight, high-performance automatic quota monitoring and account rotat
 
 Engineered with **100% functional parity** and zero-overhead performance: core in **Rust** (~3 MB RAM footprint, instantaneous execution) paired with a native macOS Menu Bar status application in **Swift** (`Codex Monitor.app`).
 
+> [!IMPORTANT]
+> **🍎 Platform Notice: Currently works exclusively on macOS (Apple Silicon M1/M2/M3/M4 & Intel, macOS 13.0 Ventura or later).**
+> Linux and Windows headless CLI support is planned for future updates.
+
 ---
 
 ## 🎯 Key Features
@@ -44,27 +48,46 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
 
 ## 🛠 Installation & Setup
 
-Run the automated installation script:
+### ⚡ One-Line Quick Install (macOS Only)
+Install and configure everything with a single terminal command:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/dst0/openai-usage-monitor/main/scripts/install.sh | bash
+```
+
+*Or using the explicit bash invocation:*
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/dst0/openai-usage-monitor/main/scripts/install.sh)"
+```
+
+### 🛠 Manual Install (From Source)
+```bash
+git clone https://github.com/dst0/openai-usage-monitor.git
+cd openai-usage-monitor
 ./scripts/install.sh
 ```
 
-The script automatically:
-1. Compiles the release Rust binary `codex-mon` and installs it to `~/.local/bin/codex-mon`, creating a symlink at `~/.local/bin/cxi`.
-2. Configures the transparent CLI shim at `~/.local/bin/codex`.
-3. Builds the native Swift status bar application with all bundled resources (`build/Codex Monitor.app`).
-4. Ad-hoc codesigns the app and installs it to `/Applications/Codex Monitor.app`.
-5. Configures macOS Login Items for automatic launch at login.
-6. Connects Skills for Claude Code, Codex, and agent swarms in `~/.codex/skills` and `~/.claude/skills`.
-7. Launches the application.
+### 📋 Prerequisites (macOS)
+The installation script checks and guides you through the prerequisites automatically:
+1. **macOS 13.0+ (Ventura, Sonoma, Sequoia)** — Apple Silicon (M1/M2/M3/M4) or Intel.
+2. **Apple Command Line Tools (`swiftc`)**:
+   ```bash
+   xcode-select --install
+   ```
+3. **Rust & Cargo** (for building the ultra-lightweight CLI core):
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
 
-### Background Daemon (`launchd`)
-To keep automatic quota monitoring and account rotation active 24/7 in the background:
-```bash
-sed "s|__HOME__|${HOME}|g" com.codex.switcher.plist > ~/Library/LaunchAgents/com.codex.switcher.plist
-launchctl load ~/Library/LaunchAgents/com.codex.switcher.plist
-```
+### 🤖 What the Installer Does Automatically
+1. **Compiles the Rust CLI (`codex-mon` / `cxi`)** with maximum release optimizations.
+2. **Installs to `~/.local/bin`** and automatically configures your shell `$PATH` in `~/.zshrc`.
+3. **Configures the transparent CLI shim** at `~/.local/bin/codex`.
+4. **Builds the native macOS Menu Bar application** (`Codex Monitor.app`) and installs it into `/Applications/Codex Monitor.app`.
+5. **Registers macOS Login Item** for seamless launch on Mac startup.
+6. **Configures 24/7 background `launchd` daemon** (`~/Library/LaunchAgents/com.codex.switcher.plist`).
+7. **Integrates AI Agent Skills** into `~/.codex/skills`, `~/.claude/skills`, and `~/.agents/skills`.
+8. **Launches the Menu Bar app immediately.**
 
 ---
 

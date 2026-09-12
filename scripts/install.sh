@@ -1,22 +1,111 @@
 #!/bin/bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+# ==============================================================================
+# 🚀 OpenAI Codex Monitor & Switcher — Universal macOS Installer
+# ==============================================================================
+
+# Platform check — macOS only (Apple Silicon & Intel)
+if [ "$(uname -s)" != "Darwin" ]; then
+    echo "❌ Error: Codex Monitor is designed exclusively for macOS (Apple Silicon & Intel)."
+    echo "   Linux and Windows are not currently supported."
+    exit 1
+fi
+
 APP_NAME="Codex Monitor"
 BUNDLE_NAME="${APP_NAME}.app"
+REPO_URL="${REPO_URL:-https://github.com/dst0/openai-usage-monitor.git}"
+LOCAL_BIN="${HOME}/.local/bin"
+mkdir -p "${LOCAL_BIN}"
+
+# Detect if running from local repository or piped via curl
+SCRIPT_SOURCE="${BASH_SOURCE[0]:-$0}"
+PROJECT_DIR=""
+if [ -f "${SCRIPT_SOURCE}" ]; then
+    POTENTIAL_DIR="$(cd "$(dirname "${SCRIPT_SOURCE}")/.." && pwd)"
+    if [ -f "${POTENTIAL_DIR}/codex-switcher/Cargo.toml" ] && [ -f "${POTENTIAL_DIR}/Sources/main.swift" ]; then
+        PROJECT_DIR="${POTENTIAL_DIR}"
+    fi
+fi
+
+CLEANUP_TMP=0
+if [ -z "${PROJECT_DIR}" ]; then
+    echo "🌐 Remote installation detected. Preparing temporary build environment..."
+    TMP_DIR="$(mktemp -d -t codex-mon-install-XXXXXX)"
+    CLEANUP_TMP=1
+    cleanup() {
+        if [ "${CLEANUP_TMP}" -eq 1 ] && [ -d "${TMP_DIR:-}" ]; then
+            rm -rf "${TMP_DIR}"
+        fi
+    }
+    trap cleanup EXIT INT TERM
+
+    echo "📥 Fetching source code from ${REPO_URL}..."
+    if command -v git >/dev/null 2>&1; then
+        git clone --depth 1 "${REPO_URL}" "${TMP_DIR}"
+    else
+        echo "❌ Git is required to clone the repository."
+        echo "👉 Install Apple Command Line Tools by running: xcode-select --install"
+        exit 1
+    fi
+    PROJECT_DIR="${TMP_DIR}"
+fi
+
 BUILD_DIR="${PROJECT_DIR}/build"
 APP_DIR="${BUILD_DIR}/${BUNDLE_NAME}"
 
+# Detect installation directory: prefer /Applications, fallback to ~/Applications
 if [ -w "/Applications" ]; then
     INSTALL_DIR="/Applications"
 else
     INSTALL_DIR="${HOME}/Applications"
 fi
+mkdir -p "${INSTALL_DIR}"
 
-LOCAL_BIN="${HOME}/.local/bin"
-mkdir -p "${LOCAL_BIN}"
+# ------------------------------------------------------------------------------
+# Check Prerequisites: Swift & Rust
+# ------------------------------------------------------------------------------
+if ! command -v swiftc >/dev/null 2>&1; then
+    echo "❌ Swift compiler (swiftc) not found."
+    echo "👉 Install Apple Command Line Tools by running:"
+    echo "   xcode-select --install"
+    exit 1
+fi
 
+if ! command -v cargo >/dev/null 2>&1; then
+    if [ -f "${HOME}/.cargo/env" ]; then
+        source "${HOME}/.cargo/env"
+    fi
+fi
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "❌ Rust / Cargo not found."
+    echo "👉 Install Rust in one command by running:"
+    echo "   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    echo "After installation completes, re-run this script."
+    exit 1
+fi
+
+# Ensure ~/.local/bin is in PATH
+if [[ ":$PATH:" != *":${LOCAL_BIN}:"* ]]; then
+    export PATH="${LOCAL_BIN}:${PATH}"
+    for rc in "${HOME}/.zshrc" "${HOME}/.bash_profile"; do
+        if [ -f "${rc}" ] || [ "${rc}" = "${HOME}/.zshrc" ]; then
+            if ! grep -q '\.local/bin' "${rc}" 2>/dev/null; then
+                echo '' >> "${rc}"
+                echo '# OpenAI Codex Monitor CLI path' >> "${rc}"
+                echo 'export PATH="$HOME/.local/bin:$PATH"' >> "${rc}"
+                echo "✨ Added ~/.local/bin to PATH in ${rc}"
+            fi
+        fi
+    done
+fi
+
+ARCH="$(uname -m)"
+echo "🖥️  Detected macOS (${ARCH}). Starting compilation..."
+
+# ------------------------------------------------------------------------------
+# 1. Build Rust CLI (codex-mon / cxi)
+# ------------------------------------------------------------------------------
 echo "🦀 [1/4] Building Rust CLI (codex-mon / cxi)..."
 cd "${PROJECT_DIR}/codex-switcher"
 cargo build --release
@@ -26,18 +115,22 @@ cp "target/release/codex-mon" "${LOCAL_BIN}/codex-mon"
 chmod +x "${LOCAL_BIN}/codex-mon"
 ln -sfn "${LOCAL_BIN}/codex-mon" "${LOCAL_BIN}/cxi"
 
-# Ensure codex CLI shim exists
+# Ensure transparent codex CLI shim exists
 echo "🔗 Configuring codex CLI shim..."
 "${LOCAL_BIN}/codex-mon" install-shim || true
 
 # Compile codex-ui-resume helper for Accessibility automation
-echo "⚡ Compiling codex-ui-resume helper..."
-swiftc -O -o "${LOCAL_BIN}/codex-ui-resume" "${PROJECT_DIR}/scripts/codex-ui-resume.swift"
-chmod +x "${LOCAL_BIN}/codex-ui-resume"
+if [ -f "${PROJECT_DIR}/scripts/codex-ui-resume.swift" ]; then
+    echo "⚡ Compiling codex-ui-resume helper..."
+    swiftc -O -target "${ARCH}-apple-macosx13.0" -o "${LOCAL_BIN}/codex-ui-resume" "${PROJECT_DIR}/scripts/codex-ui-resume.swift"
+    chmod +x "${LOCAL_BIN}/codex-ui-resume"
+fi
 
-
+# ------------------------------------------------------------------------------
+# 2. Build macOS Menu Bar App (Codex Monitor.app)
+# ------------------------------------------------------------------------------
 echo ""
-echo "🔨 [2/4] Building macOS Menu Bar App (${APP_NAME})..."
+echo "🔨 [2/4] Building native macOS Menu Bar App (${APP_NAME})..."
 cd "${PROJECT_DIR}"
 rm -rf "${BUILD_DIR}"
 mkdir -p "${APP_DIR}/Contents/MacOS"
@@ -86,7 +179,7 @@ swiftc \
     -O \
     -whole-module-optimization \
     -sdk "$(xcrun --show-sdk-path)" \
-    -target arm64-apple-macosx13.0 \
+    -target "${ARCH}-apple-macosx13.0" \
     -framework AppKit \
     -framework Foundation \
     -framework ServiceManagement \
@@ -98,6 +191,9 @@ swiftc \
 echo "🔏 Ad-hoc code signing..."
 codesign --force --deep --sign - "${APP_DIR}" 2>/dev/null || true
 
+# ------------------------------------------------------------------------------
+# 3. Install to Applications & Register Login Item
+# ------------------------------------------------------------------------------
 echo ""
 echo "📂 [3/4] Installing to ${INSTALL_DIR}..."
 # Stop previous running instances
@@ -129,8 +225,23 @@ osascript -e "tell application \"System Events\"
     make login item at end with properties {name:\"${APP_NAME}\", path:\"${INSTALL_DIR}/${BUNDLE_NAME}\", hidden:false}
 end tell" 2>/dev/null || true
 
+# Configure launchd background daemon automatically
+if [ -f "${PROJECT_DIR}/com.codex.switcher.plist" ]; then
+    echo "⚙️  Configuring background monitoring daemon (launchd)..."
+    LAUNCH_AGENTS="${HOME}/Library/LaunchAgents"
+    mkdir -p "${LAUNCH_AGENTS}"
+    TARGET_PLIST="${LAUNCH_AGENTS}/com.codex.switcher.plist"
+    sed "s|__HOME__|${HOME}|g" "${PROJECT_DIR}/com.codex.switcher.plist" > "${TARGET_PLIST}"
+    launchctl unload "${TARGET_PLIST}" 2>/dev/null || true
+    launchctl load "${TARGET_PLIST}" 2>/dev/null || true
+    echo "  -> Loaded background daemon at ${TARGET_PLIST}"
+fi
+
+# ------------------------------------------------------------------------------
+# 4. Install Skills for AI Agents (Codex, Claude Code, Agent Swarms)
+# ------------------------------------------------------------------------------
 echo ""
-echo "🧠 [4/4] Installing skills for Codex, Claude Code, and Agent Swarm..."
+echo "🧠 [4/4] Installing skills for Codex, Claude Code, and Agent Swarms..."
 for skill_name in "cxi" "codex-mon"; do
     canonical_skill="${PROJECT_DIR}/skills/${skill_name}"
     if [ -d "${canonical_skill}" ]; then
@@ -155,6 +266,9 @@ for skill_name in "cxi" "codex-mon"; do
     fi
 done
 
+# ------------------------------------------------------------------------------
+# Launch & Wrap Up
+# ------------------------------------------------------------------------------
 echo ""
 echo "🚀 Launching ${APP_NAME}..."
 open "${INSTALL_DIR}/${BUNDLE_NAME}"
@@ -163,5 +277,5 @@ echo ""
 echo "🎉 Installation complete!"
 echo "   CLI: ${LOCAL_BIN}/cxi  (also: codex-mon, codex)"
 echo "   App: ${INSTALL_DIR}/${BUNDLE_NAME}"
-echo "   Look for the blue Codex icon (>_) in your macOS menu bar!"
+echo "   Look for the Codex icon (>_) in your macOS menu bar!"
 echo ""
