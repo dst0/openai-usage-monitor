@@ -371,29 +371,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
     }
 
-    // MARK: - Screen State Observers
+    // MARK: - Screen Parameter Observers
 
     private func setupScreenObservers() {
-        lastKnownScreenActive = isCurrentScreenActive()
-
-        let wsCenter = NSWorkspace.shared.notificationCenter
-        wsCenter.addObserver(self, selector: #selector(handleScreenStateChanged), name: NSWorkspace.didActivateApplicationNotification, object: nil)
-        wsCenter.addObserver(self, selector: #selector(handleScreenStateChanged), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
-
         let dCenter = NotificationCenter.default
-        dCenter.addObserver(self, selector: #selector(handleScreenStateChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        dCenter.addObserver(self, selector: #selector(handleScreenParametersChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
     }
 
     private func isCurrentScreenActive() -> Bool {
-        return MenuBarAppearanceHelper.isCurrentScreenActive(itemWindow: statusItem?.button?.window)
+        return true
     }
 
-    @objc private func handleScreenStateChanged() {
-        let currentActive = isCurrentScreenActive()
-        if currentActive != lastKnownScreenActive {
-            lastKnownScreenActive = currentActive
-            if let snap = lastSnapshot {
-                updateStatusBar(with: snap)
+    @objc private func handleScreenParametersChanged() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if let snap = self.lastSnapshot {
+                self.updateStatusBar(with: snap)
             }
         }
     }
@@ -401,7 +394,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // MARK: - Status Bar Display Construction
 
     private func updateStatusBar(with snapshot: MultiAccountSnapshot) {
-        let isScreenActive = isCurrentScreenActive()
+        let isScreenActive = true
 
         let cliMult = snapshot.cliAccount?.planMultiplier ?? snapshot.planMultiplier
         let cli5h = snapshot.fiveHourPercentage
@@ -527,6 +520,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let labelFont = MenuBarAppearanceHelper.labelFont(isScreenActive: isScreenActive)
         let sepFont = MenuBarAppearanceHelper.separatorFont(isScreenActive: isScreenActive)
         let bracketFont = MenuBarAppearanceHelper.bracketFont(isScreenActive: isScreenActive)
+        let bracketShadow = MenuBarAppearanceHelper.bracketShadow(isScreenActive: isScreenActive)
 
         let textShadow = MenuBarAppearanceHelper.textShadow(isScreenActive: isScreenActive)
         let sepColor = MenuBarAppearanceHelper.separatorColor(isScreenActive: isScreenActive)
@@ -637,7 +631,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             attributed.append(NSAttributedString(string: "  [", attributes: [
                 .font: bracketFont,
                 .foregroundColor: bracketColor,
-                .shadow: textShadow,
+                .shadow: bracketShadow,
                 .baselineOffset: 0.0
             ]))
             let singleBadge = MenuBarAppearanceHelper.makeHybridQuotaIndicator(
@@ -655,7 +649,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             attributed.append(NSAttributedString(string: "]", attributes: [
                 .font: bracketFont,
                 .foregroundColor: bracketColor,
-                .shadow: textShadow,
+                .shadow: bracketShadow,
                 .baselineOffset: 0.0
             ]))
         } else {
@@ -666,7 +660,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             attributed.append(NSAttributedString(string: "  [", attributes: [
                 .font: bracketFont,
                 .foregroundColor: bracketColor,
-                .shadow: textShadow,
+                .shadow: bracketShadow,
                 .baselineOffset: 0.0
             ]))
 
@@ -689,7 +683,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             attributed.append(NSAttributedString(string: "]", attributes: [
                 .font: bracketFont,
                 .foregroundColor: bracketColor,
-                .shadow: textShadow,
+                .shadow: bracketShadow,
                 .baselineOffset: 0.0
             ]))
 

@@ -181,6 +181,14 @@ public struct MenuBarAppearanceHelper {
         return shadow
     }
 
+    public static func bracketShadow(isScreenActive: Bool = true) -> NSShadow {
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(isScreenActive ? 0.90 : 0.85)
+        shadow.shadowOffset = NSSize(width: 0.0, height: -0.5)
+        shadow.shadowBlurRadius = 1.0
+        return shadow
+    }
+
     public static func isScreenActive(
         itemScreenID: CGDirectDisplayID?,
         activeScreenID: CGDirectDisplayID?,
@@ -268,7 +276,7 @@ public struct MenuBarAppearanceHelper {
             ctx.restoreGState()
 
             // 6. Deep 3D outer rim
-            let rimAlpha: CGFloat = isScreenActive ? 0.65 : 0.40
+            let rimAlpha: CGFloat = isScreenActive ? 0.65 : 0.60
             let rimLineWidth: CGFloat = 0.7
             ctx.setStrokeColor(NSColor(white: 0.0, alpha: rimAlpha).cgColor)
             ctx.setLineWidth(rimLineWidth)
@@ -375,7 +383,7 @@ public struct MenuBarAppearanceHelper {
             ctx.restoreGState()
 
             // 6. Deep 3D outer rim stroke
-            let rimAlpha: CGFloat = isScreenActive ? 0.70 : 0.45
+            let rimAlpha: CGFloat = isScreenActive ? 0.70 : 0.65
             let rimLineWidth: CGFloat = 0.75
             ctx.saveGState()
             ctx.setStrokeColor(NSColor(white: 0.0, alpha: rimAlpha).cgColor)
