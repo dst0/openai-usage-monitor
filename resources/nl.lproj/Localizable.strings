@@ -41,3 +41,6 @@
 "switch_to_account" = "Overschakelen naar dit account";
 "refreshing" = "🔄 Vernieuwen...";
 "stack_percentages" = "Compacte procentstapel (2 rijen)";
+"auto_switch_on_limit" = "🔄 Automatisch overschakelen bij limietuitputting";
+"auto_switch_business_only" = "🏢 Alleen automatisch overschakelen tussen zakelijke accounts";
+"auto_switch_business_priority" = "⚡ Automatisch overschakelen met voorrang voor zakelijke accounts";

@@ -54,11 +54,11 @@ struct AppDelegateTestRunner {
         }
         assertEqual(stackedAttachmentCount, 3, "Expected 1 app icon + 1 stacked values + 1 bracketed badge = 3 attachments")
 
-        // Attachment 0: app icon (bounds 18x18, vertically centered at y=-5.0)
+        // Attachment 0: app icon (bounds 18x18, vertically centered at y=-6.0)
         assertEqual(stackedAttachments[0].image, mockIcon)
-        assertEqual(stackedAttachments[0].bounds, CGRect(x: 0, y: -5.0, width: 18, height: 18))
+        assertEqual(stackedAttachments[0].bounds, CGRect(x: 0, y: -6.0, width: 18, height: 18))
 
-        // Verify attachment with 22x22 icon (standard macOS menu bar size, vertically centered at y=-6.0)
+        // Verify attachment with 22x22 icon (standard macOS menu bar size, vertically centered at y=-7.0)
         let icon22 = NSImage(size: NSSize(width: 22, height: 22))
         let attr22 = AppDelegate.buildStatusBarAttributedString(
             icon: icon22,
@@ -75,10 +75,10 @@ struct AppDelegateTestRunner {
         attr22.enumerateAttribute(.attachment, in: NSRange(location: 0, length: attr22.length), options: []) { val, _, _ in
             if let att = val as? NSTextAttachment { att22List.append(att) }
         }
-        assertEqual(att22List[0].bounds, CGRect(x: 0, y: -6.0, width: 22, height: 22), "22x22 icon must have bounds y=-6.0, w=22, h=22")
+        assertEqual(att22List[0].bounds, CGRect(x: 0, y: -7.0, width: 22, height: 22), "22x22 icon must have bounds y=-7.0, w=22, h=22")
 
-        // Attachment 1: 2-row stacked values (bounds height=20.5, y=-5.0)
-        assertEqual(stackedAttachments[1].bounds.origin.y, -5.0, "Stacked values attachment y origin must be -5.0")
+        // Attachment 1: 2-row stacked values (bounds height=20.5, y=-6.5)
+        assertEqual(stackedAttachments[1].bounds.origin.y, -6.5, "Stacked values attachment y origin must be -6.5")
         assertEqual(stackedAttachments[1].bounds.size.height, 20.5, "Stacked values attachment height must be 20.5")
         assertTrue(stackedAttachments[1].bounds.size.width > 20.0, "Stacked values attachment width must be > 20.0")
 
@@ -431,7 +431,40 @@ struct AppDelegateTestRunner {
         assertTrue(tiffData != nil, "Composite image tiffRepresentation must be non-nil")
         assertTrue(tiffData!.count > 0, "Composite image tiffRepresentation must be non-empty")
 
-        print("  ✅ Composite NSImage rendering (anti-vibrancy invariant) verified")
+        // 4. Vertical centering & non-clipping regression test (Test 13.5)
+        // Verify that composite image draws at y = 0.0 without negative line-height offsets,
+        // ensuring quota badges and brackets are vertically centered and do not clip at the bottom.
+        let fullAttr = AppDelegate.buildStatusBarAttributedString(
+            icon: mockIcon,
+            appSession: (fiveHPct: "34%", fiveHColor: .systemGreen, weeklyPct: "100%", weeklyColor: .systemGreen),
+            cliSession: (fiveHPct: "48%", fiveHColor: .systemGreen, weeklyPct: "87%", weeklyColor: .systemGreen),
+            accounts: [bizAccount, personalAccount],
+            isScreenActive: true,
+            useQuotaIcons: true,
+            stackPercentages: true
+        )
+        let fullImg = AppDelegate.renderCompositeImage(from: fullAttr)
+        let fullRep = NSBitmapImageRep(data: fullImg.tiffRepresentation!)!
+        let fW = fullRep.pixelsWide
+        let fH = fullRep.pixelsHigh
+        assertEqual(fH, 22, "Composite image pixel height must be 22")
+
+        // Scan rightmost reserve badge pixels (last 13 columns of content)
+        var badgeMinY = 999, badgeMaxY = -1
+        for x in (fW - 13)..<fW {
+            for y in 0..<fH {
+                if fullRep.colorAt(x: x, y: y)!.alphaComponent > 0.1 {
+                    badgeMinY = min(badgeMinY, y)
+                    badgeMaxY = max(badgeMaxY, y)
+                }
+            }
+        }
+        assertTrue(badgeMinY >= 1, "Badge must have at least 1pt top margin in composite image (got \(badgeMinY))")
+        assertTrue(badgeMaxY <= 20, "Badge must not touch or clip the bottom row of composite image (got maxY=\(badgeMaxY))")
+        let badgeCenter = Double(badgeMinY + badgeMaxY) / 2.0
+        assertTrue(abs(badgeCenter - 10.5) <= 1.0, "Badge vertical center must optically align with 10.5pt image center within 1.0pt (got \(badgeCenter))")
+
+        print("  ✅ Composite NSImage rendering (anti-vibrancy & vertical centering invariant) verified")
 
         print("\n🎉 ALL APP DELEGATE TESTS PASSED!")
     }

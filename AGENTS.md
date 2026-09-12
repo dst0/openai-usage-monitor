@@ -73,3 +73,50 @@ Rollout files are evaluated backwards from the tail, filtering out post-turn met
   2. `cxi` cycles through each thread URL (`open "codex://threads/<tid>"`) with a `400 ms` delay.
   3. For each tab opened, `cxi` triggers macOS Accessibility APIs (`AXUIElementCopyAttributeValue`) to press any unpause/resume buttons.
   4. Finally, `cxi` refocuses the user's primary/active thread.
+
+---
+
+## Auto-Switching Engine & Policies
+
+The switcher daemon (`daemon.rs`), CLI switcher (`strategy.rs`), and Menu Bar app (`AppDelegate.swift`) enforce unified account rotation policies:
+
+### 1. Trigger Conditions (`needs_switch`)
+An account switch is triggered when:
+- Active account 5-hour sprint quota reaches `0.0%` or encounters an HTTP `429` / rate limit error.
+- **Preemptive Quota Restore Trigger**: Under `business_priority` mode, if the active account is a personal account (`!is_business`) and any configured business account has recovered available quota (`> 0%` and error-free), a switch is immediately triggered to return to the business account.
+
+### 2. Candidate Selection & Sorting (`select_best_switch`)
+1. **Filtering**:
+   - Accounts must have quota `> 0%` and no active error.
+   - Candidates must provide strictly greater quota than the active account (unless triggering a preemptive return).
+   - In `business_only` mode, non-business accounts are strictly excluded.
+2. **Priority Ordering**:
+   - **Business Tier First**: Under `business_priority`, business accounts (`Team`, `Business`, `Enterprise`) always precede personal accounts (`Plus`, `Pro`, `Free`).
+   - **Reset Credits (`credits`)**: Candidates with available rate-limit reset credits are sorted first (`credits` descending).
+   - **Reset Duration**: Candidates whose quota resets soonest are preferred (`reset_after_seconds` ascending).
+   - **Headroom**: Highest available percentage (`fiveHourPercentage` descending).
+
+---
+
+## Plan Multipliers & Capacity Mathematics
+
+- **Auto-detected Tiers**: `Plus` (1.0x), `Pro` (2.0x), `Team` (2.0x), `Business` (2.0x).
+- **Custom Overrides**: Set via `cxi set-multiplier <account> <val>` (e.g. 5 for Pro 5x / Business Premium, 20 for Pro 20x). Stored in `Account.plan_multiplier` in `accounts.json`. Clear with `cxi reset-multiplier <account>`.
+- **Effective Multiplier**: Evaluated via `acc.effective_multiplier()`.
+- **Tank Normalization**:
+  - Normalized tank percentage: `(percentage / multiplier).clamp(0.0, 100.0)`.
+  - Progress bars scale to `100.0 * plan_multiplier`.
+
+---
+
+## macOS Status Bar Visual & Rendering Invariants
+
+- **Anti-Vibrancy Invariant (Composite NSImage)**: AppKit text rendering on inactive displays applies `NSTitlebarContainer` vibrancy that washes out custom text colors. To prevent this, the Menu Bar app renders a composite `NSImage` offscreen with explicit CGContext alpha blending and applies `.imagePosition = .imageOnly` on inactive screens.
+- **3D Stratified Shield Badge**:
+  - Total badge height: 16.5 pt.
+  - Top Tier (5h Sprint): Tallest section (7.5 pt of 16.5) with linear gradient based on sprint quota.
+  - Middle Tier (Weekly Pool): Middle section (5.8 pt of 16.5). If weekly pool is exhausted or critical, overrides top tier green to gray to prevent misleading operational indicators.
+  - Bottom Strip (Reset Credits): Compact strip (3.2 pt of 16.5). Green when credits > 0.
+  - Outer Rim: Crisp, thin dark outer stroke (`lineWidth: 0.6`, `rimAlpha: 0.85/0.80`).
+- **Contrast Shadows**: Specialized contrast shadows for brackets `[ ]` and omnidirectional soft red shadow for low-quota alerts to ensure legibility across all wallpaper luminosities.
+

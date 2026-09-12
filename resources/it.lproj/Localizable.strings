@@ -41,3 +41,6 @@
 "switch_to_account" = "Passa a questo account";
 "refreshing" = "🔄 Aggiornamento...";
 "stack_percentages" = "Impila percentuali (2 righe)";
+"auto_switch_on_limit" = "🔄 Cambio automatico all'esaurimento del limite";
+"auto_switch_business_only" = "🏢 Cambio automatico solo account aziendali";
+"auto_switch_business_priority" = "⚡ Cambio automatico con priorità account aziendali";

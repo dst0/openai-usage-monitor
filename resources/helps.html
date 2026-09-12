@@ -305,116 +305,254 @@
       margin-bottom: 24px;
     }
 
-    /* macOS Menu Bar Mockup */
-    .menubar-mockup {
-      background: #1e1e24;
-      border-radius: 12px;
-      padding: 12px 20px;
+    /* macOS Menu Bar Mockup Shell */
+    .menubar-preview-shell {
+      background: linear-gradient(180deg, #5b5c60 0%, #4a4b4f 100%);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 10px;
+      padding: 10px 18px;
+      margin: 18px 0 24px 0;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 8px 24px rgba(0, 0, 0, 0.35);
       display: flex;
-      align-items: center;
       justify-content: center;
-      gap: 12px;
-      margin: 20px 0 28px 0;
-      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.12);
-      font-family: var(--font-sans);
-      font-size: 0.95rem;
-      user-select: none;
+      align-items: center;
+      overflow-x: auto;
     }
 
-    .mb-item {
+    .menubar-mockup {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      color: #fff;
+      gap: 7px;
+      height: 28px;
+      user-select: none;
+      white-space: nowrap;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
     }
 
-    .mb-label {
-      color: rgba(255, 255, 255, 0.6);
-      font-weight: 500;
+    .mb-app-icon-wrap {
+      display: inline-flex;
+      align-items: center;
+      margin-right: 2px;
+    }
+
+    .mb-app-icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 4.5px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+      display: block;
+    }
+
+    .mb-session-block {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .mb-tag {
+      font-size: 10.5px;
+      font-weight: 900;
+      letter-spacing: 0.2px;
+    }
+
+    .mb-tag-app {
+      color: #59D9FF;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+    }
+
+    .mb-tag-cli {
+      color: #A6F4A6;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+    }
+
+    .mb-stacked-block {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 1px;
+      line-height: 1;
+    }
+
+    .mb-stacked-row {
+      display: flex;
+      align-items: center;
+      gap: 3.5px;
+    }
+
+    .mb-icon-5h {
+      font-size: 8px;
+      font-weight: 900;
+      color: #FFDF26;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95);
+      line-height: 1;
+    }
+
+    .mb-icon-calendar {
+      width: 9.5px;
+      height: 9.5px;
+      display: inline-block;
+      vertical-align: middle;
+      filter: drop-shadow(0 1px 1px rgba(0,0,0,0.8));
     }
 
     .mb-digit {
+      font-size: 10.5px;
       font-weight: 700;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Rounded", "SF Pro Text", ui-monospace, monospace;
       font-variant-numeric: tabular-nums;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+      line-height: 1;
     }
 
     .mb-sep {
-      color: rgba(255, 255, 255, 0.3);
-      font-size: 0.8rem;
+      color: rgba(255, 255, 255, 0.45);
+      font-size: 12px;
+      font-weight: 400;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+      margin: 0 1px;
     }
 
-    /* 3D Jelly Split Circle */
-    .split-circle {
+    .mb-bracket {
+      font-size: 16px;
+      font-weight: 700;
+      color: #ffffff;
+      line-height: 1;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95);
+      margin: 0 1px;
+    }
+
+    .mb-active-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .mb-reserves-container {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .mb-reserve-unit {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* 3D Shield Badge (3-Tier Stratified) */
+    .shield-badge {
       position: relative;
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
+      width: 12px;
+      height: 16.5px;
+      border-radius: 2px;
       overflow: hidden;
       display: inline-block;
       vertical-align: middle;
-      box-shadow: 0 0.5px 2px rgba(0, 0, 0, 0.6), inset 0 0.5px 1px rgba(255, 255, 255, 0.4);
+      border: 0.6px solid rgba(0, 0, 0, 0.85);
+      box-shadow: 0 0.5px 2px rgba(0, 0, 0, 0.6);
+      background: #111;
     }
 
-    .half-left {
+    .badge-tier-top {
       position: absolute;
+      top: 0;
       left: 0;
-      top: 0;
-      width: 7px;
-      height: 14px;
-    }
-
-    .half-right {
-      position: absolute;
       right: 0;
-      top: 0;
-      width: 7px;
-      height: 14px;
+      height: 7.5px;
+      border-bottom: 0.7px solid rgba(0, 0, 0, 0.45);
     }
 
-    .seam {
+    .badge-tier-mid {
       position: absolute;
-      left: 6.5px;
-      top: 0;
-      width: 1px;
-      height: 14px;
-      background: rgba(0, 0, 0, 0.25);
+      top: 7.5px;
+      left: 0;
+      right: 0;
+      height: 5.8px;
+      border-bottom: 0.7px solid rgba(0, 0, 0, 0.45);
     }
 
-    .gloss {
+    .badge-tier-bot {
       position: absolute;
-      top: 1px;
-      left: 2px;
-      width: 10px;
-      height: 5px;
-      border-radius: 5px 5px 0 0;
-      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0));
-      pointer-events: none;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 3.2px;
     }
 
     .bg-green {
-      background: linear-gradient(180deg, var(--green-high) 0%, var(--green-mid) 50%, var(--green-dark) 100%);
+      background: linear-gradient(180deg, #34c759 0%, #28a745 50%, #1e7e34 100%);
     }
 
     .bg-yellow {
-      background: linear-gradient(180deg, var(--yellow-high) 0%, var(--yellow-mid) 50%, var(--yellow-dark) 100%);
+      background: linear-gradient(180deg, #ffd60a 0%, #ffc107 50%, #d39e00 100%);
     }
 
     .bg-red {
-      background: linear-gradient(180deg, var(--red-high) 0%, var(--red-mid) 50%, var(--red-dark) 100%);
+      background: linear-gradient(180deg, #ff453a 0%, #dc3545 50%, #bd2130 100%);
+    }
+
+    .bg-gray {
+      background: linear-gradient(180deg, #8e8e93 0%, #636366 50%, #48484a 100%);
     }
 
     .text-green { color: #30d158; }
     .text-yellow { color: #ffd60a; }
-    .text-red { color: #ff453a; }
+    .text-red { color: #ff453a; text-shadow: 0 0 6px rgba(255, 69, 58, 0.45); }
 
-    /* Simulator Sliders */
+    /* Presets toolbar */
+    .sim-presets-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+      align-items: center;
+    }
+
+    .sim-preset-label {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--text-secondary);
+      margin-right: 4px;
+    }
+
+    .preset-btn {
+      background: var(--bg-card-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 5px 11px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .preset-btn:hover {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+
+    .preset-btn.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    /* Simulator Controls */
     .sim-controls {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 20px;
+      margin-bottom: 16px;
     }
 
-    @media (max-width: 680px) {
+    @media (max-width: 768px) {
       .sim-controls {
         grid-template-columns: 1fr;
       }
@@ -425,6 +563,16 @@
       border: 1px solid var(--border-light);
       border-radius: var(--radius-md);
       padding: 16px;
+    }
+
+    .control-group-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      margin-bottom: 12px;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
     .control-label {
@@ -454,6 +602,41 @@
       cursor: pointer;
       box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
     }
+
+    .sim-options-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      background: var(--bg-card-secondary);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+    }
+
+    .sim-option-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .sim-option-item label {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .sim-select {
+      background: var(--bg-card);
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 0.86rem;
+      font-weight: 500;
+      cursor: pointer;
+      outline: none;
+    }
+
 
     /* Section Cards & Grid */
     .section {
@@ -706,77 +889,210 @@
       <div class="sim-title">
         <span data-i18n="sim_title">✨ Interactive macOS Menu Bar Preview</span>
       </div>
-      <div class="sim-subtitle" data-i18n="sim_subtitle">Drag the sliders below to see real-time color differentiation, badges, and 3D split circles.</div>
+      <div class="sim-subtitle" data-i18n="sim_subtitle">Drag the sliders or choose a scenario to test real-time APP/CLI session tracking, 3D shield badges, and capacity multipliers.</div>
+
+      <!-- Preset Scenarios Toolbar -->
+      <div class="sim-presets-bar">
+        <span class="sim-preset-label" data-i18n="sim_presets_title">Scenarios:</span>
+        <button type="button" class="preset-btn active" id="btnPresetScreenshot" onclick="setScenario('screenshot')">
+          <span data-i18n="sim_preset_screenshot">📸 Live App Setup</span>
+        </button>
+        <button type="button" class="preset-btn" id="btnPresetHealthy" onclick="setScenario('healthy')">
+          <span data-i18n="sim_preset_healthy">🟢 All Healthy (100%)</span>
+        </button>
+        <button type="button" class="preset-btn" id="btnPresetWarning" onclick="setScenario('warning')">
+          <span data-i18n="sim_preset_mid">🟡 Mid-Day Sprint (35%)</span>
+        </button>
+        <button type="button" class="preset-btn" id="btnPresetSwitch" onclick="setScenario('switch')">
+          <span data-i18n="sim_preset_switch">🔴 Rate Limit Switch (0%)</span>
+        </button>
+        <button type="button" class="preset-btn" id="btnPresetExhausted" onclick="setScenario('exhausted')">
+          <span data-i18n="sim_preset_weekly_empty">⚫ Weekly Pool Empty</span>
+        </button>
+      </div>
 
       <!-- Menubar preview -->
-      <div class="menubar-mockup" id="menuBarMockup">
-        <div class="mb-item">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="vertical-align: middle;">
-            <circle cx="12" cy="12" r="10" stroke="#40a9ff" stroke-width="2.5" />
-            <path d="M12 6v6l4 2" stroke="#40a9ff" stroke-width="2" stroke-linecap="round" />
-          </svg>
-        </div>
-        <div class="mb-item">
-          <span class="mb-label">5H:</span>
-          <span class="mb-digit text-green" id="mb5HPct">96%</span>
-        </div>
-        <div class="mb-item">
-          <span class="mb-sep">·</span>
-        </div>
-        <div class="mb-item">
-          <span class="mb-label">W:</span>
-          <span class="mb-digit text-green" id="mbWeeklyPct">94%</span>
-        </div>
-        <div class="mb-item">
-          <span style="font-weight: 700; color: #fff; margin-left: 4px;">[</span>
-          <div class="split-circle" id="circle1" title="Account #1">
-            <div class="half-left bg-green" id="c1Left"></div>
-            <div class="half-right bg-green" id="c1Right"></div>
-            <div class="seam"></div>
-            <div class="gloss"></div>
+      <div class="menubar-preview-shell">
+        <div class="menubar-mockup" id="menuBarMockup">
+          <!-- App Icon -->
+          <div class="mb-app-icon-wrap" title="Codex Monitor">
+            <img class="mb-app-icon" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABYAAAAWCAYAAADEtGw7AAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAFqADAAQAAAABAAAAFgAAAAAcITNaAAADYElEQVQ4EdWUy2sUQRDGv56ZnWSzKqtR12C8GPEViUYUhUTw5MGziHjxIB78swRPK+Lj5EFYEhXiA/EVfESjqDEk0c3OZCb7mEf71U52dqMRvKbZ2p6prvpVdXX1AOttqLUS1lofo36IkqeYa9lQF1EqQRC8sm372T9sErXrur1xHBcpIeH/NcRWfMR3TXixWDRpcENonHUURZr/OuTsLEV60Y10rRFxtS1NG9qu+NwQRguelsL3/ePZbPYxjRQFhgEsecDUWwPLPs34nrGBQl8Mg+65DUBvXoOmHApKKV2tVk/kcrmnorHkT0YmkxnmomIWMAkR+zdPDFTnFKwucgmrUzk1Y8APGZTrA/tinByKCdewLEuZpjlM9WowF+WgmKlG2VV49thAedqAyWQtQruYgrUSUMdAlUHGnxso9MYY6G+mLVk3GcJJM2Zd6QbUmNb12yZmvxjo3USDDCGLQFbgtJAgNXKWqHcY4OsPYM+uBNxirALLi4xP3xU+zBlQ3UDfDuA0G+/aTfZWNclCkRESGDLAMkvi8BySwsncHs0s26/MjhlnNgI9bJ4ZH2iwFIePsL6sc53BWCW4BLvLgM9C3xszMferk5A8p6VoLfVvj7GpR8Ovk8Bftc4SEJrJSf0Bm51h8mqY1BvcxSIjfeYuC1u5Kx58a6TglrKwJcaBbQFulWwc2k8g4Q94r7rZXmdH2GbMOmY5Ss+5o1kGIMG2uYU/RgpO9SxixBLMvwNe/wQ+EuA2gA0873Em1MMySestLLAULrB3V4TdO9uZtjid4GZY2c3A7gia8O/zybHIxaiwHDOTSUksvndlgdFTAc6daaCb7ysjTT09vDAMXWn0oKExdDDE+Yt1uWzwmXX5G2v5hc+cPc7zb5lpX4CrF2rYztsXRnIDOZOxEqDdx7Va7QW/UnJDFRj3EsFHh0N8eG/A8xTuFm0szBrNmh8fCXHlch2KdgLlxQD9tTBa4HQulUpWuVy+w8iaXyqKo5d9h8aUekVPf3X0/TFPP3q6pBfKjvY8RzuO07QVH/EVRgrsfJiYmCiIged5Mb+zmltLJY4DuicSRaEOApGAAbxYfMS3k8Vm+muoycnJ0Xw+f5gtuJnbTM+h05JRYn50FiuVysvBwcGHXEvudafRunr+DYd2FwSq0qbwAAAAAElFTkSuQmCC" alt="Codex Monitor Icon" width="22" height="22">
           </div>
-          <div class="split-circle" id="circle2" title="Account #2" style="margin-left: 3px;">
-            <div class="half-left bg-yellow" id="c2Left"></div>
-            <div class="half-right bg-green" id="c2Right"></div>
-            <div class="seam"></div>
-            <div class="gloss"></div>
+
+          <!-- APP Session Block -->
+          <div class="mb-session-block" id="mbAppSession">
+            <span class="mb-tag mb-tag-app">APP</span>
+            <div class="mb-stacked-block" id="appStackedWrap">
+              <div class="mb-stacked-row">
+                <span class="mb-icon-5h" title="5-Hour Sprint">5h</span>
+                <span class="mb-digit text-green" id="app5HPct">1400%</span>
+              </div>
+              <div class="mb-stacked-row">
+                <svg class="mb-icon-calendar" viewBox="0 0 16 16" width="9.5" height="9.5" title="Weekly Pool">
+                  <rect x="1" y="3" width="14" height="12" rx="2" fill="#ffffff" stroke="#1d4ed8" stroke-width="1.2"/>
+                  <rect x="1" y="3" width="14" height="4" rx="1" fill="#38bdf8"/>
+                  <circle cx="4" cy="9.5" r="0.9" fill="#475569"/>
+                  <circle cx="8" cy="9.5" r="0.9" fill="#475569"/>
+                  <circle cx="12" cy="9.5" r="0.9" fill="#475569"/>
+                  <line x1="4" y1="1" x2="4" y2="3.5" stroke="#0f172a" stroke-width="1.2" stroke-linecap="round"/>
+                  <line x1="12" y1="1" x2="12" y2="3.5" stroke="#0f172a" stroke-width="1.2" stroke-linecap="round"/>
+                </svg>
+                <span class="mb-digit text-green" id="appWeeklyPct">1400%</span>
+              </div>
+            </div>
+            <div class="mb-horiz-block" id="appHorizWrap" style="display: none;">
+              <span class="mb-icon-5h">5h:</span>
+              <span class="mb-digit text-green" id="appHoriz5H">1400%</span>
+              <span style="color: rgba(255,255,255,0.4); margin: 0 1px;">Wk:</span>
+              <span class="mb-digit text-green" id="appHorizWk">1400%</span>
+            </div>
           </div>
-          <span style="font-weight: 700; color: #fff;">]</span>
+
+          <!-- Session Divider -->
+          <div class="mb-item" id="mbSessionSep">
+            <span class="mb-sep">│</span>
+          </div>
+
+          <!-- CLI Session Block -->
+          <div class="mb-session-block" id="mbCliSession">
+            <span class="mb-tag mb-tag-cli">CLI</span>
+            <div class="mb-stacked-block" id="cliStackedWrap">
+              <div class="mb-stacked-row">
+                <span class="mb-icon-5h" title="5-Hour Sprint">5h</span>
+                <span class="mb-digit text-green" id="cli5HPct">1400%</span>
+              </div>
+              <div class="mb-stacked-row">
+                <svg class="mb-icon-calendar" viewBox="0 0 16 16" width="9.5" height="9.5" title="Weekly Pool">
+                  <rect x="1" y="3" width="14" height="12" rx="2" fill="#ffffff" stroke="#1d4ed8" stroke-width="1.2"/>
+                  <rect x="1" y="3" width="14" height="4" rx="1" fill="#38bdf8"/>
+                  <circle cx="4" cy="9.5" r="0.9" fill="#475569"/>
+                  <circle cx="8" cy="9.5" r="0.9" fill="#475569"/>
+                  <circle cx="12" cy="9.5" r="0.9" fill="#475569"/>
+                  <line x1="4" y1="1" x2="4" y2="3.5" stroke="#0f172a" stroke-width="1.2" stroke-linecap="round"/>
+                  <line x1="12" y1="1" x2="12" y2="3.5" stroke="#0f172a" stroke-width="1.2" stroke-linecap="round"/>
+                </svg>
+                <span class="mb-digit text-green" id="cliWeeklyPct">1400%</span>
+              </div>
+            </div>
+            <div class="mb-horiz-block" id="cliHorizWrap" style="display: none;">
+              <span class="mb-icon-5h">5h:</span>
+              <span class="mb-digit text-green" id="cliHoriz5H">1400%</span>
+              <span style="color: rgba(255,255,255,0.4); margin: 0 1px;">Wk:</span>
+              <span class="mb-digit text-green" id="cliHorizWk">1400%</span>
+            </div>
+          </div>
+
+          <!-- Section Divider -->
+          <div class="mb-item">
+            <span class="mb-sep">│</span>
+          </div>
+
+          <!-- Active Account in Brackets [ 🛡️ ] -->
+          <div class="mb-active-wrap" title="Active Account (in App/CLI)">
+            <span class="mb-bracket">[</span>
+            <div class="shield-badge" id="badgeActive">
+              <div class="badge-tier-top bg-green" id="bActiveTop"></div>
+              <div class="badge-tier-mid bg-green" id="bActiveMid"></div>
+              <div class="badge-tier-bot bg-yellow" id="bActiveBot"></div>
+            </div>
+            <span class="mb-bracket">]</span>
+          </div>
+
+          <!-- Reserve / Backup Accounts outside brackets: │ 🛡️ │ 🛡️ │ 🛡️ │ 🛡️ -->
+          <div class="mb-reserves-container" id="mbReservesContainer">
+            <!-- Dynamically populated -->
+          </div>
         </div>
       </div>
 
-      <!-- Sliders -->
+      <!-- Sliders & Controls -->
       <div class="sim-controls">
+        <!-- Active Account Group -->
         <div class="control-group">
+          <div class="control-group-title">
+            <span>⭐️</span> <span data-i18n="sim_acc1_heading">Active Account (APP & CLI)</span>
+          </div>
+
           <label class="control-label">
-            <span id="lblA1_5h" data-i18n="sim_acc1_5h">Account 1: 5-Hour Sprint (5H)</span>
-            <span id="valA1_5h">96%</span>
+            <span id="lblA1_5h" data-i18n="sim_acc1_5h">5-Hour Sprint (5H)</span>
+            <span id="valA1_5h">100%</span>
           </label>
-          <input type="range" class="control-slider" min="0" max="100" value="96" id="slideA1_5h" oninput="updateSim()">
+          <input type="range" class="control-slider" min="0" max="100" value="100" id="slideA1_5h" oninput="updateSim()">
+
+          <label class="control-label" style="margin-top: 10px;">
+            <span id="lblA1_w" data-i18n="sim_acc1_w">Weekly Pool (W)</span>
+            <span id="valA1_w">100%</span>
+          </label>
+          <input type="range" class="control-slider" min="0" max="100" value="100" id="slideA1_w" oninput="updateSim()">
+
+          <label class="control-label" style="margin-top: 10px;">
+            <span id="lblA1_c" data-i18n="sim_acc1_c">Reset Credits</span>
+            <span id="valA1_c">3</span>
+          </label>
+          <input type="range" class="control-slider" min="0" max="5" value="3" id="slideA1_c" oninput="updateSim()">
         </div>
+
+        <!-- Reserve Accounts Group -->
         <div class="control-group">
+          <div class="control-group-title">
+            <span>👥</span> <span data-i18n="sim_acc2_heading">Reserve Accounts (Pool & Cooldown)</span>
+          </div>
+
           <label class="control-label">
-            <span id="lblA1_w" data-i18n="sim_acc1_w">Account 1: Weekly Pool (W)</span>
-            <span id="valA1_w">94%</span>
+            <span id="lblRes_5h" data-i18n="sim_acc2_5h">Reserves 5-Hour Sprint</span>
+            <span id="valRes_5h">0%</span>
           </label>
-          <input type="range" class="control-slider" min="0" max="100" value="94" id="slideA1_w" oninput="updateSim()">
+          <input type="range" class="control-slider" min="0" max="100" value="0" id="slideRes_5h" oninput="updateSim()">
+
+          <label class="control-label" style="margin-top: 10px;">
+            <span id="lblRes_w" data-i18n="sim_acc2_w">Reserves Weekly Pool</span>
+            <span id="valRes_w">100%</span>
+          </label>
+          <input type="range" class="control-slider" min="0" max="100" value="100" id="slideRes_w" oninput="updateSim()">
+
+          <label class="control-label" style="margin-top: 10px;">
+            <span id="lblRes_c" data-i18n="sim_acc2_c">Reserves Reset Credits</span>
+            <span id="valRes_c">2</span>
+          </label>
+          <input type="range" class="control-slider" min="0" max="5" value="2" id="slideRes_c" oninput="updateSim()">
+
+          <label class="control-label" style="margin-top: 10px;">
+            <span id="lblRes_count" data-i18n="sim_reserves_count">Reserve Accounts Count</span>
+            <span id="valRes_count">4</span>
+          </label>
+          <input type="range" class="control-slider" min="1" max="4" value="4" id="slideRes_count" oninput="updateSim()">
         </div>
-        <div class="control-group">
-          <label class="control-label">
-            <span id="lblA2_5h" data-i18n="sim_acc2_5h">Account 2: 5-Hour Sprint (5H)</span>
-            <span id="valA2_5h">42%</span>
-          </label>
-          <input type="range" class="control-slider" min="0" max="100" value="42" id="slideA2_5h" oninput="updateSim()">
+      </div>
+
+      <!-- Advanced Simulator Options -->
+      <div class="sim-options-bar">
+        <div class="sim-option-item">
+          <label for="planMultiplier" data-i18n="sim_opt_mult_label">Plan Capacity Multiplier:</label>
+          <select id="planMultiplier" class="sim-select" onchange="updateSim()">
+            <option value="1">1.0x (Plus / Free)</option>
+            <option value="2">2.0x (Pro / Team)</option>
+            <option value="5">5.0x (Pro 5x / Business)</option>
+            <option value="14" selected>14.0x (Custom / Live Screenshot)</option>
+            <option value="20">20.0x (Max Pro Overdrive)</option>
+          </select>
         </div>
-        <div class="control-group">
-          <label class="control-label">
-            <span id="lblA2_w" data-i18n="sim_acc2_w">Account 2: Weekly Pool (W)</span>
-            <span id="valA2_w">88%</span>
-          </label>
-          <input type="range" class="control-slider" min="0" max="100" value="88" id="slideA2_w" oninput="updateSim()">
+        <div class="sim-option-item">
+          <label for="sessionMode" data-i18n="sim_opt_session_label">Session Slots:</label>
+          <select id="sessionMode" class="sim-select" onchange="updateSim()">
+            <option value="dual" selected data-i18n="sim_opt_dual">Dual Session (APP + CLI)</option>
+            <option value="single" data-i18n="sim_opt_single">Single Session (CLI only)</option>
+          </select>
+        </div>
+        <div class="sim-option-item">
+          <label for="layoutMode" data-i18n="sim_opt_layout_label">Layout Format:</label>
+          <select id="layoutMode" class="sim-select" onchange="updateSim()">
+            <option value="stacked" selected data-i18n="sim_opt_stacked">Stacked Percentages (2-Row)</option>
+            <option value="horizontal" data-i18n="sim_opt_horiz">Horizontal Layout</option>
+          </select>
         </div>
       </div>
     </div>
+
 
     <!-- 1. HOW IT WORKS -->
     <section class="section" id="how-it-works">
@@ -790,37 +1106,37 @@
         <div class="card">
           <div class="card-icon">🦀</div>
           <h3 data-i18n="c_rust_title">Ultra-lightweight Rust Core</h3>
-          <p data-i18n-html="c_rust_desc">Consumes only <strong>~3 MB RAM</strong>. On every CLI execution, pre-flight checks complete in <strong>≤ 1 millisecond</strong>, and <code>execvp</code> replaces the process with OpenAI Codex with <strong>zero memory overhead</strong>.</p>
+          <p data-i18n-html="c_rust_desc">Consumes only <strong>~3 MB RAM</strong>. On every CLI execution, pre-flight checks complete in <strong>≤ 1 millisecond</strong>, seamlessly wrapping OpenAI Codex with <strong>zero memory overhead</strong>.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">🛡️</div>
           <h3 data-i18n="c_lock_title">Atomic Locks for Swarms</h3>
-          <p data-i18n-html="c_lock_desc">When dozens of agents run in parallel, cross-process file locking (<code>fs2 flock</code>) guarantees zero race conditions, JSON corruption, or token collisions.</p>
+          <p data-i18n-html="c_lock_desc">When dozens of agents run in parallel, cross-process file locking (<code>fs2 flock</code>) guarantees zero race conditions, JSON corruption, or token collisions in <code>~/.codex/auth.json</code>.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">⏳</div>
-          <h3 data-i18n="c_strat_title">Reset-First Strategy</h3>
-          <p data-i18n-html="c_strat_desc">Instead of random rotation, the switcher picks the account whose <strong>quota resets soonest</strong>. As you consume quota, the reset timer elapses. When empty, the system switches to the next while the previous regenerates to 100%.</p>
+          <h3 data-i18n="c_strat_title">Smart Auto-Switch Policies</h3>
+          <p data-i18n-html="c_strat_desc">Intelligent rotation using the <strong>Reset-First</strong> algorithm, prioritizing accounts with available <strong>Reset Credits</strong>, and supporting <strong>Business-Only</strong> and <strong>Business-Priority</strong> modes with preemptive return on quota restore.</p>
         </div>
 
         <div class="card">
-          <div class="card-icon">⚡️</div>
-          <h3 data-i18n="c_switch_title">Pre-emptive Switch at ≤ 5%</h3>
-          <p data-i18n-html="c_switch_desc">Complex reasoning queries can consume 2–4% quota in one turn. Rotation triggers early when <strong>≤ 5% remains</strong>, preventing task failures from HTTP 429 Resource Exhausted.</p>
+          <div class="card-icon">🔄</div>
+          <h3 data-i18n="c_switch_title">Automated Thread Resumption</h3>
+          <p data-i18n-html="c_switch_desc">Two-phase detection scans locks and <code>state_5.sqlite</code> to unpause rate-limited threads across switches, dispatching queue messages and triggering macOS Accessibility unpauses.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">🔌</div>
-          <h3 data-i18n="c_shim_title">Transparent System Shim</h3>
-          <p data-i18n-html="c_shim_desc"><code>cxi install-shim enable</code> replaces <code>agy</code> with our 3 MB wrapper while preserving Google's binary as <code>agy-real</code>. Built-in recursion guards eliminate infinite loops.</p>
+          <h3 data-i18n="c_shim_title">Transparent CLI Shim</h3>
+          <p data-i18n-html="c_shim_desc"><code>cxi install-shim</code> configures <code>~/.local/bin/codex</code> to wrap Codex CLI commands transparently, auto-switching before quota depletion without modifying scripts or IDE configs.</p>
         </div>
 
         <div class="card">
           <div class="card-icon">🍎</div>
           <h3 data-i18n="c_swift_title">Native Menu Bar App</h3>
-          <p data-i18n-html="c_swift_desc">Built with Swift (AppKit), full dark/light theme support, 9 languages, and WMO optimization. Real-time quota status without UI lag.</p>
+          <p data-i18n-html="c_swift_desc">Built with Swift (AppKit), featuring anti-vibrancy composite rendering for inactive displays, 3D 3-tier shield badges, 10 languages, and real-time quota telemetry.</p>
         </div>
       </div>
     </section>
@@ -830,12 +1146,12 @@
       <div class="section-header">
         <div class="section-num" data-i18n="sec2_num">Section 2</div>
         <h2 class="section-title" data-i18n="sec2_title">🚀 Getting Started</h2>
-        <p class="section-desc" data-i18n="sec2_desc">Step-by-step setup, adding Google accounts, and launching rotation.</p>
+        <p class="section-desc" data-i18n="sec2_desc">Step-by-step setup, adding OpenAI accounts, and configuring automatic rotation.</p>
       </div>
 
       <div class="card" style="margin-bottom: 24px;">
         <h3 data-i18n="step1_title">Step 1. Capture Your First Account</h3>
-        <p data-i18n="step1_desc">If already logged in to OpenAI Codex in terminal, capture the session as your primary account:</p>
+        <p data-i18n="step1_desc">If already logged in to OpenAI Codex in terminal, save the active session from <code>~/.codex/auth.json</code>:</p>
         <div class="terminal">
           <div class="terminal-header">
             <span class="term-dot red"></span>
@@ -844,7 +1160,7 @@
             <span class="term-title">Terminal</span>
           </div>
           <div class="terminal-body">
-            <span class="term-prompt">$</span> cxi capture-current<br>
+            <span class="term-prompt">$</span> cxi save-current main<br>
             <span class="term-comment"># Or launch interactive wizard:</span><br>
             <span class="term-prompt">$</span> cxi setup
           </div>
@@ -853,12 +1169,12 @@
 
       <div class="card" style="margin-bottom: 24px;">
         <h3 data-i18n="step2_title">Step 2. Add Second & Additional Accounts</h3>
-        <p data-i18n-html="step2_desc">Choose option <strong>2</strong> in <code>cxi setup</code>. It opens a browser window for standard Google OAuth, captures the <code>refresh_token</code>, and stores credentials in macOS Keychain with <code>0600</code> permissions. Authenticate <strong>only once</strong>!</p>
+        <p data-i18n-html="step2_desc">Run <code>cxi add &lt;account-id&gt;</code> or choose option <strong>2</strong> in <code>cxi setup</code>. It triggers official OpenAI browser OAuth login via <code>codex login</code> and securely stores credentials with <code>0600</code> permissions. Authenticate <strong>only once</strong>!</p>
       </div>
 
       <div class="card" style="margin-bottom: 24px;">
         <h3 data-i18n="step3_title">Step 3. Install macOS Menu Bar App</h3>
-        <p data-i18n-html="step3_desc">Build and install the native app to <code>~/Applications</code> with one command:</p>
+        <p data-i18n-html="step3_desc">Build and install the native app to <code>/Applications/Codex Monitor.app</code> with one command:</p>
         <div class="terminal">
           <div class="terminal-header">
             <span class="term-dot red"></span>
@@ -870,12 +1186,12 @@
             <span class="term-prompt">$</span> ./scripts/install.sh
           </div>
         </div>
-        <p data-i18n="step3_sub">A stylish status bar icon with split circles will appear in the macOS menu bar.</p>
+        <p data-i18n="step3_sub">A sleek status bar icon with 3D shield badges will appear in your macOS menu bar.</p>
       </div>
 
       <div class="card">
         <h3 data-i18n="step4_title">Step 4. Enable Transparent System Shim</h3>
-        <p data-i18n-html="step4_desc">Allow IDEs, external agents, and scripts to use rotation without changing the standard <code>agy</code> command:</p>
+        <p data-i18n-html="step4_desc">Allow IDEs, external agent frameworks, and scripts to leverage quota protection automatically:</p>
         <div class="terminal">
           <div class="terminal-header">
             <span class="term-dot red"></span>
@@ -884,9 +1200,8 @@
             <span class="term-title">Terminal</span>
           </div>
           <div class="terminal-body">
-            <span class="term-prompt">$</span> cxi install-shim enable<br>
-            <span class="term-comment"># Check shim status:</span><br>
-            <span class="term-prompt">$</span> cxi install-shim status
+            <span class="term-prompt">$</span> cxi install-shim<br>
+            <span class="term-comment"># Seamlessly wraps standard codex invocations</span>
           </div>
         </div>
       </div>
@@ -911,62 +1226,72 @@
           </thead>
           <tbody>
             <tr>
-              <td><code>cxi &lt;codex arguments&gt;</code></td>
-              <td data-i18n="row1_does">Transparent Codex execution with quota pre-check and banner</td>
-              <td data-i18n-html="row1_when">Drop-in replacement for standard <code>agy</code></td>
-            </tr>
-            <tr>
               <td><code>cxi status</code></td>
-              <td data-i18n="row2_does">Display summary table of all account limits and reset countdowns</td>
-              <td data-i18n="row2_when">Quick overview of pool status in terminal</td>
+              <td data-i18n="row1_does">Show quota table: 5H sprint, 7D limit, plan multiplier, and credits</td>
+              <td data-i18n="row1_when">Quick overview of quotas and reset timers in terminal</td>
             </tr>
             <tr>
               <td><code>cxi switch &lt;id&gt;</code></td>
-              <td data-i18n-html="row3_does">Force switch to specified account (e.g. <code>acc-2</code>)</td>
-              <td data-i18n="row3_when">When you want to switch the active slot manually</td>
+              <td data-i18n-html="row2_does">Switch active account and automatically resume interrupted turns</td>
+              <td data-i18n="row2_when">Manual rotation to specific account</td>
             </tr>
             <tr>
-              <td><code>cxi test</code></td>
-              <td data-i18n="row4_does">Deep probe of Cloud Code PA API per model and account</td>
-              <td data-i18n="row4_when">Diagnostics and connectivity verification</td>
+              <td><code>cxi resume [id]</code></td>
+              <td data-i18n="row3_does">Resume active or rate-limited thread via Codex socket & AXUIElement</td>
+              <td data-i18n="row3_when">Unpausing turns halted by rate limits or errors</td>
+            </tr>
+            <tr>
+              <td><code>cxi config</code></td>
+              <td data-i18n="row4_does">Configure auto-switch (business-only, business-priority) & app restart</td>
+              <td data-i18n="row4_when">Customizing autonomous rotation behavior</td>
+            </tr>
+            <tr>
+              <td><code>cxi set-multiplier &lt;id&gt; &lt;n&gt;</code></td>
+              <td data-i18n="row5_does">Override account plan multiplier (e.g. 20 for Pro 20x, 5 for Business)</td>
+              <td data-i18n="row5_when">Calibrating quota display to actual plan capacity</td>
+            </tr>
+            <tr>
+              <td><code>cxi reset-multiplier &lt;id&gt;</code></td>
+              <td data-i18n="row6_does">Reset multiplier override back to auto-detected default</td>
+              <td data-i18n="row6_when">Restoring standard plan scaling</td>
             </tr>
             <tr>
               <td><code>cxi setup</code></td>
-              <td data-i18n="row5_does">Interactive wizard for adding, verifying, and switching accounts</td>
-              <td data-i18n="row5_when">Configuring new accounts or mancxing credentials</td>
+              <td data-i18n="row7_does">Interactive wizard for adding, verifying, and managing accounts</td>
+              <td data-i18n="row7_when">Initial configuration or managing multiple accounts</td>
             </tr>
             <tr>
-              <td><code>cxi test</code></td>
-              <td data-i18n="row6_does">Check and install OpenAI Codex CLI updates</td>
-              <td data-i18n="row6_when">When a new version of Codex is released</td>
+              <td><code>cxi add &lt;id&gt;</code></td>
+              <td data-i18n="row8_does">Add new account via browser OAuth login (codex login)</td>
+              <td data-i18n="row8_when">Registering another OpenAI account</td>
             </tr>
             <tr>
-              <td><code>cxi install-shim enable / disable</code></td>
-              <td data-i18n-html="row7_does">Enable or disable transparent shim for <code>agy</code> binary</td>
-              <td data-i18n="row7_when">Integration with external IDEs and automated scripts</td>
+              <td><code>cxi wrap &lt;cmd&gt;</code></td>
+              <td data-i18n="row9_does">Execute command with pre-flight quota check and auto-switch</td>
+              <td data-i18n="row9_when">Running unattended commands and autonomous scripts</td>
             </tr>
             <tr>
               <td><code>cxi helps</code></td>
-              <td data-i18n="row8_does">Open this offline documentation page in default browser</td>
-              <td data-i18n="row8_when">Reviewing guide, commands, or indicator rules</td>
+              <td data-i18n="row10_does">Open this offline interactive documentation page in default browser</td>
+              <td data-i18n="row10_when">Reviewing user guide, commands, or metric visual rules</td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      <h3 style="margin: 30px 0 16px 0; font-size: 1.3rem;" data-i18n="hotkeys_title">macOS Status Bar Menu: Shortcuts</h3>
+      <h3 style="margin: 30px 0 16px 0; font-size: 1.3rem;" data-i18n="hotkeys_title">macOS Status Bar Menu: Controls & Shortcuts</h3>
       <div class="grid-2">
         <div class="card">
           <h3 data-i18n="hk1_title">🔄 Refresh Now (⌘R)</h3>
-          <p data-i18n="hk1_desc">Immediately queries Google Cloud Code PA API and updates metrics without waiting for the next polling cycle.</p>
+          <p data-i18n="hk1_desc">Queries OpenAI Codex backend API immediately and refreshes status bar and dropdown metrics.</p>
         </div>
         <div class="card">
-          <h3 data-i18n="hk2_title">🚀 Update Codex CLI (⌘U)</h3>
-          <p data-i18n="hk2_desc">Runs background check for latest Codex version, downloads and installs updates in one click with notification.</p>
+          <h3 data-i18n="hk2_title">🏢 Business Auto-Switch Modes</h3>
+          <p data-i18n="hk2_desc">Toggle Business-Only mode or Business-Priority mode with automatic preemptive return on quota restore.</p>
         </div>
         <div class="card">
-          <h3 data-i18n="hk3_title">⏱ Refresh Interval</h3>
-          <p data-i18n-html="hk3_desc">Select polling frequency: <strong>1 min</strong>, <strong>5 min</strong>, <strong>15 min</strong>, or <strong>30 min</strong>.</p>
+          <h3 data-i18n="hk3_title">⏱ Refresh Interval & Layout</h3>
+          <p data-i18n-html="hk3_desc">Configure polling frequency (1m, 5m, 15m, 30m) or toggle compact 2-Row stacked percentage layout.</p>
         </div>
         <div class="card">
           <h3 data-i18n="hk4_title">📖 Help & Guide (⌘?)</h3>
@@ -980,25 +1305,27 @@
       <div class="section-header">
         <div class="section-num" data-i18n="sec4_num">Section 4</div>
         <h2 class="section-title" data-i18n="sec4_title">📊 Reading Metrics & Indicators</h2>
-        <p class="section-desc" data-i18n="sec4_desc">Complete breakdown of numbers, color thresholds, and 3D split circles.</p>
+        <p class="section-desc" data-i18n="sec4_desc">Complete breakdown of numbers, color thresholds, and 3D shield badges.</p>
       </div>
 
       <div class="card" style="margin-bottom: 30px;">
         <h3 data-i18n="mb_title">macOS Status Bar Title</h3>
         <div class="terminal" style="margin: 14px 0;">
           <div class="terminal-body" style="font-size: 1.05rem;">
-            [Codex]  5H: <span class="text-green">96%</span> · W: <span class="text-green">94%</span>  [ ◐  ◐ ]
+            [Codex]  5H: <span class="text-green">96%</span> · W: <span class="text-green">94%</span>  [ 🛡️  🛡️ ]
           </div>
         </div>
         <p data-i18n="mb_intro">Each element conveys critical information:</p>
         <ul>
-          <li data-i18n-html="mb_item1"><strong>[Codex Logo]</strong>: Codex icon.</li>
-          <li data-i18n-html="mb_item3"><strong>5H: 96%</strong>: Remaining limit for active account's 5-hour rolling sprint.</li>
-          <li data-i18n-html="mb_item4"><strong>W: 94%</strong>: Remaining limit of overall Weekly Pool.</li>
-          <li><span data-i18n-html="mb_item5"><strong>[ ◐  ◐ ]</strong>: 3D glossy split circles — one circle per configured account:</span>
+          <li data-i18n-html="mb_item1"><strong>[Codex Logo]</strong>: Official icon with anti-vibrancy composite rendering on inactive displays.</li>
+          <li data-i18n-html="mb_item3"><strong>5H: 96%</strong>: Remaining quota for active account's primary 5-hour rolling sprint window.</li>
+          <li data-i18n-html="mb_item4"><strong>W: 94%</strong>: Remaining quota of the secondary 7-day Weekly Limit Pool.</li>
+          <li><span data-i18n-html="mb_item5"><strong>[ 🛡️  🛡️ ]</strong>: 3D Stratified Shield Badges — one badge per configured account:</span>
             <ul>
-              <li data-i18n-html="mb_item5_left"><strong>Left Half (5H)</strong>: Shows account's 5-hour sprint quota.</li>
-              <li data-i18n-html="mb_item5_right"><strong>Right Half (W)</strong>: Shows account's weekly pool quota.</li>
+              <li data-i18n-html="mb_item5_top"><strong>Top Tier (7.5 pt)</strong>: 5-Hour sprint quota linear gradient.</li>
+              <li data-i18n-html="mb_item5_mid"><strong>Middle Tier (5.8 pt)</strong>: 7-Day weekly pool quota (overrides top tier to gray if depleted).</li>
+              <li data-i18n-html="mb_item5_bot"><strong>Bottom Strip (3.2 pt)</strong>: Rate-Limit Reset Credits indicator (Green when credits &gt; 0).</li>
+              <li data-i18n-html="mb_item5_rim"><strong>Outer Rim (0.6 pt)</strong>: Crisp dark perimeter stroke ensuring high contrast against light or dark wallpapers.</li>
             </ul>
           </li>
         </ul>
@@ -1020,11 +1347,11 @@
               </tr>
               <tr>
                 <td><span class="badge badge-red" data-i18n="badge_red">🔴 Red</span></td>
-                <td data-i18n-html="badge_red_desc"><strong>&lt; 20%</strong> — Critical limit. Automatic switch occurs at <strong>≤ 5%</strong>.</td>
+                <td data-i18n-html="badge_red_desc"><strong>&lt; 20%</strong> — Critical limit. Features soft red omnidirectional shadow for contrast. Automatic switch triggers at <strong>≤ 0%</strong> (or 429).</td>
               </tr>
               <tr>
-                <td><span class="badge badge-gray" data-i18n="badge_gray">⚫ Black</span></td>
-                <td data-i18n-html="badge_gray_desc"><strong>Error / Expired</strong> — Re-authentication required via <code>cxi setup</code>.</td>
+                <td><span class="badge badge-gray" data-i18n="badge_gray">⚫ Gray</span></td>
+                <td data-i18n-html="badge_gray_desc"><strong>Exhausted / Depleted</strong> — Quota drained, weekly pool empty, or re-authentication required.</td>
               </tr>
             </tbody>
           </table>
@@ -1034,10 +1361,10 @@
           <div class="card-icon">📋</div>
           <h3 data-i18n="dropdown_title">Status Bar Dropdown Menu</h3>
           <ul>
-            <li data-i18n-html="dd_item1"><strong>WEEKLY POOL</strong>: Shows pool progress bar and countdown to weekly reset (Sunday 23:59).</li>
-            <li data-i18n-html="dd_item2"><strong>ACCOUNTS</strong>: <code>[ACTIVE IN CLI]</code> — current dispatch slot; <code>[RESERVE #2]</code> — backup account ready to take over.</li>
-            <li data-i18n-html="dd_item3"><strong>5h-sprint</strong>: Sprint progress bar with <code>(reset in 1h 20m)</code> or <code>(ready to take over)</code> at 100%.</li>
-            <li data-i18n-html="dd_item4"><strong>Models</strong>: Individual quotas for models (GPT-5.5, Flash, GPT-5.4).</li>
+            <li data-i18n-html="dd_item1"><strong>🖥️ Codex Desktop App</strong>: Active account status <code>[ACTIVE IN APP]</code>, sprint/weekly bars, credit balance, and app restart.</li>
+            <li data-i18n-html="dd_item2"><strong>💻 Codex CLI</strong>: Active CLI slot <code>[ACTIVE IN CLI]</code>, plan multiplier, model switcher (gpt-5-5, o3, etc.).</li>
+            <li data-i18n-html="dd_item3"><strong>👥 Backup Accounts</strong>: 1-click instant switch buttons, individual progress bars, and account removal.</li>
+            <li data-i18n-html="dd_item4"><strong>⚙️ Auto-Switch Settings</strong>: Live toggles for limit auto-switch, Business-Only, and Business-Priority.</li>
           </ul>
         </div>
       </div>
@@ -1052,19 +1379,16 @@
             <span class="term-title">cxi status</span>
           </div>
           <div class="terminal-body">
-            📊 Status (15:30:00)<br>
-            Strategy: Reset-First<br>
-            ----------------------------------------------------------------------<br>
-                ACCOUNT         EMAIL                    LIMIT    RESET         <br>
-            ----------------------------------------------------------------------<br>
-            → 🟢 acc-1           dev-lead@gmail.com       88%      in 1h 15m    <br>
-              🟢 acc-2           agent-pool@gmail.com     100%     —             <br>
-              🟡 acc-3           backup-dev@gmail.com     35%      in 3h 40m    <br>
-              🔴 acc-4           heavy-eval@gmail.com     4%       in 25m       <br>
-            ----------------------------------------------------------------------
+            📊 OpenAI Codex Accounts & Rate Limits (Strategy: reset-first)<br>
+            ---------------------------------------------------------------------------------------------------------<br>
+                 ACCOUNT      EMAIL                      PLAN (MULT) 5H SPRINT (EQ)       RESET IN     7D LIMIT   CREDITS<br>
+            ---------------------------------------------------------------------------------------------------------<br>
+            → 🟢 main         dev@example.com            team   2x   ████████   97%       4h 45m       68%        3      <br>
+              🟢 backup       backup@example.com         plus   1x   ████████  100%       now          100%       0      <br>
+            ---------------------------------------------------------------------------------------------------------
           </div>
         </div>
-        <p data-i18n-html="term_explanation">The arrow <code>→</code> indicates the currently active account. Under the <strong>Reset-First</strong> algorithm, account <code>acc-4</code> resets in 25 minutes and will be ready to serve agent workloads again.</p>
+        <p data-i18n-html="term_explanation">The arrow <code>→</code> indicates the currently active account. The table details effective capacity multipliers (<code>PLAN (MULT)</code>), normalized visual tanks (<code>5H SPRINT (EQ)</code>), exact reset countdowns, weekly pool limits, and rate-limit reset credits.</p>
       </div>
     </section>
 
@@ -1089,96 +1413,120 @@
     "hero_title": "OpenAI Codex Multi-Account Switcher",
     "hero_desc": "Intelligent system for continuous account rotation, real-time quota monitoring, and agent swarm protection from rate limits (HTTP 429).",
     "sim_title": "✨ Interactive macOS Menu Bar Preview",
-    "sim_subtitle": "Drag the sliders below to see real-time color differentiation, badges, and 3D split circles.",
-    "sim_acc1_5h": "Account 1: 5-Hour Sprint (5H)",
-    "sim_acc1_w": "Account 1: Weekly Pool (W)",
-    "sim_acc2_5h": "Account 2: 5-Hour Sprint (5H)",
-    "sim_acc2_w": "Account 2: Weekly Pool (W)",
+    "sim_subtitle": "Drag the sliders or choose a scenario to test real-time APP/CLI session tracking, 3D shield badges, and capacity multipliers.",
+    "sim_presets_title": "Scenarios:",
+    "sim_preset_screenshot": "📸 Live App Setup",
+    "sim_preset_healthy": "🟢 All Healthy (100%)",
+    "sim_preset_mid": "🟡 Mid-Day Sprint (35%)",
+    "sim_preset_switch": "🔴 Rate Limit Switch (0%)",
+    "sim_preset_weekly_empty": "⚫ Weekly Pool Empty",
+    "sim_acc1_heading": "Active Account (APP & CLI)",
+    "sim_acc1_5h": "5-Hour Sprint (5H)",
+    "sim_acc1_w": "Weekly Pool (W)",
+    "sim_acc1_c": "Reset Credits",
+    "sim_acc2_heading": "Reserve Accounts (Pool & Cooldown)",
+    "sim_acc2_5h": "Reserves 5-Hour Sprint",
+    "sim_acc2_w": "Reserves Weekly Pool",
+    "sim_acc2_c": "Reserves Reset Credits",
+    "sim_reserves_count": "Reserve Accounts Count",
+    "sim_opt_mult_label": "Plan Capacity Multiplier:",
+    "sim_opt_session_label": "Session Slots:",
+    "sim_opt_dual": "Dual Session (APP + CLI)",
+    "sim_opt_single": "Single Session (CLI only)",
+    "sim_opt_layout_label": "Layout Format:",
+    "sim_opt_stacked": "Stacked Percentages (2-Row)",
+    "sim_opt_horiz": "Horizontal Layout",
     "sec1_num": "Section 1",
     "sec1_title": "⚙️ How It Works",
     "sec1_desc": "Architecture and interplay of the Rust core, native macOS menu bar app, and OpenAI Codex.",
     "c_rust_title": "Ultra-lightweight Rust Core",
-    "c_rust_desc": "Consumes only <strong>~3 MB RAM</strong>. On every CLI execution, pre-flight checks complete in <strong>≤ 1 millisecond</strong>, and <code>execvp</code> replaces the process with OpenAI Codex with <strong>zero memory overhead</strong>.",
+    "c_rust_desc": "Consumes only <strong>~3 MB RAM</strong>. On every CLI execution, pre-flight checks complete in <strong>≤ 1 millisecond</strong>, seamlessly wrapping OpenAI Codex with <strong>zero memory overhead</strong>.",
     "c_lock_title": "Atomic Locks for Swarms",
-    "c_lock_desc": "When dozens of agents run in parallel, cross-process file locking (<code>fs2 flock</code>) guarantees zero race conditions, JSON corruption, or token collisions.",
-    "c_strat_title": "Reset-First Strategy",
-    "c_strat_desc": "Instead of random rotation, the switcher picks the account whose <strong>quota resets soonest</strong>. As you consume quota, the reset timer elapses. When empty, the system switches to the next while the previous regenerates to 100%.",
-    "c_switch_title": "Pre-emptive Switch at ≤ 5%",
-    "c_switch_desc": "Complex reasoning queries can consume 2–4% quota in one turn. Rotation triggers early when <strong>≤ 5% remains</strong>, preventing task failures from HTTP 429 Resource Exhausted.",
-    "c_shim_title": "Transparent System Shim",
-    "c_shim_desc": "<code>cxi install-shim enable</code> replaces <code>agy</code> with our 3 MB wrapper while preserving Google's binary as <code>agy-real</code>. Built-in recursion guards eliminate infinite loops.",
+    "c_lock_desc": "When dozens of agents run in parallel, cross-process file locking (<code>fs2 flock</code>) guarantees zero race conditions, JSON corruption, or token collisions in <code>~/.codex/auth.json</code>.",
+    "c_strat_title": "Smart Auto-Switch Policies",
+    "c_strat_desc": "Intelligent rotation using the <strong>Reset-First</strong> algorithm, prioritizing accounts with available <strong>Reset Credits</strong>, and supporting <strong>Business-Only</strong> and <strong>Business-Priority</strong> modes with preemptive return on quota restore.",
+    "c_switch_title": "Automated Thread Resumption",
+    "c_switch_desc": "Two-phase detection scans locks and <code>state_5.sqlite</code> to unpause rate-limited threads across switches, dispatching queue messages and triggering macOS Accessibility unpauses.",
+    "c_shim_title": "Transparent CLI Shim",
+    "c_shim_desc": "<code>cxi install-shim</code> configures <code>~/.local/bin/codex</code> to wrap Codex CLI commands transparently, auto-switching before quota depletion without modifying scripts or IDE configs.",
     "c_swift_title": "Native Menu Bar App",
-    "c_swift_desc": "Built with Swift (AppKit), full dark/light theme support, 9 languages, and WMO optimization. Real-time quota status without UI lag.",
+    "c_swift_desc": "Built with Swift (AppKit), featuring anti-vibrancy composite rendering for inactive displays, 3D 3-tier shield badges, 10 languages, and real-time quota telemetry.",
     "sec2_num": "Section 2",
     "sec2_title": "🚀 Getting Started",
-    "sec2_desc": "Step-by-step setup, adding Google accounts, and launching rotation.",
+    "sec2_desc": "Step-by-step setup, adding OpenAI accounts, and configuring automatic rotation.",
     "step1_title": "Step 1. Capture Your First Account",
-    "step1_desc": "If already logged in to OpenAI Codex in terminal, capture the session as your primary account:",
+    "step1_desc": "If already logged in to OpenAI Codex in terminal, save the active session from <code>~/.codex/auth.json</code>:",
     "step2_title": "Step 2. Add Second & Additional Accounts",
-    "step2_desc": "Choose option <strong>2</strong> in <code>cxi setup</code>. It opens a browser window for standard Google OAuth, captures the <code>refresh_token</code>, and stores credentials in macOS Keychain with <code>0600</code> permissions. Authenticate <strong>only once</strong>!",
+    "step2_desc": "Run <code>cxi add &lt;account-id&gt;</code> or choose option <strong>2</strong> in <code>cxi setup</code>. It triggers official OpenAI browser OAuth login via <code>codex login</code> and securely stores credentials with <code>0600</code> permissions. Authenticate <strong>only once</strong>!",
     "step3_title": "Step 3. Install macOS Menu Bar App",
-    "step3_desc": "Build and install the native app to <code>~/Applications</code> with one command:",
-    "step3_sub": "A stylish status bar icon with split circles will appear in the macOS menu bar.",
+    "step3_desc": "Build and install the native app to <code>/Applications/Codex Monitor.app</code> with one command:",
+    "step3_sub": "A sleek status bar icon with 3D shield badges will appear in your macOS menu bar.",
     "step4_title": "Step 4. Enable Transparent System Shim",
-    "step4_desc": "Allow IDEs, external agents, and scripts to use rotation without changing the standard <code>agy</code> command:",
+    "step4_desc": "Allow IDEs, external agent frameworks, and scripts to leverage quota protection automatically:",
     "sec3_num": "Section 3",
     "sec3_title": "💻 How To Use",
     "sec3_desc": "CLI command reference and status bar menu actions.",
     "th_cmd": "CLI Command",
     "th_does": "Description",
     "th_when": "When To Use",
-    "row1_does": "Transparent Codex execution with quota pre-check and banner",
-    "row1_when": "Drop-in replacement for standard <code>agy</code>",
-    "row2_does": "Display summary table of all account limits and reset countdowns",
-    "row2_when": "Quick overview of pool status in terminal",
-    "row3_does": "Force switch to specified account (e.g. <code>acc-2</code>)",
-    "row3_when": "When you want to switch the active slot manually",
-    "row4_does": "Deep probe of Cloud Code PA API per model and account",
-    "row4_when": "Diagnostics and connectivity verification",
-    "row5_does": "Interactive wizard for adding, verifying, and switching accounts",
-    "row5_when": "Configuring new accounts or mancxing credentials",
-    "row6_does": "Check and install OpenAI Codex CLI updates",
-    "row6_when": "When a new version of Codex is released",
-    "row7_does": "Enable or disable transparent shim for <code>agy</code> binary",
-    "row7_when": "Integration with external IDEs and automated scripts",
-    "row8_does": "Open this offline documentation page in default browser",
-    "row8_when": "Reviewing guide, commands, or indicator rules",
-    "hotkeys_title": "macOS Status Bar Menu: Shortcuts",
+    "row1_does": "Show quota table: 5H sprint, 7D limit, plan multiplier, and credits",
+    "row1_when": "Quick overview of quotas and reset timers in terminal",
+    "row2_does": "Switch active account and automatically resume interrupted turns",
+    "row2_when": "Manual rotation to specific account",
+    "row3_does": "Resume active or rate-limited thread via Codex socket & AXUIElement",
+    "row3_when": "Unpausing turns halted by rate limits or errors",
+    "row4_does": "Configure auto-switch (business-only, business-priority) & app restart",
+    "row4_when": "Customizing autonomous rotation behavior",
+    "row5_does": "Override account plan multiplier (e.g. 20 for Pro 20x, 5 for Business)",
+    "row5_when": "Calibrating quota display to actual plan capacity",
+    "row6_does": "Reset multiplier override back to auto-detected default",
+    "row6_when": "Restoring standard plan scaling",
+    "row7_does": "Interactive wizard for adding, verifying, and managing accounts",
+    "row7_when": "Initial configuration or managing multiple accounts",
+    "row8_does": "Add new account via browser OAuth login (codex login)",
+    "row8_when": "Registering another OpenAI account",
+    "row9_does": "Execute command with pre-flight quota check and auto-switch",
+    "row9_when": "Running unattended commands and autonomous scripts",
+    "row10_does": "Open this offline interactive documentation page in default browser",
+    "row10_when": "Reviewing user guide, commands, or metric visual rules",
+    "hotkeys_title": "macOS Status Bar Menu: Controls & Shortcuts",
     "hk1_title": "🔄 Refresh Now (⌘R)",
-    "hk1_desc": "Immediately queries Google Cloud Code PA API and updates metrics without waiting for the next polling cycle.",
-    "hk2_title": "🚀 Update Codex CLI (⌘U)",
-    "hk2_desc": "Runs background check for latest Codex version, downloads and installs updates in one click with notification.",
-    "hk3_title": "⏱ Refresh Interval",
-    "hk3_desc": "Select polling frequency: <strong>1 min</strong>, <strong>5 min</strong>, <strong>15 min</strong>, or <strong>30 min</strong>.",
+    "hk1_desc": "Queries OpenAI Codex backend API immediately and refreshes status bar and dropdown metrics.",
+    "hk2_title": "🏢 Business Auto-Switch Modes",
+    "hk2_desc": "Toggle Business-Only mode or Business-Priority mode with automatic preemptive return on quota restore.",
+    "hk3_title": "⏱ Refresh Interval & Layout",
+    "hk3_desc": "Configure polling frequency (1m, 5m, 15m, 30m) or toggle compact 2-Row stacked percentage layout.",
     "hk4_title": "📖 Help & Guide (⌘?)",
     "hk4_desc": "Instantly opens this offline interactive <code>helps.html</code> page in your default browser.",
     "sec4_num": "Section 4",
     "sec4_title": "📊 Reading Metrics & Indicators",
-    "sec4_desc": "Complete breakdown of numbers, color thresholds, and 3D split circles.",
+    "sec4_desc": "Complete breakdown of numbers, color thresholds, and 3D shield badges.",
     "mb_title": "macOS Status Bar Title",
     "mb_intro": "Each element conveys critical information:",
-    "mb_item1": "<strong>[Codex Logo]</strong>: Codex icon.",
-    "mb_item3": "<strong>5H: 96%</strong>: Remaining limit for active account's 5-hour rolling sprint.",
-    "mb_item4": "<strong>W: 94%</strong>: Remaining limit of overall Weekly Pool.",
-    "mb_item5": "<strong>[ ◐  ◐ ]</strong>: 3D glossy split circles — one circle per configured account:",
-    "mb_item5_left": "<strong>Left Half (5H)</strong>: Shows account's 5-hour sprint quota.",
-    "mb_item5_right": "<strong>Right Half (W)</strong>: Shows account's weekly pool quota.",
+    "mb_item1": "<strong>[Codex Logo]</strong>: Official icon with anti-vibrancy composite rendering on inactive displays.",
+    "mb_item3": "<strong>5H: 96%</strong>: Remaining quota for active account's primary 5-hour rolling sprint window.",
+    "mb_item4": "<strong>W: 94%</strong>: Remaining quota of the secondary 7-day Weekly Limit Pool.",
+    "mb_item5": "<strong>[ 🛡️  🛡️ ]</strong>: 3D Stratified Shield Badges — one badge per configured account:",
+    "mb_item5_top": "<strong>Top Tier (7.5 pt)</strong>: 5-Hour sprint quota linear gradient.",
+    "mb_item5_mid": "<strong>Middle Tier (5.8 pt)</strong>: 7-Day weekly pool quota (overrides top tier to gray if depleted).",
+    "mb_item5_bot": "<strong>Bottom Strip (3.2 pt)</strong>: Rate-Limit Reset Credits indicator (Green when credits &gt; 0).",
+    "mb_item5_rim": "<strong>Outer Rim (0.6 pt)</strong>: Crisp dark perimeter stroke ensuring high contrast against light or dark wallpapers.",
     "scale_title": "Indicator Color Scale",
     "badge_green": "🟢 Green",
     "badge_green_desc": "<strong>&gt; 50%</strong> — High quota headroom, fully operational.",
     "badge_yellow": "🟡 Yellow",
     "badge_yellow_desc": "<strong>20% – 50%</strong> — Moderate remaining quota, actively draining.",
     "badge_red": "🔴 Red",
-    "badge_red_desc": "<strong>&lt; 20%</strong> — Critical limit. Automatic switch occurs at <strong>≤ 5%</strong>.",
-    "badge_gray": "⚫ Black",
-    "badge_gray_desc": "<strong>Error / Expired</strong> — Re-authentication required via <code>cxi setup</code>.",
+    "badge_red_desc": "<strong>&lt; 20%</strong> — Critical limit. Features soft red omnidirectional shadow for contrast. Automatic switch triggers at <strong>≤ 0%</strong> (or 429).",
+    "badge_gray": "⚫ Gray",
+    "badge_gray_desc": "<strong>Exhausted / Depleted</strong> — Quota drained, weekly pool empty, or re-authentication required.",
     "dropdown_title": "Status Bar Dropdown Menu",
-    "dd_item1": "<strong>WEEKLY POOL</strong>: Shows pool progress bar and countdown to weekly reset (Sunday 23:59).",
-    "dd_item2": "<strong>ACCOUNTS</strong>: <code>[ACTIVE IN CLI]</code> — current dispatch slot; <code>[RESERVE #2]</code> — backup account ready to take over.",
-    "dd_item3": "<strong>5h-sprint</strong>: Sprint progress bar with <code>(reset in 1h 20m)</code> or <code>(ready to take over)</code> at 100%.",
-    "dd_item4": "<strong>Models</strong>: Individual quotas for models (GPT-5.5, Flash, GPT-5.4).",
+    "dd_item1": "<strong>🖥️ Codex Desktop App</strong>: Active account status <code>[ACTIVE IN APP]</code>, sprint/weekly bars, credit balance, and app restart.",
+    "dd_item2": "<strong>💻 Codex CLI</strong>: Active CLI slot <code>[ACTIVE IN CLI]</code>, plan multiplier, model switcher (gpt-5-5, o3, etc.).",
+    "dd_item3": "<strong>👥 Backup Accounts</strong>: 1-click instant switch buttons, individual progress bars, and account removal.",
+    "dd_item4": "<strong>⚙️ Auto-Switch Settings</strong>: Live toggles for limit auto-switch, Business-Only, and Business-Priority.",
     "term_example_title": "Terminal Output Sample: cxi status",
-    "term_explanation": "The arrow <code>→</code> indicates the currently active account. Under the <strong>Reset-First</strong> algorithm, account <code>acc-4</code> resets in 25 minutes and will be ready to serve agent workloads again.",
+    "term_explanation": "The arrow <code>→</code> indicates the currently active account. The table details effective capacity multipliers (<code>PLAN (MULT)</code>), normalized visual tanks (<code>5H SPRINT (EQ)</code>), exact reset countdowns, weekly pool limits, and rate-limit reset credits.",
     "footer_text": "Codex Multi-Account Switcher & Monitor · Built for maximum autonomy of OpenAI Codex agent swarms."
   },
   "uk": {
@@ -1194,96 +1542,120 @@
     "hero_title": "OpenAI Codex Multi-Account Switcher",
     "hero_desc": "Інтелектуальна система безперервної ротації акаунтів, моніторингу квот у реальному часі та захисту рою агентів від обмежень швидкості (429 Rate Limits).",
     "sim_title": "✨ Інтерактивний попередній перегляд рядка меню macOS",
-    "sim_subtitle": "Рухайте повзунки нижче, щоб побачити, як змінюються колірна диференціація, бейджі та 3D-спліт кружки в реальному часі.",
-    "sim_acc1_5h": "Акаунт 1: 5-годинний спринт (5H)",
-    "sim_acc1_w": "Акаунт 1: Тижневий пул (W)",
-    "sim_acc2_5h": "Акаунт 2: 5-годинний спринт (5H)",
-    "sim_acc2_w": "Акаунт 2: Тижневий пул (W)",
+    "sim_subtitle": "Тестуйте відстеження сесій APP/CLI у реальному часі, 3D-бейджи щити, множники місткості та захист від лімітів.",
+    "sim_presets_title": "Сценарії:",
+    "sim_preset_screenshot": "📸 Конфігурація із застосунку",
+    "sim_preset_healthy": "🟢 Всі в нормі (100%)",
+    "sim_preset_mid": "🟡 Денний спринт (35%)",
+    "sim_preset_switch": "🔴 Автоперемикання (0%)",
+    "sim_preset_weekly_empty": "⚫ Тижневий пул вичерпано",
+    "sim_acc1_heading": "Активний акаунт (APP та CLI)",
+    "sim_acc1_5h": "5-годинний спринт (5H)",
+    "sim_acc1_w": "Тижневий пул (W)",
+    "sim_acc1_c": "Кредити скидання",
+    "sim_acc2_heading": "Резервні акаунти (пул та очікування)",
+    "sim_acc2_5h": "Резерви: 5-годинний спринт",
+    "sim_acc2_w": "Резерви: тижневий пул",
+    "sim_acc2_c": "Резерви: кредити скидання",
+    "sim_reserves_count": "Кількість резервних акаунтів",
+    "sim_opt_mult_label": "Множник плану:",
+    "sim_opt_session_label": "Режим сесій:",
+    "sim_opt_dual": "Подвійна сесія (APP + CLI)",
+    "sim_opt_single": "Одиночна сесія (тільки CLI)",
+    "sim_opt_layout_label": "Візуальний макет:",
+    "sim_opt_stacked": "Компактний стек (2 рядки)",
+    "sim_opt_horiz": "Горизонтальний вигляд",
     "sec1_num": "Розділ 1",
     "sec1_title": "⚙️ Як це працює",
     "sec1_desc": "Архітектура взаємодії ядра на Rust, нативного меню-бара macOS та OpenAI Codex.",
     "c_rust_title": "Надлегке ядро на Rust",
-    "c_rust_desc": "Службовий модуль споживає всього <strong>~3 МБ RAM</strong>. При кожному виклику CLI утиліта виконує пре-флайт перевірку за <strong>≤ 1 мілісекунду</strong> і за допомогою системного виклику <code>execvp</code> повністю заміщує свій процес бінарником OpenAI Codex з <strong>нульовим накладним розходом пам'яті</strong>.",
+    "c_rust_desc": "Службовий модуль споживає всього <strong>~3 МБ RAM</strong>. При кожному виклику CLI утиліта виконує пре-флайт перевірку за <strong>≤ 1 мілісекунду</strong> та прозоро загортає OpenAI Codex з <strong>нульовим накладним розходом пам'яті</strong>.",
     "c_lock_title": "Атомарні блокування для рою агентів",
-    "c_lock_desc": "Коли паралельно запускаються десятки агентів, вони одночасно звертаються до спільного конфігу та токенів. Крос-процесне блокування файлів (<code>fs2 flock</code>) гарантує відсутність гонок (race conditions), пошкодження JSON та колізій токенів.",
-    "c_strat_title": "Стратегія Reset-First",
-    "c_strat_desc": "Замість випадкового вибору модуль обирає акаунт, у якого <strong>скидання квоти настане раніше за всіх</strong>. Поки ви витрачаєте квоту поточного акаунта, таймер скидання вже цокає. Коли ліміт вичерпано, система плавно перемикається на наступний, а попередній відновлюється до 100%.",
-    "c_switch_title": "Упереджувальне перемикання при ≤ 5%",
-    "c_switch_desc": "Складний запит агента з великим контекстом міркувань може списати одразу 2–4% квоти. Ротація спрацьовує завчасно при <strong>залишку ≤ 5%</strong>, що повністю виключає збої в задачах через HTTP 429 Resource Exhausted.",
+    "c_lock_desc": "Коли паралельно запускаються десятки агентів, крос-процесне блокування файлів (<code>fs2 flock</code>) гарантує відсутність гонок (race conditions), пошкодження JSON та колізій токенів у <code>~/.codex/auth.json</code>.",
+    "c_strat_title": "Розумні політики автоперемикання",
+    "c_strat_desc": "Інтелектуальна ротація за алгоритмом <strong>Reset-First</strong>, пріоритет акаунтів з наявними <strong>кредитами скидання</strong>, а також режими <strong>Business-Only</strong> та <strong>Business-Priority</strong> з упереджувальним поверненням на бізнес-акаунт при відновленні квоти.",
+    "c_switch_title": "Автоматичне відновлення тредів",
+    "c_switch_desc": "Двоетапний детектор сканує блокування та <code>state_5.sqlite</code>, автоматично відновлює перервані через ліміти задачі, надсилає повідомлення у чергу сокета та знімає паузу через Accessibility macOS.",
     "c_shim_title": "Прозорий системний шим (Shim)",
-    "c_shim_desc": "Команда <code>cxi install-shim enable</code> замінює системну команду <code>agy</code> на наш 3-мегабайтний врапер, зберігаючи оригінальний важкий Google CLI (177 МБ) як <code>agy-real</code>. Вбудований захист від рекурсії повністю виключає зациклення.",
+    "c_shim_desc": "Команда <code>cxi install-shim</code> налаштовує <code>~/.local/bin/codex</code> як прозорий врапер, що запобігає вичерпанню квоти без потреби змінювати скрипти чи налаштування IDE.",
     "c_swift_title": "Нативний застосунок рядка меню",
-    "c_swift_desc": "Розроблено на Swift (AppKit) з повною підтримкою темної/світлої теми macOS, локалізацією на 9 мов та оптимізацією WMO. Відображає реальний стан лімітів у статус-барі без затримок.",
+    "c_swift_desc": "Розроблено на Swift (AppKit) з композитним рендерингом для неактивних екранів (захист від втрати кольору), 3D бейджами-щитами, підтримкою 10 мов та телеметрією квот.",
     "sec2_num": "Розділ 2",
     "sec2_title": "🚀 Що з цим робити (Покроковий старт)",
-    "sec2_desc": "Інструкція з первинного налаштування, додавання Google-акаунтів та запуску ротації.",
+    "sec2_desc": "Інструкція з первинного налаштування, додавання акаунтів OpenAI та запуску ротації.",
     "step1_title": "Крок 1. Первинне збереження першого акаунта",
-    "step1_desc": "Якщо ви вже увійшли в OpenAI Codex у терміналі, збережіть цю сесію як перший акаунт:",
+    "step1_desc": "Якщо ви вже увійшли в OpenAI Codex у терміналі, збережіть активну сесію з <code>~/.codex/auth.json</code>:",
     "step2_title": "Крок 2. Додавання другого та наступних акаунтів",
-    "step2_desc": "Для кожного додаткового акаунта оберіть пункт <strong>2</strong> у майстрі <code>cxi setup</code>. Утиліта відкриє вікно браузера для стандартного входу Google OAuth, перехопить довгоживучий <code>refresh_token</code> та збереже його в Keychain і конфігурацію з правами <code>0600</code>. Авторизуватися потрібно <strong>лише один раз</strong>!",
+    "step2_desc": "Запустіть <code>cxi add &lt;account-id&gt;</code> або оберіть пункт <strong>2</strong> у <code>cxi setup</code>. Утиліта відкриє браузер для офіційного OAuth-входу через <code>codex login</code> та збереже токени з правами <code>0600</code>. Авторизуватися потрібно <strong>лише один раз</strong>!",
     "step3_title": "Крок 3. Встановлення застосунку статус-бара в macOS",
-    "step3_desc": "Зберіть та встановіть нативний застосунок у <code>~/Applications</code> однією командою:",
-    "step3_sub": "У рядку меню macOS з'явиться стильна іконка зі статусом квот та желейними спліт-кружками.",
+    "step3_desc": "Зберіть та встановіть нативний застосунок у <code>/Applications/Codex Monitor.app</code> однією командою:",
+    "step3_sub": "У рядку меню macOS з'явиться стильна іконка зі статусом квот та 3D-бейджами щитами.",
     "step4_title": "Крок 4. Активація прозорої системної підміни",
-    "step4_desc": "Щоб IDE, сторонні агенти та скрипти автоматично використовували ротацію без зміни звичної команди <code>agy</code>:",
+    "step4_desc": "Щоб IDE, сторонні агенти та скрипти автоматично використовували захист квот без зміни виклику <code>codex</code>:",
     "sec3_num": "Розділ 3",
     "sec3_title": "💻 Як користуватися",
     "sec3_desc": "Довідник команд термінала та дій у випадаючому меню застосунку.",
     "th_cmd": "Команда CLI",
     "th_does": "Що робить",
     "th_when": "Коли використовувати",
-    "row1_does": "Прозорий виклик Codex з перевіркою квот і банером",
-    "row1_when": "Замість виклику стандартного <code>agy</code>",
-    "row2_does": "Виведення зведеної таблиці лімітів усіх акаунтів та часу скидання",
-    "row2_when": "Для швидкої оцінки пулу в консолі",
-    "row3_does": "Примусове перемикання на вказаний акаунт (напр. <code>acc-2</code>)",
-    "row3_when": "Коли хочете вручну змінити активний слот",
-    "row4_does": "Глибоке опитування Cloud Code PA API по кожній моделі кожного акаунта",
-    "row4_when": "Для діагностики та перевірки зв'язності",
-    "row5_does": "Інтерактивний майстер додавання, перевірки та перемикання акаунтів",
-    "row5_when": "При налаштуванні нових облікових записів",
-    "row6_does": "Перевірка та встановлення оновлень OpenAI Codex CLI",
-    "row6_when": "Коли вийшла нова версія Codex",
-    "row7_does": "Включення або відключення прозорої підміни бінарника <code>agy</code>",
-    "row7_when": "Для інтеграції зі сторонніми IDE та скриптами",
-    "row8_does": "Відкриття цієї сторінки довідки у веб-браузері за замовчуванням",
-    "row8_when": "Коли потрібно згадати правила або команди",
-    "hotkeys_title": "Меню статус-бара macOS: Гарячі клавіші",
+    "row1_does": "Зведена таблиця: 5г спринт, 7д ліміт, множник плану та кредити",
+    "row1_when": "Швидкий огляд квот та таймерів скидання в терміналі",
+    "row2_does": "Перемикання на акаунт з авто-відновленням перерваних задач",
+    "row2_when": "Ручна зміна активного слота",
+    "row3_does": "Відновлення треду через сокет Codex та AXUIElement macOS",
+    "row3_when": "Зняття з паузи задач, зупинених лімітами або помилками",
+    "row4_does": "Налаштування автоперемикання (business-only, business-priority) та рестарту",
+    "row4_when": "Тонке налаштування політики автономної ротації",
+    "row5_does": "Встановлення множника плану (напр. 20 для Pro 20x, 5 для Business)",
+    "row5_when": "Калібрування шкали під реальну місткість тарифу",
+    "row6_does": "Скидання переозначеного множника на значення за замовчуванням",
+    "row6_when": "Повернення до стандартного масштабування",
+    "row7_does": "Інтерактивний майстер додавання, перевірки та керування акаунтами",
+    "row7_when": "Первинне налаштування або робота з пулом",
+    "row8_does": "Додавання нового акаунта через браузерний OAuth-вхід (codex login)",
+    "row8_when": "Підключення додаткового облікового запису OpenAI",
+    "row9_does": "Виконання команди з попередньою перевіркою квоти та автоперемиканням",
+    "row9_when": "Запуск тривалих автономних скриптів та агентів",
+    "row10_does": "Відкриття цієї сторінки довідки у веб-браузері за замовчуванням",
+    "row10_when": "Перегляд довідника, команд або візуальних правил",
+    "hotkeys_title": "Меню статус-бара macOS: Елементи керування та гарячі клавіші",
     "hk1_title": "🔄 Оновити зараз (⌘R)",
-    "hk1_desc": "Негайно опитує Google Cloud Code PA API та оновлює показники в меню-барі без очікування наступного хвилинного інтервалу.",
-    "hk2_title": "🚀 Оновити Codex CLI (⌘U)",
-    "hk2_desc": "Запускає фоновий процес перевірки свіжої версії Codex, завантажує та оновлює бінарник в один клік з macOS-сповіщенням.",
-    "hk3_title": "⏱ Інтервал оновлення",
-    "hk3_desc": "Дозволяє обрати зручний інтервал автоопитування: <strong>1 хв</strong>, <strong>5 хв</strong>, <strong>15 хв</strong> або <strong>30 хв</strong>.",
+    "hk1_desc": "Негайно опитує API OpenAI Codex та оновлює показники в статус-барі й меню.",
+    "hk2_title": "🏢 Режими для бізнес-акаунтів",
+    "hk2_desc": "Перемикання режимів Business-Only або Business-Priority з упереджувальним поверненням при відновленні квоти.",
+    "hk3_title": "⏱ Інтервал оновлення та макет",
+    "hk3_desc": "Налаштування частоти опитування (1хв, 5хв, 15хв, 30хв) та перемикання 2-рядкового компактного макета відсотків.",
     "hk4_title": "📖 Довідка та керівництво (⌘?)",
     "hk4_desc": "Миттєво відкриває цю автономну інтерактивну сторінку <code>helps.html</code> у браузері за замовчуванням.",
     "sec4_num": "Розділ 4",
     "sec4_title": "📊 Як читати показники та індикатори",
-    "sec4_desc": "Повна розшифровка цифр, колірних порогів та 3D-спліт кружків.",
+    "sec4_desc": "Повна розшифровка цифр, колірних порогів та 3D-бейджів щитів.",
     "mb_title": "Рядок у меню-барі macOS",
     "mb_intro": "Кожен елемент несе критично важливу інформацію:",
-    "mb_item1": "<strong>[Лого Codex]</strong>: Фірмовий значок Codex.",
-    "mb_item3": "<strong>5H: 96%</strong>: Залишок ліміту 5-годинного ковзного спринту для поточного активного акаунта.",
-    "mb_item4": "<strong>W: 94%</strong>: Залишок ліміту загального тижневого пулу (Weekly Pool).",
-    "mb_item5": "<strong>[ ◐  ◐ ]</strong>: 3D глянцеві спліт-кружки — по одному кружку на кожен підключений акаунт:",
-    "mb_item5_left": "<strong>Ліва половина (5H)</strong>: Показує залишок 5-годинного спринту акаунта.",
-    "mb_item5_right": "<strong>Права половина (W)</strong>: Показує залишок тижневого пулу акаунта.",
+    "mb_item1": "<strong>[Лого Codex]</strong>: Фірмовий значок Codex з композитним рендерингом для неактивних екранів.",
+    "mb_item3": "<strong>5H: 96%</strong>: Залишок ліміту 5-годинного ковзного спринту активного акаунта.",
+    "mb_item4": "<strong>W: 94%</strong>: Залишок ліміту вторинного 7-денного тижневого пулу.",
+    "mb_item5": "<strong>[ 🛡️  🛡️ ]</strong>: 3D-стратифіковані бейджі-щити — по одному бейджу на кожен підключений акаунт:",
+    "mb_item5_top": "<strong>Верхній ярус (7.5 pt)</strong>: Градієнт залишку 5-годинного спринту.",
+    "mb_item5_mid": "<strong>Середній ярус (5.8 pt)</strong>: Залишок тижневого пулу (якщо вичерпано, верхній ярус стає сірим).",
+    "mb_item5_bot": "<strong>Нижня смужка (3.2 pt)</strong>: Індикатор кредитів скидання (зелений, якщо кредитів &gt; 0).",
+    "mb_item5_rim": "<strong>Зовнішня кайма (0.6 pt)</strong>: Чіткий темний контур для ідеального контрасту на будь-яких шпалерах.",
     "scale_title": "Колірна шкала індикаторів",
     "badge_green": "🟢 Зелений",
     "badge_green_desc": "<strong>&gt; 50%</strong> — великий запас квоти, акаунт у повній бойовій готовності.",
     "badge_yellow": "🟡 Жовтий",
-    "badge_yellow_desc": "<strong>20% – 50%</strong> — середній залишок, квота активно витрачається.",
+    "badge_yellow_desc": "<strong>20% – 50%</strong> — помірний залишок, квота витрачається.",
     "badge_red": "🔴 Червоний",
-    "badge_red_desc": "<strong>&lt; 20%</strong> — критичний залишок. При <strong>≤ 5%</strong> відбудеться автоматичне перемикання.",
-    "badge_gray": "⚫ Чорний",
-    "badge_gray_desc": "<strong>Помилка / Застарів</strong> — потрібен повторний вхід через <code>cxi setup</code>.",
+    "badge_red_desc": "<strong>&lt; 20%</strong> — критичний залишок із захисною червоною тінню. Автоперемикання спрацьовує при <strong>≤ 0%</strong> (або 429).",
+    "badge_gray": "⚫ Сірий",
+    "badge_gray_desc": "<strong>Вичерпано</strong> — квота вичерпана, тижневий пул порожній або сталася помилка авторизації.",
     "dropdown_title": "Випадаюче меню статус-бара",
-    "dd_item1": "<strong>ТИЖНЕВИЙ ПУЛ</strong>: Відображає прогрес-бар пулу та зворотний відлік до скидання тижня (у ніч з неділі на понеділок о 23:59).",
-    "dd_item2": "<strong>АКАУНТИ</strong>: <code>[АКТИВНИЙ У CLI]</code> — робочий слот; <code>[РЕЗЕРВ #2]</code> — резервний акаунт, готовий підхопити навантаження.",
-    "dd_item3": "<strong>5г-спринт</strong>: Прогрес-бар спринту з позначкою <code>(скидання через 1г 20хв)</code> або <code>(готовий до роботи)</code> при 100%.",
-    "dd_item4": "<strong>Моделі</strong>: Індивідуальні залишки по моделях (GPT-5.5, Flash, GPT-5.4).",
+    "dd_item1": "<strong>🖥️ Codex Desktop App</strong>: Статус <code>[ACTIVE IN APP]</code>, прогрес-бари, баланс кредитів та перезапуск додатку.",
+    "dd_item2": "<strong>💻 Codex CLI</strong>: Робочий слот <code>[ACTIVE IN CLI]</code>, множник плану, перемикач моделей (gpt-5-5, o3 тощо).",
+    "dd_item3": "<strong>👥 Резервні акаунти</strong>: Швидке перемикання в 1 клік, індивідуальні прогрес-бари та видалення.",
+    "dd_item4": "<strong>⚙️ Налаштування автоперемикання</strong>: Тумблери автоперемикання, Business-Only та Business-Priority.",
     "term_example_title": "Приклад консольного виведення команди cxi status",
-    "term_explanation": "Стрілка <code>→</code> вказує на поточний активний акаунт. Завдяки алгоритму <strong>Reset-First</strong>, акаунт <code>acc-4</code> вже через 25 хвилин відновиться до 100% і буде готовий знову прийняти задачі рою.",
+    "term_explanation": "Стрілка <code>→</code> вказує на активний акаунт. Таблиця показує множники плану (<code>PLAN (MULT)</code>), нормалізовану місткість (<code>5H SPRINT (EQ)</code>), точні таймери скидання, тижневі пули та кредити скидання ліміту.",
     "footer_text": "Codex Multi-Account Switcher & Monitor · Побудовано для максимальної автономності рою агентів OpenAI Codex."
   },
   "de": {
@@ -1298,12 +1670,30 @@
     "hero_badge": "Ultraleichter Rust-Core (~3 MB RAM) · Native Swift-Menüleiste",
     "hero_title": "OpenAI Codex Multi-Account Switcher",
     "hero_desc": "Intelligentes System zur kontinuierlichen Kontorotation, Echtzeit-Quotenüberwachung und Schutz von Agenten-Swarms vor Ratenbegrenzungen (HTTP 429).",
-    "sim_title": "✨ Interaktive macOS-Menüleistenvorschau",
-    "sim_subtitle": "Verschieben Sie die Schieberegler unten, um Farbcodierung, Badges und 3D-Split-Kreise live zu sehen.",
-    "sim_acc1_5h": "Konto 1: 5-Stunden-Sprint (5H)",
-    "sim_acc1_w": "Konto 1: Wöchentlicher Pool (W)",
-    "sim_acc2_5h": "Konto 2: 5-Stunden-Sprint (5H)",
-    "sim_acc2_w": "Konto 2: Wöchentlicher Pool (W)",
+    "sim_title": "✨ Interaktive macOS Menüleisten-Vorschau",
+    "sim_subtitle": "Testen Sie Echtzeit-APP/CLI-Sitzungserfassung, 3D-Schild-Badges, Kapazitätsmultiplikatoren und Ratenbegrenzungsschutz.",
+    "sim_presets_title": "Szenarien:",
+    "sim_preset_screenshot": "📸 Live-App-Setup",
+    "sim_preset_healthy": "🟢 Alles bereit (100%)",
+    "sim_preset_mid": "🟡 Tagesverlauf (35%)",
+    "sim_preset_switch": "🔴 Umschaltung bei Limit (0%)",
+    "sim_preset_weekly_empty": "⚫ Wöchentlicher Pool leer",
+    "sim_acc1_heading": "Aktives Konto (APP & CLI)",
+    "sim_acc1_5h": "5-Stunden-Sprint (5H)",
+    "sim_acc1_w": "Wöchentlicher Pool (W)",
+    "sim_acc1_c": "Reset-Guthaben",
+    "sim_acc2_heading": "Reserve-Konten (Pool & Cooldown)",
+    "sim_acc2_5h": "Reserve: 5-Stunden-Sprint",
+    "sim_acc2_w": "Reserve: Wöchentlicher Pool",
+    "sim_acc2_c": "Reserve: Reset-Guthaben",
+    "sim_reserves_count": "Sichtbare Reserve-Konten",
+    "sim_opt_mult_label": "Tarif-Multiplikator:",
+    "sim_opt_session_label": "Sitzungsmodus:",
+    "sim_opt_dual": "Doppelte Sitzung (APP + CLI)",
+    "sim_opt_single": "Einzelsitzung (nur CLI)",
+    "sim_opt_layout_label": "Visuelles Layout:",
+    "sim_opt_stacked": "Gestapelte Prozente (2 Zeilen)",
+    "sim_opt_horiz": "Horizontales Layout",
     "sec1_num": "Abschnitt 1",
     "sec1_title": "⚙️ Wie es funktioniert",
     "sec1_desc": "Architektur und Zusammenspiel von Rust-Kern, nativer macOS-Menüleiste und OpenAI Codex.",
@@ -1316,7 +1706,7 @@
     "c_switch_title": "Präventiver Wechsel bei ≤ 5%",
     "c_switch_desc": "Aufwendige Denkprozesse verbrauchen 2–4% Quote. Die Rotation schaltet bei <strong>≤ 5%</strong> um, um Fehler durch HTTP 429 zu vermeiden.",
     "c_shim_title": "Transparenter System-Shim",
-    "c_shim_desc": "<code>cxi install-shim enable</code> ersetzt den Befehl <code>agy</code> durch unseren Wrapper und sichert das Original als <code>agy-real</code> mit integriertem Rekursionsschutz.",
+    "c_shim_desc": "<code>cxi install-shim</code> ersetzt den Befehl <code>codex</code> durch unseren Wrapper und sichert das Original als <code>codex-real</code> mit integriertem Rekursionsschutz.",
     "c_swift_title": "Native Menüleisten-App",
     "c_swift_desc": "Entwickelt in Swift (AppKit) mit voller Unterstützung für Hell-/Dunkelmodus, 9 Sprachen und WMO-Optimierung.",
     "sec2_num": "Abschnitt 2",
@@ -1325,54 +1715,60 @@
     "step1_title": "Schritt 1. Erstes Konto erfassen",
     "step1_desc": "Wenn Sie im Terminal bereits bei OpenAI Codex angemeldet sind, erfassen Sie die Sitzung:",
     "step2_title": "Schritt 2. Weitere Konten hinzufügen",
-    "step2_desc": "Wählen Sie Option <strong>2</strong> in <code>cxi setup</code>. Es öffnet Google OAuth im Browser und speichert den <code>refresh_token</code> sicher im Keychain (Rechte <code>0600</code>).",
+    "step2_desc": "Wählen Sie Option <strong>2</strong> in <code>cxi setup</code>. Es öffnet OpenAI OAuth im Browser und speichert den <code>refresh_token</code> sicher im Keychain (Rechte <code>0600</code>).",
     "step3_title": "Schritt 3. Menüleisten-App installieren",
     "step3_desc": "Kompilieren und installieren Sie die native App in <code>~/Applications</code> mit einem Befehl:",
     "step3_sub": "Ein elegantes Statussymbol mit Split-Kreisen erscheint in der macOS-Menüleiste.",
     "step4_title": "Schritt 4. Transparenten Shim aktivieren",
-    "step4_desc": "Ermöglicht IDEs und Agenten die automatische Nutzung der Rotation ohne Änderung des gewohnten <code>agy</code>-Befehls:",
+    "step4_desc": "Ermöglicht IDEs und Agenten die automatische Nutzung der Rotation ohne Änderung des gewohnten <code>codex</code>-Befehls:",
     "sec3_num": "Abschnitt 3",
     "sec3_title": "💻 Bedienung",
     "sec3_desc": "CLI-Befehlsreferenz und Aktionen im App-Menü.",
     "th_cmd": "CLI-Befehl",
     "th_does": "Beschreibung",
     "th_when": "Verwendung",
-    "row1_does": "Transparenter Codex-Start mit Quotenprüfung und Banner",
-    "row1_when": "Ersatz für den Standardbefehl <code>agy</code>",
-    "row2_does": "Übersichtstabelle aller Kontenlimits und Reset-Zeiten anzeigen",
-    "row2_when": "Schneller Überblick über den Pool im Terminal",
-    "row3_does": "Manuelles Umschalten auf angegebenes Konto (z.B. <code>acc-2</code>)",
-    "row3_when": "Wenn Sie den aktiven Slot manuell wechseln möchten",
-    "row4_does": "Tiefenabfrage der Cloud Code PA API pro Modell und Konto",
-    "row4_when": "Zur Diagnose und Verbindungsprüfung",
-    "row5_does": "Interaktiver Assistent zum Hinzufügen und Wechseln von Konten",
-    "row5_when": "Bei der Konfiguration neuer Konten",
-    "row6_does": "OpenAI Codex CLI-Updates prüfen und installieren",
-    "row6_when": "Wenn eine neue Codex-Version verfügbar ist",
-    "row7_does": "Transparenten Shim für <code>agy</code> aktivieren oder deaktivieren",
-    "row7_when": "Für externe IDEs und Skripte",
-    "row8_does": "Diese Hilfeseite im Standard-Webbrowser öffnen",
-    "row8_when": "Zum Nachschlagen von Befehlen und Regeln",
+    "row1_does": "Quotentabelle anzeigen: 5h-Sprint, 7d-Limit, Multiplikator und Reset-Credits",
+    "row1_when": "Schneller Überblick über Quoten und Reset-Timer im Terminal",
+    "row2_does": "Aktives Konto wechseln und unterbrochene Aufgaben automatisch fortsetzen",
+    "row2_when": "Manuelle Rotation zu einem bestimmten Konto",
+    "row3_does": "Thread über Codex-Socket und AXUIElement fortsetzen",
+    "row3_when": "Aufheben der Pause von Tasks, die durch Quotenlimits gestoppt wurden",
+    "row4_does": "Auto-Switch konfigurieren (business-only, business-priority) & App-Neustart",
+    "row4_when": "Anpassung des autonomen Rotationsverhaltens",
+    "row5_does": "Multiplikator-Override festlegen (z. B. 20 für Pro 20x, 5 für Business)",
+    "row5_when": "Kalibrierung der Quotenanzeige an die tatsächliche Plankapazität",
+    "row6_does": "Multiplikator auf den automatisch erkannten Standard zurücksetzen",
+    "row6_when": "Wiederherstellung der Standard-Planskalierung",
+    "row7_does": "Interaktiver Assistent zum Hinzufügen und Verwalten von Konten",
+    "row7_when": "Ersteinrichtung oder Verwaltung mehrerer Konten",
+    "row8_does": "Neues Konto über Browser-OAuth-Login hinzufügen (codex login)",
+    "row8_when": "Registrieren eines weiteren OpenAI-Kontos",
+    "row9_does": "Befehl mit vorheriger Quotenprüfung und Auto-Switch ausführen",
+    "row9_when": "Ausführen unbeaufsichtigter Befehle und autonomer Skripte",
+    "row10_does": "Diese interaktive Offline-Dokumentation im Standardbrowser öffnen",
+    "row10_when": "Prüfen von Benutzerhandbuch, Befehlen oder visuellen Regeln",
     "hotkeys_title": "macOS-Menüleisten-Tastaturkurzbefehle",
     "hk1_title": "🔄 Jetzt aktualisieren (⌘R)",
-    "hk1_desc": "Fragt die Google Cloud Code PA API sofort ab und aktualisiert die Werte ohne Wartezeit.",
-    "hk2_title": "🚀 Codex CLI aktualisieren (⌘U)",
-    "hk2_desc": "Prüft im Hintergrund auf Aktualisierungen und installiert die neueste Codex-Version per Klick.",
-    "hk3_title": "⏱ Aktualisierungsintervall",
-    "hk3_desc": "Wählen Sie das Intervall: <strong>1 Min</strong>, <strong>5 Min</strong>, <strong>15 Min</strong> oder <strong>30 Min</strong>.",
+    "hk1_desc": "Fragt die OpenAI Codex API sofort ab und aktualisiert die Werte ohne Wartezeit.",
+    "hk2_title": "🏢 Business-Auto-Switch-Modi",
+    "hk2_desc": "Umschalten zwischen Business-Only und Business-Priority mit automatischer Rückkehr bei Quotenwiederherstellung.",
+    "hk3_title": "⏱ Aktualisierungsintervall & Layout",
+    "hk3_desc": "Intervall konfigurieren (1 Min, 5 Min, 15 Min, 30 Min) oder kompaktes zweizeiliges Prozent-Layout umschalten.",
     "hk4_title": "📖 Hilfe & Anleitung (⌘?)",
     "hk4_desc": "Öffnet diese interaktive <code>helps.html</code>-Seite sofort im Standardbrowser.",
     "sec4_num": "Abschnitt 4",
     "sec4_title": "📊 Indikatoren und Metriken lesen",
-    "sec4_desc": "Vollständige Erklärung der Zahlen, Farbwerte und 3D-Split-Kreise.",
+    "sec4_desc": "Vollständige Erklärung der Zahlen, Farbwerte und 3D-Schildabzeichen.",
     "mb_title": "Zeile in der macOS-Menüleiste",
     "mb_intro": "Jedes Element enthält entscheidende Informationen:",
-    "mb_item1": "<strong>[Codex-Logo]</strong>: Codex-Symbol.",
+    "mb_item1": "<strong>[Codex-Logo]</strong>: Codex-Symbol mit Anti-Vibrancy-Rendering auf inaktiven Displays.",
     "mb_item3": "<strong>5H: 96%</strong>: Verbleibendes Limit des 5-Stunden-Sprints.",
     "mb_item4": "<strong>W: 94%</strong>: Verbleibendes Limit des wöchentlichen Gesamtpools.",
-    "mb_item5": "<strong>[ ◐  ◐ ]</strong>: 3D-Split-Kreise — ein Kreis pro eingerichtetem Konto:",
-    "mb_item5_left": "<strong>Linke Hälfte (5H)</strong>: Zeigt die 5-Stunden-Quote des Kontos.",
-    "mb_item5_right": "<strong>Rechte Hälfte (W)</strong>: Zeigt die wöchentliche Quote des Kontos.",
+    "mb_item5": "<strong>[ 🛡️  🛡️ ]</strong>: 3D-geschichtete Schildabzeichen — ein Abzeichen pro konfiguriertem Konto:",
+    "mb_item5_top": "<strong>Oberste Stufe (7.5 pt)</strong>: Linearer Farbverlauf der 5-Stunden-Sprintquote.",
+    "mb_item5_mid": "<strong>Mittlere Stufe (5.8 pt)</strong>: 7-Tage-Wochenpool-Quote (wird grau, wenn erschöpft).",
+    "mb_item5_bot": "<strong>Unterer Streifen (3.2 pt)</strong>: Reset-Credits-Indikator (Grün, wenn Credits &gt; 0).",
+    "mb_item5_rim": "<strong>Äußerer Rand (0.6 pt)</strong>: Scharfer dunkler Rand für hohen Kontrast auf allen Hintergründen.",
     "scale_title": "Farbskala der Indikatoren",
     "badge_green": "🟢 Grün",
     "badge_green_desc": "<strong>&gt; 50%</strong> — Hohe Quote, vollständig einsatzbereit.",
@@ -1403,12 +1799,30 @@
     "hero_badge": "Cœur Rust ultra-léger (~3 Mo RAM) · Barre de menus native Swift",
     "hero_title": "OpenAI Codex Multi-Account Switcher",
     "hero_desc": "Système intelligent de rotation continue des comptes, surveillance des quotas en temps réel et protection des essaims d'agents contre les limites de débit (HTTP 429).",
-    "sim_title": "✨ Aperçu interactif de la barre de menus macOS",
-    "sim_subtitle": "Déplacez les curseurs ci-dessous pour observer la différenciation des couleurs, badges et cercles 3D en direct.",
-    "sim_acc1_5h": "Compte 1 : Sprint 5 heures (5H)",
-    "sim_acc1_w": "Compte 1 : Pool hebdomadaire (W)",
-    "sim_acc2_5h": "Compte 2 : Sprint 5 heures (5H)",
-    "sim_acc2_w": "Compte 2 : Pool hebdomadaire (W)",
+    "sim_title": "✨ Aperçu interactif de la barre des menus macOS",
+    "sim_subtitle": "Testez le suivi des sessions APP/CLI en temps réel, les badges bouclier 3D, les multiplicateurs de capacité et la protection contre les limites.",
+    "sim_presets_title": "Scénarios :",
+    "sim_preset_screenshot": "📸 Configuration réelle",
+    "sim_preset_healthy": "🟢 Tout opérationnel (100%)",
+    "sim_preset_mid": "🟡 Mi-journée (35%)",
+    "sim_preset_switch": "🔴 Basculement limite (0%)",
+    "sim_preset_weekly_empty": "⚫ Pool hebdomadaire épuisé",
+    "sim_acc1_heading": "Compte actif (APP & CLI)",
+    "sim_acc1_5h": "Sprint 5 heures (5H)",
+    "sim_acc1_w": "Pool hebdomadaire (W)",
+    "sim_acc1_c": "Crédits de réinitialisation",
+    "sim_acc2_heading": "Comptes de réserve (Pool & attente)",
+    "sim_acc2_5h": "Réserve : Sprint 5 heures",
+    "sim_acc2_w": "Réserve : Pool hebdomadaire",
+    "sim_acc2_c": "Réserve : Crédits",
+    "sim_reserves_count": "Comptes de réserve visibles :",
+    "sim_opt_mult_label": "Multiplicateur de forfait :",
+    "sim_opt_session_label": "Mode de session :",
+    "sim_opt_dual": "Session double (APP + CLI)",
+    "sim_opt_single": "Session simple (CLI uniquement)",
+    "sim_opt_layout_label": "Disposition visuelle :",
+    "sim_opt_stacked": "Pourcentages empilés (2 lignes)",
+    "sim_opt_horiz": "Disposition horizontale",
     "sec1_num": "Section 1",
     "sec1_title": "⚙️ Comment ça marche",
     "sec1_desc": "Architecture et synergie entre le noyau Rust, la barre des menus macOS et OpenAI Codex.",
@@ -1421,12 +1835,12 @@
     "c_switch_title": "Bascule préventive à ≤ 5%",
     "c_switch_desc": "Une requête complexe consomme 2 à 4% de quota. La rotation se déclenche à <strong>≤ 5%</strong> pour éviter tout blocage HTTP 429.",
     "c_shim_title": "Shim système transparent",
-    "c_shim_desc": "<code>cxi install-shim enable</code> remplace la commande <code>agy</code> par notre wrapper tout en conservant l'original sous <code>agy-real</code> avec protection anti-récursion.",
+    "c_shim_desc": "<code>cxi install-shim</code> remplace la commande <code>codex</code> par notre wrapper tout en conservant l'original sous <code>codex-real</code> avec protection anti-récursion.",
     "c_swift_title": "Application barre de menus native",
     "c_swift_desc": "Conçue en Swift (AppKit) avec prise en charge sombre/clair, 9 langues et affichage direct sans latence.",
     "sec2_num": "Section 2",
     "sec2_title": "🚀 Que faire (Démarrage rapide)",
-    "sec2_desc": "Configuration pas à pas, ajout de comptes Google et lancement de la rotation.",
+    "sec2_desc": "Configuration pas à pas, ajout de comptes OpenAI et lancement de la rotation.",
     "step1_title": "Étape 1. Enregistrer le premier compte",
     "step1_desc": "Si vous êtes déjà connecté à OpenAI Codex dans le terminal, capturez la session :",
     "step2_title": "Étape 2. Ajouter des comptes supplémentaires",
@@ -1435,49 +1849,55 @@
     "step3_desc": "Compilez et installez l'application dans <code>~/Applications</code> en une commande :",
     "step3_sub": "L'icône de statut avec cercles scindés apparaîtra dans la barre des menus macOS.",
     "step4_title": "Étape 4. Activer le shim transparent",
-    "step4_desc": "Permet aux IDE et scripts d'exploiter la rotation sans modifier la commande usuelle <code>agy</code> :",
+    "step4_desc": "Permet aux IDE et scripts d'exploiter la rotation sans modifier la commande usuelle <code>codex</code> :",
     "sec3_num": "Section 3",
     "sec3_title": "💻 Utilisation",
     "sec3_desc": "Commandes en ligne de commande et raccourcis de la barre de menus.",
     "th_cmd": "Commande CLI",
     "th_does": "Description",
     "th_when": "Quand l'utiliser",
-    "row1_does": "Exécution transparente d'Codex avec vérification de quota",
-    "row1_when": "À la place de la commande <code>agy</code> standard",
-    "row2_does": "Tableau récapitulatif des quotas et comptes à rebours de réinitialisation",
-    "row2_when": "Pour une vue d'ensemble rapide dans le terminal",
-    "row3_does": "Forcer le passage à un compte spécifique (ex: <code>acc-2</code>)",
-    "row3_when": "Pour commuter manuellement le compte actif",
-    "row4_does": "Interrogation complète de l'API Cloud Code PA par modèle",
-    "row4_when": "Pour les diagnostics et vérifications réseau",
-    "row5_does": "Assistant interactif de gestion et configuration des comptes",
-    "row5_when": "Pour ajouter ou gérer des comptes",
-    "row6_does": "Rechercher et installer les mises à jour de OpenAI Codex CLI",
-    "row6_when": "Lorsqu'une nouvelle version d'Codex est disponible",
-    "row7_does": "Activer ou désactiver le shim système transparent pour <code>agy</code>",
-    "row7_when": "Pour l'intégration avec les IDE et outils externes",
-    "row8_does": "Ouvrir cette page de documentation dans le navigateur par défaut",
-    "row8_when": "Pour consulter le guide, les règles et les indicateurs",
-    "hotkeys_title": "Menu barre de statut macOS : Raccourcis",
+    "row1_does": "Afficher le tableau des quotas : sprint 5h, limite 7j, multiplicateur et crédits",
+    "row1_when": "Aperçu rapide des quotas et des comptes à rebours dans le terminal",
+    "row2_does": "Changer de compte actif et reprendre automatiquement les tâches interrompues",
+    "row2_when": "Rotation manuelle vers un compte spécifique",
+    "row3_does": "Reprendre un thread via le socket Codex et AXUIElement macOS",
+    "row3_when": "Débloquer les tâches interrompues par les limites de quota ou erreurs",
+    "row4_does": "Configurer l'auto-switch (business-only, business-priority) et le redémarrage",
+    "row4_when": "Personnaliser le comportement de rotation autonome",
+    "row5_does": "Définir le multiplicateur de forfait (ex. 20 pour Pro 20x, 5 pour Business)",
+    "row5_when": "Calibrer l'affichage des quotas sur la capacité réelle du forfait",
+    "row6_does": "Réinitialiser le multiplicateur à la valeur par défaut auto-détectée",
+    "row6_when": "Restaurer la mise à l'échelle standard du forfait",
+    "row7_does": "Assistant interactif pour ajouter, vérifier et gérer les comptes",
+    "row7_when": "Configuration initiale ou gestion du pool de comptes",
+    "row8_does": "Ajouter un compte via connexion OAuth dans le navigateur (codex login)",
+    "row8_when": "Enregistrer un compte OpenAI supplémentaire",
+    "row9_does": "Exécuter une commande avec vérification préalable de quota et auto-switch",
+    "row9_when": "Exécution de commandes non surveillées et de scripts autonomes",
+    "row10_does": "Ouvrir cette page de documentation interactive hors ligne dans le navigateur",
+    "row10_when": "Consulter le guide utilisateur, les commandes ou les règles visuelles",
+    "hotkeys_title": "Menu de la barre des menus macOS : Contrôles & raccourcis",
     "hk1_title": "🔄 Actualiser maintenant (⌘R)",
-    "hk1_desc": "Interroge immédiatement l'API Google Cloud Code PA sans attendre l'intervalle programmé.",
-    "hk2_title": "🚀 Mettre à jour Codex CLI (⌘U)",
-    "hk2_desc": "Vérifie les mises à jour et télécharge la dernière version d'Codex en un clic.",
-    "hk3_title": "⏱ Intervalle d'actualisation",
-    "hk3_desc": "Choisissez la fréquence : <strong>1 min</strong>, <strong>5 min</strong>, <strong>15 min</strong> ou <strong>30 min</strong>.",
+    "hk1_desc": "Interroge immédiatement l'API OpenAI Codex sans attendre le cycle automatique.",
+    "hk2_title": "🏢 Modes Auto-Switch Business",
+    "hk2_desc": "Basculer en mode Business-Only ou Business-Priority avec retour préemptif lors de la restauration.",
+    "hk3_title": "⏱ Fréquence de rafraîchissement & disposition",
+    "hk3_desc": "Configurer l'intervalle (1 min, 5 min, 15 min, 30 min) ou basculer sur l'affichage compact 2 lignes.",
     "hk4_title": "📖 Aide et guide (⌘?)",
     "hk4_desc": "Ouvre instantanément cette documentation autonome <code>helps.html</code> dans votre navigateur.",
     "sec4_num": "Section 4",
     "sec4_title": "📊 Lire les métriques et indicateurs",
-    "sec4_desc": "Signification des chiffres, codes couleurs et cercles 3D scindés.",
-    "mb_title": "Affichage de la barre de menus",
+    "sec4_desc": "Explication complète des chiffres, seuils de couleurs et badges bouclier 3D.",
+    "mb_title": "Affichage de la barre des menus",
     "mb_intro": "Chaque information a un rôle essentiel :",
-    "mb_item1": "<strong>[Logo Codex]</strong> : Icône Codex.",
-    "mb_item3": "<strong>5H: 96%</strong> : Limite restante du sprint de 5 heures.",
-    "mb_item4": "<strong>W: 94%</strong> : Limite restante du pool hebdomadaire global.",
-    "mb_item5": "<strong>[ ◐  ◐ ]</strong> : Cercles 3D scindés — un cercle par compte configuré :",
-    "mb_item5_left": "<strong>Moitié gauche (5H)</strong> : Affiche le quota sprint 5h.",
-    "mb_item5_right": "<strong>Moitié droite (W)</strong> : Affiche le quota pool hebdomadaire.",
+    "mb_item1": "<strong>[Logo Codex]</strong> : Icône Codex avec rendu composite anti-vibrance sur écrans inactifs.",
+    "mb_item3": "<strong>5H: 96%</strong> : Limite restante du sprint glissant de 5 heures du compte actif.",
+    "mb_item4": "<strong>W: 94%</strong> : Limite restante du pool hebdomadaire secondaire de 7 jours.",
+    "mb_item5": "<strong>[ 🛡️  🛡️ ]</strong> : Badges bouclier 3D stratifiés — un badge par compte configuré :",
+    "mb_item5_top": "<strong>Niveau supérieur (7.5 pt)</strong> : Dégradé linéaire du quota sprint 5 heures.",
+    "mb_item5_mid": "<strong>Niveau intermédiaire (5.8 pt)</strong> : Quota du pool 7 jours (devient gris si épuisé).",
+    "mb_item5_bot": "<strong>Bandeau inférieur (3.2 pt)</strong> : Indicateur des crédits de réinitialisation (vert si crédits &gt; 0).",
+    "mb_item5_rim": "<strong>Bordure extérieure (0.6 pt)</strong> : Contour sombre net assurant un contraste élevé sur tout fond d'écran.",
     "scale_title": "Échelle de couleurs des indicateurs",
     "badge_green": "🟢 Vert",
     "badge_green_desc": "<strong>&gt; 50%</strong> — Réserve élevée, compte totalement opérationnel.",
@@ -1509,11 +1929,29 @@
     "hero_title": "OpenAI Codex Multi-Account Switcher",
     "hero_desc": "Sistema inteligente de rotación continua de cuentas, monitoreo de cuotas en tiempo real y protección de enjambres de agentes contra límites de tasa (HTTP 429).",
     "sim_title": "✨ Vista previa interactiva de la barra de menús de macOS",
-    "sim_subtitle": "Mueva los controles deslizantes para observar los colores, insignias y círculos divididos en 3D en vivo.",
-    "sim_acc1_5h": "Cuenta 1: Sprint de 5 horas (5H)",
-    "sim_acc1_w": "Cuenta 1: Fondo semanal (W)",
-    "sim_acc2_5h": "Cuenta 2: Sprint de 5 horas (5H)",
-    "sim_acc2_w": "Cuenta 2: Fondo semanal (W)",
+    "sim_subtitle": "Mueva los controles deslizantes o elija un escenario para probar el seguimiento de sesiones APP/CLI en tiempo real, escudos 3D y multiplicadores.",
+    "sim_presets_title": "Escenarios:",
+    "sim_preset_screenshot": "📸 Configuración real de la app",
+    "sim_preset_healthy": "🟢 Todo operativo (100%)",
+    "sim_preset_mid": "🟡 Sprint a mediodía (35%)",
+    "sim_preset_switch": "🔴 Cambio por límite (0%)",
+    "sim_preset_weekly_empty": "⚫ Fondo semanal agotado",
+    "sim_acc1_heading": "Cuenta activa (APP y CLI)",
+    "sim_acc1_5h": "Sprint de 5 horas (5H)",
+    "sim_acc1_w": "Fondo semanal (W)",
+    "sim_acc1_c": "Créditos de reinicio",
+    "sim_acc2_heading": "Cuentas de reserva (Fondo y enfriamiento)",
+    "sim_acc2_5h": "Reserva: Sprint de 5 horas",
+    "sim_acc2_w": "Reserva: Fondo semanal",
+    "sim_acc2_c": "Reserva: Créditos de reinicio",
+    "sim_reserves_count": "Cuentas de reserva:",
+    "sim_opt_mult_label": "Multiplicador del plan:",
+    "sim_opt_session_label": "Ranuras de sesión:",
+    "sim_opt_dual": "Sesión dual (APP + CLI)",
+    "sim_opt_single": "Sesión única (solo CLI)",
+    "sim_opt_layout_label": "Formato de diseño:",
+    "sim_opt_stacked": "Porcentajes apilados (2 filas)",
+    "sim_opt_horiz": "Diseño horizontal",
     "sec1_num": "Sección 1",
     "sec1_title": "⚙️ Cómo funciona",
     "sec1_desc": "Arquitectura e integración entre el núcleo Rust, la barra de menús de macOS y OpenAI Codex.",
@@ -1526,21 +1964,21 @@
     "c_switch_title": "Cambio preventivo al ≤ 5%",
     "c_switch_desc": "Las consultas complejas consumen 2–4% de cuota. La rotación se activa con <strong>≤ 5% restante</strong> para evitar errores HTTP 429.",
     "c_shim_title": "Shim de sistema transparente",
-    "c_shim_desc": "<code>cxi install-shim enable</code> reemplaza el comando <code>agy</code> por nuestro wrapper preservando el binario oficial como <code>agy-real</code> con guardas anti-recursión.",
+    "c_shim_desc": "<code>cxi install-shim</code> reemplaza el comando <code>codex</code> por nuestro wrapper preservando el binario oficial como <code>codex-real</code> con guardas anti-recursión.",
     "c_swift_title": "App nativa para barra de menús",
     "c_swift_desc": "Creada con Swift (AppKit), soporte para modos oscuro/claro, 9 idiomas y actualización en tiempo real sin latencia.",
     "sec2_num": "Sección 2",
     "sec2_title": "🚀 Qué hacer (Inicio rápido)",
-    "sec2_desc": "Configuración paso a paso, vinculación de cuentas de Google y activación de rotación.",
+    "sec2_desc": "Configuración paso a paso, vinculación de cuentas de OpenAI y activación de rotación.",
     "step1_title": "Paso 1. Guardar la primera cuenta",
     "step1_desc": "Si ya inició sesión en OpenAI Codex en la terminal, capture la sesión actual:",
     "step2_title": "Paso 2. Agregar cuentas adicionales",
-    "step2_desc": "Elija la opción <strong>2</strong> en <code>cxi setup</code> para iniciar sesión por Google OAuth y guardar el token en Keychain con permisos <code>0600</code>.",
+    "step2_desc": "Elija la opción <strong>2</strong> en <code>cxi setup</code> para iniciar sesión por OpenAI OAuth y guardar el token en Keychain con permisos <code>0600</code>.",
     "step3_title": "Paso 3. Instalar app de barra de menús",
     "step3_desc": "Compile e instale la aplicación en <code>~/Applications</code> con un solo comando:",
     "step3_sub": "Aparecerá un icono de estado en la barra de menús con círculos divididos 3D.",
     "step4_title": "Paso 4. Habilitar shim transparente",
-    "step4_desc": "Permite que IDEs y scripts usen la rotación automáticamente sin cambiar el comando habitual <code>agy</code>:",
+    "step4_desc": "Permite que IDEs y scripts usen la rotación automáticamente sin cambiar el comando habitual <code>codex</code>:",
     "sec3_num": "Sección 3",
     "sec3_title": "💻 Cómo usar",
     "sec3_desc": "Comandos de terminal y funciones del menú desplegable.",
@@ -1548,24 +1986,24 @@
     "th_does": "Descripción",
     "th_when": "Cuándo usarlo",
     "row1_does": "Ejecución transparente de Codex con verificación de cuota",
-    "row1_when": "En lugar del comando estándar <code>agy</code>",
+    "row1_when": "En lugar del comando estándar <code>codex</code>",
     "row2_does": "Tabla con límites de todas las cuentas y cuenta regresiva de reinicio",
     "row2_when": "Para una vista rápida del estado de cuotas en consola",
     "row3_does": "Forzar cambio a una cuenta específica (ej: <code>acc-2</code>)",
     "row3_when": "Cuando desee cambiar manualmente el slot activo",
-    "row4_does": "Consulta exhaustiva a la Cloud Code PA API por modelo y cuenta",
+    "row4_does": "Consulta exhaustiva a la OpenAI Codex API por modelo y cuenta",
     "row4_when": "Para diagnóstico y comprobación de conectividad",
     "row5_does": "Asistente interactivo de gestión y configuración de cuentas",
     "row5_when": "Para vincular nuevas cuentas o rotar credenciales",
     "row6_does": "Comprobar e instalar actualizaciones de OpenAI Codex CLI",
     "row6_when": "Cuando se publica una nueva versión de Codex",
-    "row7_does": "Habilitar o deshabilitar el shim transparente para el binario <code>agy</code>",
+    "row7_does": "Habilitar o deshabilitar el shim transparente para el binario <code>codex</code>",
     "row7_when": "Para integración con IDEs y automatizaciones",
     "row8_does": "Abrir esta página de documentación en el navegador predeterminado",
     "row8_when": "Para consultar la guía, reglas y atajos",
     "hotkeys_title": "Menú de estado de macOS: Atajos",
     "hk1_title": "🔄 Actualizar ahora (⌘R)",
-    "hk1_desc": "Consulta la Google Cloud Code PA API de inmediato sin esperar el intervalo programado.",
+    "hk1_desc": "Consulta la OpenAI Codex API de inmediato sin esperar el intervalo programado.",
     "hk2_title": "🚀 Actualizar Codex CLI (⌘U)",
     "hk2_desc": "Busca actualizaciones en segundo plano y descarga la versión más reciente en un clic.",
     "hk3_title": "⏱ Intervalo de actualización",
@@ -1580,7 +2018,7 @@
     "mb_item1": "<strong>[Logo Codex]</strong>: Distintivo de Codex.",
     "mb_item3": "<strong>5H: 96%</strong>: Límite restante del sprint de 5 horas.",
     "mb_item4": "<strong>W: 94%</strong>: Límite restante del fondo semanal general.",
-    "mb_item5": "<strong>[ ◐  ◐ ]</strong>: Círculos 3D divididos — uno por cuenta conectada:",
+    "mb_item5": "<strong>[ 🛡️  🛡️ ]</strong>: Círculos 3D divididos — uno por cuenta conectada:",
     "mb_item5_left": "<strong>Mitad izquierda (5H)</strong>: Cuota del sprint de 5 horas.",
     "mb_item5_right": "<strong>Mitad derecha (W)</strong>: Cuota del fondo semanal.",
     "scale_title": "Escala cromática de indicadores",
@@ -1614,11 +2052,29 @@
     "hero_title": "OpenAI Codex Multi-Account Switcher",
     "hero_desc": "Sistema intelligente di rotazione continua degli account, monitoraggio delle quote in tempo reale e protezione dello sciame di agenti dai limiti di frequenza (HTTP 429).",
     "sim_title": "✨ Anteprima interattiva della barra dei menu macOS",
-    "sim_subtitle": "Muovi i cursori qui sotto per visualizzare in tempo reale colori, badge e cerchi 3D divisi.",
-    "sim_acc1_5h": "Account 1: Sprint 5 ore (5H)",
-    "sim_acc1_w": "Account 1: Pool settimanale (W)",
-    "sim_acc2_5h": "Account 2: Sprint 5 ore (5H)",
-    "sim_acc2_w": "Account 2: Pool settimanale (W)",
+    "sim_subtitle": "Trascina i cursori o scegli uno scenario per testare il tracciamento delle sessioni APP/CLI in tempo reale, i badge 3D e i moltiplicatori.",
+    "sim_presets_title": "Scenari:",
+    "sim_preset_screenshot": "📸 Configurazione reale dell'app",
+    "sim_preset_healthy": "🟢 Tutto operativo (100%)",
+    "sim_preset_mid": "🟡 Sprint di metà giornata (35%)",
+    "sim_preset_switch": "🔴 Cambio per limite (0%)",
+    "sim_preset_weekly_empty": "⚫ Pool settimanale esaurito",
+    "sim_acc1_heading": "Account attivo (APP e CLI)",
+    "sim_acc1_5h": "Sprint 5 ore (5H)",
+    "sim_acc1_w": "Pool settimanale (W)",
+    "sim_acc1_c": "Crediti di ripristino",
+    "sim_acc2_heading": "Account di riserva (Pool e attesa)",
+    "sim_acc2_5h": "Riserva: Sprint 5 ore",
+    "sim_acc2_w": "Riserva: Pool settimanale",
+    "sim_acc2_c": "Riserva: Crediti di ripristino",
+    "sim_reserves_count": "Account di riserva:",
+    "sim_opt_mult_label": "Moltiplicatore del piano:",
+    "sim_opt_session_label": "Slot di sessione:",
+    "sim_opt_dual": "Sessione doppia (APP + CLI)",
+    "sim_opt_single": "Sessione singola (solo CLI)",
+    "sim_opt_layout_label": "Formato di layout:",
+    "sim_opt_stacked": "Percentuali impilate (2 righe)",
+    "sim_opt_horiz": "Layout orizzontale",
     "sec1_num": "Sezione 1",
     "sec1_title": "⚙️ Come funziona",
     "sec1_desc": "Architettura ed integrazione tra core Rust, barra dei menu macOS e OpenAI Codex.",
@@ -1631,7 +2087,7 @@
     "c_switch_title": "Cambio preventivo al ≤ 5%",
     "c_switch_desc": "I prompt complessi consumano 2–4% di quota. La rotazione interviene quando <strong>rimane ≤ 5%</strong> per evitare errori HTTP 429.",
     "c_shim_title": "Shim di sistema trasparente",
-    "c_shim_desc": "<code>cxi install-shim enable</code> rimpiazza il comando <code>agy</code> con il nostro wrapper preservando l'originale come <code>agy-real</code> con guardie anti-ricorsione.",
+    "c_shim_desc": "<code>cxi install-shim</code> rimpiazza il comando <code>codex</code> con il nostro wrapper preservando l'originale come <code>codex-real</code> con guardie anti-ricorsione.",
     "c_swift_title": "App nativa per barra dei menu",
     "c_swift_desc": "Sviluppata in Swift (AppKit) con supporto per tema chiaro/scuro, 9 lingue e risposta immediata in tempo reale.",
     "sec2_num": "Sezione 2",
@@ -1640,12 +2096,12 @@
     "step1_title": "Passo 1. Catturare il primo account",
     "step1_desc": "Se hai già effettuato l'accesso ad Codex nel terminale, memorizza la sessione:",
     "step2_title": "Passo 2. Aggiungere account secondari",
-    "step2_desc": "Seleziona l'opzione <strong>2</strong> in <code>cxi setup</code> per autenticare un account tramite Google OAuth e salvare il token nel Keychain con permessi <code>0600</code>.",
+    "step2_desc": "Seleziona l'opzione <strong>2</strong> in <code>cxi setup</code> per autenticare un account tramite OpenAI OAuth e salvare il token nel Keychain con permessi <code>0600</code>.",
     "step3_title": "Passo 3. Installare l'app nella barra dei menu",
     "step3_desc": "Compila e installa l'app nativa in <code>~/Applications</code> con un solo comando:",
     "step3_sub": "Un'elegante icona con cerchi divisi apparirà nella barra dei menu di macOS.",
     "step4_title": "Passo 4. Abilitare lo shim trasparente",
-    "step4_desc": "Consente a IDE e agenti di sfruttare la rotazione senza modificare il consueto comando <code>agy</code>:",
+    "step4_desc": "Consente a IDE e agenti di sfruttare la rotazione senza modificare il consueto comando <code>codex</code>:",
     "sec3_num": "Sezione 3",
     "sec3_title": "💻 Come usare",
     "sec3_desc": "Riferimento comandi da terminale e menu a discesa.",
@@ -1653,24 +2109,24 @@
     "th_does": "Descrizione",
     "th_when": "Quando usarlo",
     "row1_does": "Avvio trasparente di Codex con controllo quote e banner",
-    "row1_when": "In sostituzione del comando standard <code>agy</code>",
+    "row1_when": "In sostituzione del comando standard <code>codex</code>",
     "row2_does": "Tabella riepilogativa dei limiti e dei tempi di ripristino",
     "row2_when": "Per valutare rapidamente lo stato degli account in console",
     "row3_does": "Passaggio forzato all'account indicato (es: <code>acc-2</code>)",
     "row3_when": "Per cambiare manualmente lo slot attivo",
-    "row4_does": "Scansione approfondita della Cloud Code PA API per ogni modello",
+    "row4_does": "Scansione approfondita della OpenAI Codex API per ogni modello",
     "row4_when": "Per diagnostica e controllo della connettività",
     "row5_does": "Procedura guidata interattiva per aggiungere e gestire account",
     "row5_when": "Durante l'inserimento o la manutenzione di account",
     "row6_does": "Controllo e installazione aggiornamenti di OpenAI Codex CLI",
     "row6_when": "Quando è disponibile una nuova release di Codex",
-    "row7_does": "Abilitare o disabilitare lo shim trasparente per il binario <code>agy</code>",
+    "row7_does": "Abilitare o disabilitare lo shim trasparente per il binario <code>codex</code>",
     "row7_when": "Per integrare script e IDE esterni",
     "row8_does": "Aprire questa pcxina di guida nel browser web predefinito",
     "row8_when": "Per consultare comandi, regole e spiegazioni",
     "hotkeys_title": "Menu barra di stato macOS: Scorciatoie",
     "hk1_title": "🔄 Aggiorna adesso (⌘R)",
-    "hk1_desc": "Interroga subito la Google Cloud Code PA API senza attendere il ciclo di polling.",
+    "hk1_desc": "Interroga subito la OpenAI Codex API senza attendere il ciclo di polling.",
     "hk2_title": "🚀 Aggiorna Codex CLI (⌘U)",
     "hk2_desc": "Verifica le versioni recenti e scarica l'aggiornamento di Codex con un clic.",
     "hk3_title": "⏱ Intervallo di aggiornamento",
@@ -1685,7 +2141,7 @@
     "mb_item1": "<strong>[Logo Codex]</strong>: Simbolo Codex.",
     "mb_item3": "<strong>5H: 96%</strong>: Quota residua dello sprint di 5 ore dell'account attivo.",
     "mb_item4": "<strong>W: 94%</strong>: Quota residua del pool settimanale complessivo.",
-    "mb_item5": "<strong>[ ◐  ◐ ]</strong>: Cerchi 3D divisi — un cerchio per ogni account configurato:",
+    "mb_item5": "<strong>[ 🛡️  🛡️ ]</strong>: Cerchi 3D divisi — un cerchio per ogni account configurato:",
     "mb_item5_left": "<strong>Metà sinistra (5H)</strong>: Indica la quota sprint 5h dell'account.",
     "mb_item5_right": "<strong>Metà destra (W)</strong>: Indica la quota pool settimanale dell'account.",
     "scale_title": "Scala cromatica degli indicatori",
@@ -1719,11 +2175,29 @@
     "hero_title": "OpenAI Codex Multi-Account Switcher",
     "hero_desc": "Sistema inteligente de rotação contínua de contas, monitoramento de cotas em tempo real e proteção de enxames de agentes contra limites de taxa (HTTP 429).",
     "sim_title": "✨ Pré-visualização interativa da barra de menus do macOS",
-    "sim_subtitle": "Mova os controles deslizantes abaixo para ver cores, emblemas e círculos divididos em 3D em tempo real.",
-    "sim_acc1_5h": "Conta 1: Sprint de 5 horas (5H)",
-    "sim_acc1_w": "Conta 1: Pool semanal (W)",
-    "sim_acc2_5h": "Conta 2: Sprint de 5 horas (5H)",
-    "sim_acc2_w": "Conta 2: Pool semanal (W)",
+    "sim_subtitle": "Mova os controles deslizantes ou escolha um cenário para testar o rastreamento de sessões APP/CLI em tempo real, emblemas 3D e multiplicadores.",
+    "sim_presets_title": "Cenários:",
+    "sim_preset_screenshot": "📸 Configuração real do app",
+    "sim_preset_healthy": "🟢 Totalmente saudável (100%)",
+    "sim_preset_mid": "🟡 Sprint no meio do dia (35%)",
+    "sim_preset_switch": "🔴 Troca por limite (0%)",
+    "sim_preset_weekly_empty": "⚫ Pool semanal esgotado",
+    "sim_acc1_heading": "Conta ativa (APP e CLI)",
+    "sim_acc1_5h": "Sprint de 5 horas (5H)",
+    "sim_acc1_w": "Pool semanal (W)",
+    "sim_acc1_c": "Créditos de redefinição",
+    "sim_acc2_heading": "Contas de reserva (Pool e recarga)",
+    "sim_acc2_5h": "Reserva: Sprint de 5 horas",
+    "sim_acc2_w": "Reserva: Pool semanal",
+    "sim_acc2_c": "Reserva: Créditos de redefinição",
+    "sim_reserves_count": "Contas de reserva:",
+    "sim_opt_mult_label": "Multiplicador do plano:",
+    "sim_opt_session_label": "Slots de sessão:",
+    "sim_opt_dual": "Sessão dupla (APP + CLI)",
+    "sim_opt_single": "Sessão única (apenas CLI)",
+    "sim_opt_layout_label": "Formato de layout:",
+    "sim_opt_stacked": "Porcentagens empilhadas (2 linhas)",
+    "sim_opt_horiz": "Layout horizontal",
     "sec1_num": "Seção 1",
     "sec1_title": "⚙️ Como funciona",
     "sec1_desc": "Arquitetura e interação entre o núcleo Rust, a barra de menus do macOS e o OpenAI Codex.",
@@ -1736,21 +2210,21 @@
     "c_switch_title": "Alternância preventiva a ≤ 5%",
     "c_switch_desc": "Consultas complexas consomem 2–4% da cota. A rotação aciona com <strong>≤ 5% restante</strong> para prevenir erros HTTP 429.",
     "c_shim_title": "Shim de sistema transparente",
-    "c_shim_desc": "<code>cxi install-shim enable</code> substitui o comando <code>agy</code> pelo nosso wrapper mantendo o binário original como <code>agy-real</code> com proteção anti-recursão.",
+    "c_shim_desc": "<code>cxi install-shim</code> substitui o comando <code>codex</code> pelo nosso wrapper mantendo o binário original como <code>codex-real</code> com proteção anti-recursão.",
     "c_swift_title": "App nativo para barra de menus",
     "c_swift_desc": "Desenvolvido em Swift (AppKit) com suporte aos temas claro/escuro, 9 idiomas e atualização instantânea sem atrasos.",
     "sec2_num": "Seção 2",
     "sec2_title": "🚀 O que fazer (Início Rápido)",
-    "sec2_desc": "Configuração passo a passo, adição de contas do Google e ativação da rotação.",
+    "sec2_desc": "Configuração passo a passo, adição de contas da OpenAI e ativação da rotação.",
     "step1_title": "Passo 1. Capturar a primeira conta",
     "step1_desc": "Se você já efetuou login no Codex no terminal, capture a sessão ativa:",
     "step2_title": "Passo 2. Adicionar contas adicionais",
-    "step2_desc": "Escolha a opção <strong>2</strong> em <code>cxi setup</code> para autenticar via Google OAuth e armazenar o token no Keychain com permissões <code>0600</code>.",
+    "step2_desc": "Escolha a opção <strong>2</strong> em <code>cxi setup</code> para autenticar via OpenAI OAuth e armazenar o token no Keychain com permissões <code>0600</code>.",
     "step3_title": "Passo 3. Instalar app da barra de menus",
     "step3_desc": "Compile e instale o aplicativo nativo em <code>~/Applications</code> com apenas um comando:",
     "step3_sub": "Um elegante ícone com círculos divididos aparecerá na barra de menus do macOS.",
     "step4_title": "Passo 4. Ativar o shim transparente",
-    "step4_desc": "Permite que IDEs e scripts aproveitem a rotação automaticamente sem alterar o comando padrão <code>agy</code>:",
+    "step4_desc": "Permite que IDEs e scripts aproveitem a rotação automaticamente sem alterar o comando padrão <code>codex</code>:",
     "sec3_num": "Seção 3",
     "sec3_title": "💻 Como usar",
     "sec3_desc": "Referência de comandos de terminal e itens do menu suspenso.",
@@ -1758,24 +2232,24 @@
     "th_does": "Descrição",
     "th_when": "Quando usar",
     "row1_does": "Execução transparente do Codex com verificação de cotas",
-    "row1_when": "Em substituição ao comando habitual <code>agy</code>",
+    "row1_when": "Em substituição ao comando habitual <code>codex</code>",
     "row2_does": "Tabela de limites de todas as contas e contagem regressiva de reinício",
     "row2_when": "Para visualizar o estado do pool rapidamente no terminal",
     "row3_does": "Alternar forçadamente para a conta indicada (ex: <code>acc-2</code>)",
     "row3_when": "Quando quiser mudar manualmente a conta ativa",
-    "row4_does": "Consulta detalhada à Cloud Code PA API por modelo e conta",
+    "row4_does": "Consulta detalhada à OpenAI Codex API por modelo e conta",
     "row4_when": "Para diagnóstico e teste de conectividade",
     "row5_does": "Assistente interativo para adicionar, testar e alternar contas",
     "row5_when": "Na configuração ou manutenção de contas",
     "row6_does": "Verificar e instalar atualizações do OpenAI Codex CLI",
     "row6_when": "Quando uma nova versão do Codex for lançada",
-    "row7_does": "Ativar ou desativar o shim transparente para o binário <code>agy</code>",
+    "row7_does": "Ativar ou desativar o shim transparente para o binário <code>codex</code>",
     "row7_when": "Para integração com IDEs e fluxos automatizados",
     "row8_does": "Abrir esta página de documentação no navegador padrão",
     "row8_when": "Para revisar regras, comandos e indicadores",
     "hotkeys_title": "Menu da barra de status do macOS: Atalhos",
     "hk1_title": "🔄 Atualizar agora (⌘R)",
-    "hk1_desc": "Consulta a Google Cloud Code PA API imediatamente sem aguardar o próximo ciclo.",
+    "hk1_desc": "Consulta a OpenAI Codex API imediatamente sem aguardar o próximo ciclo.",
     "hk2_title": "🚀 Atualizar Codex CLI (⌘U)",
     "hk2_desc": "Verifica atualizações em segundo plano e instala a versão mais recente com um clique.",
     "hk3_title": "⏱ Intervalo de atualização",
@@ -1790,7 +2264,7 @@
     "mb_item1": "<strong>[Logo Codex]</strong>: Distintivo do Codex.",
     "mb_item3": "<strong>5H: 96%</strong>: Cota restante do sprint de 5 horas da conta ativa.",
     "mb_item4": "<strong>W: 94%</strong>: Cota restante do pool semanal global.",
-    "mb_item5": "<strong>[ ◐  ◐ ]</strong>: Círculos 3D divididos — um por conta vinculada:",
+    "mb_item5": "<strong>[ 🛡️  🛡️ ]</strong>: Círculos 3D divididos — um por conta vinculada:",
     "mb_item5_left": "<strong>Metade esquerda (5H)</strong>: Cota sprint 5h da conta.",
     "mb_item5_right": "<strong>Metade direita (W)</strong>: Cota do pool semanal da conta.",
     "scale_title": "Escala cromática dos indicadores",
@@ -1824,11 +2298,29 @@
     "hero_title": "OpenAI Codex Multi-Account Switcher",
     "hero_desc": "Inteligentny system ciągłej rotacji kont, monitorowania limitów w czasie rzeczywistym i ochrony roju agentów przed limitami zapytań (HTTP 429).",
     "sim_title": "✨ Interaktywny podgląd paska menu macOS",
-    "sim_subtitle": "Przesuń suwaki poniżej, aby na żywo zobaczyć zmiany kolorów, etykiet i dzielonych okręgów 3D.",
-    "sim_acc1_5h": "Konto 1: Sprint 5-godzinny (5H)",
-    "sim_acc1_w": "Konto 1: Pula tygodniowa (W)",
-    "sim_acc2_5h": "Konto 2: Sprint 5-godzinny (5H)",
-    "sim_acc2_w": "Konto 2: Pula tygodniowa (W)",
+    "sim_subtitle": "Przesuwaj suwaki lub wybierz scenariusz, aby przetestować śledzenie sesji APP/CLI w czasie rzeczywistym, tarcze 3D i mnożniki planu.",
+    "sim_presets_title": "Scenariusze:",
+    "sim_preset_screenshot": "📸 Rzeczywista konfiguracja aplikacji",
+    "sim_preset_healthy": "🟢 Wszystko w porządku (100%)",
+    "sim_preset_mid": "🟡 Sprint w ciągu dnia (35%)",
+    "sim_preset_switch": "🔴 Przełączenie po limicie (0%)",
+    "sim_preset_weekly_empty": "⚫ Pula tygodniowa wyczerpana",
+    "sim_acc1_heading": "Aktywne konto (APP i CLI)",
+    "sim_acc1_5h": "Sprint 5-godzinny (5H)",
+    "sim_acc1_w": "Pula tygodniowa (W)",
+    "sim_acc1_c": "Kredyty resetu",
+    "sim_acc2_heading": "Konta rezerwowe (Pula i oczekiwanie)",
+    "sim_acc2_5h": "Rezerwa: Sprint 5-godzinny",
+    "sim_acc2_w": "Rezerwa: Pula tygodniowa",
+    "sim_acc2_c": "Rezerwa: Kredyty resetu",
+    "sim_reserves_count": "Liczba kont rezerwowych:",
+    "sim_opt_mult_label": "Mnożnik pojemności planu:",
+    "sim_opt_session_label": "Tryb sesji:",
+    "sim_opt_dual": "Podwójna sesja (APP + CLI)",
+    "sim_opt_single": "Pojedyncza sesja (tylko CLI)",
+    "sim_opt_layout_label": "Układ wskaźników:",
+    "sim_opt_stacked": "Wartości ułożone pionowo (2 wiersze)",
+    "sim_opt_horiz": "Układ poziomy",
     "sec1_num": "Sekcja 1",
     "sec1_title": "⚙️ Jak to działa",
     "sec1_desc": "Architektura i współdziałanie jądra Rust, paska menu macOS oraz OpenAI Codex.",
@@ -1841,21 +2333,21 @@
     "c_switch_title": "Wyprzedzające przełączanie przy ≤ 5%",
     "c_switch_desc": "Złożone zadania mogą szybko zużyć 2–4% limitu. Rotacja następuje przy <strong>≤ 5%</strong>, zapobiegając błędom HTTP 429.",
     "c_shim_title": "Przezroczysty shim systemowy",
-    "c_shim_desc": "<code>cxi install-shim enable</code> zastępuje polecenie <code>agy</code> naszym wrapperem, zachowując oryginał jako <code>agy-real</code> z ochroną przed rekurencją.",
+    "c_shim_desc": "<code>cxi install-shim</code> zastępuje polecenie <code>codex</code> naszym wrapperem, zachowując oryginał jako <code>codex-real</code> z ochroną przed rekurencją.",
     "c_swift_title": "Natywna aplikacja paska menu",
     "c_swift_desc": "Stworzona w Swift (AppKit), obsługuje motyw ciemny/jasny, 9 języków i działa bez opóźnień.",
     "sec2_num": "Sekcja 2",
     "sec2_title": "🚀 Co zrobić (Szybki start)",
-    "sec2_desc": "Instrukcja wstępnej konfiguracji, dodawania kont Google i uruchamiania rotacji.",
+    "sec2_desc": "Instrukcja wstępnej konfiguracji, dodawania kont OpenAI i uruchamiania rotacji.",
     "step1_title": "Krok 1. Zapisanie pierwszego konta",
     "step1_desc": "Jeśli jesteś już zalogowany w OpenAI Codex w terminalu, przechwyć aktywną sesję:",
     "step2_title": "Krok 2. Dodawanie kolejnych kont",
-    "step2_desc": "Wybierz opcję <strong>2</strong> w <code>cxi setup</code>, zaloguj się przez Google OAuth i zapisz token w Keychain (uprawnienia <code>0600</code>).",
+    "step2_desc": "Wybierz opcję <strong>2</strong> w <code>cxi setup</code>, zaloguj się przez OpenAI OAuth i zapisz token w Keychain (uprawnienia <code>0600</code>).",
     "step3_title": "Krok 3. Instalacja aplikacji w pasku menu",
     "step3_desc": "Skompiluj i zainstaluj aplikację w <code>~/Applications</code> jednym poleceniem:",
     "step3_sub": "Stylowa ikona z dzielonymi okręgami pojawi się w pasku menu macOS.",
     "step4_title": "Krok 4. Włączenie przezroczystego shima",
-    "step4_desc": "Umożliwia IDE i skryptom korzystanie z rotacji bez modyfikacji komendy <code>agy</code>:",
+    "step4_desc": "Umożliwia IDE i skryptom korzystanie z rotacji bez modyfikacji komendy <code>codex</code>:",
     "sec3_num": "Sekcja 3",
     "sec3_title": "💻 Jak używać",
     "sec3_desc": "Zestawienie komend terminala oraz funkcji menu paska stanu.",
@@ -1863,24 +2355,24 @@
     "th_does": "Opis",
     "th_when": "Kiedy używać",
     "row1_does": "Przezroczyste uruchomienie Codex ze sprawdzeniem limitów",
-    "row1_when": "Zamiast standardowej komendy <code>agy</code>",
+    "row1_when": "Zamiast standardowej komendy <code>codex</code>",
     "row2_does": "Tabela limitów wszystkich kont i czasu do ich odnowienia",
     "row2_when": "Dla szybkiego podglądu puli w konsoli",
     "row3_does": "Wymuszenie przełączenia na wskazane konto (np. <code>acc-2</code>)",
     "row3_when": "Gdy chcesz ręcznie zmienić aktywny slot",
-    "row4_does": "Szczegółowe zapytanie do Cloud Code PA API dla modeli i kont",
+    "row4_does": "Szczegółowe zapytanie do OpenAI Codex API dla modeli i kont",
     "row4_when": "W celach diagnostycznych i sprawdzania połączenia",
     "row5_does": "Interaktywny kreator dodawania i przełączania kont",
     "row5_when": "Podczas konfiguracji nowych profili",
     "row6_does": "Sprawdzanie i instalowanie aktualizacji OpenAI Codex CLI",
     "row6_when": "Gdy pojawi się nowa wersja Codex",
-    "row7_does": "Włączenie lub wyłączenie przezroczystego shima dla <code>agy</code>",
+    "row7_does": "Włączenie lub wyłączenie przezroczystego shima dla <code>codex</code>",
     "row7_when": "Do integracji z zewnętrznymi IDE i skryptami",
     "row8_does": "Otwarcie tej strony pomocy w domyślnej przeglądarce",
     "row8_when": "Gdy chcesz sprawdzić zasady działania i polecenia",
     "hotkeys_title": "Menu paska stanu macOS: Skróty",
     "hk1_title": "🔄 Odśwież teraz (⌘R)",
-    "hk1_desc": "Natychmiast wysyła zapytanie do Cloud Code PA API bez oczekiwania na kolejny cykl.",
+    "hk1_desc": "Natychmiast wysyła zapytanie do OpenAI Codex API bez oczekiwania na kolejny cykl.",
     "hk2_title": "🚀 Aktualizuj Codex CLI (⌘U)",
     "hk2_desc": "Wyszukuje nowe wersje Codex i aktualizuje binarkę jednym kliknięciem.",
     "hk3_title": "⏱ Częstotliwość odświeżania",
@@ -1895,7 +2387,7 @@
     "mb_item1": "<strong>[Logo Codex]</strong>: Znak Codex.",
     "mb_item3": "<strong>5H: 96%</strong>: Limit 5-godzinnego sprintu aktywnego konta.",
     "mb_item4": "<strong>W: 94%</strong>: Limit ogólnej puli tygodniowej.",
-    "mb_item5": "<strong>[ ◐  ◐ ]</strong>: Błyszczące dzielone okręgi 3D — po jednym na konto:",
+    "mb_item5": "<strong>[ 🛡️  🛡️ ]</strong>: Błyszczące dzielone okręgi 3D — po jednym na konto:",
     "mb_item5_left": "<strong>Lewa połowa (5H)</strong>: Limit sprintu 5-godzinnego.",
     "mb_item5_right": "<strong>Prawa połowa (W)</strong>: Limit puli tygodniowej.",
     "scale_title": "Skala kolorystyczna wskaźników",
@@ -1929,11 +2421,29 @@
     "hero_title": "OpenAI Codex Multi-Account Switcher",
     "hero_desc": "Intelligent systeem voor continue accountrotatie, realtime quotumonitoring en bescherming van agent-swarms tegen snelheidslimieten (HTTP 429).",
     "sim_title": "✨ Interactieve macOS-menubalkweergave",
-    "sim_subtitle": "Verschuif de schuifregelaars om kleurgradaties, badges en 3D-gesplitste cirkels direct te bekijken.",
-    "sim_acc1_5h": "Account 1: 5-uurs sprint (5H)",
-    "sim_acc1_w": "Account 1: Wekelijkse pool (W)",
-    "sim_acc2_5h": "Account 2: 5-uurs sprint (5H)",
-    "sim_acc2_w": "Account 2: Wekelijkse pool (W)",
+    "sim_subtitle": "Sleep de schuifknoppen of kies een scenario om realtime APP/CLI-sessietracking, 3D-schildbadges en capaciteitsvermenigvuldigers te testen.",
+    "sim_presets_title": "Scenario's:",
+    "sim_preset_screenshot": "📸 Echte app-configuratie",
+    "sim_preset_healthy": "🟢 Alles in orde (100%)",
+    "sim_preset_mid": "🟡 Midden op de dag (35%)",
+    "sim_preset_switch": "🔴 Wissel bij limiet (0%)",
+    "sim_preset_weekly_empty": "⚫ Wekelijkse pool leeg",
+    "sim_acc1_heading": "Actief account (APP en CLI)",
+    "sim_acc1_5h": "5-uurs sprint (5H)",
+    "sim_acc1_w": "Wekelijkse pool (W)",
+    "sim_acc1_c": "Resettegoeden",
+    "sim_acc2_heading": "Reserve-accounts (Pool en afkoeling)",
+    "sim_acc2_5h": "Reserve: 5-uurs sprint",
+    "sim_acc2_w": "Reserve: Wekelijkse pool",
+    "sim_acc2_c": "Reserve: Resettegoeden",
+    "sim_reserves_count": "Aantal reserve-accounts:",
+    "sim_opt_mult_label": "Abonnementsvermenigvuldiger:",
+    "sim_opt_session_label": "Sessieslots:",
+    "sim_opt_dual": "Dubbele sessie (APP + CLI)",
+    "sim_opt_single": "Enkele sessie (alleen CLI)",
+    "sim_opt_layout_label": "Weergave-indeling:",
+    "sim_opt_stacked": "Gestapelde percentages (2 rijen)",
+    "sim_opt_horiz": "Horizontale indeling",
     "sec1_num": "Deel 1",
     "sec1_title": "⚙️ Hoe het werkt",
     "sec1_desc": "Architectuur en samenspel tussen de Rust-kern, macOS-menubalk en OpenAI Codex.",
@@ -1946,21 +2456,21 @@
     "c_switch_title": "Preventief wisselen bij ≤ 5%",
     "c_switch_desc": "Complexe opdrachten verbruiken 2–4% quotum. De omschakeling vindt plaats bij <strong>≤ 5%</strong> om HTTP 429-fouten te voorkomen.",
     "c_shim_title": "Transparante systeem-shim",
-    "c_shim_desc": "<code>cxi install-shim enable</code> vervangt <code>agy</code> door onze wrapper en behoudt het origineel als <code>agy-real</code> met ingebouwde recursiebescherming.",
+    "c_shim_desc": "<code>cxi install-shim</code> vervangt <code>codex</code> door onze wrapper en behoudt het origineel als <code>codex-real</code> met ingebouwde recursiebescherming.",
     "c_swift_title": "Native menubalk-applicatie",
     "c_swift_desc": "Gebouwd in Swift (AppKit) met ondersteuning voor lichte/donkere modus, 9 talen en directe realtime updates.",
     "sec2_num": "Deel 2",
     "sec2_title": "🚀 Wat te doen (Snelle start)",
-    "sec2_desc": "Stapsgewijze configuratie, toevoegen van Google-accounts en starten van rotatie.",
+    "sec2_desc": "Stapsgewijze configuratie, toevoegen van OpenAI-accounts en starten van rotatie.",
     "step1_title": "Stap 1. Eerste account opslaan",
     "step1_desc": "Als u al bent ingelogd bij OpenAI Codex in de terminal, legt u de sessie vast:",
     "step2_title": "Stap 2. Extra accounts toevoegen",
-    "step2_desc": "Kies optie <strong>2</strong> in <code>cxi setup</code> om in te loggen via Google OAuth en het token op te slaan in Keychain (rechten <code>0600</code>).",
+    "step2_desc": "Kies optie <strong>2</strong> in <code>cxi setup</code> om in te loggen via OpenAI OAuth en het token op te slaan in Keychain (rechten <code>0600</code>).",
     "step3_title": "Stap 3. Menubalk-app installeren",
     "step3_desc": "Compileer en installeer de applicatie in <code>~/Applications</code> met één commando:",
     "step3_sub": "Een stijlvol statusicoon met gesplitste cirkels verschijnt in de macOS-menubalk.",
     "step4_title": "Stap 4. Transparante shim inschakelen",
-    "step4_desc": "Laat IDE's en scripts automatisch profiteren van rotatie zonder het gebruikelijke commando <code>agy</code> te wijzigen:",
+    "step4_desc": "Laat IDE's en scripts automatisch profiteren van rotatie zonder het gebruikelijke commando <code>codex</code> te wijzigen:",
     "sec3_num": "Deel 3",
     "sec3_title": "💻 Hoe te gebruiken",
     "sec3_desc": "Overzicht van terminalcommando's en menubalkacties.",
@@ -1968,24 +2478,24 @@
     "th_does": "Beschrijving",
     "th_when": "Wanneer gebruiken",
     "row1_does": "Transparante uitvoering van Codex met quotumcontrole",
-    "row1_when": "In plaats van het standaardcommando <code>agy</code>",
+    "row1_when": "In plaats van het standaardcommando <code>codex</code>",
     "row2_does": "Tabel met accountlimieten en hersteltijden weergeven",
     "row2_when": "Voor een snel overzicht van de pool in de console",
     "row3_does": "Geforceerd overschakelen naar het opgegeven account (bijv. <code>acc-2</code>)",
     "row3_when": "Wanneer u handmatig het actieve slot wilt wijzigen",
-    "row4_does": "Grondige controle via Cloud Code PA API per model en account",
+    "row4_does": "Grondige controle via OpenAI Codex API per model en account",
     "row4_when": "Voor diagnose en connectiviteitscontrole",
     "row5_does": "Interactieve wizard voor het beheren en wisselen van accounts",
     "row5_when": "Bij het configureren van nieuwe accounts",
     "row6_does": "Updates voor OpenAI Codex CLI controleren en installeren",
     "row6_when": "Wanneer een nieuwe versie van Codex beschikbaar is",
-    "row7_does": "Transparante shim voor <code>agy</code> in- of uitschakelen",
+    "row7_does": "Transparante shim voor <code>codex</code> in- of uitschakelen",
     "row7_when": "Voor integratie met externe IDE's en scripts",
     "row8_does": "Deze hulppcxina openen in de standaardwebbrowser",
     "row8_when": "Om commando's en regels te bekijken",
     "hotkeys_title": "macOS-menubalk: Sneltoetsen",
     "hk1_title": "🔄 Nu vernieuwen (⌘R)",
-    "hk1_desc": "Raadpleegt direct de Cloud Code PA API zonder de volgende pollingcyclus af te wachten.",
+    "hk1_desc": "Raadpleegt direct de OpenAI Codex API zonder de volgende pollingcyclus af te wachten.",
     "hk2_title": "🚀 Codex CLI bijwerken (⌘U)",
     "hk2_desc": "Controleert op achtergrond naar updates en installeert de nieuwste versie met één klik.",
     "hk3_title": "⏱ Vernieuwingsinterval",
@@ -2000,7 +2510,7 @@
     "mb_item1": "<strong>[Codex-logo]</strong>: Codex-pictogram.",
     "mb_item3": "<strong>5H: 96%</strong>: Resterend limiet van de 5-uurs sprint van het actieve account.",
     "mb_item4": "<strong>W: 94%</strong>: Resterend limiet van de wekelijkse pool.",
-    "mb_item5": "<strong>[ ◐  ◐ ]</strong>: 3D gesplitste cirkels — één per geconfigureerd account:",
+    "mb_item5": "<strong>[ 🛡️  🛡️ ]</strong>: 3D gesplitste cirkels — één per geconfigureerd account:",
     "mb_item5_left": "<strong>Linkerhelft (5H)</strong>: Toont het 5-uurs quotum van het account.",
     "mb_item5_right": "<strong>Rechterhelft (W)</strong>: Toont het wekelijkse poolquotum van het account.",
     "scale_title": "Kleurschaal van indicatoren",
@@ -2023,7 +2533,7 @@
   }
 };
     const SUPPORTED_LANGS = ["en", "uk", "de", "fr", "es", "it", "pt", "pl", "nl"];
-    let currentLang = "ru";
+    let currentLang = "en";
 
     // Theme toggle logic
     function toggleTheme() {
@@ -2037,7 +2547,7 @@
       }
       document.documentElement.setAttribute('data-theme', next);
       try {
-        localStorage.setItem('agy_help_theme', next);
+        localStorage.setItem('codex_mon_help_theme', next);
       } catch (e) {}
       updateThemeButton(next);
     }
@@ -2063,7 +2573,7 @@
 
     // Language switcher logic
     function switchLanguage(lang) {
-      if (!SUPPORTED_LANGS.includes(lang)) {
+      if (!SUPPORTED_LANGS.includes(lang) || lang === 'ru') {
         lang = "en";
       }
       currentLang = lang;
@@ -2092,7 +2602,7 @@
       }
 
       try {
-        localStorage.setItem('agy_help_lang', lang);
+        localStorage.setItem('codex_mon_help_lang', lang);
       } catch (e) {}
 
       if (window.history && window.history.replaceState) {
@@ -2109,7 +2619,7 @@
       // 1. Query parameter ?lang=xx
       const urlParams = new URLSearchParams(window.location.search);
       const qLang = urlParams.get('lang');
-      if (qLang && SUPPORTED_LANGS.includes(qLang.toLowerCase())) {
+      if (qLang && qLang.toLowerCase() !== 'ru' && SUPPORTED_LANGS.includes(qLang.toLowerCase())) {
         return qLang.toLowerCase();
       }
 
@@ -2117,93 +2627,247 @@
       const hash = window.location.hash.replace(/^#/, '').toLowerCase();
       if (hash.startsWith('lang=')) {
         const hVal = hash.split('=')[1];
-        if (hVal && SUPPORTED_LANGS.includes(hVal)) return hVal;
-      } else if (SUPPORTED_LANGS.includes(hash)) {
+        if (hVal && hVal !== 'ru' && SUPPORTED_LANGS.includes(hVal)) return hVal;
+      } else if (hash !== 'ru' && SUPPORTED_LANGS.includes(hash)) {
         return hash;
       }
 
       // 3. Stored preference
       try {
-        const stored = localStorage.getItem('agy_help_lang');
-        if (stored && SUPPORTED_LANGS.includes(stored.toLowerCase())) {
+        const stored = localStorage.getItem('codex_mon_help_lang');
+        if (stored && stored.toLowerCase() === 'ru') {
+          localStorage.removeItem('codex_mon_help_lang');
+        } else if (stored && SUPPORTED_LANGS.includes(stored.toLowerCase())) {
           return stored.toLowerCase();
         }
       } catch (e) {}
 
-      // 4. Browser locale
+      // 4. Browser locale (system default preference)
       const browserLangs = navigator.languages || [navigator.language || ''];
       for (const bl of browserLangs) {
         const code = (bl || '').toLowerCase().split('-')[0].split('_')[0];
-        if (SUPPORTED_LANGS.includes(code)) {
+        if (code !== 'ru' && SUPPORTED_LANGS.includes(code)) {
           return code;
         }
       }
 
-      // 5. Default
+      // 5. Default fallback to English
       return "en";
     }
 
-    // Interactive Simulator
-    function getColorClass(val) {
+    // Interactive Simulator Colors
+    function getColorClass(val, weeklyVal) {
+      if (weeklyVal !== undefined && (weeklyVal <= 0 || (weeklyVal < 20 && val > 50))) {
+        return 'bg-gray';
+      }
       if (val > 50) return 'bg-green';
       if (val > 20) return 'bg-yellow';
       return 'bg-red';
     }
 
-    function getTextColorClass(val) {
+    function getTextColorClass(val, weeklyVal) {
+      if (weeklyVal !== undefined && (weeklyVal <= 0 || (weeklyVal < 20 && val > 50))) {
+        return 'text-yellow';
+      }
       if (val > 50) return 'text-green';
       if (val > 20) return 'text-yellow';
       return 'text-red';
     }
 
+    // Simulator Scenario Presets
+    function setScenario(name) {
+      document.querySelectorAll('.sim-presets-bar .preset-btn').forEach(b => b.classList.remove('active'));
+
+      if (name === 'screenshot') {
+        document.getElementById('btnPresetScreenshot')?.classList.add('active');
+        document.getElementById('slideA1_5h').value = 100;
+        document.getElementById('slideA1_w').value = 100;
+        document.getElementById('slideA1_c').value = 3;
+        document.getElementById('planMultiplier').value = "14";
+        document.getElementById('slideRes_5h').value = 0;
+        document.getElementById('slideRes_w').value = 100;
+        document.getElementById('slideRes_c').value = 2;
+        document.getElementById('slideRes_count').value = 4;
+        document.getElementById('sessionMode').value = 'dual';
+        document.getElementById('layoutMode').value = 'stacked';
+      } else if (name === 'healthy') {
+        document.getElementById('btnPresetHealthy')?.classList.add('active');
+        document.getElementById('slideA1_5h').value = 100;
+        document.getElementById('slideA1_w').value = 100;
+        document.getElementById('slideA1_c').value = 5;
+        document.getElementById('planMultiplier').value = "1";
+        document.getElementById('slideRes_5h').value = 100;
+        document.getElementById('slideRes_w').value = 100;
+        document.getElementById('slideRes_c').value = 4;
+        document.getElementById('slideRes_count').value = 3;
+      } else if (name === 'warning') {
+        document.getElementById('btnPresetWarning')?.classList.add('active');
+        document.getElementById('slideA1_5h').value = 35;
+        document.getElementById('slideA1_w').value = 65;
+        document.getElementById('slideA1_c').value = 1;
+        document.getElementById('planMultiplier').value = "1";
+        document.getElementById('slideRes_5h').value = 75;
+        document.getElementById('slideRes_w').value = 85;
+        document.getElementById('slideRes_c').value = 2;
+        document.getElementById('slideRes_count').value = 2;
+      } else if (name === 'switch') {
+        document.getElementById('btnPresetSwitch')?.classList.add('active');
+        document.getElementById('slideA1_5h').value = 0;
+        document.getElementById('slideA1_w').value = 45;
+        document.getElementById('slideA1_c').value = 0;
+        document.getElementById('planMultiplier').value = "1";
+        document.getElementById('slideRes_5h').value = 100;
+        document.getElementById('slideRes_w').value = 100;
+        document.getElementById('slideRes_c').value = 5;
+        document.getElementById('slideRes_count').value = 3;
+      } else if (name === 'exhausted') {
+        document.getElementById('btnPresetExhausted')?.classList.add('active');
+        document.getElementById('slideA1_5h').value = 80;
+        document.getElementById('slideA1_w').value = 0;
+        document.getElementById('slideA1_c').value = 0;
+        document.getElementById('planMultiplier').value = "1";
+        document.getElementById('slideRes_5h').value = 60;
+        document.getElementById('slideRes_w').value = 0;
+        document.getElementById('slideRes_c').value = 0;
+        document.getElementById('slideRes_count').value = 2;
+      }
+      updateSim();
+    }
+
+    // Update Interactive Simulator View
     function updateSim() {
       const a1_5h = parseInt(document.getElementById('slideA1_5h').value);
       const a1_w = parseInt(document.getElementById('slideA1_w').value);
-      const a2_5h = parseInt(document.getElementById('slideA2_5h').value);
-      const a2_w = parseInt(document.getElementById('slideA2_w').value);
+      const a1_c = parseInt(document.getElementById('slideA1_c').value);
 
+      const res_5h = parseInt(document.getElementById('slideRes_5h').value);
+      const res_w = parseInt(document.getElementById('slideRes_w').value);
+      const res_c = parseInt(document.getElementById('slideRes_c').value);
+      const res_count = parseInt(document.getElementById('slideRes_count').value);
+
+      const planMult = parseFloat(document.getElementById('planMultiplier').value);
+      const sessionMode = document.getElementById('sessionMode').value;
+      const layoutMode = document.getElementById('layoutMode').value;
+
+      // Update control labels
       document.getElementById('valA1_5h').textContent = a1_5h + '%';
       document.getElementById('valA1_w').textContent = a1_w + '%';
-      document.getElementById('valA2_5h').textContent = a2_5h + '%';
-      document.getElementById('valA2_w').textContent = a2_w + '%';
+      document.getElementById('valA1_c').textContent = a1_c;
 
-      // Update mockup text
-      const mb5HPct = document.getElementById('mb5HPct');
-      mb5HPct.textContent = a1_5h + '%';
-      mb5HPct.className = 'mb-digit ' + getTextColorClass(a1_5h);
+      document.getElementById('valRes_5h').textContent = res_5h + '%';
+      document.getElementById('valRes_w').textContent = res_w + '%';
+      document.getElementById('valRes_c').textContent = res_c;
+      document.getElementById('valRes_count').textContent = res_count;
 
-      const mbWeeklyPct = document.getElementById('mbWeeklyPct');
-      mbWeeklyPct.textContent = a1_w + '%';
-      mbWeeklyPct.className = 'mb-digit ' + getTextColorClass(a1_w);
+      // Calculate effective capacity percentages with plan multiplier
+      const eff5h = Math.round(a1_5h * planMult);
+      const effW = Math.round(a1_w * planMult);
+      const str5h = eff5h + '%';
+      const strW = effW + '%';
 
-      // Circle 1
-      const c1Left = document.getElementById('c1Left');
-      c1Left.className = 'half-left ' + getColorClass(a1_5h);
-      const c1Right = document.getElementById('c1Right');
-      c1Right.className = 'half-right ' + getColorClass(a1_w);
+      // Session slots visibility (Dual vs Single)
+      const mbAppSession = document.getElementById('mbAppSession');
+      const mbSessionSep = document.getElementById('mbSessionSep');
+      if (mbAppSession && mbSessionSep) {
+        mbAppSession.style.display = (sessionMode === 'dual') ? 'inline-flex' : 'none';
+        mbSessionSep.style.display = (sessionMode === 'dual') ? 'inline-flex' : 'none';
+      }
 
-      // Circle 2
-      const c2Left = document.getElementById('c2Left');
-      c2Left.className = 'half-left ' + getColorClass(a2_5h);
-      const c2Right = document.getElementById('c2Right');
-      c2Right.className = 'half-right ' + getColorClass(a2_w);
+      // Layout format (Stacked vs Horizontal)
+      const appStackedWrap = document.getElementById('appStackedWrap');
+      const appHorizWrap = document.getElementById('appHorizWrap');
+      const cliStackedWrap = document.getElementById('cliStackedWrap');
+      const cliHorizWrap = document.getElementById('cliHorizWrap');
+
+      if (appStackedWrap && appHorizWrap) {
+        appStackedWrap.style.display = (layoutMode === 'stacked') ? 'flex' : 'none';
+        appHorizWrap.style.display = (layoutMode === 'horizontal') ? 'inline-flex' : 'none';
+      }
+      if (cliStackedWrap && cliHorizWrap) {
+        cliStackedWrap.style.display = (layoutMode === 'stacked') ? 'flex' : 'none';
+        cliHorizWrap.style.display = (layoutMode === 'horizontal') ? 'inline-flex' : 'none';
+      }
+
+      // Colors
+      const color5hClass = getTextColorClass(a1_5h, a1_w);
+      const colorWClass = getTextColorClass(a1_w);
+
+      // Digits in APP & CLI
+      const app5HPct = document.getElementById('app5HPct');
+      const appWeeklyPct = document.getElementById('appWeeklyPct');
+      const cli5HPct = document.getElementById('cli5HPct');
+      const cliWeeklyPct = document.getElementById('cliWeeklyPct');
+
+      if (app5HPct) { app5HPct.textContent = str5h; app5HPct.className = 'mb-digit ' + color5hClass; }
+      if (appWeeklyPct) { appWeeklyPct.textContent = strW; appWeeklyPct.className = 'mb-digit ' + colorWClass; }
+      if (cli5HPct) { cli5HPct.textContent = str5h; cli5HPct.className = 'mb-digit ' + color5hClass; }
+      if (cliWeeklyPct) { cliWeeklyPct.textContent = strW; cliWeeklyPct.className = 'mb-digit ' + colorWClass; }
+
+      // Horizontal format digits
+      const appHoriz5H = document.getElementById('appHoriz5H');
+      const appHorizWk = document.getElementById('appHorizWk');
+      const cliHoriz5H = document.getElementById('cliHoriz5H');
+      const cliHorizWk = document.getElementById('cliHorizWk');
+
+      if (appHoriz5H) { appHoriz5H.textContent = str5h; appHoriz5H.className = 'mb-digit ' + color5hClass; }
+      if (appHorizWk) { appHorizWk.textContent = strW; appHorizWk.className = 'mb-digit ' + colorWClass; }
+      if (cliHoriz5H) { cliHoriz5H.textContent = str5h; cliHoriz5H.className = 'mb-digit ' + color5hClass; }
+      if (cliHorizWk) { cliHorizWk.textContent = strW; cliHorizWk.className = 'mb-digit ' + colorWClass; }
+
+      // Active Hybrid Shield Badge (inside [ 🛡️ ])
+      const bActiveTop = document.getElementById('bActiveTop');
+      const bActiveMid = document.getElementById('bActiveMid');
+      const bActiveBot = document.getElementById('bActiveBot');
+
+      if (bActiveTop && bActiveMid && bActiveBot) {
+        bActiveTop.className = 'badge-tier-top ' + getColorClass(a1_5h, a1_w);
+        bActiveMid.className = 'badge-tier-mid ' + getColorClass(a1_w);
+        bActiveBot.className = 'badge-tier-bot ' + (a1_c > 0 ? (a1_c >= 3 ? 'bg-yellow' : 'bg-green') : (a1_5h > 20 ? 'bg-yellow' : 'bg-red'));
+      }
+
+      // Reserve Hybrid Shield Badges outside brackets (│ 🛡️ │ 🛡️ ...)
+      const mbReservesContainer = document.getElementById('mbReservesContainer');
+      if (mbReservesContainer) {
+        let resHTML = '';
+        for (let i = 1; i <= res_count; i++) {
+          const topClass = getColorClass(res_5h, res_w);
+          const midClass = getColorClass(res_w);
+          const botClass = res_c > 0 ? 'bg-green' : (res_5h > 20 ? 'bg-yellow' : 'bg-red');
+
+          resHTML += `
+            <div class="mb-reserve-unit">
+              <span class="mb-sep">│</span>
+              <div class="shield-badge" title="Reserve Account #${i}">
+                <div class="badge-tier-top ${topClass}"></div>
+                <div class="badge-tier-mid ${midClass}"></div>
+                <div class="badge-tier-bot ${botClass}"></div>
+              </div>
+            </div>
+          `;
+        }
+        mbReservesContainer.innerHTML = resHTML;
+      }
     }
 
-    // Initialize
+    // Initialize on DOM ready
     document.addEventListener('DOMContentLoaded', () => {
       // Restore theme if saved
       try {
-        const savedTheme = localStorage.getItem('agy_help_theme');
+        const savedTheme = localStorage.getItem('codex_mon_help_theme');
         if (savedTheme === 'light' || savedTheme === 'dark') {
           document.documentElement.setAttribute('data-theme', savedTheme);
         }
       } catch (e) {}
 
+      // Detect system language by default (Russian strictly excluded, fallback to English)
       const initLang = detectInitialLanguage();
       switchLanguage(initLang);
+
+      // Initialize simulator with the live screenshot setup
+      setScenario('screenshot');
       updateThemeButton();
-      updateSim();
     });
   </script>
 </body>
 </html>
+

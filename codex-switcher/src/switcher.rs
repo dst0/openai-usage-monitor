@@ -180,32 +180,39 @@ pub fn switch_to_account(account_id: &str, restart_app: bool, notify: bool) -> R
             get_most_recent_threads(&codex_home, 1).into_iter().next()
         });
 
-        // Wait for Codex App and its app-server to initialize, then resume threads
+        // Wait for Codex App and its app-server to initialize
         if !running_threads.is_empty() {
             println!("⏳ Waiting for Codex App to initialize before resuming {} thread(s)...", running_threads.len());
             sleep(Duration::from_secs(3));
-            resume_threads(&running_threads, "continue");
         } else {
             sleep(Duration::from_secs(2));
         }
 
-        // Cycle through all running threads in the UI to trigger Accessibility Resume on each
-        if running_threads.len() > 1 {
-            println!("🔄 Cycling UI through {} threads to unpause any interrupted states...", running_threads.len());
-            for tid in &running_threads {
-                open_thread_in_codex(tid);
-                sleep(Duration::from_millis(400));
-                let _ = poll_and_trigger_ui_resume(3, Duration::from_millis(200));
+        // Resume running threads according to their state:
+        // 1. First open thread in UI and check for a native Resume / unpause button (e.g. paused queue).
+        // 2. If UI Resume succeeds, the thread is directly resumed without queuing an extra 'continue' message.
+        // 3. If no UI Resume button exists, queue 'continue' via socket CLI.
+        for tid in &running_threads {
+            println!("🔄 Navigating UI to thread '{}' to resume...", tid);
+            open_thread_in_codex(tid);
+            sleep(Duration::from_millis(450));
+            let ui_resumed = poll_and_trigger_ui_resume(3, Duration::from_millis(200));
+            if ui_resumed {
+                println!("✅ Thread '{}' resumed directly via UI Resume button!", tid);
+            } else {
+                println!("ℹ️ No UI Resume button for '{}'. Sending 'continue' via queue...", tid);
+                resume_threads(&[tid.clone()], "continue");
+                sleep(Duration::from_millis(300));
+                let _ = poll_and_trigger_ui_resume(2, Duration::from_millis(200));
             }
         }
 
         // Navigate ChatGPT UI directly to the primary thread so it is visible to the user
         if let Some(ref tid) = primary_thread {
             open_thread_in_codex(tid);
-            sleep(Duration::from_millis(500));
+            sleep(Duration::from_millis(400));
             if running_threads.iter().any(|r| r == tid) {
-                // Final check on primary thread UI only if it was actually in running_threads
-                poll_and_trigger_ui_resume(6, Duration::from_millis(400));
+                let _ = poll_and_trigger_ui_resume(3, Duration::from_millis(300));
             }
         }
     }
@@ -735,18 +742,24 @@ pub fn resume_thread_interactive(thread_id: Option<&str>) -> Result<(), String> 
     };
 
     println!("🚀 Resuming {} thread(s): {:?}", target_tids.len(), target_tids);
-    resume_threads(&target_tids, "continue");
-
-    // Cycle through all target threads to ensure UI unpauses on each
     for tid in &target_tids {
         open_thread_in_codex(tid);
-        sleep(Duration::from_millis(400));
-        let _ = poll_and_trigger_ui_resume(3, Duration::from_millis(200));
+        sleep(Duration::from_millis(450));
+        let ui_resumed = poll_and_trigger_ui_resume(3, Duration::from_millis(200));
+        if ui_resumed {
+            println!("✅ Thread '{}' resumed directly via UI Resume button!", tid);
+        } else {
+            println!("ℹ️ No UI Resume button for '{}'. Sending 'continue' via queue...", tid);
+            resume_threads(&[tid.clone()], "continue");
+            sleep(Duration::from_millis(300));
+            let _ = poll_and_trigger_ui_resume(2, Duration::from_millis(200));
+        }
     }
 
     if let Some(primary) = target_tids.first() {
         open_thread_in_codex(primary);
-        poll_and_trigger_ui_resume(5, Duration::from_millis(400));
+        sleep(Duration::from_millis(300));
+        let _ = poll_and_trigger_ui_resume(3, Duration::from_millis(300));
     }
     Ok(())
 }
@@ -780,6 +793,7 @@ guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "
 }
 let axApp = AXUIElementCreateApplication(app.processIdentifier)
 AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, true as CFTypeRef)
+AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, true as CFTypeRef)
 
 var windows: AnyObject?
 guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windows) == .success,
@@ -787,7 +801,7 @@ guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &win
 
 var resumed = false
 func searchAndPress(el: AXUIElement, depth: Int = 0) {
-    if depth > 25 { return }
+    if depth > 65 { return }
     var role: AnyObject?
     AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &role)
     var desc: AnyObject?
@@ -799,9 +813,39 @@ func searchAndPress(el: AXUIElement, depth: Int = 0) {
     let d = (desc as? String) ?? ""
     let t = (title as? String) ?? ""
     
-    if r == "AXButton" && (d == "Resume" || t == "Resume") {
-        let err = AXUIElementPerformAction(el, kAXPressAction as CFString)
-        if err == .success { resumed = true }
+    let isButton = r == "AXButton" || r.contains("Button")
+    let isResume = d.localizedCaseInsensitiveContains("resume") ||
+                   t.localizedCaseInsensitiveContains("resume") ||
+                   d.localizedCaseInsensitiveContains("retry") ||
+                   t.localizedCaseInsensitiveContains("retry") ||
+                   d.localizedCaseInsensitiveContains("возобновить") ||
+                   t.localizedCaseInsensitiveContains("возобновить") ||
+                   d.localizedCaseInsensitiveContains("повторить") ||
+                   t.localizedCaseInsensitiveContains("повторить")
+    
+    if isButton && isResume {
+        _ = AXUIElementPerformAction(el, kAXPressAction as CFString)
+        
+        var posVal: AnyObject?
+        AXUIElementCopyAttributeValue(el, kAXPositionAttribute as CFString, &posVal)
+        var sizeVal: AnyObject?
+        AXUIElementCopyAttributeValue(el, kAXSizeAttribute as CFString, &sizeVal)
+        
+        var point = CGPoint.zero
+        var size = CGSize.zero
+        if let pv = posVal { AXValueGetValue(pv as! AXValue, .cgPoint, &point) }
+        if let sv = sizeVal { AXValueGetValue(sv as! AXValue, .cgSize, &size) }
+        
+        if size.width > 0 && size.height > 0 {
+            let center = CGPoint(x: point.x + size.width / 2.0, y: point.y + size.height / 2.0)
+            if let mouseDown = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: center, mouseButton: .left),
+               let mouseUp = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: center, mouseButton: .left) {
+                mouseDown.post(tap: .cghidEventTap)
+                usleep(50000)
+                mouseUp.post(tap: .cghidEventTap)
+            }
+        }
+        resumed = true
     }
     
     var children: AnyObject?

@@ -17,32 +17,41 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
    - Exact countdown timer until rate-limit reset (e.g. `↻ 4h 45m`).
    - Tracking of the 7-day secondary limit window (`secondary_window: 604800s`) and rate-limit reset credits (`rate_limit_reset_credits`).
 
-2. **Automatic Account Switching on Limit Exhaustion (or Custom Threshold)**:
-   - When the active account exhausts its quota, the background daemon automatically selects the optimal account using the **Reset-First / Highest-Quota** algorithm.
+2. **Intelligent Auto-Switching Policies & Quota Recovery**:
+   - **Reset-First & Highest Quota**: Automatically selects the account resetting soonest with maximum available headroom.
+   - **Reset Credit Priority**: Accounts with available rate-limit reset credits (`credits`) are prioritized first.
+   - **Business-Only Mode**: Restricts automated switching exclusively to corporate/team accounts (Team, Business, Enterprise).
+   - **Business-Priority Mode**: Exhausts business quotas first, with automatic **preemptive return** to business accounts the moment their quota restores!
    - Atomically updates `~/.codex/auth.json` protected by `fs2` file locks (`flock`) and strict POSIX `0600` permissions.
 
-3. **Instant Switching for Codex CLI**:
+3. **Plan Multiplier & Capacity Scaling**:
+   - Auto-detects and scales capacity for OpenAI plan tiers (1.0x Plus, 2.0x Team/Business, up to 20x Pro).
+   - Manual override per account via `cxi set-multiplier <account> <val>` (and `cxi reset-multiplier`).
+   - Proportional quota visualization in CLI and Menu Bar (`PLAN (MULT)` and `5H SPRINT (EQ)`).
+
+4. **Instant Switching for Codex CLI**:
    - Codex CLI reads `~/.codex/auth.json` on each invocation.
    - Transparent `cxi` / `codex-mon` shim or `codex` wrapper ensures agent swarms and terminal sessions never fail with `429 Rate Limit Exceeded`.
 
-4. **Desktop Application Switching (`ChatGPT.app`)**:
+5. **Desktop Application Switching (`ChatGPT.app`)**:
    - The desktop app (`/Applications/ChatGPT.app`, bundle ID `com.openai.codex`) shares the `~/.codex/auth.json` credentials.
    - When an account is switched, the tool gracefully restarts the desktop app (`restart_app_on_switch: true`), immediately updating the interface and active sessions to the new account.
 
-5. **Automated Session & Thread Resumption Across Switches**:
+6. **Automated Session & Thread Resumption Across Switches**:
    - Automatically detects active mid-turn worker tasks and threads halted by rate limits or credit exhaustion within the last 4 hours (`RECENT_QUOTA_WINDOW_SECS = 14400s`).
    - Scans up to 30 recent threads via `state_5.sqlite` with instantaneous 128 KB tail reads (`read_rollout_tail_lines`), eliminating I/O stalls even on 500 MB+ session files.
-   - Automatically queues resumption messages (`codex queue --thread <id> --message continue`) and cycles ChatGPT.app UI tabs to trigger Accessibility-level unpauses.
-   - Never resumes cleanly completed tasks or user-aborted turns (`turn_aborted`).
+   - Automatically queues resumption messages (`codex queue --thread <id> --message continue`) and cycles ChatGPT.app UI tabs to trigger Accessibility-level unpauses (`cxi resume`).
+   - Filters out internal subagent threads and never resumes cleanly completed or user-aborted tasks.
 
-6. **Native macOS Menu Bar App (`Codex Monitor.app`)**:
-   - Official Codex icon in the status bar.
-   - Dual-session live display: `APP 97% | CLI 97% (↻ 4h 45m)`.
-   - Distinctive 3D shield badges `[ 🛡️ ] 🛡️ 🛡️` with a 3-tier visual gauge (Top = 5h sprint, Center = 7-day pool, Bottom = reset credits).
+7. **Native macOS Menu Bar App (`Codex Monitor.app`)**:
+   - Official Codex icon in the status bar with composite `NSImage` rendering to bypass AppKit vibrancy on inactive displays.
+   - Dual-session live display: `APP 97% | CLI 97% (↻ 4h 45m)` with contrast shadows and red anti-washout glow.
+   - Distinctive 3D shield badges `[ 🛡️ ] 🛡️ 🛡️` with a 3-tier visual gauge (Top = 5h sprint, Center = 7-day pool, Bottom = reset credits strip) and 0.6pt crisp dark outer rim.
    - Rich dropdown menu:
      - **Block 1**: 🖥️ Codex Desktop App (`ChatGPT.app`) — active account, status `[ACTIVE IN APP]`, sprint and weekly progress bars, credit balance.
      - **Block 2**: 💻 Codex CLI — active account, status `[ACTIVE IN CLI]`, remove button `✕`, progress bars, CLI model selection submenu (`gpt-5-5`, `gpt-5-4`, `o3`, `gpt-4.5`).
      - **Block 3**: 👥 Backup Accounts — 1-click instant switch buttons, individual progress bars, account removal.
+     - **Auto-Switch Settings**: Live menu toggles for Auto-Switch, Business-Only, and Business-Priority modes.
    - Quick action `➕ Add Account via Terminal...`.
    - Configurable polling interval (1m, 5m, 15m, 30m) persisted in `UserDefaults`.
    - Desktop app restart button.
@@ -109,13 +118,13 @@ cxi status --refresh
 Example output:
 ```text
 📊 OpenAI Codex Accounts & Rate Limits (Strategy: reset-first)
---------------------------------------------------------------------------------------------------
-     ACCOUNT      EMAIL                        PLAN     5H SPRINT          RESET IN     7D LIMIT   CREDITS
---------------------------------------------------------------------------------------------------
-→ 🟢  main         dev@example.com              team     ████████  97%      4h 45m       68%        3      
-  🟢  backup       backup@example.com           plus     ████████ 100%      now         100%        0      
---------------------------------------------------------------------------------------------------
-💡 Switch account: `codex-mon switch <id>` | Run daemon: `codex-mon daemon`
+---------------------------------------------------------------------------------------------------------
+     ACCOUNT      EMAIL                      PLAN (MULT) 5H SPRINT (EQ)       RESET IN     7D LIMIT   CREDITS
+---------------------------------------------------------------------------------------------------------
+→ 🟢 main         dev@example.com            team   2x   ████████   97%       4h 45m       68%        3      
+  🟢 backup       backup@example.com         plus   1x   ████████  100%       now          100%       0      
+---------------------------------------------------------------------------------------------------------
+💡 Switch account: `codex-mon switch <name|id>` | Set multiplier: `codex-mon set-multiplier <name> <val>`
 ```
 
 ### 2. Save Current Authenticated Session
@@ -151,23 +160,44 @@ cxi rename backup "Work Backup"
 cxi rename backup --clear
 ```
 
-### 7. Configure Settings
+### 7. Configure Auto-Switch Policies & Desktop App Sync
 ```bash
+# Inspect current configuration values:
+cxi config
+
+# Toggle automated account switching on quota exhaustion:
+cxi config --auto-switch-enabled true
+
+# Restrict automated switching exclusively to business accounts (Team/Business/Enterprise):
+cxi config --auto-switch-business-only true
+
+# Prioritize business accounts first (fallback to personal, preemptive switch back on quota restore):
+cxi config --auto-switch-business-priority true
+
 # Enable/disable automatic ChatGPT.app restart on switch:
 cxi config --restart-app-on-switch true
 ```
 
-### 8. Remove an Account
+### 8. Set or Reset Account Plan Multipliers
+```bash
+# Set custom multiplier override (e.g. 20 for Pro 20x, 5 for Pro 5x / Business Premium):
+cxi set-multiplier main 20
+
+# Reset multiplier override back to auto-detected default:
+cxi reset-multiplier main
+```
+
+### 9. Remove an Account
 ```bash
 cxi remove backup
 ```
 
-### 9. Run Commands with Automatic Quota Check & Switch
+### 10. Run Commands with Automatic Quota Check & Switch
 ```bash
 cxi wrap exec "fix bug in auth"
 ```
 
-### 10. Resume Active or Paused Threads
+### 11. Resume Active or Paused Threads
 ```bash
 # Resume the most recent active or rate-limited thread:
 cxi resume
@@ -177,10 +207,32 @@ cxi resume 01a07d3c-3008-75c2-87a6-2c5c75f0e48b
 cxi resume "codex://threads/01a07d3c-3008-75c2-87a6-2c5c75f0e48b"
 ```
 
-### 11. Open Interactive Documentation
+### 12. Open Interactive Documentation
 ```bash
 cxi helps
 ```
+
+---
+
+## 🧠 Smart Auto-Switch Engine & Policies
+
+The switcher daemon and Menu Bar application implement an autonomous policy engine designed to prevent interruptions during long agent runs and interactive development:
+
+### 🔄 Auto-Switch Modes
+
+1. **Default Mode (`reset-first` / Highest Quota)**:
+   - Evaluates all available accounts when active quota drops to 0% (or on HTTP 429 errors).
+   - Selects candidates resetting soonest with available headroom.
+   - **Reset Credit Weighting**: When multiple candidate accounts have available quota, accounts with available **Rate-Limit Reset Credits** (`credits > 0`) are selected first.
+
+2. **Business-Only Mode (`auto_switch_business_only: true`)**:
+   - Strictly confines automated switching to corporate/team accounts (`team`, `business`, `enterprise`).
+   - Personal accounts (`plus`, `pro`, `free`) are never selected automatically, protecting private developer accounts from team batch workloads.
+
+3. **Business-Priority Mode (`auto_switch_business_priority: true`)**:
+   - Uses business accounts first, sorting by reset credits and reset time.
+   - If all business accounts are depleted, gracefully falls back to personal accounts so work is not halted.
+   - **Preemptive Quota-Restore Switch**: While temporarily executing on a personal fallback account, the background daemon constantly monitors the business accounts. The instant any business account's quota regenerates (> 0%), the system immediately and preemptively switches back to the business account, freeing up the personal account!
 
 ---
 

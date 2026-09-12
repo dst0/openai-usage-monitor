@@ -44,12 +44,24 @@ Binary path: `~/.local/bin/cxi` (or `~/.local/bin/codex-mon`).
    ```
    Unpauses and queues a continuation message to the specified thread (or latest active/paused thread) and triggers native macOS Accessibility unpause.
 
+6. **Manage Auto-Switching Policies & Multipliers**:
+   ```bash
+   # Restrict auto-switching to corporate/business accounts:
+   cxi config --auto-switch-business-only true
+
+   # Prioritize business accounts with preemptive return on quota recovery:
+   cxi config --auto-switch-business-priority true
+
+   # Override plan multiplier (e.g. 20 for Pro 20x, 5 for Business Premium):
+   cxi set-multiplier <account> <multiplier>
+   ```
+
 ---
 
 ## 🚀 Quick Command Reference
 
 ```bash
-# 1. Show status of all accounts
+# 1. Show status of all accounts (displays PLAN (MULT) and 5H SPRINT (EQ))
 cxi status
 
 # 2. Switch to specific account (auto-resumes active & quota-paused threads)
@@ -78,4 +90,15 @@ cxi resume
 
 # 10. Resume specific thread by ID or URL
 cxi resume 01a07d3c-3008-75c2-87a6-2c5c75f0e48b
+
+# 11. Configure auto-switch modes and app restart
+cxi config --auto-switch-enabled true
+cxi config --auto-switch-business-only true
+cxi config --auto-switch-business-priority true
+cxi config --restart-app-on-switch true
+
+# 12. Set or reset custom quota multiplier
+cxi set-multiplier main 20
+cxi reset-multiplier main
 ```
+

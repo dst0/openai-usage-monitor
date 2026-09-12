@@ -41,3 +41,6 @@
 "switch_to_account" = "Zu diesem Konto wechseln";
 "refreshing" = "🔄 Aktualisieren...";
 "stack_percentages" = "Kompakter Prozent-Stapel (2 Zeilen)";
+"auto_switch_on_limit" = "🔄 Automatischer Wechsel bei Limit-Erschöpfung";
+"auto_switch_business_only" = "🏢 Automatischer Wechsel nur für Business-Konten";
+"auto_switch_business_priority" = "⚡ Automatischer Wechsel mit Business-Konto-Priorität";

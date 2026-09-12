@@ -515,7 +515,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             let attachment = NSTextAttachment()
             attachment.image = icon
             let iconSize = icon.size.width > 0 ? icon.size : NSSize(width: 22, height: 22)
-            let yOffset = iconSize.height >= 22.0 ? -6.0 : (iconSize.height >= 20.0 ? -5.5 : -5.0)
+            let yOffset = iconSize.height >= 22.0 ? -7.0 : (iconSize.height >= 20.0 ? -6.5 : -6.0)
             attachment.bounds = CGRect(x: 0, y: yOffset, width: iconSize.width, height: iconSize.height)
             attributed.append(NSAttributedString(attachment: attachment))
             attributed.append(NSAttributedString(string: "  "))
@@ -559,7 +559,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                     let sprintIcon = MenuBarAppearanceHelper.makeSprintIcon(size: 8.0, isScreenActive: isScreenActive)
                     let attach = NSTextAttachment()
                     attach.image = sprintIcon
-                    attach.bounds = CGRect(x: 0, y: -0.5, width: 8.0, height: 8.0)
+                    let sprintW = sprintIcon.size.height > 0 ? sprintIcon.size.width * (8.0 / sprintIcon.size.height) : 8.0
+                    attach.bounds = CGRect(x: 0, y: -0.5, width: sprintW, height: 8.0)
                     attributed.append(NSAttributedString(attachment: attach))
                     attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 2.5)]))
                 } else {
@@ -634,14 +635,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
         let bracketBaselineOffset = MenuBarAppearanceHelper.bracketBaselineOffset(isScreenActive: isScreenActive)
 
-        // 3D Hybrid Quota Indicators: [ 🛡️ ] 🛡️ 🛡️ (Active in brackets, reserves outside)
+        // 3D Hybrid Quota Indicators: [ 🛡️ ] │ 🛡️ │ 🛡️ (Active in brackets, reserves separated by stylized dividers)
+        attributed.append(NSAttributedString(string: " │ ", attributes: [
+            .font: sepFont,
+            .foregroundColor: sepColor,
+            .shadow: textShadow,
+            .baselineOffset: 0.0
+        ]))
+
         if accounts.isEmpty {
-            attributed.append(NSAttributedString(string: "  [", attributes: [
+            attributed.append(NSAttributedString(string: "[", attributes: [
                 .font: bracketFont,
                 .foregroundColor: bracketColor,
                 .shadow: bracketShadow,
                 .baselineOffset: bracketBaselineOffset
             ]))
+            attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 2.5)]))
             let singleBadge = MenuBarAppearanceHelper.makeHybridQuotaIndicator(
                 fiveHour: 100.0,
                 weekly: 100.0,
@@ -654,6 +663,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             attach.image = singleBadge
             attach.bounds = CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5)
             attributed.append(NSAttributedString(attachment: attach))
+            attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 2.5)]))
             attributed.append(NSAttributedString(string: "]", attributes: [
                 .font: bracketFont,
                 .foregroundColor: bracketColor,
@@ -664,13 +674,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             let activeAcc = accounts.first(where: { $0.isCurrentActive }) ?? accounts[0]
             let reserveAccs = accounts.filter { $0.id != activeAcc.id }
 
-            // Active account in brackets: [badge]
-            attributed.append(NSAttributedString(string: "  [", attributes: [
+            // Active account in brackets: [ badge ]
+            attributed.append(NSAttributedString(string: "[", attributes: [
                 .font: bracketFont,
                 .foregroundColor: bracketColor,
                 .shadow: bracketShadow,
                 .baselineOffset: bracketBaselineOffset
             ]))
+            attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 2.5)]))
 
             let f5h = activeAcc.fiveHourPercentage
             let w = activeAcc.weeklyPercentage ?? f5h
@@ -688,6 +699,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             activeAttach.image = activeBadge
             activeAttach.bounds = CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5)
             attributed.append(NSAttributedString(attachment: activeAttach))
+            attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 2.5)]))
             attributed.append(NSAttributedString(string: "]", attributes: [
                 .font: bracketFont,
                 .foregroundColor: bracketColor,
@@ -695,15 +707,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 .baselineOffset: bracketBaselineOffset
             ]))
 
-            if !reserveAccs.isEmpty {
-                attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 7.0)]))
-            }
+            // Reserve accounts outside brackets with stylized gray vertical dividers between account blocks
+            let dividerColor = isScreenActive ? NSColor(white: 0.52, alpha: 0.75) : NSColor(white: 0.45, alpha: 0.60)
+            for acc in reserveAccs {
+                attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 3.0)]))
+                attributed.append(NSAttributedString(string: "│", attributes: [
+                    .font: NSFont.systemFont(ofSize: 10.5, weight: .regular),
+                    .foregroundColor: dividerColor,
+                    .shadow: textShadow,
+                    .baselineOffset: 0.0
+                ]))
+                attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 3.0)]))
 
-            // Reserve accounts outside brackets
-            for (idx, acc) in reserveAccs.enumerated() {
-                if idx > 0 {
-                    attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 6.5)]))
-                }
                 let r5h = acc.fiveHourPercentage
                 let rW = acc.weeklyPercentage ?? r5h
                 let rCr = acc.credits
@@ -823,14 +838,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let titleSize = attributedTitle.size()
         let compositeWidth = max(1.0, ceil(titleSize.width))
         let compositeHeight: CGFloat = 22.0
-        // Use boundingRect to get actual glyph extents rather than size() which returns
-        // inflated line-height metrics (e.g. 27.4pt for a string containing 21pt bracket font).
-        // This ensures we center the *visible* content within the 22pt status bar.
-        let glyphBounds = attributedTitle.boundingRect(
-            with: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
-        )
-        let drawY = (compositeHeight - glyphBounds.height) / 2.0 - glyphBounds.origin.y
+        // When titleSize.height exceeds compositeHeight (due to font ascenders/descenders & attachments),
+        // drawing at y = 0 aligns the bottom baseline/attachment extent with y = 0.
+        // Never subtract (compositeHeight - titleSize.height) when negative, as that pushes the content into the floor!
+        let drawY = max(0.0, (compositeHeight - titleSize.height) / 2.0)
         let compositeImage = NSImage(size: NSSize(width: compositeWidth, height: compositeHeight), flipped: false) { rect in
             attributedTitle.draw(at: NSPoint(x: 0, y: drawY))
             return true

@@ -55,3 +55,6 @@
 "switch_to_account" = "Przełącz na to konto";
 "refreshing" = "🔄 Odświeżanie...";
 "stack_percentages" = "Kompaktowy stos procentów (2 wiersze)";
+"auto_switch_on_limit" = "🔄 Automatyczne przełączanie po wyczerpaniu limitu";
+"auto_switch_business_only" = "🏢 Automatyczne przełączanie tylko na konta biznesowe";
+"auto_switch_business_priority" = "⚡ Automatyczne przełączanie z priorytetem kont biznesowych";

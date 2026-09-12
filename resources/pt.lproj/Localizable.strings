@@ -41,3 +41,6 @@
 "switch_to_account" = "Alternar para esta conta";
 "refreshing" = "🔄 Atualizando...";
 "stack_percentages" = "Empilhar percentagens (2 linhas)";
+"auto_switch_on_limit" = "🔄 Alternância automática ao esgotar o limite";
+"auto_switch_business_only" = "🏢 Alternância automática apenas contas empresariais";
+"auto_switch_business_priority" = "⚡ Alternância automática com prioridade para contas de negócios";

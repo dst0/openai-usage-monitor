@@ -323,7 +323,7 @@ public struct MenuBarAppearanceHelper {
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
 
             let colorSpace = CGColorSpaceCreateDeviceRGB()
-            let cornerR: CGFloat = 2.0
+            let cornerR: CGFloat = 1.2
             // Inset by 0.4pt so the outer hairline stroke stays completely within bounds
             let badgeRect = CGRect(x: 0.4, y: 0.4, width: width - 0.8, height: height - 0.8)
             let contour = CGPath(roundedRect: badgeRect, cornerWidth: cornerR, cornerHeight: cornerR, transform: nil)
@@ -478,14 +478,25 @@ public struct MenuBarAppearanceHelper {
         let img = NSImage(size: NSSize(width: totalW, height: totalH), flipped: false) { rect in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
 
-            let fgColor = isScreenActive
-                ? NSColor(red: 1.0, green: 0.85, blue: 0.20, alpha: 1.0).cgColor
-                : NSColor(red: 0.90, green: 0.78, blue: 0.20, alpha: 1.0).cgColor
-            let shadowColor = NSColor(white: 0.0, alpha: isScreenActive ? 0.65 : 0.35).cgColor
+            // Saturated, juicy sunlit electric gold palette:
+            // Top highlight: luminous sunlit citrus
+            // Mid body: rich, juicy electric gold
+            // Bottom base: warm vibrant amber-gold
+            let topColor = isScreenActive
+                ? NSColor(red: 1.0, green: 1.0, blue: 0.40, alpha: 1.0)
+                : NSColor(red: 0.95, green: 0.94, blue: 0.45, alpha: 1.0)
+            let midColor = isScreenActive
+                ? NSColor(red: 1.0, green: 0.88, blue: 0.02, alpha: 1.0)
+                : NSColor(red: 0.92, green: 0.82, blue: 0.08, alpha: 1.0)
+            let bottomColor = isScreenActive
+                ? NSColor(red: 1.0, green: 0.74, blue: 0.0, alpha: 1.0)
+                : NSColor(red: 0.88, green: 0.68, blue: 0.0, alpha: 1.0)
 
-            let shadowOffset = CGSize(width: pixelSize * 0.75, height: -pixelSize * 0.75)
+            let shadowAlpha: CGFloat = isScreenActive ? 0.52 : 0.35
+            let shadowColor = NSColor(white: 0.0, alpha: shadowAlpha).cgColor
+            let shadowOffset = CGSize(width: pixelSize * 0.60, height: -pixelSize * 0.60)
 
-            // Pass 1: Draw dark 1px shadow (classic Win 3.1 / Win 95 drop shadow)
+            // Pass 1: Crisp drop shadow for razor-sharp legibility on light wallpapers
             ctx.setFillColor(shadowColor)
             for r in 0..<rows {
                 let y = CGFloat(r) * pixelSize + shadowOffset.height + 0.5
@@ -497,17 +508,27 @@ public struct MenuBarAppearanceHelper {
                 }
             }
 
-            // Pass 2: Draw crisp retro pixel glyphs in gold/amber
-            ctx.setFillColor(fgColor)
+            // Pass 2: Juicy gradient clipped strictly to pixel glyph contours
+            ctx.saveGState()
             for r in 0..<rows {
                 let y = CGFloat(r) * pixelSize + 0.5
                 for c in 0..<cols {
                     if bitmapRows[r][c] == 1 {
                         let x = CGFloat(c) * pixelSize
-                        ctx.fill(CGRect(x: x, y: y, width: pixelSize, height: pixelSize))
+                        ctx.addRect(CGRect(x: x, y: y, width: pixelSize, height: pixelSize))
                     }
                 }
             }
+            ctx.clip()
+
+            let colors = [topColor.cgColor, midColor.cgColor, bottomColor.cgColor] as CFArray
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            if let grad = CGGradient(colorsSpace: colorSpace, colors: colors, locations: [0.0, 0.52, 1.0]) {
+                let start = CGPoint(x: 0, y: CGFloat(rows) * pixelSize + 0.5)
+                let end = CGPoint(x: 0, y: 0.5)
+                ctx.drawLinearGradient(grad, start: start, end: end, options: [])
+            }
+            ctx.restoreGState()
 
             return true
         }
@@ -557,18 +578,18 @@ public struct MenuBarAppearanceHelper {
 
             // Colors
             let bodyColor = isScreenActive
-                ? NSColor(white: 0.92, alpha: 1.0).cgColor
-                : NSColor(white: 0.82, alpha: 1.0).cgColor
+                ? NSColor(white: 0.95, alpha: 1.0).cgColor
+                : NSColor(white: 0.85, alpha: 1.0).cgColor
             let headerColor = isScreenActive
-                ? NSColor(red: 0.25, green: 0.65, blue: 1.0, alpha: 1.0).cgColor
-                : NSColor(red: 0.22, green: 0.55, blue: 0.85, alpha: 1.0).cgColor
+                ? NSColor(red: 0.20, green: 0.70, blue: 1.0, alpha: 1.0).cgColor
+                : NSColor(red: 0.18, green: 0.60, blue: 0.90, alpha: 1.0).cgColor
             let pegColor = isScreenActive
                 ? NSColor(white: 0.35, alpha: 1.0).cgColor
                 : NSColor(white: 0.30, alpha: 1.0).cgColor
             let dotColor = isScreenActive
-                ? NSColor(white: 0.30, alpha: 1.0).cgColor
-                : NSColor(white: 0.25, alpha: 1.0).cgColor
-            let shadowColor = NSColor(white: 0.0, alpha: isScreenActive ? 0.65 : 0.35).cgColor
+                ? NSColor(white: 0.28, alpha: 1.0).cgColor
+                : NSColor(white: 0.24, alpha: 1.0).cgColor
+            let shadowColor = NSColor(white: 0.0, alpha: isScreenActive ? 0.75 : 0.45).cgColor
 
             let shadowOffset = CGSize(width: pixelSize * 0.75, height: -pixelSize * 0.75)
 
@@ -687,40 +708,50 @@ public struct MenuBarAppearanceHelper {
 
             // Row 1: 5-Hour sprint (Top tier: y in [rowHeight, totalHeight])
             let row1Y = rowHeight
+            let row1CenterY = row1Y + (rowHeight / 2.0)
+            let f5hBaseline = row1CenterY - (font.capHeight / 2.0)
+            let f5hTextY = f5hBaseline - abs(font.descender)
+
             if useQuotaIcons {
                 let sprintIcon = sprintIconSample ?? makeSprintIcon(size: 8.0, isScreenActive: isScreenActive)
                 let sprintX = leftPad + (maxIconW - sprintIconW) / 2.0
+                let sprintIconY = row1CenterY - (sprintIconH / 2.0)
                 let iconRect = CGRect(
                     x: sprintX,
-                    y: row1Y + (rowHeight - sprintIconH) / 2.0,
+                    y: sprintIconY,
                     width: sprintIconW,
                     height: sprintIconH
                 )
                 sprintIcon.draw(in: iconRect)
             } else {
-                let labelY = row1Y + (rowHeight - f5hLabelSize.height) / 2.0 - 0.5
-                f5hLabelStr.draw(at: NSPoint(x: 0, y: labelY))
+                let f5hLabelBaseline = row1CenterY - (labelF.capHeight / 2.0)
+                let f5hLabelY = f5hLabelBaseline - abs(labelF.descender)
+                f5hLabelStr.draw(at: NSPoint(x: 0, y: f5hLabelY))
             }
-            let f5hTextY = row1Y + (rowHeight - f5hTextSize.height) / 2.0 - 0.5
             f5hStr.draw(at: NSPoint(x: prefixWidth, y: f5hTextY))
 
             // Row 2: Weekly quota (Bottom tier: y in [0.0, rowHeight])
             let row2Y: CGFloat = 0.0
+            let row2CenterY = row2Y + (rowHeight / 2.0)
+            let wBaseline = row2CenterY - (font.capHeight / 2.0)
+            let wTextY = wBaseline - abs(font.descender)
+
             if useQuotaIcons {
                 let weeklyIcon = weeklyIconSample ?? makeWeeklyIcon(size: 10.0, isScreenActive: isScreenActive)
                 let weeklyX = leftPad + (maxIconW - weeklyIconW) / 2.0
+                let weeklyIconY = row2CenterY - (weeklyIconH / 2.0)
                 let iconRect = CGRect(
                     x: weeklyX,
-                    y: row2Y + (rowHeight - weeklyIconH) / 2.0,
+                    y: weeklyIconY,
                     width: weeklyIconW,
                     height: weeklyIconH
                 )
                 weeklyIcon.draw(in: iconRect)
             } else {
-                let labelY = row2Y + (rowHeight - wLabelSize.height) / 2.0 - 0.5
-                wLabelStr.draw(at: NSPoint(x: 0, y: labelY))
+                let wLabelBaseline = row2CenterY - (labelF.capHeight / 2.0)
+                let wLabelY = wLabelBaseline - abs(labelF.descender)
+                wLabelStr.draw(at: NSPoint(x: 0, y: wLabelY))
             }
-            let wTextY = row2Y + (rowHeight - wTextSize.height) / 2.0 - 0.5
             wStr.draw(at: NSPoint(x: prefixWidth, y: wTextY))
 
             return true
@@ -767,7 +798,7 @@ public struct MenuBarAppearanceHelper {
         )
         let attachment = NSTextAttachment()
         attachment.image = image
-        attachment.bounds = CGRect(x: 0, y: -5.0, width: size.width, height: size.height)
+        attachment.bounds = CGRect(x: 0, y: -6.5, width: size.width, height: size.height)
         return attachment
     }
 

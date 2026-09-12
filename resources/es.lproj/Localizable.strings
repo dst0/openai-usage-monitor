@@ -55,3 +55,6 @@
 "switch_to_account" = "Cambiar a esta cuenta";
 "refreshing" = "🔄 Actualizando...";
 "stack_percentages" = "Apilar porcentajes (2 filas)";
+"auto_switch_on_limit" = "🔄 Cambio automático al agotar el límite";
+"auto_switch_business_only" = "🏢 Cambio automático solo en cuentas de empresa";
+"auto_switch_business_priority" = "⚡ Cambio automático con prioridad de cuentas de empresa";

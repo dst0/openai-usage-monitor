@@ -41,3 +41,6 @@
 "switch_to_account" = "Basculer vers ce compte";
 "refreshing" = "🔄 Actualisation...";
 "stack_percentages" = "Empiler les pourcentages (2 lignes)";
+"auto_switch_on_limit" = "🔄 Basculement automatique en cas d'épuisement";
+"auto_switch_business_only" = "🏢 Basculement automatique uniquement sur comptes Business";
+"auto_switch_business_priority" = "⚡ Basculement automatique prioritaire sur comptes Business";
