@@ -1,0 +1,67 @@
+name: CI & Quality Guard
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-rust:
+    name: 🦀 Rust Core Tests (cxi / codex-mon)
+    runs-on: macos-14
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            codex-switcher/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('codex-switcher/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Run Rust Unit Tests
+        run: |
+          cd codex-switcher
+          cargo test --verbose
+
+  test-swift:
+    name: 🍏 Swift Menu Bar App Tests
+    runs-on: macos-14
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Swift Test Suites
+        run: |
+          chmod +x ./scripts/test_swift.sh
+          ./scripts/test_swift.sh
+
+  security-scan:
+    name: 🔒 Security & Privacy Scan
+    runs-on: macos-14
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Check for Leaked Tokens or Secrets
+        run: |
+          echo "Scanning codebase for potential secrets..."
+          if grep -rnE "sk-[a-zA-Z0-9]{20,}" . --exclude-dir=".git" ; then
+            echo "❌ Error: Potential OpenAI API key pattern found!"
+            exit 1
+          fi
+          echo "✅ Security scan clean."

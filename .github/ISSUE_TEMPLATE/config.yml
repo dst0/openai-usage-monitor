@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Documentation & Architecture
+    url: https://github.com/dst0/openai-usage-monitor#readme
+    about: Please consult the documentation and CLI reference before creating an issue.
+  - name: 🔒 Security Advisory
+    url: https://github.com/dst0/openai-usage-monitor/security/advisories/new
+    about: Report security vulnerabilities or sensitive token concerns privately.

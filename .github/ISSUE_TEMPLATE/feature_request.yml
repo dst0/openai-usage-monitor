@@ -1,0 +1,42 @@
+name: 💡 Feature Request
+description: Suggest an enhancement or new feature for Codex Monitor.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature proposals are welcome! Please describe the use case and how this helps multi-account Codex workflows.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Use Case
+      description: Is your feature request related to a specific problem or limitation?
+      placeholder: "I frequently need to ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed Solution
+      description: Describe what you want to happen or how you envision the UI/CLI behaving.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative solutions or workarounds you've evaluated.
+
+  - type: checkboxes
+    id: conditions
+    attributes:
+      label: Submission Checklist
+      options:
+        - label: I searched open and closed Feature Requests to ensure this is not a duplicate.
+          required: true
+        - label: I understand that Codex Monitor is strictly designed to remain under 5 MB RAM overhead with zero telemetry.
+          required: true

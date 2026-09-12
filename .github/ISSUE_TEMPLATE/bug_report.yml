@@ -1,0 +1,84 @@
+name: 🐛 Bug Report
+description: Report a reproducible bug or unexpected behavior in Codex Monitor or CLI.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue! Please ensure that you do **NOT** include private credentials, session tokens, or API keys in your submission.
+
+  - type: dropdown
+    id: os_version
+    attributes:
+      label: macOS Version
+      description: What version of macOS are you running? (Codex Monitor requires macOS 13.0+)
+      options:
+        - macOS 15 (Sequoia)
+        - macOS 14 (Sonoma)
+        - macOS 13 (Ventura)
+        - Other / Unsupported
+    validations:
+      required: true
+
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: System Architecture
+      options:
+        - Apple Silicon (M1 / M2 / M3 / M4)
+        - Intel (x86_64)
+    validations:
+      required: true
+
+  - type: input
+    id: cli_version
+    attributes:
+      label: CLI Version
+      description: Run `cxi --version` in terminal and paste the output.
+      placeholder: "codex-mon 0.1.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the Bug
+      description: A clear, concise description of what the bug is.
+      placeholder: "When switching accounts via 'cxi switch', ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Step-by-step instructions to reproduce the issue.
+      placeholder: |
+        1. Run 'cxi status'
+        2. Execute '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs & Error Output
+      description: Paste relevant output from terminal or `~/.codex/account-switcher-daemon.err` (sanitize any private info!).
+      render: shell
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: conditions
+    attributes:
+      label: Mandatory Validation Checklist
+      description: Please verify each requirement before submitting:
+      options:
+        - label: I have searched existing Issues and confirmed this has not already been reported.
+          required: true
+        - label: I have tested or reproduced this with the latest release / commit.
+          required: true
+        - label: I have verified that NO private tokens, passwords, or personal API keys are included in the logs above.
+          required: true
