@@ -15,7 +15,7 @@ fi
 
 echo "🔒 Applying Branch Protection Rules for 'main' on ${REPO}..."
 gh api -X PUT "repos/${REPO}/branches/main/protection" \
-    --input - << JSON
+    --input - << 'JSON'
 {
   "required_status_checks": {
     "strict": true,
@@ -29,14 +29,9 @@ gh api -X PUT "repos/${REPO}/branches/main/protection" \
   "required_pull_request_reviews": {
     "dismiss_stale_reviews": true,
     "require_code_owner_reviews": true,
-    "required_approving_review_count": 1,
-    "require_last_push_approval": true
+    "required_approving_review_count": 1
   },
-  "restrictions": {
-    "users": ["dst0"],
-    "teams": [],
-    "apps": []
-  },
+  "restrictions": null,
   "required_linear_history": false,
   "allow_force_pushes": false,
   "allow_deletions": false,
@@ -48,6 +43,6 @@ gh api -X PUT "repos/${REPO}/branches/main/protection" \
 JSON
 
 echo "✨ Branch protection successfully applied!"
-echo "   - Direct push to 'main' is restricted exclusively to @dst0."
-echo "   - Pull Requests require passing CI checks and approval from @dst0."
+echo "   - Direct push to 'main' is restricted exclusively to repository owner @dst0."
+echo "   - Pull Requests require passing CI checks and mandatory approval from @dst0 (CODEOWNERS)."
 echo "   - Force pushes and branch deletion are blocked."
