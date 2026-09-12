@@ -1,0 +1,13 @@
+target/
+build/
+.build/
+.swiftpm/
+*.app
+*.dmg
+.DS_Store
+*.lock
+.env
+.env.*
+*.swp
+*~
+
