@@ -452,9 +452,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let currentIcon = isScreenActive ? (menuBarIconActive ?? menuBarIcon) : (menuBarIconInactive ?? menuBarIcon)
         let stackPercentages = UserDefaults.standard.object(forKey: "stackPercentages") as? Bool ?? true
 
-        // NEVER set button.image = currentIcon because button.attributedTitle with NSTextAttachment is 100% reliable!
-        button.image = nil
-        button.attributedTitle = AppDelegate.buildStatusBarAttributedString(
+        let attributedTitle = AppDelegate.buildStatusBarAttributedString(
             icon: currentIcon,
             appSession: appSession,
             cliSession: cliSession,
@@ -463,6 +461,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             useQuotaIcons: true,
             stackPercentages: stackPercentages
         )
+        let titleSize = attributedTitle.size()
+        let compositeWidth = max(1.0, ceil(titleSize.width))
+        let compositeHeight: CGFloat = 22.0
+        let compositeImage = NSImage(size: NSSize(width: compositeWidth, height: compositeHeight), flipped: false) { rect in
+            attributedTitle.draw(at: NSPoint(x: 0, y: (compositeHeight - titleSize.height) / 2.0))
+            return true
+        }
+        compositeImage.isTemplate = false
+        button.image = compositeImage
+        button.imagePosition = .imageOnly
+        button.attributedTitle = NSAttributedString()
 
         // Detailed Tooltip
         var tipParts: [String] = []
@@ -820,8 +829,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         guard let button = statusItem?.button else { return }
         let currentIcon = isScreenActive ? (menuBarIconActive ?? menuBarIcon) : (menuBarIconInactive ?? menuBarIcon)
         let stackPref = UserDefaults.standard.object(forKey: "stackPercentages") as? Bool ?? true
-        button.image = nil
-        button.attributedTitle = AppDelegate.buildStatusBarAttributedString(
+        let attributedTitle = AppDelegate.buildStatusBarAttributedString(
             icon: currentIcon,
             appSession: nil,
             cliSession: (fiveHPct: fiveHPct, fiveHColor: fiveHColor, weeklyPct: weeklyPct, weeklyColor: weeklyColor),
@@ -830,6 +838,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             useQuotaIcons: true,
             stackPercentages: stackPref
         )
+        let titleSize = attributedTitle.size()
+        let compositeWidth = max(1.0, ceil(titleSize.width))
+        let compositeHeight: CGFloat = 22.0
+        let compositeImage = NSImage(size: NSSize(width: compositeWidth, height: compositeHeight), flipped: false) { rect in
+            attributedTitle.draw(at: NSPoint(x: 0, y: (compositeHeight - titleSize.height) / 2.0))
+            return true
+        }
+        compositeImage.isTemplate = false
+        button.image = compositeImage
+        button.imagePosition = .imageOnly
+        button.attributedTitle = NSAttributedString()
     }
 
     // MARK: - Menu Construction
