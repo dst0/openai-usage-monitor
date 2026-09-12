@@ -203,8 +203,10 @@ pub fn switch_to_account(account_id: &str, restart_app: bool, notify: bool) -> R
         if let Some(ref tid) = primary_thread {
             open_thread_in_codex(tid);
             sleep(Duration::from_millis(500));
-            // Final check on primary thread UI
-            poll_and_trigger_ui_resume(6, Duration::from_millis(400));
+            if running_threads.iter().any(|r| r == tid) {
+                // Final check on primary thread UI only if it was actually in running_threads
+                poll_and_trigger_ui_resume(6, Duration::from_millis(400));
+            }
         }
     }
 
@@ -410,12 +412,203 @@ pub fn is_user_thread(codex_home: &std::path::Path, thread_id: &str) -> bool {
     true
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreadRolloutState {
+    /// Turn completed cleanly with task_complete and no error. Never resume.
+    CleanCompleted,
+    /// Turn ended with an error indicating usage/rate limits or credit exhaustion.
+    InterruptedByQuota,
+    /// Turn was aborted/interrupted by user or cancelled.
+    TurnAborted,
+    /// Turn was actively executing mid-flight (user message, tool call, reasoning in flight).
+    ActiveInProgress,
+    /// No significant events or unparseable.
+    Unknown,
+}
+
+/// Locates the JSONL rollout file for a thread, querying SQLite first and scanning sessions as fallback.
+pub fn find_thread_rollout_path(codex_home: &std::path::Path, thread_id: &str) -> Option<std::path::PathBuf> {
+    let state_sqlite = codex_home.join("state_5.sqlite");
+    if state_sqlite.exists() {
+        let query = format!("SELECT rollout_path FROM threads WHERE id = '{}' LIMIT 1;", thread_id);
+        if let Ok(output) = Command::new("/usr/bin/sqlite3")
+            .arg(state_sqlite.to_str().unwrap_or(""))
+            .arg(&query)
+            .output()
+        {
+            if output.status.success() {
+                let p_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !p_str.is_empty() && std::path::Path::new(&p_str).exists() {
+                    return Some(std::path::PathBuf::from(p_str));
+                }
+            }
+        }
+    }
+
+    let sessions_dir = codex_home.join("sessions");
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+
+    fn scan_sessions(dir: &std::path::Path, thread_id: &str, matches: &mut Vec<std::path::PathBuf>) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    scan_sessions(&p, thread_id, matches);
+                } else if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                    if name.contains(thread_id) && name.ends_with(".jsonl") {
+                        matches.push(p);
+                    }
+                }
+            }
+        }
+    }
+
+    scan_sessions(&sessions_dir, thread_id, &mut candidates);
+    candidates.sort_by(|a, b| {
+        let m_a = a.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let m_b = b.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        m_b.cmp(&m_a)
+    });
+
+    candidates.into_iter().next()
+}
+
+/// Reads lines from the tail of a rollout file without reading the whole file into memory.
+pub fn read_rollout_tail_lines(path: &std::path::Path, max_bytes: u64) -> Vec<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return Vec::new(),
+    };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let seek_pos = if len > max_bytes { len - max_bytes } else { 0 };
+    if file.seek(SeekFrom::Start(seek_pos)).is_err() {
+        return Vec::new();
+    }
+    let mut buf = Vec::new();
+    if file.read_to_end(&mut buf).is_err() {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(&buf);
+    text.lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// Inspects lines from the end of a rollout to determine the state of the latest turn.
+pub fn inspect_thread_rollout_state_from_lines(lines: &[String]) -> ThreadRolloutState {
+    for line in lines.iter().rev() {
+        let val = match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(v) => v,
+            Err(_) => continue, // Skip potentially truncated initial line of seek window
+        };
+
+        let payload = val.get("payload");
+        let payload_type = payload.and_then(|p| p.get("type")).and_then(|t| t.as_str());
+        let val_type = val.get("type").and_then(|t| t.as_str());
+
+        // Skip post-turn completion metadata and telemetry events
+        if matches!(
+            payload_type,
+            Some("item_completed") | Some("thread_settings_applied") | Some("token_count")
+        ) || matches!(
+            val_type,
+            Some("token_usage_record") | Some("inter_agent_communication_metadata")
+        ) {
+            continue;
+        }
+
+        if payload_type == Some("task_complete") {
+            if let Some(err) = payload.and_then(|p| p.get("error")) {
+                if !err.is_null() {
+                    let err_str = err.to_string().to_lowercase();
+                    if err_str.contains("usage_limit_exceeded")
+                        || err_str.contains("workspace_owner_credits_depleted")
+                        || err_str.contains("out of credits")
+                        || err_str.contains("credits")
+                        || err_str.contains("limit")
+                        || err_str.contains("quota")
+                    {
+                        return ThreadRolloutState::InterruptedByQuota;
+                    }
+                    // Non-quota error, but turn completed
+                    return ThreadRolloutState::CleanCompleted;
+                }
+            }
+            return ThreadRolloutState::CleanCompleted;
+        }
+
+        if payload_type == Some("turn_aborted") {
+            return ThreadRolloutState::TurnAborted;
+        }
+
+        if matches!(
+            payload_type,
+            Some("user_message")
+                | Some("agent_message")
+                | Some("message")
+                | Some("reasoning")
+                | Some("custom_tool_call")
+                | Some("custom_tool_call_output")
+                | Some("function_call")
+                | Some("function_call_output")
+                | Some("web_search")
+                | Some("file_change")
+        ) {
+            return ThreadRolloutState::ActiveInProgress;
+        }
+    }
+
+    ThreadRolloutState::Unknown
+}
+
+/// Inspects the rollout log of a thread to determine its current state.
+pub fn inspect_thread_rollout_state(codex_home: &std::path::Path, thread_id: &str) -> ThreadRolloutState {
+    if let Some(path) = find_thread_rollout_path(codex_home, thread_id) {
+        let lines = read_rollout_tail_lines(&path, 131072);
+        return inspect_thread_rollout_state_from_lines(&lines);
+    }
+    ThreadRolloutState::Unknown
+}
+
+/// Returns the unix timestamp of the thread's updated_at field from state_5.sqlite.
+pub fn get_thread_updated_at(codex_home: &std::path::Path, thread_id: &str) -> Option<i64> {
+    let state_sqlite = codex_home.join("state_5.sqlite");
+    if !state_sqlite.exists() {
+        return None;
+    }
+    let query = format!("SELECT updated_at FROM threads WHERE id = '{}' LIMIT 1;", thread_id);
+    let output = Command::new("/usr/bin/sqlite3")
+        .arg(state_sqlite.to_str().unwrap_or(""))
+        .arg(&query)
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        s.parse::<i64>().ok()
+    } else {
+        None
+    }
+}
+
+/// Checks if a thread's rollout log indicates an active turn or an incomplete turn needing resumption.
+#[allow(dead_code)]
+pub fn is_thread_rollout_in_progress(codex_home: &std::path::Path, thread_id: &str) -> bool {
+    matches!(
+        inspect_thread_rollout_state(codex_home, thread_id),
+        ThreadRolloutState::ActiveInProgress | ThreadRolloutState::InterruptedByQuota
+    )
+}
+
 /// Detects active threads in progress by inspecting lock files in ~/.codex/thread-writer-locks/
 /// and recent threads in state_5.sqlite, verifying their latest rollout events.
 pub fn detect_in_progress_threads() -> Vec<String> {
     let codex_home = crate::storage::codex_home();
     let locks_dir = codex_home.join("thread-writer-locks");
     let mut in_progress = Vec::new();
+    let now = chrono::Utc::now().timestamp();
+    const RECENT_QUOTA_WINDOW_SECS: i64 = 4 * 3600; // 4 hours
 
     // 1. Check lock files held by running processes (codex app-server)
     if let Ok(entries) = std::fs::read_dir(&locks_dir) {
@@ -447,132 +640,42 @@ pub fn detect_in_progress_threads() -> Vec<String> {
             }
 
             // The lock is held by a running process (codex app-server).
-            // Check if rollout event history indicates an active or interrupted turn.
-            if is_thread_rollout_in_progress(&codex_home, thread_id) {
-                in_progress.push(thread_id.to_string());
+            // Check rollout state: ONLY resume if mid-turn active or recently quota-exhausted.
+            // Never resume cleanly completed or user-aborted threads!
+            match inspect_thread_rollout_state(&codex_home, thread_id) {
+                ThreadRolloutState::ActiveInProgress => {
+                    in_progress.push(thread_id.to_string());
+                }
+                ThreadRolloutState::InterruptedByQuota => {
+                    let is_recent = get_thread_updated_at(&codex_home, thread_id)
+                        .map(|updated| (now - updated).abs() <= RECENT_QUOTA_WINDOW_SECS)
+                        .unwrap_or(true);
+                    if is_recent {
+                        in_progress.push(thread_id.to_string());
+                    }
+                }
+                _ => {}
             }
         }
     }
 
-    // 2. Also check top 5 recent threads from state_5.sqlite for quota/credit exhaustion aborts
-    let recent_threads = get_most_recent_threads(&codex_home, 5);
+    // 2. Also check top 30 recent threads from state_5.sqlite if they failed
+    // due to quota/credit exhaustion within the quota window.
+    let recent_threads = get_most_recent_threads(&codex_home, 30);
     for tid in recent_threads {
         if !in_progress.iter().any(|existing| existing == &tid) {
-            if is_thread_rollout_in_progress(&codex_home, &tid) {
-                in_progress.push(tid);
+            let is_recent = get_thread_updated_at(&codex_home, &tid)
+                .map(|updated| (now - updated).abs() <= RECENT_QUOTA_WINDOW_SECS)
+                .unwrap_or(false);
+            if is_recent {
+                if inspect_thread_rollout_state(&codex_home, &tid) == ThreadRolloutState::InterruptedByQuota {
+                    in_progress.push(tid);
+                }
             }
         }
     }
 
     in_progress
-}
-
-/// Checks if a thread's rollout log indicates an active turn or an incomplete turn needing resumption.
-pub fn is_thread_rollout_in_progress(codex_home: &std::path::Path, thread_id: &str) -> bool {
-    // 1. Try querying sqlite3 ~/.codex/state_5.sqlite for rollout_path
-    let state_sqlite = codex_home.join("state_5.sqlite");
-    let mut rollout_path = None;
-
-    if state_sqlite.exists() {
-        let query = format!("SELECT rollout_path FROM threads WHERE id = '{}' LIMIT 1;", thread_id);
-        if let Ok(output) = Command::new("/usr/bin/sqlite3")
-            .arg(state_sqlite.to_str().unwrap_or(""))
-            .arg(&query)
-            .output()
-        {
-            if output.status.success() {
-                let p_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !p_str.is_empty() && std::path::Path::new(&p_str).exists() {
-                    rollout_path = Some(std::path::PathBuf::from(p_str));
-                }
-            }
-        }
-    }
-
-    // 2. Fallback: scan ~/.codex/sessions for files matching thread_id
-    if rollout_path.is_none() {
-        let sessions_dir = codex_home.join("sessions");
-        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-
-        fn scan_sessions(dir: &std::path::Path, thread_id: &str, matches: &mut Vec<std::path::PathBuf>) {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.is_dir() {
-                        scan_sessions(&p, thread_id, matches);
-                    } else if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-                        if name.contains(thread_id) && name.ends_with(".jsonl") {
-                            matches.push(p);
-                        }
-                    }
-                }
-            }
-        }
-
-        scan_sessions(&sessions_dir, thread_id, &mut candidates);
-        candidates.sort_by(|a, b| {
-            let m_a = a.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            let m_b = b.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            m_b.cmp(&m_a)
-        });
-
-        if let Some(first) = candidates.into_iter().next() {
-            rollout_path = Some(first);
-        }
-    }
-
-    // 3. Inspect the last few lines of the rollout file
-    if let Some(path) = rollout_path {
-        if let Ok(file) = std::fs::File::open(&path) {
-            use std::io::{BufRead, BufReader};
-            let reader = BufReader::new(file);
-            let mut last_lines: Vec<String> = Vec::new();
-            for line in reader.lines().flatten() {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    if last_lines.len() >= 6 {
-                        last_lines.remove(0);
-                    }
-                    last_lines.push(trimmed.to_string());
-                }
-            }
-
-            if let Some(last_line) = last_lines.last() {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(last_line) {
-                    let payload = val.get("payload");
-                    let payload_type = payload
-                        .and_then(|p| p.get("type"))
-                        .and_then(|t| t.as_str());
-
-                    if payload_type == Some("task_complete") {
-                        // Check if the task failed with an error (e.g. usage/rate limit, workspace out of credits)
-                        if let Some(error) = payload.and_then(|p| p.get("error")) {
-                            if !error.is_null() {
-                                return true;
-                            }
-                        }
-                        // Also check if recent tail events indicated credit or rate limit exhaustion
-                        for prev in &last_lines {
-                            if prev.contains("workspace_owner_credits_depleted")
-                                || prev.contains("usage_limit_exceeded")
-                                || prev.contains("out of credits")
-                                || prev.contains("rate_limit_reached_type")
-                            {
-                                return true;
-                            }
-                        }
-                        // Clean completion with no error
-                        return false;
-                    }
-
-                    // Any other payload type at the end of the rollout indicates an interrupted/in-progress turn
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
 }
 
 /// Resumes threads by queueing a message (e.g. "continue") via codex queue CLI.
@@ -866,5 +969,60 @@ mod tests {
             clean_thread_id("  codex://threads/01a07d3c-3008-75c2-87a6-2c5c75f0e48b  "),
             "01a07d3c-3008-75c2-87a6-2c5c75f0e48b"
         );
+    }
+
+    #[test]
+    fn test_rollout_clean_completed_with_trailing_events_and_null_rate_limits() {
+        let lines = vec![
+            r#"{"type":"event_msg","payload":{"type":"user_message","message":"Audit project"}}"#.to_string(),
+            r#"{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":5.0},"rate_limit_reached_type":null}}}"#.to_string(),
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","last_agent_message":"Work is finished!","error":null}}"#.to_string(),
+            r#"{"type":"event_msg","payload":{"type":"item_completed","thread_id":"th-1"}}"#.to_string(),
+            r#"{"type":"token_usage_record","payload":{"tokens":123}}"#.to_string(),
+        ];
+
+        let state = inspect_thread_rollout_state_from_lines(&lines);
+        assert_eq!(state, ThreadRolloutState::CleanCompleted);
+    }
+
+    #[test]
+    fn test_rollout_interrupted_by_quota_exhaustion() {
+        let lines = vec![
+            r#"{"type":"event_msg","payload":{"type":"user_message","message":"Run tests"}}"#.to_string(),
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-2","error":{"message":"You have hit your limit","codex_error_info":"usage_limit_exceeded"}}}"#.to_string(),
+            r#"{"type":"event_msg","payload":{"type":"item_completed","thread_id":"th-2"}}"#.to_string(),
+        ];
+
+        let state = inspect_thread_rollout_state_from_lines(&lines);
+        assert_eq!(state, ThreadRolloutState::InterruptedByQuota);
+    }
+
+    #[test]
+    fn test_rollout_turn_aborted_by_user() {
+        let lines = vec![
+            r#"{"type":"event_msg","payload":{"type":"user_message","message":"Investigate bug"}}"#.to_string(),
+            r#"{"type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}"#.to_string(),
+            r#"{"type":"event_msg","payload":{"type":"item_completed","thread_id":"th-3"}}"#.to_string(),
+        ];
+
+        let state = inspect_thread_rollout_state_from_lines(&lines);
+        assert_eq!(state, ThreadRolloutState::TurnAborted);
+    }
+
+    #[test]
+    fn test_rollout_active_mid_turn() {
+        let lines = vec![
+            r#"{"type":"event_msg","payload":{"type":"user_message","message":"Build feature"}}"#.to_string(),
+            r#"{"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"cargo build"}}"#.to_string(),
+        ];
+
+        let state = inspect_thread_rollout_state_from_lines(&lines);
+        assert_eq!(state, ThreadRolloutState::ActiveInProgress);
+    }
+
+    #[test]
+    fn test_detect_in_progress_live() {
+        let in_progress = detect_in_progress_threads();
+        println!("Live detected in-progress threads: {:?}", in_progress);
     }
 }

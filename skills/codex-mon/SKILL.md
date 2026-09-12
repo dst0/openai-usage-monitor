@@ -35,8 +35,14 @@ Binary path: `~/.local/bin/cxi` (or `~/.local/bin/codex-mon`).
    ```
    Atomically swaps `~/.codex/auth.json` with POSIX `0600` permissions and cross-process file locks (`fs2` flock).
 
-4. **Desktop App Sync**:
-   Both Codex CLI and `/Applications/ChatGPT.app` share `~/.codex/auth.json`. To sync the GUI app, restart it via the Menu Bar app or run `cxi switch` with app restart enabled.
+4. **Desktop App Sync & Automated Thread Recovery**:
+   Both Codex CLI and `/Applications/ChatGPT.app` share `~/.codex/auth.json`. When switching accounts via `cxi switch`, active worker threads and turns paused by rate limits within the last 4 hours (`RECENT_QUOTA_WINDOW_SECS = 14400s`) across the top 30 unarchived threads are automatically resumed and cycled in the UI.
+
+5. **Resume Interrupted or Rate-Limited Threads**:
+   ```bash
+   cxi resume [thread-id]
+   ```
+   Unpauses and queues a continuation message to the specified thread (or latest active/paused thread) and triggers native macOS Accessibility unpause.
 
 ---
 
@@ -46,7 +52,7 @@ Binary path: `~/.local/bin/cxi` (or `~/.local/bin/codex-mon`).
 # 1. Show status of all accounts
 cxi status
 
-# 2. Switch to specific account
+# 2. Switch to specific account (auto-resumes active & quota-paused threads)
 cxi switch acc-2
 
 # 3. Interactive setup wizard
@@ -66,4 +72,10 @@ cxi install-shim
 
 # 8. Start background monitoring daemon
 cxi daemon
+
+# 9. Resume most recent active or rate-limited thread
+cxi resume
+
+# 10. Resume specific thread by ID or URL
+cxi resume 01a07d3c-3008-75c2-87a6-2c5c75f0e48b
 ```

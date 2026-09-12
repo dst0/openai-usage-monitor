@@ -244,7 +244,26 @@ pub fn run_daemon_tick_with_state(
     }
 
     // Save updated quota caches back to accounts.json
-    let _ = save_accounts(&accounts_file);
+    // Reload fresh accounts from disk under lock to preserve any settings or accounts modified during network fetch!
+    let mut fresh = load_accounts().unwrap_or_default();
+    for updated in &accounts_file.accounts {
+        if let Some(acc) = fresh.accounts.iter_mut().find(|a| a.id == updated.id) {
+            acc.last_primary_percentage = updated.last_primary_percentage;
+            acc.last_reset_time = updated.last_reset_time.clone();
+            acc.last_reset_after_seconds = updated.last_reset_after_seconds;
+            acc.last_weekly_percentage = updated.last_weekly_percentage;
+            acc.last_credits = updated.last_credits;
+            acc.last_error = updated.last_error.clone();
+            acc.last_checked = updated.last_checked.clone();
+            acc.tokens = updated.tokens.clone();
+            if updated.multiplier_is_manual != Some(true) {
+                acc.plan_multiplier = updated.plan_multiplier;
+                acc.last_multiplier_checked = updated.last_multiplier_checked.clone();
+            }
+        }
+    }
+    let _ = save_accounts(&fresh);
+    accounts_file.settings = fresh.settings;
 
     // 3. Write usage-status.json for Swift Menu Bar app
     let active_acc = active_entry_idx.map(|i| &accounts_file.accounts[i]);
@@ -270,11 +289,19 @@ pub fn run_daemon_tick_with_state(
     if auto_switch && accounts_file.settings.auto_switch_enabled {
         if let Some(active) = active_acc {
             let threshold = accounts_file.settings.switch_threshold_percent;
-            if needs_switch(active, threshold) {
-                println!(
-                    "⚠️ Active account '{}' reached {:.1}% (threshold: {:.1}%). Searching for switch candidate...",
-                    active.id, active.last_primary_percentage, threshold
-                );
+            let biz_priority = accounts_file.settings.auto_switch_business_priority;
+            if needs_switch(active, threshold, biz_priority, &accounts_file.accounts) {
+                if biz_priority && !active.is_business() && active.last_primary_percentage > threshold {
+                    println!(
+                        "⚡ Active account '{}' is non-business ({:.1}%). Business quota is available. Preempting to business account...",
+                        active.id, active.last_primary_percentage
+                    );
+                } else {
+                    println!(
+                        "⚠️ Active account '{}' reached {:.1}% (threshold: {:.1}%). Searching for switch candidate...",
+                        active.id, active.last_primary_percentage, threshold
+                    );
+                }
 
                 if let Some(next_id) = select_best_switch(
                     Some(&active.id),

@@ -13,11 +13,19 @@ pub fn run_codex_with_auto_switch(args: &[String]) -> Result<(), String> {
         let active_id = accounts_file.active_account_id.as_deref();
         if let Some(active) = accounts_file.accounts.iter().find(|a| Some(a.id.as_str()) == active_id) {
             let threshold = accounts_file.settings.switch_threshold_percent;
-            if needs_switch(active, threshold) {
-                eprintln!(
-                    "[codex-mon] ⚠️ Active account '{}' quota is {:.0}%. Checking for available account...",
-                    active.id, active.last_primary_percentage
-                );
+            let biz_priority = accounts_file.settings.auto_switch_business_priority;
+            if needs_switch(active, threshold, biz_priority, &accounts_file.accounts) {
+                if biz_priority && !active.is_business() && active.last_primary_percentage > threshold {
+                    eprintln!(
+                        "[codex-mon] ⚡ Active account '{}' is non-business ({:.0}%). Preempting to business account...",
+                        active.id, active.last_primary_percentage
+                    );
+                } else {
+                    eprintln!(
+                        "[codex-mon] ⚠️ Active account '{}' quota is {:.0}%. Checking for available account...",
+                        active.id, active.last_primary_percentage
+                    );
+                }
                 if let Some(next_id) = select_best_switch(
                     active_id,
                     &accounts_file.accounts,

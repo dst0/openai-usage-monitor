@@ -1,7 +1,10 @@
 use crate::models::{AccountConfig, AccountsFile, AuthJson, AuthTokens};
 use crate::oauth::extract_jwt_metadata_from_tokens;
 use crate::quota::update_account_quota_cache;
-use crate::storage::{codex_home, load_accounts, read_active_auth_json, save_accounts, write_active_auth_json};
+use crate::storage::{
+    codex_home, load_accounts, read_active_auth_json, save_accounts, sync_settings_to_status_file,
+    write_active_auth_json,
+};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::process::Command;
@@ -805,6 +808,7 @@ pub fn set_config_auto_switch_enabled(enabled: bool) -> Result<(), String> {
     let mut file = load_accounts()?;
     file.settings.auto_switch_enabled = enabled;
     save_accounts(&file)?;
+    sync_settings_to_status_file(&file.settings);
     println!("✅ Setting updated: auto_switch_enabled = {}", enabled);
     Ok(())
 }
@@ -818,6 +822,7 @@ pub fn set_config_auto_switch_business_only(enabled: bool) -> Result<(), String>
         file.settings.auto_switch_enabled = true;
     }
     save_accounts(&file)?;
+    sync_settings_to_status_file(&file.settings);
     println!("✅ Setting updated: auto_switch_business_only = {}", enabled);
     Ok(())
 }
@@ -831,6 +836,7 @@ pub fn set_config_auto_switch_business_priority(enabled: bool) -> Result<(), Str
         file.settings.auto_switch_enabled = true;
     }
     save_accounts(&file)?;
+    sync_settings_to_status_file(&file.settings);
     println!("✅ Setting updated: auto_switch_business_priority = {}", enabled);
     Ok(())
 }

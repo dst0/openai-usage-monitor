@@ -401,7 +401,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let cliMult = snapshot.cliAccount?.planMultiplier ?? snapshot.planMultiplier
         let cli5h = snapshot.fiveHourPercentage
         let cliW = snapshot.weeklyPercentage ?? cli5h
-        let cli5hStr = String(format: "%.0f%%", cli5h)
+        let cliWeeklyExhausted = MenuBarAppearanceHelper.isWeeklyExhausted(snapshot.weeklyPercentage)
+        let cli5hStr = cliWeeklyExhausted ? "0%" : String(format: "%.0f%%", cli5h)
         let cliWStr = String(format: "%.0f%%", cliW)
         let cli5hColor = MenuBarAppearanceHelper.menuBarColor(
             forPercentage: cli5h,
@@ -428,7 +429,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             let appMult = app.planMultiplier
             let app5h = app.fiveHourPercentage
             let appW = app.weeklyPercentage ?? app5h
-            let app5hStr = String(format: "%.0f%%", app5h)
+            let appWeeklyExhausted = MenuBarAppearanceHelper.isWeeklyExhausted(app.weeklyPercentage)
+            let app5hStr = appWeeklyExhausted ? "0%" : String(format: "%.0f%%", app5h)
             let appWStr = String(format: "%.0f%%", appW)
             let app5hColor = MenuBarAppearanceHelper.menuBarColor(
                 forPercentage: app5h,
@@ -463,14 +465,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             useQuotaIcons: true,
             stackPercentages: stackPercentages
         )
-        let titleSize = attributedTitle.size()
-        let compositeWidth = max(1.0, ceil(titleSize.width))
-        let compositeHeight: CGFloat = 22.0
-        let compositeImage = NSImage(size: NSSize(width: compositeWidth, height: compositeHeight), flipped: false) { rect in
-            attributedTitle.draw(at: NSPoint(x: 0, y: (compositeHeight - titleSize.height) / 2.0))
-            return true
-        }
-        compositeImage.isTemplate = false
+        let compositeImage = AppDelegate.renderCompositeImage(from: attributedTitle)
         button.image = compositeImage
         button.imagePosition = .imageOnly
         button.attributedTitle = NSAttributedString()
@@ -637,13 +632,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             appendSession("CLI ", cliTagColor, cliSession.fiveHPct, cliSession.fiveHColor, cliSession.weeklyPct, cliSession.weeklyColor)
         }
 
+        let bracketBaselineOffset = MenuBarAppearanceHelper.bracketBaselineOffset(isScreenActive: isScreenActive)
+
         // 3D Hybrid Quota Indicators: [ 🛡️ ] 🛡️ 🛡️ (Active in brackets, reserves outside)
         if accounts.isEmpty {
             attributed.append(NSAttributedString(string: "  [", attributes: [
                 .font: bracketFont,
                 .foregroundColor: bracketColor,
                 .shadow: bracketShadow,
-                .baselineOffset: 0.0
+                .baselineOffset: bracketBaselineOffset
             ]))
             let singleBadge = MenuBarAppearanceHelper.makeHybridQuotaIndicator(
                 fiveHour: 100.0,
@@ -655,13 +652,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             )
             let attach = NSTextAttachment()
             attach.image = singleBadge
-            attach.bounds = CGRect(x: 0, y: -3.5, width: 13.0, height: 16.5)
+            attach.bounds = CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5)
             attributed.append(NSAttributedString(attachment: attach))
             attributed.append(NSAttributedString(string: "]", attributes: [
                 .font: bracketFont,
                 .foregroundColor: bracketColor,
                 .shadow: bracketShadow,
-                .baselineOffset: 0.0
+                .baselineOffset: bracketBaselineOffset
             ]))
         } else {
             let activeAcc = accounts.first(where: { $0.isCurrentActive }) ?? accounts[0]
@@ -672,7 +669,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 .font: bracketFont,
                 .foregroundColor: bracketColor,
                 .shadow: bracketShadow,
-                .baselineOffset: 0.0
+                .baselineOffset: bracketBaselineOffset
             ]))
 
             let f5h = activeAcc.fiveHourPercentage
@@ -689,23 +686,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             )
             let activeAttach = NSTextAttachment()
             activeAttach.image = activeBadge
-            activeAttach.bounds = CGRect(x: 0, y: -3.5, width: 13.0, height: 16.5)
+            activeAttach.bounds = CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5)
             attributed.append(NSAttributedString(attachment: activeAttach))
             attributed.append(NSAttributedString(string: "]", attributes: [
                 .font: bracketFont,
                 .foregroundColor: bracketColor,
                 .shadow: bracketShadow,
-                .baselineOffset: 0.0
+                .baselineOffset: bracketBaselineOffset
             ]))
 
             if !reserveAccs.isEmpty {
-                attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 2.0)]))
+                attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 7.0)]))
             }
 
             // Reserve accounts outside brackets
             for (idx, acc) in reserveAccs.enumerated() {
                 if idx > 0 {
-                    attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 1.5)]))
+                    attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 6.5)]))
                 }
                 let r5h = acc.fiveHourPercentage
                 let rW = acc.weeklyPercentage ?? r5h
@@ -721,7 +718,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 )
                 let attach = NSTextAttachment()
                 attach.image = reserveBadge
-                attach.bounds = CGRect(x: 0, y: -3.5, width: 13.0, height: 16.5)
+                attach.bounds = CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5)
                 attributed.append(NSAttributedString(attachment: attach))
             }
         }
@@ -820,6 +817,28 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         )
     }
 
+    // MARK: - Composite Image Rendering (Bypasses NSStatusBarButton text vibrancy filter)
+
+    public static func renderCompositeImage(from attributedTitle: NSAttributedString) -> NSImage {
+        let titleSize = attributedTitle.size()
+        let compositeWidth = max(1.0, ceil(titleSize.width))
+        let compositeHeight: CGFloat = 22.0
+        // Use boundingRect to get actual glyph extents rather than size() which returns
+        // inflated line-height metrics (e.g. 27.4pt for a string containing 21pt bracket font).
+        // This ensures we center the *visible* content within the 22pt status bar.
+        let glyphBounds = attributedTitle.boundingRect(
+            with: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        let drawY = (compositeHeight - glyphBounds.height) / 2.0 - glyphBounds.origin.y
+        let compositeImage = NSImage(size: NSSize(width: compositeWidth, height: compositeHeight), flipped: false) { rect in
+            attributedTitle.draw(at: NSPoint(x: 0, y: drawY))
+            return true
+        }
+        compositeImage.isTemplate = false
+        return compositeImage
+    }
+
     private func updateStatusBarDisplay(
         fiveHPct: String,
         fiveHColor: NSColor,
@@ -840,14 +859,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             useQuotaIcons: true,
             stackPercentages: stackPref
         )
-        let titleSize = attributedTitle.size()
-        let compositeWidth = max(1.0, ceil(titleSize.width))
-        let compositeHeight: CGFloat = 22.0
-        let compositeImage = NSImage(size: NSSize(width: compositeWidth, height: compositeHeight), flipped: false) { rect in
-            attributedTitle.draw(at: NSPoint(x: 0, y: (compositeHeight - titleSize.height) / 2.0))
-            return true
-        }
-        compositeImage.isTemplate = false
+        let compositeImage = AppDelegate.renderCompositeImage(from: attributedTitle)
         button.image = compositeImage
         button.imagePosition = .imageOnly
         button.attributedTitle = NSAttributedString()
@@ -884,7 +896,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         )
         let attach = NSTextAttachment()
         attach.image = sampleBadge
-        attach.bounds = CGRect(x: 0, y: -3.5, width: 13.0, height: 16.5)
+        attach.bounds = CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5)
         legendAttr.append(NSAttributedString(attachment: attach))
         legendAttr.append(NSAttributedString(string: "  " + L10n.legendCircles, attributes: [
             .font: NSFont.systemFont(ofSize: 11),
@@ -1072,7 +1084,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
         if snapshot.isAppRunning, let appAcc = snapshot.appAccount {
             let appStatusTag = isRu ? "[АКТИВЕН В APP]" : "[ACTIVE IN APP]"
-            let dotColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: appAcc.fiveHourPercentage)
+            let appWeeklyExhausted = MenuBarAppearanceHelper.isWeeklyExhausted(appAcc.weeklyPercentage)
+            let dotColor = MenuBarAppearanceHelper.dropdownColor(
+                forPercentage: appAcc.fiveHourPercentage,
+                weeklyPercentage: appAcc.weeklyPercentage,
+                planMultiplier: appAcc.planMultiplier
+            )
 
             let appItem = NSMenuItem(title: "● \(appAcc.email)  \(appStatusTag)", action: #selector(noop), keyEquivalent: "")
             appItem.target = self
@@ -1096,9 +1113,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
             // 5-Hour sprint bar
             let pPct = appAcc.fiveHourPercentage
-            let pStr = String(format: "%.0f%%", pPct)
-            let pColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: pPct, planMultiplier: appAcc.planMultiplier)
-            let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    ⚡ 5h Sprint: \(pStr) ", percentage: pPct, maxPercentage: 100.0 * appAcc.planMultiplier, fillColor: pColor)
+            let pStr = appWeeklyExhausted ? "0%" : String(format: "%.0f%%", pPct)
+            let pColor = MenuBarAppearanceHelper.dropdownColor(
+                forPercentage: pPct,
+                weeklyPercentage: appAcc.weeklyPercentage,
+                planMultiplier: appAcc.planMultiplier
+            )
+            let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(
+                label: "    ⚡ 5h Sprint: \(pStr) ",
+                percentage: appWeeklyExhausted ? 0.0 : pPct,
+                maxPercentage: 100.0 * appAcc.planMultiplier,
+                fillColor: pColor
+            )
             let resetDesc = appAcc.timeUntilResetString
             if !resetDesc.isEmpty && resetDesc != L10n.resetNow {
                 pRich.append(NSAttributedString(string: " (\(resetDesc))", attributes: [
@@ -1118,6 +1144,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 let wStr = String(format: "%.0f%%", wPct)
                 let wColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: wPct, planMultiplier: appAcc.planMultiplier)
                 let wRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    🗓️ Weekly: \(wStr) ", percentage: wPct, maxPercentage: 100.0 * appAcc.planMultiplier, fillColor: wColor)
+                let wReset = appAcc.timeUntilResetString
+                if !wReset.isEmpty && wReset != L10n.resetNow {
+                    wRich.append(NSAttributedString(string: " (\(wReset))", attributes: [
+                        .font: NSFont.systemFont(ofSize: 11),
+                        .foregroundColor: NSColor.secondaryLabelColor
+                    ]))
+                }
                 let weekItem = NSMenuItem(title: "    🗓️ Weekly: \(wStr)", action: #selector(noop), keyEquivalent: "")
                 weekItem.target = self
                 weekItem.attributedTitle = wRich
@@ -1198,7 +1231,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let cliPrimary = snapshot.cliAccount ?? snapshot.accounts.first(where: { $0.isCurrentActive }) ?? snapshot.accounts.first
         if let activeAcc = cliPrimary {
             let statusTag = L10n.activeInCli
-            let dotColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: activeAcc.fiveHourPercentage, planMultiplier: activeAcc.planMultiplier)
+            let cliWeeklyExhausted = MenuBarAppearanceHelper.isWeeklyExhausted(activeAcc.weeklyPercentage)
+            let dotColor = MenuBarAppearanceHelper.dropdownColor(
+                forPercentage: activeAcc.fiveHourPercentage,
+                weeklyPercentage: activeAcc.weeklyPercentage,
+                planMultiplier: activeAcc.planMultiplier
+            )
 
             let accItem = NSMenuItem(title: "● \(activeAcc.email)  \(statusTag)", action: #selector(noop), keyEquivalent: "")
             accItem.target = self
@@ -1227,9 +1265,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
             // 5h Sprint bar
             let pPct = activeAcc.fiveHourPercentage
-            let pStr = String(format: "%.0f%%", pPct)
-            let pColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: pPct, planMultiplier: activeAcc.planMultiplier)
-            let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    ⚡ 5h Sprint: \(pStr) ", percentage: pPct, maxPercentage: 100.0 * activeAcc.planMultiplier, fillColor: pColor)
+            let pStr = cliWeeklyExhausted ? "0%" : String(format: "%.0f%%", pPct)
+            let pColor = MenuBarAppearanceHelper.dropdownColor(
+                forPercentage: pPct,
+                weeklyPercentage: activeAcc.weeklyPercentage,
+                planMultiplier: activeAcc.planMultiplier
+            )
+            let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(
+                label: "    ⚡ 5h Sprint: \(pStr) ",
+                percentage: cliWeeklyExhausted ? 0.0 : pPct,
+                maxPercentage: 100.0 * activeAcc.planMultiplier,
+                fillColor: pColor
+            )
             let resetDesc = activeAcc.timeUntilResetString
             if !resetDesc.isEmpty && resetDesc != L10n.resetNow {
                 pRich.append(NSAttributedString(string: " (\(resetDesc))", attributes: [
@@ -1249,6 +1296,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 let wStr = String(format: "%.0f%%", wPct)
                 let wColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: wPct, planMultiplier: activeAcc.planMultiplier)
                 let wRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    🗓️ Weekly: \(wStr) ", percentage: wPct, maxPercentage: 100.0 * activeAcc.planMultiplier, fillColor: wColor)
+                let wReset = activeAcc.timeUntilResetString
+                if !wReset.isEmpty && wReset != L10n.resetNow {
+                    wRich.append(NSAttributedString(string: " (\(wReset))", attributes: [
+                        .font: NSFont.systemFont(ofSize: 11),
+                        .foregroundColor: NSColor.secondaryLabelColor
+                    ]))
+                }
                 let weekItem = NSMenuItem(title: "    🗓️ Weekly: \(wStr)", action: #selector(noop), keyEquivalent: "")
                 weekItem.target = self
                 weekItem.attributedTitle = wRich
@@ -1330,7 +1384,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
             for (index, acc) in reserveAccs.enumerated() {
                 let statusTag = L10n.reserveSlot(index: index + 1)
-                let dotColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: acc.fiveHourPercentage, planMultiplier: acc.planMultiplier)
+                let rWeeklyExhausted = MenuBarAppearanceHelper.isWeeklyExhausted(acc.weeklyPercentage)
+                let dotColor = MenuBarAppearanceHelper.dropdownColor(
+                    forPercentage: acc.fiveHourPercentage,
+                    weeklyPercentage: acc.weeklyPercentage,
+                    planMultiplier: acc.planMultiplier
+                )
 
                 if index > 0 {
                     let sep = AppDelegate.makeInsetSeparatorItem()
@@ -1368,9 +1427,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
                 // 5h Sprint bar for reserve
                 let pPct = acc.fiveHourPercentage
-                let pStr = String(format: "%.0f%%", pPct)
-                let pColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: pPct, planMultiplier: acc.planMultiplier)
-                let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    ⚡ 5h Sprint: \(pStr) ", percentage: pPct, maxPercentage: 100.0 * acc.planMultiplier, fillColor: pColor)
+                let pStr = rWeeklyExhausted ? "0%" : String(format: "%.0f%%", pPct)
+                let pColor = MenuBarAppearanceHelper.dropdownColor(
+                    forPercentage: pPct,
+                    weeklyPercentage: acc.weeklyPercentage,
+                    planMultiplier: acc.planMultiplier
+                )
+                let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(
+                    label: "    ⚡ 5h Sprint: \(pStr) ",
+                    percentage: rWeeklyExhausted ? 0.0 : pPct,
+                    maxPercentage: 100.0 * acc.planMultiplier,
+                    fillColor: pColor
+                )
                 let resetDesc = acc.timeUntilResetString
                 if !resetDesc.isEmpty && resetDesc != L10n.resetNow {
                     pRich.append(NSAttributedString(string: " (\(resetDesc))", attributes: [
@@ -1704,8 +1772,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         if newState {
             autoSwitchBusinessPriorityItem?.state = .off
             autoSwitchItem?.state = .on
-            client.setAutoSwitchEnabled(true)
-            client.setAutoSwitchBusinessPriority(false)
         }
         client.setAutoSwitchBusinessOnly(newState)
     }
@@ -1716,10 +1782,56 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         if newState {
             autoSwitchBusinessOnlyItem?.state = .off
             autoSwitchItem?.state = .on
-            client.setAutoSwitchEnabled(true)
-            client.setAutoSwitchBusinessOnly(false)
         }
         client.setAutoSwitchBusinessPriority(newState)
+    }
+
+    public static func determineAutoSwitchTarget(
+        activeAcc: AccountQuota?,
+        accounts: [AccountQuota],
+        autoSwitchEnabled: Bool,
+        businessOnly: Bool,
+        businessPriority: Bool
+    ) -> AccountQuota? {
+        guard autoSwitchEnabled else { return nil }
+        guard let activeAcc = activeAcc else { return nil }
+
+        let isDepleted = activeAcc.fiveHourPercentage <= 0.0 ||
+            (activeAcc.error?.localizedCaseInsensitiveContains("429") == true) ||
+            (activeAcc.error?.localizedCaseInsensitiveContains("limit") == true)
+
+        let shouldPreemptForBusiness = businessPriority && !activeAcc.isBusiness && accounts.contains { acc in
+            acc.id != activeAcc.id && acc.isBusiness && acc.fiveHourPercentage > 0.0 && acc.error == nil
+        }
+
+        guard isDepleted || shouldPreemptForBusiness else { return nil }
+
+        var candidates = accounts.filter { acc in
+            acc.id != activeAcc.id && acc.fiveHourPercentage > 0.0 && acc.error == nil
+        }
+
+        if businessOnly || shouldPreemptForBusiness {
+            candidates = candidates.filter { $0.isBusiness }
+        }
+
+        guard !candidates.isEmpty else { return nil }
+
+        candidates.sort { a, b in
+            if businessPriority && a.isBusiness != b.isBusiness {
+                return a.isBusiness
+            }
+            if a.credits != b.credits {
+                return a.credits > b.credits
+            }
+            let aReset = a.resetAfterSeconds ?? Int.max
+            let bReset = b.resetAfterSeconds ?? Int.max
+            if aReset != bReset {
+                return aReset < bReset
+            }
+            return a.fiveHourPercentage > b.fiveHourPercentage
+        }
+
+        return candidates.first
     }
 
     private func checkAutoSwitchQuotaDepletion(snapshot: MultiAccountSnapshot) {
@@ -1733,55 +1845,33 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             return
         }
 
-        let isDepleted = activeAcc.fiveHourPercentage <= 0.0 ||
-            (activeAcc.error?.localizedCaseInsensitiveContains("429") == true) ||
-            (activeAcc.error?.localizedCaseInsensitiveContains("limit") == true)
-
-        guard isDepleted else { return }
-
         let businessOnly = client.getAutoSwitchBusinessOnly()
         let businessPriority = client.getAutoSwitchBusinessPriority()
 
-        // Find candidate reserve accounts with available quota (> 0%)
-        var candidates = snapshot.accounts.filter { acc in
-            acc.id != activeAcc.id && acc.fiveHourPercentage > 0.0 && acc.error == nil
-        }
-
-        if businessOnly {
-            candidates = candidates.filter { $0.isBusiness }
-        }
-
-        guard !candidates.isEmpty else { return }
-
-        // Sort candidates:
-        // 1. If businessPriority: business accounts first
-        // 2. More resets (credits) first
-        // 3. Reset time (soonest reset) first
-        // 4. Higher fiveHourPercentage
-        candidates.sort { a, b in
-            if businessPriority && a.isBusiness != b.isBusiness {
-                return a.isBusiness // true comes before false
-            }
-            if a.credits != b.credits {
-                return a.credits > b.credits // more credits first
-            }
-            let aReset = a.resetAfterSeconds ?? Int.max
-            let bReset = b.resetAfterSeconds ?? Int.max
-            if aReset != bReset {
-                return aReset < bReset
-            }
-            return a.fiveHourPercentage > b.fiveHourPercentage
-        }
-
-        guard let bestCandidate = candidates.first else {
+        guard let bestCandidate = AppDelegate.determineAutoSwitchTarget(
+            activeAcc: activeAcc,
+            accounts: snapshot.accounts,
+            autoSwitchEnabled: true,
+            businessOnly: businessOnly,
+            businessPriority: businessPriority
+        ) else {
             return
         }
 
         self.isAutoSwitching = true
         self.lastAutoSwitchTime = Date()
 
-        NSLog("[CodexMonitor] Auto-switching from %@ (0%%) to %@ (%.0f%%, %d credits, biz=%@)",
-              activeAcc.email, bestCandidate.email, bestCandidate.fiveHourPercentage, bestCandidate.credits, bestCandidate.isBusiness ? "yes" : "no")
+        let isDepleted = activeAcc.fiveHourPercentage <= 0.0 ||
+            (activeAcc.error?.localizedCaseInsensitiveContains("429") == true) ||
+            (activeAcc.error?.localizedCaseInsensitiveContains("limit") == true)
+
+        if !isDepleted && businessPriority && !activeAcc.isBusiness {
+            NSLog("[CodexMonitor] Business quota restored! Preemptively switching from non-business %@ (%.0f%%) to business %@ (%.0f%%, %d credits)",
+                  activeAcc.email, activeAcc.fiveHourPercentage, bestCandidate.email, bestCandidate.fiveHourPercentage, bestCandidate.credits)
+        } else {
+            NSLog("[CodexMonitor] Auto-switching from %@ (%.0f%%) to %@ (%.0f%%, %d credits, biz=%@)",
+                  activeAcc.email, activeAcc.fiveHourPercentage, bestCandidate.email, bestCandidate.fiveHourPercentage, bestCandidate.credits, bestCandidate.isBusiness ? "yes" : "no")
+        }
 
         self.executeSwitchAccount(id: bestCandidate.id)
         DispatchQueue.main.asyncAfter(deadline: .now() + 15.0) { [weak self] in

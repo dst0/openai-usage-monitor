@@ -82,6 +82,27 @@ struct AppDelegateTestRunner {
         assertEqual(stackedAttachments[1].bounds.size.height, 20.5, "Stacked values attachment height must be 20.5")
         assertTrue(stackedAttachments[1].bounds.size.width > 20.0, "Stacked values attachment width must be > 20.0")
 
+        // Bracket '[' attributes: font pointSize 21.0, baselineOffset -2.4
+        do {
+            let fullStr = defaultStackedAttr.string as NSString
+            let bracketIdx = fullStr.range(of: "[").location
+            assertTrue(bracketIdx != NSNotFound, "Bracket '[' must exist in attributed string")
+            let bracketAttrs = defaultStackedAttr.attributes(at: bracketIdx, effectiveRange: nil)
+            if let bracketFnt = bracketAttrs[.font] as? NSFont {
+                assertEqual(bracketFnt.pointSize, 21.0, "Bracket font pointSize must be 21.0")
+            } else {
+                assertTrue(false, "Bracket must have .font attribute")
+            }
+            if let bracketBL = bracketAttrs[.baselineOffset] as? CGFloat {
+                assertEqual(bracketBL, -2.4, "Bracket baselineOffset must be -2.4")
+            } else {
+                assertTrue(false, "Bracket must have .baselineOffset attribute")
+            }
+        }
+
+        // Attachment 2: badge attachment bounds must be CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5)
+        assertEqual(stackedAttachments[2].bounds, CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5), "Badge attachment bounds must match")
+
         print("  ✅ Stacked mode single session layout verified")
 
         // ====================================================================
@@ -135,11 +156,37 @@ struct AppDelegateTestRunner {
         assertTrue(horizStr.contains("44%"), "In horizontal mode, weekly percentage must be in text string")
 
         var horizAttachmentCount = 0
+        var horizAttachments: [NSTextAttachment] = []
         horizontalAttr.enumerateAttribute(.attachment, in: NSRange(location: 0, length: horizontalAttr.length), options: []) { val, _, _ in
-            if val != nil { horizAttachmentCount += 1 }
+            if let att = val as? NSTextAttachment {
+                horizAttachmentCount += 1
+                horizAttachments.append(att)
+            }
         }
         // 1 app icon + 1 sprint icon + 1 weekly icon + 1 shield = 4 attachments
         assertEqual(horizAttachmentCount, 4, "Expected 1 app icon + 1 sprint icon + 1 weekly icon + 1 shield badge = 4 attachments")
+
+        // Bracket '[' attributes in horizontal mode: font pointSize 21.0, baselineOffset -2.4
+        do {
+            let horizNS = horizontalAttr.string as NSString
+            let hBracketIdx = horizNS.range(of: "[").location
+            assertTrue(hBracketIdx != NSNotFound, "Bracket '[' must exist in horizontal attributed string")
+            let hBracketAttrs = horizontalAttr.attributes(at: hBracketIdx, effectiveRange: nil)
+            if let hBracketFnt = hBracketAttrs[.font] as? NSFont {
+                assertEqual(hBracketFnt.pointSize, 21.0, "Horizontal bracket font pointSize must be 21.0")
+            } else {
+                assertTrue(false, "Horizontal bracket must have .font attribute")
+            }
+            if let hBracketBL = hBracketAttrs[.baselineOffset] as? CGFloat {
+                assertEqual(hBracketBL, -2.4, "Horizontal bracket baselineOffset must be -2.4")
+            } else {
+                assertTrue(false, "Horizontal bracket must have .baselineOffset attribute")
+            }
+        }
+
+        // Active badge attachment bounds in horizontal mode: CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5)
+        // The badge is the last attachment (index 3)
+        assertEqual(horizAttachments[3].bounds, CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5), "Horizontal active badge bounds must match")
 
         print("  ✅ Horizontal mode layout verified")
 
@@ -330,7 +377,61 @@ struct AppDelegateTestRunner {
         let standardMode = rankCandidates([proAccount, personalAccount], businessPriority: false, businessOnly: false)
         assertEqual(standardMode.first?.id, "personal-1", "Account with 5 credits must rank ahead of account with 0 credits")
 
+        // Case 5: AppDelegate.determineAutoSwitchTarget Preemption verification
+        // Active Pro has 90% quota, business account has 70% quota
+        let preemptTarget = AppDelegate.determineAutoSwitchTarget(
+            activeAcc: proAccount,
+            accounts: [proAccount, bizAccount],
+            autoSwitchEnabled: true,
+            businessOnly: false,
+            businessPriority: true
+        )
+        assertEqual(preemptTarget?.id, "work-1", "Active Pro account with quota must be preempted when business quota is available")
+
+        // Active Pro has 90% quota, but all business accounts have 0% quota -> No preemption
+        let noPreemptTarget = AppDelegate.determineAutoSwitchTarget(
+            activeAcc: proAccount,
+            accounts: [proAccount, exhaustedBiz],
+            autoSwitchEnabled: true,
+            businessOnly: false,
+            businessPriority: true
+        )
+        assertTrue(noPreemptTarget == nil, "Active Pro must not be preempted when all business accounts are exhausted")
+
+        // Active Business has 70% quota -> Must NOT be preempted by another business account with higher quota
+        let activeBizPreempt = AppDelegate.determineAutoSwitchTarget(
+            activeAcc: bizAccount,
+            accounts: [bizAccount, bizAccountWithMoreCredits],
+            autoSwitchEnabled: true,
+            businessOnly: false,
+            businessPriority: true
+        )
+        assertTrue(activeBizPreempt == nil, "Active business account with quota must NOT be preempted")
+
         print("  ✅ Business account auto-switch selection & resets ranking verified")
+
+        // ====================================================================
+        // Test 8: Composite NSImage Rendering (Anti-Vibrancy Invariant)
+        // ====================================================================
+        // 1. Normal attributed string renders composite with expected properties
+        let compositeImg = AppDelegate.renderCompositeImage(from: defaultStackedAttr)
+        assertEqual(compositeImg.isTemplate, false, "Composite image must have isTemplate == false (anti-vibrancy)")
+        assertEqual(compositeImg.size.height, 22.0, "Composite image height must be 22.0")
+        let expectedWidth = max(1.0, ceil(defaultStackedAttr.size().width))
+        assertEqual(compositeImg.size.width, expectedWidth, "Composite image width must be max(1.0, ceil(attrString.size().width))")
+
+        // 2. Empty string boundary: minimum 1pt width, 22pt height
+        let emptyComposite = AppDelegate.renderCompositeImage(from: NSAttributedString(string: ""))
+        assertEqual(emptyComposite.isTemplate, false, "Empty composite must have isTemplate == false")
+        assertEqual(emptyComposite.size.width, 1.0, "Empty composite width must be 1.0 (minimum clamp)")
+        assertEqual(emptyComposite.size.height, 22.0, "Empty composite height must be 22.0")
+
+        // 3. TIFF representation must be non-nil and non-empty
+        let tiffData = compositeImg.tiffRepresentation
+        assertTrue(tiffData != nil, "Composite image tiffRepresentation must be non-nil")
+        assertTrue(tiffData!.count > 0, "Composite image tiffRepresentation must be non-empty")
+
+        print("  ✅ Composite NSImage rendering (anti-vibrancy invariant) verified")
 
         print("\n🎉 ALL APP DELEGATE TESTS PASSED!")
     }

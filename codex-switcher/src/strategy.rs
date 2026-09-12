@@ -1,7 +1,33 @@
 use crate::models::AccountConfig;
 
-pub fn needs_switch(account: &AccountConfig, threshold: f64) -> bool {
-    account.last_primary_percentage <= threshold
+pub fn needs_switch(
+    account: &AccountConfig,
+    threshold: f64,
+    business_priority: bool,
+    accounts: &[AccountConfig],
+) -> bool {
+    // 1. Normal exhaustion: active account reached or fell below threshold
+    if account.last_primary_percentage <= threshold {
+        return true;
+    }
+
+    // 2. Preemption: if business_priority is enabled and active account is non-business,
+    // switch if any enabled business account has available quota without errors.
+    if business_priority && !account.is_business() {
+        let has_available_business = accounts.iter().any(|a| {
+            a.id != account.id
+                && !a.email.eq_ignore_ascii_case(&account.email)
+                && a.enabled
+                && a.is_business()
+                && a.last_error.is_none()
+                && a.last_primary_percentage > threshold
+        });
+        if has_available_business {
+            return true;
+        }
+    }
+
+    false
 }
 
 pub fn select_best_switch(
@@ -22,7 +48,9 @@ pub fn select_best_switch(
             .iter()
             .find(|a| a.id == id || a.email.eq_ignore_ascii_case(id))
     });
+    let active_is_non_business = active.map(|a| !a.is_business()).unwrap_or(false);
     let active_pct = active.map(|a| a.last_primary_percentage).unwrap_or(0.0);
+    let active_depleted = active_pct <= threshold;
 
     let candidates: Vec<&AccountConfig> = accounts
         .iter()
@@ -43,15 +71,38 @@ pub fn select_best_switch(
         return None;
     }
 
-    // Usable candidates MUST have quota strictly above threshold AND strictly greater than current active quota.
-    // We NEVER switch to another exhausted account (0% quota) or disrupt a Pro account without a usable alternative.
+    // Usable candidates MUST have quota strictly above threshold.
+    // In addition:
+    // - If active is depleted, any candidate above threshold is ready.
+    // - If business_priority is ON and active is non-business, any business candidate above threshold is ready (preemption).
+    // - Otherwise, candidate must have strictly higher quota than active.
     let mut ready_candidates: Vec<&AccountConfig> = candidates
         .into_iter()
-        .filter(|a| a.last_primary_percentage > threshold && a.last_primary_percentage > active_pct)
+        .filter(|a| {
+            if a.last_primary_percentage <= threshold {
+                return false;
+            }
+            if active_depleted {
+                return true;
+            }
+            if business_priority && active_is_non_business && a.is_business() {
+                return true;
+            }
+            a.last_primary_percentage > active_pct
+        })
         .collect();
 
     if ready_candidates.is_empty() {
         return None;
+    }
+
+    // When preempting a non-depleted non-business account in business_priority mode,
+    // we MUST only switch to business accounts.
+    if !active_depleted && business_priority && active_is_non_business {
+        ready_candidates.retain(|a| a.is_business());
+        if ready_candidates.is_empty() {
+            return None;
+        }
     }
 
     if business_only {
@@ -254,5 +305,44 @@ mod tests {
         ];
         let fallback_chosen = select_best_switch(Some("active-acc"), &exhausted_biz_accounts, 0.0, "reset-first", false, true);
         assert_eq!(fallback_chosen, Some("personal-1".to_string()));
+    }
+
+    #[test]
+    fn test_needs_switch_and_preemption_when_business_quota_restores() {
+        let active_pro = make_acc_with_credits_and_plan("pro-active", 95.0, 7200, Some(10), "pro");
+        let exhausted_biz = make_acc_with_credits_and_plan("biz-1", 0.0, 3600, Some(2), "team");
+        let restored_biz = make_acc_with_credits_and_plan("biz-restored", 80.0, 1800, Some(4), "business");
+
+        // 1. While business account is exhausted, active Pro (95%) does NOT need switch
+        let accounts_exhausted = vec![active_pro.clone(), exhausted_biz.clone()];
+        assert!(!needs_switch(&active_pro, 0.0, true, &accounts_exhausted));
+        assert_eq!(
+            select_best_switch(Some("pro-active"), &accounts_exhausted, 0.0, "reset-first", false, true),
+            None
+        );
+
+        // 2. When business account quota restores (80%), active Pro MUST trigger needs_switch
+        let accounts_restored = vec![active_pro.clone(), restored_biz.clone()];
+        assert!(needs_switch(&active_pro, 0.0, true, &accounts_restored));
+
+        // 3. select_best_switch MUST preempt Pro (95%) in favor of restored business account (80%)!
+        let chosen = select_best_switch(Some("pro-active"), &accounts_restored, 0.0, "reset-first", false, true);
+        assert_eq!(chosen, Some("biz-restored".to_string()));
+
+        // 4. Once on business account, even if another business account has more quota, needs_switch is false (no switch triggered)
+        let accounts_two_biz = vec![
+            make_acc_with_credits_and_plan("biz-current", 60.0, 3600, Some(1), "team"),
+            make_acc_with_credits_and_plan("biz-other", 100.0, 1800, Some(5), "business"),
+        ];
+        assert!(!needs_switch(&accounts_two_biz[0], 0.0, true, &accounts_two_biz));
+
+        // When biz-current exhausts its quota (0%), needs_switch triggers and switches to biz-other
+        let mut biz_current_exhausted = accounts_two_biz.clone();
+        biz_current_exhausted[0].last_primary_percentage = 0.0;
+        assert!(needs_switch(&biz_current_exhausted[0], 0.0, true, &biz_current_exhausted));
+        assert_eq!(
+            select_best_switch(Some("biz-current"), &biz_current_exhausted, 0.0, "reset-first", false, true),
+            Some("biz-other".to_string())
+        );
     }
 }

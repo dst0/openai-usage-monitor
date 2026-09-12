@@ -29,7 +29,13 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
    - The desktop app (`/Applications/ChatGPT.app`, bundle ID `com.openai.codex`) shares the `~/.codex/auth.json` credentials.
    - When an account is switched, the tool gracefully restarts the desktop app (`restart_app_on_switch: true`), immediately updating the interface and active sessions to the new account.
 
-5. **Native macOS Menu Bar App (`Codex Monitor.app`)**:
+5. **Automated Session & Thread Resumption Across Switches**:
+   - Automatically detects active mid-turn worker tasks and threads halted by rate limits or credit exhaustion within the last 4 hours (`RECENT_QUOTA_WINDOW_SECS = 14400s`).
+   - Scans up to 30 recent threads via `state_5.sqlite` with instantaneous 128 KB tail reads (`read_rollout_tail_lines`), eliminating I/O stalls even on 500 MB+ session files.
+   - Automatically queues resumption messages (`codex queue --thread <id> --message continue`) and cycles ChatGPT.app UI tabs to trigger Accessibility-level unpauses.
+   - Never resumes cleanly completed tasks or user-aborted turns (`turn_aborted`).
+
+6. **Native macOS Menu Bar App (`Codex Monitor.app`)**:
    - Official Codex icon in the status bar.
    - Dual-session live display: `APP 97% | CLI 97% (↻ 4h 45m)`.
    - Distinctive 3D shield badges `[ 🛡️ ] 🛡️ 🛡️` with a 3-tier visual gauge (Top = 5h sprint, Center = 7-day pool, Bottom = reset credits).
@@ -161,10 +167,70 @@ cxi remove backup
 cxi wrap exec "fix bug in auth"
 ```
 
-### 10. Open Interactive Documentation
+### 10. Resume Active or Paused Threads
+```bash
+# Resume the most recent active or rate-limited thread:
+cxi resume
+
+# Or resume a specific thread by ID or URL:
+cxi resume 01a07d3c-3008-75c2-87a6-2c5c75f0e48b
+cxi resume "codex://threads/01a07d3c-3008-75c2-87a6-2c5c75f0e48b"
+```
+
+### 11. Open Interactive Documentation
 ```bash
 cxi helps
 ```
+
+---
+
+## 🔄 Automated Session & Thread Resumption Engine
+
+When switching accounts or restarting the ChatGPT desktop app, ongoing turns and tasks interrupted by quota limits are automatically detected, recovered, and resumed under the newly activated account.
+
+### ⚙️ Detection Pipeline & Invariants
+
+Detection runs through a two-phase analysis pipeline before terminating or restarting the app:
+
+1. **Phase 1: Running Worker Locks (`~/.codex/thread-writer-locks/`)**
+   - Active worker threads hold an exclusive `flock` on their corresponding lock file in `thread-writer-locks/`.
+   - The detector tests exclusivity (`file.try_lock_exclusive().is_err()`). If locked by a running process, the thread is inspected via rollout state.
+
+2. **Phase 2: Historical Database & Quota Exhaustion (`state_5.sqlite`)**
+   - When ChatGPT hits a rate limit or runs out of credits, the app-server issues `task_complete` with an error and **releases its file lock**.
+   - The detector queries `state_5.sqlite` for recent unarchived user threads and checks if their turn halted due to quota or credit exhaustion.
+
+### 📊 Constants, Thresholds & Timing Limits
+
+| Parameter / Constant | Value | Purpose |
+| :--- | :--- | :--- |
+| `RECENT_QUOTA_WINDOW_SECS` | `14400` (4 hours) | Lookback window for resuming threads interrupted by quota/credit exhaustion. |
+| `recent_threads` SQLite limit | `30` | Number of recent unarchived user threads queried from `state_5.sqlite` (`ORDER BY updated_at DESC LIMIT 30`). |
+| `read_rollout_tail_lines` buffer | `131072` bytes (128 KB) | Tail seek window for inspecting `.jsonl` rollout events, avoiding reading entire multi-hundred MB logs into RAM. |
+| App shutdown cooldown | `600 ms` | Grace period after `pgrep` exit for macOS `LaunchServices` cleanup. |
+| App launch verification | `3` attempts @ `300 ms` | Polling loop confirming ChatGPT.app is running after `open -a`. |
+| App server init delay | `3000 ms` | Wait time for ChatGPT's internal `codex app-server` socket to begin accepting CLI queue commands. |
+| UI cycle delay | `400 ms` per thread | Delay between cycling thread URLs (`codex://threads/<tid>`). |
+| Accessibility unpause polling | `3` attempts @ `200 ms` | Polling loop for finding and pressing native AXUIElement "Resume" buttons. |
+| Primary thread focus | `6` attempts @ `400 ms` | Extended polling to ensure the primary foreground thread is unpaused and focused. |
+
+### 🚦 Rollout Lifecycle States (`ThreadRolloutState`)
+
+- **`InterruptedByQuota`**: The turn's final `task_complete` contains an `error` payload matching `usage_limit_exceeded`, `workspace_owner_credits_depleted`, `out of credits`, or active `rate_limit_reached_type`. **Automatically resumed.**
+- **`ActiveInProgress`**: The latest event is a mid-turn event (`user_message`, `reasoning`, `custom_tool_call`, etc.) with no closing `task_complete`. **Automatically resumed.**
+- **`CleanCompleted`**: The last turn completed cleanly with no error, or a non-quota execution error. **Never auto-resumed.**
+- **`TurnAborted`**: The turn was explicitly cancelled by the user (`turn_aborted`). **Never auto-resumed.**
+- **Filtered Metadata**: Events such as `thread_settings_applied`, `item_completed`, and `token_count` are filtered out during tail inspection so they never mask or falsify turn completion states.
+
+### 💡 Why Desktop UI Cycling is Necessary
+
+In macOS `ChatGPT.app` (Chromium/Electron architecture), background threads remain unhydrated. When a thread pauses on a quota limit, simply switching `auth.json` in the background will not wake up idle background tabs until they are opened in the UI. 
+
+To solve this, `codex-mon`:
+1. Dispatches `codex queue --thread <id> --message continue` via the CLI socket.
+2. Cycles through all detected interrupted threads via `open "codex://threads/<id>"`.
+3. Invokes macOS Accessibility APIs to trigger any pending UI resume buttons.
+4. Returns focus to your active/primary thread.
 
 ---
 

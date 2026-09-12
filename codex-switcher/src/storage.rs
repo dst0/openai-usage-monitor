@@ -264,3 +264,13 @@ pub fn read_status_file() -> Result<StatusFile, String> {
         .map_err(|e| format!("Failed to parse status file: {}", e))?;
     Ok(status)
 }
+
+pub fn sync_settings_to_status_file(settings: &crate::models::Settings) {
+    if let Ok(mut status) = read_status_file() {
+        status.auto_switch_enabled = settings.auto_switch_enabled;
+        status.auto_switch_business_only = settings.auto_switch_business_only;
+        status.auto_switch_business_priority = settings.auto_switch_business_priority;
+        let _ = write_status_file(&status);
+    }
+}
+

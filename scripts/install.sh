@@ -113,6 +113,8 @@ cargo build --release
 echo "📦 Installing CLI to ${LOCAL_BIN}..."
 cp "target/release/codex-mon" "${LOCAL_BIN}/codex-mon"
 chmod +x "${LOCAL_BIN}/codex-mon"
+xattr -c "${LOCAL_BIN}/codex-mon" 2>/dev/null || true
+codesign -s - -f "${LOCAL_BIN}/codex-mon" 2>/dev/null || true
 ln -sfn "${LOCAL_BIN}/codex-mon" "${LOCAL_BIN}/cxi"
 
 # Ensure transparent codex CLI shim exists

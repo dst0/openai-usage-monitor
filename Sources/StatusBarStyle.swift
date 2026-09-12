@@ -11,27 +11,27 @@ public enum QuotaColorType: Sendable {
             switch self {
             case .green:
                 return [
-                    NSColor(red: 0.35, green: 0.98, blue: 0.45, alpha: 1.0),
-                    NSColor(red: 0.0, green: 0.76, blue: 0.22, alpha: 1.0),
-                    NSColor(red: 0.0, green: 0.45, blue: 0.10, alpha: 1.0)
+                    NSColor(red: 0.35, green: 0.98, blue: 0.45, alpha: 1.0), // top highlight
+                    NSColor(red: 0.0, green: 0.76, blue: 0.22, alpha: 1.0),   // mid rich green
+                    NSColor(red: 0.0, green: 0.45, blue: 0.10, alpha: 1.0)    // bottom dark shadow
                 ]
             case .yellow:
                 return [
-                    NSColor(red: 1.0, green: 0.92, blue: 0.35, alpha: 1.0),
-                    NSColor(red: 0.98, green: 0.65, blue: 0.0, alpha: 1.0),
-                    NSColor(red: 0.75, green: 0.42, blue: 0.0, alpha: 1.0)
+                    NSColor(red: 1.0, green: 0.92, blue: 0.35, alpha: 1.0), // top highlight
+                    NSColor(red: 0.98, green: 0.65, blue: 0.0, alpha: 1.0),  // mid rich amber
+                    NSColor(red: 0.75, green: 0.42, blue: 0.0, alpha: 1.0)   // bottom dark shadow
                 ]
             case .red:
                 return [
-                    NSColor(red: 1.0, green: 0.42, blue: 0.42, alpha: 1.0),
-                    NSColor(red: 0.88, green: 0.08, blue: 0.12, alpha: 1.0),
-                    NSColor(red: 0.55, green: 0.02, blue: 0.04, alpha: 1.0)
+                    NSColor(red: 1.0, green: 0.58, blue: 0.52, alpha: 1.0), // top highlight
+                    NSColor(red: 0.98, green: 0.28, blue: 0.24, alpha: 1.0), // mid rich ruby
+                    NSColor(red: 0.78, green: 0.12, blue: 0.14, alpha: 1.0)  // bottom dark crimson
                 ]
             case .gray:
                 return [
-                    NSColor(red: 0.72, green: 0.73, blue: 0.75, alpha: 1.0),
-                    NSColor(red: 0.52, green: 0.53, blue: 0.56, alpha: 1.0),
-                    NSColor(red: 0.32, green: 0.33, blue: 0.35, alpha: 1.0)
+                    NSColor(red: 0.83, green: 0.84, blue: 0.86, alpha: 1.0), // top highlight
+                    NSColor(red: 0.65, green: 0.66, blue: 0.68, alpha: 1.0), // mid rich slate gray
+                    NSColor(red: 0.47, green: 0.48, blue: 0.50, alpha: 1.0)  // bottom dark shadow
                 ]
             }
         } else {
@@ -45,21 +45,21 @@ public enum QuotaColorType: Sendable {
                 ]
             case .yellow:
                 return [
-                    NSColor(red: 0.95, green: 0.85, blue: 0.30, alpha: 1.0),
-                    NSColor(red: 0.90, green: 0.58, blue: 0.0, alpha: 1.0),
+                    NSColor(red: 0.92, green: 0.85, blue: 0.30, alpha: 1.0),
+                    NSColor(red: 0.88, green: 0.58, blue: 0.0, alpha: 1.0),
                     NSColor(red: 0.68, green: 0.38, blue: 0.0, alpha: 1.0)
                 ]
             case .red:
                 return [
-                    NSColor(red: 0.92, green: 0.38, blue: 0.38, alpha: 1.0),
-                    NSColor(red: 0.80, green: 0.08, blue: 0.12, alpha: 1.0),
-                    NSColor(red: 0.50, green: 0.02, blue: 0.04, alpha: 1.0)
+                    NSColor(red: 0.90, green: 0.45, blue: 0.42, alpha: 1.0),
+                    NSColor(red: 0.82, green: 0.22, blue: 0.20, alpha: 1.0),
+                    NSColor(red: 0.62, green: 0.10, blue: 0.12, alpha: 1.0)
                 ]
             case .gray:
                 return [
-                    NSColor(red: 0.65, green: 0.66, blue: 0.68, alpha: 1.0),
-                    NSColor(red: 0.48, green: 0.49, blue: 0.52, alpha: 1.0),
-                    NSColor(red: 0.30, green: 0.31, blue: 0.33, alpha: 1.0)
+                    NSColor(red: 0.75, green: 0.76, blue: 0.78, alpha: 1.0),
+                    NSColor(red: 0.58, green: 0.59, blue: 0.60, alpha: 1.0),
+                    NSColor(red: 0.42, green: 0.43, blue: 0.45, alpha: 1.0)
                 ]
             }
         }
@@ -71,7 +71,7 @@ public enum QuotaColorType: Sendable {
 
     public static func from(pct: Double) -> QuotaColorType {
         if pct > 50.0 { return .green }
-        if pct > 15.0 { return .yellow }
+        if pct > 20.0 { return .yellow }
         return .red
     }
 }
@@ -96,25 +96,25 @@ public struct MenuBarAppearanceHelper {
         if isWeeklyExhausted(weeklyPercentage) {
             // Slate gray clearly indicates unusable state when weekly quota is exhausted
             return isScreenActive
-                ? NSColor(white: 0.60, alpha: 1.0)
-                : NSColor(white: 0.55, alpha: 1.0)
+                ? NSColor(white: 0.78, alpha: 1.0)
+                : NSColor(white: 0.65, alpha: 1.0)
         }
         let tankPct = planMultiplier > 0.0 ? (pct / planMultiplier) : pct
         if isScreenActive {
             if tankPct > 50.0 {
                 return NSColor(red: 0.0, green: 0.88, blue: 0.35, alpha: 1.0)
-            } else if tankPct > 15.0 {
+            } else if tankPct > 20.0 {
                 return NSColor(red: 1.0, green: 0.78, blue: 0.0, alpha: 1.0)
             } else {
-                return NSColor(red: 1.0, green: 0.18, blue: 0.22, alpha: 1.0)
+                return NSColor(red: 1.0, green: 0.46, blue: 0.38, alpha: 1.0)
             }
         } else {
             if tankPct > 50.0 {
-                return NSColor(red: 0.0, green: 0.80, blue: 0.32, alpha: 1.0)
-            } else if tankPct > 15.0 {
-                return NSColor(red: 0.92, green: 0.70, blue: 0.0, alpha: 1.0)
+                return NSColor(red: 0.0, green: 0.78, blue: 0.30, alpha: 1.0)
+            } else if tankPct > 20.0 {
+                return NSColor(red: 0.90, green: 0.70, blue: 0.0, alpha: 1.0)
             } else {
-                return NSColor(red: 0.92, green: 0.18, blue: 0.20, alpha: 1.0)
+                return NSColor(red: 0.90, green: 0.38, blue: 0.32, alpha: 1.0)
             }
         }
     }
@@ -128,7 +128,7 @@ public struct MenuBarAppearanceHelper {
             return NSColor(name: nil) { appearance in
                 let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
                 return isDark
-                    ? NSColor(white: 0.65, alpha: 1.0)
+                    ? NSColor(white: 0.70, alpha: 1.0)
                     : NSColor(white: 0.45, alpha: 1.0)
             }
         }
@@ -139,13 +139,13 @@ public struct MenuBarAppearanceHelper {
                 return isDark
                     ? NSColor(red: 0.0, green: 0.88, blue: 0.38, alpha: 1.0)
                     : NSColor(red: 0.05, green: 0.62, blue: 0.22, alpha: 1.0)
-            } else if tankPct > 15.0 {
+            } else if tankPct > 20.0 {
                 return isDark
                     ? NSColor(red: 1.0, green: 0.80, blue: 0.0, alpha: 1.0)
                     : NSColor(red: 0.82, green: 0.52, blue: 0.0, alpha: 1.0)
             } else {
                 return isDark
-                    ? NSColor(red: 1.0, green: 0.25, blue: 0.28, alpha: 1.0)
+                    ? NSColor(red: 1.0, green: 0.38, blue: 0.36, alpha: 1.0)
                     : NSColor(red: 0.85, green: 0.12, blue: 0.15, alpha: 1.0)
             }
         }
@@ -164,7 +164,14 @@ public struct MenuBarAppearanceHelper {
     }
 
     public static func bracketFont(isScreenActive: Bool = true) -> NSFont {
-        return NSFont.systemFont(ofSize: 12.0, weight: .bold)
+        let desc = NSFont.systemFont(ofSize: 21.0, weight: isScreenActive ? .regular : .medium).fontDescriptor.addingAttributes([
+            .traits: [NSFontDescriptor.TraitKey.width: -0.3]
+        ])
+        return NSFont(descriptor: desc, size: 21.0) ?? NSFont.systemFont(ofSize: 21.0, weight: isScreenActive ? .regular : .medium)
+    }
+
+    public static func bracketBaselineOffset(isScreenActive: Bool = true) -> CGFloat {
+        return -2.4
     }
 
     public static func separatorColor(isScreenActive: Bool = true) -> NSColor {
@@ -187,6 +194,20 @@ public struct MenuBarAppearanceHelper {
         shadow.shadowOffset = NSSize(width: 0.0, height: -0.5)
         shadow.shadowBlurRadius = 1.0
         return shadow
+    }
+
+    /// Soft omnidirectional shadow for red warning text to prevent top/all-edge wash-out on dark menu bar
+    public static func redTextShadow(isScreenActive: Bool = true) -> NSShadow {
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(isScreenActive ? 0.95 : 0.65)
+        shadow.shadowOffset = NSSize(width: 0, height: 0) // Radiates equally in all directions (top, bottom, left, right)
+        shadow.shadowBlurRadius = isScreenActive ? 1.4 : 1.2
+        return shadow
+    }
+
+    public static func isRedColor(_ color: NSColor) -> Bool {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return false }
+        return rgb.redComponent > 0.75 && rgb.greenComponent < 0.60
     }
 
     public static func isScreenActive(
@@ -286,10 +307,10 @@ public struct MenuBarAppearanceHelper {
         }
     }
 
-    // MARK: - 3-Row Hybrid Quota Indicator (Shield Badge)
-    // Row 1 (Top semicircle): 5-Hour sprint quota
-    // Row 2 (Middle rectangle): Weekly quota
-    // Row 3 (Bottom strip): Reset credits / projected status
+    // MARK: - 3-Row Hybrid Quota Indicator (Rectangular with Uniform Width)
+    // Row 1 (Top): 5-Hour sprint quota (tallest: 7.5 / 16.5)
+    // Row 2 (Middle): Weekly quota (mid: 5.8 / 16.5)
+    // Row 3 (Bottom): Reset credits / projected status (strip: 3.2 / 16.5)
     public static func makeHybridQuotaIndicator(
         fiveHour: Double,
         weekly: Double,
@@ -302,89 +323,72 @@ public struct MenuBarAppearanceHelper {
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
 
             let colorSpace = CGColorSpaceCreateDeviceRGB()
-            let radius = width / 2.0
-            let stripHeight: CGFloat = 3.5
-            let midBottom: CGFloat = stripHeight
-            let midTop: CGFloat = height - radius
-
-            let rawF5hType = QuotaColorType.from(pct: fiveHour)
-            let wType = QuotaColorType.from(pct: weekly)
-            let f5hType: QuotaColorType
-            if isWeeklyExhausted(weekly) || (wType == .red && rawF5hType == .green) {
-                f5hType = .gray
-            } else {
-                f5hType = rawF5hType
-            }
-            let cType: QuotaColorType = credits > 0 ? .green : (fiveHour > 15.0 ? .yellow : .red)
-
-            // Outer contour path: rounded bottom corners + straight sides + top semicircle
             let cornerR: CGFloat = 2.0
-            let contour = CGMutablePath()
-            contour.move(to: CGPoint(x: cornerR, y: 0))
-            contour.addLine(to: CGPoint(x: width - cornerR, y: 0))
-            contour.addQuadCurve(to: CGPoint(x: width, y: cornerR), control: CGPoint(x: width, y: 0))
-            contour.addLine(to: CGPoint(x: width, y: midTop))
-            contour.addArc(center: CGPoint(x: radius, y: midTop), radius: radius, startAngle: 0, endAngle: .pi, clockwise: false)
-            contour.addLine(to: CGPoint(x: 0, y: cornerR))
-            contour.addQuadCurve(to: CGPoint(x: cornerR, y: 0), control: CGPoint(x: 0, y: 0))
-            contour.closeSubpath()
+            // Inset by 0.4pt so the outer hairline stroke stays completely within bounds
+            let badgeRect = CGRect(x: 0.4, y: 0.4, width: width - 0.8, height: height - 0.8)
+            let contour = CGPath(roundedRect: badgeRect, cornerWidth: cornerR, cornerHeight: cornerR, transform: nil)
+
+            // Proportional segment heights matching design calibration:
+            // Top (5h sprint): tallest (7.5 pt of 16.5)
+            // Mid (weekly remaining): slightly smaller (5.8 pt of 16.5)
+            // Bottom (credits): compact strip (3.2 pt of 16.5)
+            let topHeight: CGFloat = badgeRect.height * (7.5 / 16.5)
+            let midHeight: CGFloat = badgeRect.height * (5.8 / 16.5)
+            let stripHeight: CGFloat = badgeRect.height * (3.2 / 16.5)
+            let midTop = badgeRect.minY + stripHeight + midHeight
+            let midBottom = badgeRect.minY + stripHeight
+
+            var f5hType = QuotaColorType.from(pct: fiveHour)
+            let wType = QuotaColorType.from(pct: weekly)
+            let cType: QuotaColorType = credits > 0 ? .green : (fiveHour > 20.0 ? .yellow : .red)
+
+            // Never show green on top of red / exhausted weekly quota:
+            if isWeeklyExhausted(weekly) || (wType == .red && f5hType == .green) {
+                f5hType = .gray
+            }
 
             ctx.saveGState()
             ctx.addPath(contour)
             ctx.clip()
 
-            // 1. Top Section (5h sprint)
+            // 1. Top Section (5h sprint) - Tallest
             ctx.saveGState()
-            ctx.clip(to: CGRect(x: 0, y: midTop, width: width, height: radius))
+            ctx.clip(to: CGRect(x: badgeRect.minX, y: midTop, width: badgeRect.width, height: topHeight))
             let f5hColors = f5hType.colors(isScreenActive: isScreenActive).map { $0.cgColor } as CFArray
             if let grad = CGGradient(colorsSpace: colorSpace, colors: f5hColors, locations: [0.0, 0.55, 1.0]) {
-                ctx.drawLinearGradient(grad, start: CGPoint(x: 0, y: height), end: CGPoint(x: 0, y: midTop), options: [])
+                ctx.drawLinearGradient(grad, start: CGPoint(x: badgeRect.minX, y: badgeRect.maxY), end: CGPoint(x: badgeRect.minX, y: midTop), options: [])
             }
             ctx.restoreGState()
 
             // 2. Middle Section (Weekly remaining)
-            let midHeight = midTop - midBottom
             ctx.saveGState()
-            ctx.clip(to: CGRect(x: 0, y: midBottom, width: width, height: midHeight))
+            ctx.clip(to: CGRect(x: badgeRect.minX, y: midBottom, width: badgeRect.width, height: midHeight))
             let wColors = wType.colors(isScreenActive: isScreenActive).map { $0.cgColor } as CFArray
             if let grad = CGGradient(colorsSpace: colorSpace, colors: wColors, locations: [0.0, 0.55, 1.0]) {
-                ctx.drawLinearGradient(grad, start: CGPoint(x: 0, y: midTop), end: CGPoint(x: 0, y: midBottom), options: [])
+                ctx.drawLinearGradient(grad, start: CGPoint(x: badgeRect.minX, y: midTop), end: CGPoint(x: badgeRect.minX, y: midBottom), options: [])
             }
             ctx.restoreGState()
 
             // 3. Bottom Strip (Reset Credits)
             ctx.saveGState()
-            ctx.clip(to: CGRect(x: 0, y: 0, width: width, height: stripHeight))
+            ctx.clip(to: CGRect(x: badgeRect.minX, y: badgeRect.minY, width: badgeRect.width, height: stripHeight))
             let cColors = cType.colors(isScreenActive: isScreenActive).map { $0.cgColor } as CFArray
             if let grad = CGGradient(colorsSpace: colorSpace, colors: cColors, locations: [0.0, 0.55, 1.0]) {
-                ctx.drawLinearGradient(grad, start: CGPoint(x: 0, y: stripHeight), end: CGPoint(x: 0, y: 0), options: [])
+                ctx.drawLinearGradient(grad, start: CGPoint(x: badgeRect.minX, y: midBottom), end: CGPoint(x: badgeRect.minX, y: badgeRect.minY), options: [])
             }
             ctx.restoreGState()
 
             // 4. Dividing micro-seams
             let seamAlpha: CGFloat = isScreenActive ? 0.45 : 0.25
             ctx.setFillColor(NSColor(white: 0.0, alpha: seamAlpha).cgColor)
-            ctx.fill(CGRect(x: 0, y: midTop - 0.35, width: width, height: 0.7))
-            ctx.fill(CGRect(x: 0, y: midBottom - 0.35, width: width, height: 0.7))
-
-            // 5. Glossy 3D specular highlight at top semicircle
-            let glossRect = CGRect(x: width * 0.18, y: height - (radius * 0.9), width: width * 0.64, height: radius * 0.6)
-            let glossPath = CGPath(ellipseIn: glossRect, transform: nil)
-            ctx.saveGState()
-            ctx.addPath(glossPath)
-            ctx.clip()
-            let highlightAlpha: CGFloat = isScreenActive ? 0.60 : 0.30
-            let glossColors = [NSColor(white: 1.0, alpha: highlightAlpha).cgColor, NSColor(white: 1.0, alpha: 0.0).cgColor] as CFArray
-            if let glossGrad = CGGradient(colorsSpace: colorSpace, colors: glossColors, locations: [0.0, 1.0]) {
-                ctx.drawLinearGradient(glossGrad, start: CGPoint(x: 0, y: height * 0.98), end: CGPoint(x: 0, y: height - radius), options: [])
-            }
-            ctx.restoreGState()
+            ctx.fill(CGRect(x: badgeRect.minX, y: midTop - 0.35, width: badgeRect.width, height: 0.7))
+            ctx.fill(CGRect(x: badgeRect.minX, y: midBottom - 0.35, width: badgeRect.width, height: 0.7))
 
             ctx.restoreGState()
 
-            // 6. Deep 3D outer rim stroke
-            let rimAlpha: CGFloat = isScreenActive ? 0.70 : 0.65
-            let rimLineWidth: CGFloat = 0.75
+            // 5. Crisp, thin dark/black outer rim ("тёмная, чёрная каёмочка снаружи")
+            let rimAlpha: CGFloat = isScreenActive ? 0.85 : 0.80
+            let rimLineWidth: CGFloat = 0.6 // Crisp thin black stroke
             ctx.saveGState()
             ctx.setStrokeColor(NSColor(white: 0.0, alpha: rimAlpha).cgColor)
             ctx.setLineWidth(rimLineWidth)
@@ -623,7 +627,8 @@ public struct MenuBarAppearanceHelper {
             ofSize: 10.5,
             weight: .bold
         )
-        let shadow = textShadow(isScreenActive: isScreenActive)
+        let defaultShadow = textShadow(isScreenActive: isScreenActive)
+        let redShadow = redTextShadow(isScreenActive: isScreenActive)
         let kern: CGFloat = 0.2
 
         let sprintIconSample = useQuotaIcons ? makeSprintIcon(size: 8.0, isScreenActive: isScreenActive) : nil
@@ -639,13 +644,13 @@ public struct MenuBarAppearanceHelper {
         let f5hAttrs: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: fiveHColor,
-            .shadow: shadow,
+            .shadow: isRedColor(fiveHColor) ? redShadow : defaultShadow,
             .kern: kern
         ]
         let wAttrs: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: weeklyColor,
-            .shadow: shadow,
+            .shadow: isRedColor(weeklyColor) ? redShadow : defaultShadow,
             .kern: kern
         ]
 
@@ -660,7 +665,7 @@ public struct MenuBarAppearanceHelper {
         let labelAttrs: [NSAttributedString.Key: Any] = [
             .font: labelF,
             .foregroundColor: NSColor.white,
-            .shadow: shadow,
+            .shadow: defaultShadow,
             .kern: 0.1
         ]
         let f5hLabelStr = NSAttributedString(string: "5h: ", attributes: labelAttrs)
