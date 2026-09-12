@@ -63,6 +63,44 @@ fi
 mkdir -p "${INSTALL_DIR}"
 
 # ------------------------------------------------------------------------------
+# Concurrency Lock: Serialize installation runs across terminal sessions & projects
+# ------------------------------------------------------------------------------
+INSTALL_LOCK_FILE="${TMPDIR:-/tmp}/codex_monitor_install_${UID:-$(id -u)}.lock"
+touch "${INSTALL_LOCK_FILE}"
+exec 9>>"${INSTALL_LOCK_FILE}"
+
+acquire_install_lock() {
+    if command -v lockf >/dev/null 2>&1; then
+        if ! lockf -s -t 0 9 2>/dev/null; then
+            local holder_pid
+            holder_pid="$(head -n 1 "${INSTALL_LOCK_FILE}" 2>/dev/null || true)"
+            if [ -n "${holder_pid}" ] && kill -0 "${holder_pid}" 2>/dev/null; then
+                echo "⏳ Another installation (PID ${holder_pid}) is currently in progress. Waiting for it to finish..."
+            else
+                echo "⏳ Another installation is currently in progress. Waiting for it to finish..."
+            fi
+            lockf 9
+            echo "🔒 Acquired installation lock. Continuing..."
+        fi
+    elif command -v python3 >/dev/null 2>&1; then
+        if ! python3 -c "import fcntl; fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)" 2>/dev/null; then
+            local holder_pid
+            holder_pid="$(head -n 1 "${INSTALL_LOCK_FILE}" 2>/dev/null || true)"
+            if [ -n "${holder_pid}" ] && kill -0 "${holder_pid}" 2>/dev/null; then
+                echo "⏳ Another installation (PID ${holder_pid}) is currently in progress. Waiting for it to finish..."
+            else
+                echo "⏳ Another installation is currently in progress. Waiting for it to finish..."
+            fi
+            python3 -c "import fcntl; fcntl.flock(9, fcntl.LOCK_EX)"
+            echo "🔒 Acquired installation lock. Continuing..."
+        fi
+    fi
+    echo "$$" > "${INSTALL_LOCK_FILE}"
+}
+
+acquire_install_lock
+
+# ------------------------------------------------------------------------------
 # Check Prerequisites: Swift & Rust
 # ------------------------------------------------------------------------------
 if ! command -v swiftc >/dev/null 2>&1; then
@@ -274,6 +312,9 @@ done
 echo ""
 echo "🚀 Launching ${APP_NAME}..."
 open "${INSTALL_DIR}/${BUNDLE_NAME}"
+
+# Release concurrency lock explicitly
+exec 9>&- 2>/dev/null || true
 
 echo ""
 echo "🎉 Installation complete!"
