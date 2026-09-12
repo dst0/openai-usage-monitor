@@ -174,6 +174,12 @@ pub fn switch_to_account(account_id: &str, restart_app: bool, notify: bool) -> R
     if app_was_running {
         launch_codex_app()?;
 
+        let codex_home = dirs::home_dir().map(|h| h.join(".codex")).unwrap_or_default();
+        // Determine primary thread to focus in ChatGPT UI
+        let primary_thread = running_threads.first().cloned().or_else(|| {
+            get_most_recent_threads(&codex_home, 1).into_iter().next()
+        });
+
         // Wait for Codex App and its app-server to initialize, then resume threads
         if !running_threads.is_empty() {
             println!("⏳ Waiting for Codex App to initialize before resuming {} thread(s)...", running_threads.len());
@@ -181,6 +187,12 @@ pub fn switch_to_account(account_id: &str, restart_app: bool, notify: bool) -> R
             resume_threads(&running_threads, "continue");
         } else {
             sleep(Duration::from_secs(2));
+        }
+
+        // Navigate ChatGPT UI directly to the active thread so it doesn't open on a blank chat
+        if let Some(ref tid) = primary_thread {
+            open_thread_in_codex(tid);
+            sleep(Duration::from_millis(500));
         }
 
         // Unpause any interrupted turn or queue via Accessibility UI Resume
@@ -283,60 +295,112 @@ pub fn send_macos_notification(title: &str, message: &str) {
     let _ = Command::new("osascript").arg("-e").arg(script).output();
 }
 
+/// Strips URL schemes like codex://threads/ or chatgpt://threads/ to return a bare thread UUID.
+pub fn clean_thread_id(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if let Some(stripped) = trimmed.strip_prefix("codex://threads/") {
+        stripped.trim_matches('/').to_string()
+    } else if let Some(stripped) = trimmed.strip_prefix("chatgpt://threads/") {
+        stripped.trim_matches('/').to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Navigates ChatGPT desktop application directly to a specific thread URL.
+pub fn open_thread_in_codex(thread_id: &str) {
+    let clean = clean_thread_id(thread_id);
+    if clean.is_empty() {
+        return;
+    }
+    println!("🧭 Opening thread '{}' in ChatGPT...", clean);
+    let _ = Command::new("open")
+        .arg(format!("codex://threads/{}", clean))
+        .status();
+}
+
+/// Retrieves the most recently updated unarchived threads from state_5.sqlite.
+pub fn get_most_recent_threads(codex_home: &std::path::Path, limit: usize) -> Vec<String> {
+    let state_sqlite = codex_home.join("state_5.sqlite");
+    if !state_sqlite.exists() {
+        return Vec::new();
+    }
+    let query = format!("SELECT id FROM threads WHERE archived = 0 ORDER BY updated_at DESC LIMIT {};", limit);
+    if let Ok(output) = Command::new("/usr/bin/sqlite3")
+        .arg(state_sqlite.to_str().unwrap_or(""))
+        .arg(&query)
+        .output()
+    {
+        if output.status.success() {
+            return String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
 /// Detects active threads in progress by inspecting lock files in ~/.codex/thread-writer-locks/
-/// and verifying their latest rollout events.
+/// and recent threads in state_5.sqlite, verifying their latest rollout events.
 pub fn detect_in_progress_threads() -> Vec<String> {
     let codex_home = crate::storage::codex_home();
     let locks_dir = codex_home.join("thread-writer-locks");
-    if !locks_dir.exists() {
-        return Vec::new();
+    let mut in_progress = Vec::new();
+
+    // 1. Check lock files held by running processes (codex app-server)
+    if let Ok(entries) = std::fs::read_dir(&locks_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if fname.starts_with('.') || !fname.ends_with(".lock") {
+                continue;
+            }
+
+            let thread_id = &fname[..fname.len() - 5];
+            if thread_id.is_empty() {
+                continue;
+            }
+
+            // Open the lock file to test if another process holds a lock on it
+            let file = match std::fs::OpenOptions::new().read(true).write(true).open(&path) {
+                Ok(f) => f,
+                Err(_) => match std::fs::File::open(&path) {
+                    Ok(f) => f,
+                    Err(_) => continue,
+                },
+            };
+
+            let is_locked = file.try_lock_exclusive().is_err();
+            if !is_locked {
+                let _ = file.unlock();
+                continue;
+            }
+
+            // The lock is held by a running process (codex app-server).
+            // Check if rollout event history indicates an active or interrupted turn.
+            if is_thread_rollout_in_progress(&codex_home, thread_id) {
+                in_progress.push(thread_id.to_string());
+            }
+        }
     }
 
-    let mut in_progress = Vec::new();
-    let entries = match std::fs::read_dir(&locks_dir) {
-        Ok(e) => e,
-        Err(_) => return Vec::new(),
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if fname.starts_with('.') || !fname.ends_with(".lock") {
-            continue;
-        }
-
-        let thread_id = &fname[..fname.len() - 5];
-        if thread_id.is_empty() {
-            continue;
-        }
-
-        // Open the lock file to test if another process holds a lock on it
-        let file = match std::fs::OpenOptions::new().read(true).write(true).open(&path) {
-            Ok(f) => f,
-            Err(_) => match std::fs::File::open(&path) {
-                Ok(f) => f,
-                Err(_) => continue,
-            },
-        };
-
-        let is_locked = file.try_lock_exclusive().is_err();
-        if !is_locked {
-            let _ = file.unlock();
-            continue;
-        }
-
-        // The lock is held by a running process (codex app-server).
-        // Check if rollout event history indicates an active turn.
-        if is_thread_rollout_in_progress(&codex_home, thread_id) {
-            in_progress.push(thread_id.to_string());
+    // 2. Also check top 5 recent threads from state_5.sqlite for quota/credit exhaustion aborts
+    let recent_threads = get_most_recent_threads(&codex_home, 5);
+    for tid in recent_threads {
+        if !in_progress.iter().any(|existing| existing == &tid) {
+            if is_thread_rollout_in_progress(&codex_home, &tid) {
+                in_progress.push(tid);
+            }
         }
     }
 
     in_progress
 }
 
-/// Checks if a thread's rollout log indicates an active turn in progress.
-fn is_thread_rollout_in_progress(codex_home: &std::path::Path, thread_id: &str) -> bool {
+/// Checks if a thread's rollout log indicates an active turn or an incomplete turn needing resumption.
+pub fn is_thread_rollout_in_progress(codex_home: &std::path::Path, thread_id: &str) -> bool {
     // 1. Try querying sqlite3 ~/.codex/state_5.sqlite for rollout_path
     let state_sqlite = codex_home.join("state_5.sqlite");
     let mut rollout_path = None;
@@ -389,27 +453,51 @@ fn is_thread_rollout_in_progress(codex_home: &std::path::Path, thread_id: &str) 
         }
     }
 
-    // 3. Inspect the last non-empty line of the rollout file
+    // 3. Inspect the last few lines of the rollout file
     if let Some(path) = rollout_path {
         if let Ok(file) = std::fs::File::open(&path) {
             use std::io::{BufRead, BufReader};
             let reader = BufReader::new(file);
-            let mut last_line = None;
+            let mut last_lines: Vec<String> = Vec::new();
             for line in reader.lines().flatten() {
                 let trimmed = line.trim();
                 if !trimmed.is_empty() {
-                    last_line = Some(trimmed.to_string());
+                    if last_lines.len() >= 6 {
+                        last_lines.remove(0);
+                    }
+                    last_lines.push(trimmed.to_string());
                 }
             }
 
-            if let Some(line) = last_line {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                    let payload_type = val.get("payload")
+            if let Some(last_line) = last_lines.last() {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(last_line) {
+                    let payload = val.get("payload");
+                    let payload_type = payload
                         .and_then(|p| p.get("type"))
                         .and_then(|t| t.as_str());
+
                     if payload_type == Some("task_complete") {
+                        // Check if the task failed with an error (e.g. usage/rate limit, workspace out of credits)
+                        if let Some(error) = payload.and_then(|p| p.get("error")) {
+                            if !error.is_null() {
+                                return true;
+                            }
+                        }
+                        // Also check if recent tail events indicated credit or rate limit exhaustion
+                        for prev in &last_lines {
+                            if prev.contains("workspace_owner_credits_depleted")
+                                || prev.contains("usage_limit_exceeded")
+                                || prev.contains("out of credits")
+                                || prev.contains("rate_limit_reached_type")
+                            {
+                                return true;
+                            }
+                        }
+                        // Clean completion with no error
                         return false;
                     }
+
+                    // Any other payload type at the end of the rollout indicates an interrupted/in-progress turn
                     return true;
                 }
             }
@@ -454,6 +542,33 @@ pub fn resume_threads(thread_ids: &[String], message: &str) {
             }
         }
     }
+}
+
+/// Interactively resumes a specific thread or the most recent active/interrupted thread.
+/// Navigates ChatGPT UI directly to the thread, queues a continuation message,
+/// and unpauses any paused UI elements.
+pub fn resume_thread_interactive(thread_id: Option<&str>) -> Result<(), String> {
+    let codex_home = crate::storage::codex_home();
+    let target_tid = match thread_id {
+        Some(tid) if !tid.trim().is_empty() => clean_thread_id(tid),
+        _ => {
+            let active = detect_in_progress_threads();
+            if let Some(first) = active.first() {
+                first.clone()
+            } else if let Some(recent) = get_most_recent_threads(&codex_home, 1).into_iter().next() {
+                recent
+            } else {
+                return Err("No active or recent thread found to resume.".to_string());
+            }
+        }
+    };
+
+    println!("🚀 Resuming thread '{}'...", target_tid);
+    open_thread_in_codex(&target_tid);
+    resume_threads(&[target_tid.clone()], "continue");
+    sleep(Duration::from_millis(500));
+    poll_and_trigger_ui_resume(5, Duration::from_millis(500));
+    Ok(())
 }
 
 /// Triggers the native macOS Accessibility "Resume" action on ChatGPT.app
@@ -644,5 +759,29 @@ mod tests {
 
         // 5. Unknown account
         assert!(resolve_target_account_idx(&accounts, "unknown").is_err());
+    }
+
+    #[test]
+    fn test_clean_thread_id() {
+        assert_eq!(
+            clean_thread_id("01a07d3c-3008-75c2-87a6-2c5c75f0e48b"),
+            "01a07d3c-3008-75c2-87a6-2c5c75f0e48b"
+        );
+        assert_eq!(
+            clean_thread_id("codex://threads/01a07d3c-3008-75c2-87a6-2c5c75f0e48b"),
+            "01a07d3c-3008-75c2-87a6-2c5c75f0e48b"
+        );
+        assert_eq!(
+            clean_thread_id("codex://threads/01a07d3c-3008-75c2-87a6-2c5c75f0e48b/"),
+            "01a07d3c-3008-75c2-87a6-2c5c75f0e48b"
+        );
+        assert_eq!(
+            clean_thread_id("chatgpt://threads/01a07d3c-3008-75c2-87a6-2c5c75f0e48b"),
+            "01a07d3c-3008-75c2-87a6-2c5c75f0e48b"
+        );
+        assert_eq!(
+            clean_thread_id("  codex://threads/01a07d3c-3008-75c2-87a6-2c5c75f0e48b  "),
+            "01a07d3c-3008-75c2-87a6-2c5c75f0e48b"
+        );
     }
 }

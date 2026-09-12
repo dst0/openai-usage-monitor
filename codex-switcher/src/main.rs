@@ -38,6 +38,11 @@ enum Commands {
         #[arg(long)]
         restart: bool,
     },
+    /// Resume an active, interrupted, or credit-exhausted thread in ChatGPT
+    Resume {
+        /// Thread ID or URL (e.g. codex://threads/<id> or bare UUID). Defaults to most recent thread.
+        thread_id: Option<String>,
+    },
     /// Rename an account label/nickname
     Rename {
         /// Current account ID, nickname, or email
@@ -259,6 +264,9 @@ fn main() {
                 }
                 Err(e) => Err(e),
             }
+        }
+        Some(Commands::Resume { thread_id }) => {
+            switcher::resume_thread_interactive(thread_id.as_deref())
         }
         Some(Commands::Rename { account, new_name, clear }) => {
             let target = if clear { None } else { Some(new_name.as_str()) };
