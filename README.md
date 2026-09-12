@@ -56,7 +56,7 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
    - Configurable polling interval (1m, 5m, 15m, 30m) persisted in `UserDefaults`.
    - Desktop app restart button.
    - Built-in offline documentation with interactive menu bar simulator (`helps.html`).
-   - Multilingual documentation support (EN, UK, DE, FR, ES, IT, PT, PL, NL).
+   - Full native multilingual localization across Menu Bar status items, menus, system dialogs, and interactive documentation (13 languages: EN, UK, RU, DE, FR, ES, IT, PT, PL, NL, JA, ZH-Hans, VI).
    - Launch at Login support (`Launch at Login`).
 
 ---
@@ -294,3 +294,29 @@ All configuration files and runtime caches reside in `~/.codex/`:
 - `~/.codex/usage-status.json` — Real-time quota snapshot consumed by the macOS Menu Bar app.
 - `~/.codex/monitor.lock` — File lock preventing concurrent daemon instances.
 - `~/.codex/helps.html` — Offline interactive documentation guide.
+
+---
+
+## 🌐 Multilingual Support (13 Languages)
+
+Both the native macOS Menu Bar application (`Codex Monitor.app`) and the offline interactive documentation guide (`helps.html`) feature full localization across **13 languages**, with automatic system locale detection and resilient fallbacks:
+
+| Code | Language | Native Name | Menu Bar UI & Strings | Interactive Guide (`helps.html`) |
+| :--- | :--- | :--- | :---: | :---: |
+| `en` | English | English | ✅ | ✅ |
+| `ja` | Japanese | 日本語 | ✅ | ✅ |
+| `zh-Hans` | Simplified Chinese | 简体中文 | ✅ | ✅ |
+| `vi` | Vietnamese | Tiếng Việt | ✅ | ✅ |
+| `uk` | Ukrainian | Українська | ✅ | ✅ |
+| `de` | German | Deutsch | ✅ | ✅ |
+| `fr` | French | Français | ✅ | ✅ |
+| `es` | Spanish | Español | ✅ | ✅ |
+| `it` | Italian | Italiano | ✅ | ✅ |
+| `pt` | Portuguese | Português | ✅ | ✅ |
+| `pl` | Polish | Polski | ✅ | ✅ |
+| `nl` | Dutch | Nederlands | ✅ | ✅ |
+| `ru` | Russian | Русский | ✅ | — *(app UI only)* |
+
+- **Automatic Locale Detection**: `Codex Monitor.app` inspects `Locale.preferredLanguages` with priority prefix matching (e.g. `ja-JP` → `ja`, `zh-Hans-CN` / `zh-CN` → `zh-Hans`, `vi-VN` → `vi`).
+- **Interactive Guide Selection**: The guide automatically resolves the active language via URL query parameter (`helps.html?lang=ja`), hash anchor (`#ja`), localStorage preference, or browser navigator languages, with an instant-switch dropdown selector in the navigation header.
+

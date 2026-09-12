@@ -23,3 +23,9 @@
 - `cxi reset-multiplier <account>`: Reset multiplier back to auto-detected default.
 - `cxi wrap exec "<prompt>"`: Run unattended command with pre-flight quota check and auto-switch.
 
+## Localization & Supported Languages
+- Supported Languages (13): English (`en`), Japanese (`ja`), Simplified Chinese (`zh-Hans`), Vietnamese (`vi`), Ukrainian (`uk`), German (`de`), French (`fr`), Spanish (`es`), Italian (`it`), Portuguese (`pt`), Polish (`pl`), Dutch (`nl`), Russian (`ru`).
+- Native macOS Bundles: `resources/*.lproj/Localizable.strings` bundled inside `Codex Monitor.app/Contents/Resources/`.
+- Offline Interactive Guide: `resources/helps.html` with language switcher and URL parameter routing (`?lang=ja`, `?lang=zh-Hans`, `?lang=vi`).
+
+

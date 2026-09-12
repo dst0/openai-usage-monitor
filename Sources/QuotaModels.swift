@@ -327,9 +327,16 @@ public enum HelpsDocHelper {
         guard let url = findHelpsHTMLURL(fileManager: fileManager, bundle: bundle, arguments: arguments) else {
             return nil
         }
-        let supportedDocLanguages: Set<String> = ["en", "uk", "de", "fr", "es", "it", "pt", "pl", "nl"]
+        let supportedDocLanguages: Set<String> = ["en", "uk", "de", "fr", "es", "it", "pt", "pl", "nl", "ja", "zh-hans", "zh", "vi"]
         let trimmed = languageCode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let docLang = supportedDocLanguages.contains(trimmed) ? trimmed : "en"
+        let docLang: String
+        if trimmed.hasPrefix("zh") {
+            docLang = "zh-Hans"
+        } else if supportedDocLanguages.contains(trimmed) {
+            docLang = trimmed
+        } else {
+            docLang = "en"
+        }
 
         if var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
             comps.queryItems = [URLQueryItem(name: "lang", value: docLang)]

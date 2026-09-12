@@ -11,6 +11,9 @@ public enum AppLanguage: String, CaseIterable, Sendable {
     case pt = "pt"
     case pl = "pl"
     case nl = "nl"
+    case ja = "ja"
+    case zhHans = "zh-Hans"
+    case vi = "vi"
 
     public var displayName: String {
         switch self {
@@ -24,6 +27,9 @@ public enum AppLanguage: String, CaseIterable, Sendable {
         case .pt: return "Português"
         case .pl: return "Polski"
         case .nl: return "Nederlands"
+        case .ja: return "日本語"
+        case .zhHans: return "简体中文"
+        case .vi: return "Tiếng Việt"
         }
     }
 }
@@ -60,10 +66,34 @@ public final class LocalizationManager: @unchecked Sendable {
 
     public static func detectSystemLanguage(preferences: [String] = Locale.preferredLanguages) -> AppLanguage {
         guard !preferences.isEmpty else { return .en }
+
+        // Check user preferences directly in order of priority
+        for pref in preferences {
+            let lower = pref.lowercased()
+            if lower.hasPrefix("ja") { return .ja }
+            if lower.hasPrefix("zh") { return .zhHans }
+            if lower.hasPrefix("vi") { return .vi }
+            if lower.hasPrefix("uk") { return .uk }
+            if lower.hasPrefix("ru") { return .ru }
+            if lower.hasPrefix("de") { return .de }
+            if lower.hasPrefix("fr") { return .fr }
+            if lower.hasPrefix("es") { return .es }
+            if lower.hasPrefix("it") { return .it }
+            if lower.hasPrefix("pt") { return .pt }
+            if lower.hasPrefix("pl") { return .pl }
+            if lower.hasPrefix("nl") { return .nl }
+            if lower.hasPrefix("en") { return .en }
+        }
+
         let available = AppLanguage.allCases.map { $0.rawValue }
         let matched = Bundle.preferredLocalizations(from: available, forPreferences: preferences)
-        if let first = matched.first, let lang = AppLanguage(rawValue: first) {
-            return lang
+        if let first = matched.first {
+            if let lang = AppLanguage(rawValue: first) {
+                return lang
+            }
+            if first.hasPrefix("zh") {
+                return .zhHans
+            }
         }
         return .en
     }
@@ -528,6 +558,180 @@ public final class LocalizationManager: @unchecked Sendable {
             "auto_switch_on_limit": "🔄 Automatisch overschakelen bij limietuitputting",
             "auto_switch_business_only": "🏢 Alleen automatisch overschakelen tussen zakelijke accounts",
             "auto_switch_business_priority": "⚡ Automatisch overschakelen met voorrang voor zakelijke accounts"
+        ],
+        .ja: [
+            "menu_title": "OpenAI Codex Quota Monitor",
+            "legend_circles": "上 = 5時間スプリント · 中央 = 週間上限 · 下 = リセットクレジット",
+            "active_in_cli": "[CLIでアクティブ]",
+            "active_in_app": "[APPでアクティブ]",
+            "reserve_slot": "[待機 #%d]",
+            "five_hour_sprint": "5時間スプリント:  %@  ",
+            "weekly_limit": "週間上限:  %@  ",
+            "reset_credits": "リセットクレジット",
+            "reset_in_hours_minutes": "(%d時間%d分後にリセット)",
+            "reset_in_minutes": "(%d分後にリセット)",
+            "reset_soon": "(まもなくリセット)",
+            "reset_now": "今すぐリセット",
+            "hours_short": "%d時間",
+            "hours_minutes_short": "%d時間%d分",
+            "minutes_short": "%d分",
+            "duration_days_hours": "%d日 %d時間",
+            "duration_hours_minutes": "%d時間%d分",
+            "duration_minutes": "%d分",
+            "models_menu_title": "CLIモデル選択",
+            "last_updated": "🕐 更新: %@",
+            "refresh_now": "🔄 今すぐ更新",
+            "refreshing": "🔄 更新中...",
+            "refresh_interval": "⏱ 更新間隔",
+            "help_guide": "📖 ヘルプとドキュメント",
+            "restart_app": "🚀 Codex デスクトップアプリを再起動",
+            "launch_at_login": "ログイン時に起動",
+            "quit": "終了",
+            "remove_account": "🗑 アカウントを削除...",
+            "remove_account_title": "アカウントの削除",
+            "remove_account_confirm": "本当に %@ を Codex Monitor から削除しますか？",
+            "remove_confirm_btn": "削除",
+            "cancel_btn": "キャンセル",
+            "add_account": "➕ アカウントを追加...",
+            "add_account_title": "Codex アカウントの追加",
+            "add_account_msg": "アカウント識別子を入力してください (例: personal, work, secondary):",
+            "add_account_login_browser": "ブラウザでログイン",
+            "add_account_save_current": "現在のセッションを保存",
+            "add_account_browser_prompt": "ログイン用ブラウザを開きます。ブラウザで認証を完了してください...",
+            "add_account_success": "アカウント '%@' が正常に追加されました！",
+            "add_account_saved_success": "現在のセッションが '%@' として保存されました！",
+            "add_account_failed_title": "アカウント追加に失敗しました",
+            "add_account_failed_desc": "アカウントのセットアップを完了できませんでした。認証情報を確認して再試行してください。",
+            "switch_to_account": "このアカウントに切り替え",
+            "cli_up_to_date": "✓ Codex CLI v%@ (最新)",
+            "cli_update_available": "🚀 Codex CLI を更新 (v%@ へ)",
+            "cli_not_found": "⚠️ Codex CLI が見つかりません",
+            "rename_account": "✏️ ニックネームを編集...",
+            "rename_account_title": "アカウントニックネームの編集",
+            "rename_account_prompt": "%@ の表示ニックネームを入力:",
+            "save_btn": "保存",
+            "clear_btn": "クリア",
+            "restart_app_on_switch": "🚀 切り替え時に Codex App を再起動",
+            "stack_percentages": "パーセントの2行スタック表示",
+            "auto_switch_on_limit": "🔄 制限到達時の自動切り替え",
+            "auto_switch_business_only": "🏢 ビジネスアカウントのみ自動切り替え",
+            "auto_switch_business_priority": "⚡ ビジネスアカウント優先で自動切り替え"
+        ],
+        .zhHans: [
+            "menu_title": "OpenAI Codex Quota Monitor",
+            "legend_circles": "顶部 = 5小时冲刺 · 中间 = 周额度 · 底部 = 重置点数",
+            "active_in_cli": "[CLI 中活跃]",
+            "active_in_app": "[APP 中活跃]",
+            "reserve_slot": "[备用 #%d]",
+            "five_hour_sprint": "5小时冲刺:  %@  ",
+            "weekly_limit": "每周限额:  %@  ",
+            "reset_credits": "重置点数",
+            "reset_in_hours_minutes": "(%d小时%d分钟后重置)",
+            "reset_in_minutes": "(%d分钟后重置)",
+            "reset_soon": "(即将重置)",
+            "reset_now": "立即重置",
+            "hours_short": "%d小时",
+            "hours_minutes_short": "%d小时%d分",
+            "minutes_short": "%d分钟",
+            "duration_days_hours": "%d天 %d小时",
+            "duration_hours_minutes": "%d小时%d分",
+            "duration_minutes": "%d分钟",
+            "models_menu_title": "CLI 模型选择",
+            "last_updated": "🕐 已更新: %@",
+            "refresh_now": "🔄 立即刷新",
+            "refreshing": "🔄 正在刷新...",
+            "refresh_interval": "⏱ 刷新间隔",
+            "help_guide": "📖 帮助与文档",
+            "restart_app": "🚀 重启 Codex 桌面应用",
+            "launch_at_login": "开机自启动",
+            "quit": "退出",
+            "remove_account": "🗑 移除账号...",
+            "remove_account_title": "移除账号",
+            "remove_account_confirm": "确定要从 Codex Monitor 中移除 %@ 吗？",
+            "remove_confirm_btn": "移除",
+            "cancel_btn": "取消",
+            "add_account": "➕ 添加账号...",
+            "add_account_title": "添加 Codex 账号",
+            "add_account_msg": "请输入账号标识符 (例如: personal, work, secondary):",
+            "add_account_login_browser": "通过浏览器登录",
+            "add_account_save_current": "保存当前会话",
+            "add_account_browser_prompt": "正在打开浏览器进行登录，请在浏览器中完成认证...",
+            "add_account_success": "账号 '%@' 添加成功！",
+            "add_account_saved_success": "当前会话已成功保存为 '%@'！",
+            "add_account_failed_title": "添加账号失败",
+            "add_account_failed_desc": "无法完成账号配置，请检查凭据后重试。",
+            "switch_to_account": "切换到此账号",
+            "cli_up_to_date": "✓ Codex CLI v%@ (已是最新)",
+            "cli_update_available": "🚀 更新 Codex CLI (至 v%@)",
+            "cli_not_found": "⚠️ 未找到 Codex CLI",
+            "rename_account": "✏️ 编辑昵称...",
+            "rename_account_title": "编辑账号昵称",
+            "rename_account_prompt": "输入 %@ 的显示昵称:",
+            "save_btn": "保存",
+            "clear_btn": "清除",
+            "restart_app_on_switch": "🚀 切换时自动重启 Codex App",
+            "stack_percentages": "百分比紧凑堆叠 (双行)",
+            "auto_switch_on_limit": "🔄 额度耗尽时自动切换",
+            "auto_switch_business_only": "🏢 仅在企业/商业账号间自动切换",
+            "auto_switch_business_priority": "⚡ 优先自动切换至企业账号"
+        ],
+        .vi: [
+            "menu_title": "OpenAI Codex Quota Monitor",
+            "legend_circles": "Trên = 5h Nước rút · Giữa = Hạn mức tuần · Dưới = Điểm đặt lại",
+            "active_in_cli": "[HOẠT ĐỘNG TRONG CLI]",
+            "active_in_app": "[HOẠT ĐỘNG TRONG APP]",
+            "reserve_slot": "[DỰ PHÒNG #%d]",
+            "five_hour_sprint": "5h nước rút:  %@  ",
+            "weekly_limit": "Hạn mức tuần:  %@  ",
+            "reset_credits": "Điểm đặt lại",
+            "reset_in_hours_minutes": "(đặt lại sau %dh %dm)",
+            "reset_in_minutes": "(đặt lại sau %dm)",
+            "reset_soon": "(sắp đặt lại)",
+            "reset_now": "đặt lại ngay",
+            "hours_short": "%dh",
+            "hours_minutes_short": "%dh %dm",
+            "minutes_short": "%d phút",
+            "duration_days_hours": "%d ngày %d giờ",
+            "duration_hours_minutes": "%dh %dm",
+            "duration_minutes": "%dm",
+            "models_menu_title": "Chọn mô hình CLI",
+            "last_updated": "🕐 Cập nhật: %@",
+            "refresh_now": "🔄 Làm mới ngay",
+            "refreshing": "🔄 Đang làm mới...",
+            "refresh_interval": "⏱ Khoảng thời gian làm mới",
+            "help_guide": "📖 Hướng dẫn & Tài liệu",
+            "restart_app": "🚀 Khởi động lại ứng dụng Codex",
+            "launch_at_login": "Khởi động cùng hệ thống",
+            "quit": "Thoát",
+            "remove_account": "🗑 Xóa tài khoản...",
+            "remove_account_title": "Xóa tài khoản",
+            "remove_account_confirm": "Bạn có chắc chắn muốn xóa %@ khỏi Codex Monitor?",
+            "remove_confirm_btn": "Xóa",
+            "cancel_btn": "Hủy",
+            "add_account": "➕ Thêm tài khoản...",
+            "add_account_title": "Thêm tài khoản Codex",
+            "add_account_msg": "Nhập định danh tài khoản (ví dụ: personal, work, secondary):",
+            "add_account_login_browser": "Đăng nhập qua trình duyệt",
+            "add_account_save_current": "Lưu phiên hiện tại",
+            "add_account_browser_prompt": "Đang mở trình duyệt để đăng nhập. Vui lòng hoàn tất xác thực trong trình duyệt...",
+            "add_account_success": "Tài khoản '%@' đã được thêm thành công!",
+            "add_account_saved_success": "Phiên hiện tại đã được lưu thành '%@'!",
+            "add_account_failed_title": "Thêm tài khoản thất bại",
+            "add_account_failed_desc": "Không thể hoàn tất thiết lập tài khoản. Vui lòng kiểm tra thông tin và thử lại.",
+            "switch_to_account": "Chuyển sang tài khoản này",
+            "cli_up_to_date": "✓ Codex CLI v%@ (mới nhất)",
+            "cli_update_available": "🚀 Cập nhật Codex CLI (lên v%@)",
+            "cli_not_found": "⚠️ Không tìm thấy Codex CLI",
+            "rename_account": "✏️ Sửa biệt danh...",
+            "rename_account_title": "Sửa biệt danh tài khoản",
+            "rename_account_prompt": "Nhập biệt danh hiển thị cho %@:",
+            "save_btn": "Lưu",
+            "clear_btn": "Xóa",
+            "restart_app_on_switch": "🚀 Khởi động lại Codex App khi chuyển",
+            "stack_percentages": "Xếp chồng phần trăm (2 dòng)",
+            "auto_switch_on_limit": "🔄 Tự động chuyển khi hết hạn mức",
+            "auto_switch_business_only": "🏢 Chỉ tự động chuyển tài khoản doanh nghiệp",
+            "auto_switch_business_priority": "⚡ Tự động chuyển ưu tiên tài khoản doanh nghiệp"
         ]
     ]
 }

@@ -34,6 +34,9 @@
         <string>pt</string>
         <string>pl</string>
         <string>nl</string>
+        <string>ja</string>
+        <string>zh-Hans</string>
+        <string>vi</string>
     </array>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
