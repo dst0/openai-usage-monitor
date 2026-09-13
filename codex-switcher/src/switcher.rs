@@ -670,13 +670,13 @@ pub fn detect_in_progress_threads() -> Vec<String> {
             }
 
             // The lock is held by a running process (codex app-server).
-            // Check rollout state: ONLY resume if mid-turn active or recently quota-exhausted.
-            // Never resume cleanly completed or user-aborted threads!
+            // Check rollout state: resume if mid-turn active, interrupted by quota, or turn was aborted/interrupted.
+            // Never resume cleanly completed turns.
             match inspect_thread_rollout_state(&codex_home, thread_id) {
                 ThreadRolloutState::ActiveInProgress => {
                     in_progress.push(thread_id.to_string());
                 }
-                ThreadRolloutState::InterruptedByQuota => {
+                ThreadRolloutState::InterruptedByQuota | ThreadRolloutState::TurnAborted => {
                     let is_recent = get_thread_updated_at(&codex_home, thread_id)
                         .map(|updated| (now - updated).abs() <= RECENT_QUOTA_WINDOW_SECS)
                         .unwrap_or(true);
@@ -689,8 +689,8 @@ pub fn detect_in_progress_threads() -> Vec<String> {
         }
     }
 
-    // 2. Also check top 30 recent threads from state_5.sqlite if they failed
-    // due to quota/credit exhaustion within the quota window.
+    // 2. Also check top 30 recent threads from state_5.sqlite if they were interrupted
+    // or failed due to quota/credit exhaustion within the quota window.
     let recent_threads = get_most_recent_threads(&codex_home, 30);
     for tid in recent_threads {
         if !in_progress.iter().any(|existing| existing == &tid) {
@@ -698,7 +698,8 @@ pub fn detect_in_progress_threads() -> Vec<String> {
                 .map(|updated| (now - updated).abs() <= RECENT_QUOTA_WINDOW_SECS)
                 .unwrap_or(false);
             if is_recent {
-                if inspect_thread_rollout_state(&codex_home, &tid) == ThreadRolloutState::InterruptedByQuota {
+                let state = inspect_thread_rollout_state(&codex_home, &tid);
+                if state == ThreadRolloutState::InterruptedByQuota || state == ThreadRolloutState::TurnAborted {
                     in_progress.push(tid);
                 }
             }

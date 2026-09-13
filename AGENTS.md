@@ -62,8 +62,7 @@ Rollout files are evaluated backwards from the tail, filtering out post-turn met
   - `rate_limit_reached_type` (when not null)
   - Generic `credits`, `limit`, or `quota` error indicators.
 - **`ActiveInProgress`**: The latest turn has initiated activity (`user_message`, `agent_message`, `reasoning`, `custom_tool_call`, `function_call`, `web_search`, `file_change`) without a closing `task_complete`.
-- **`CleanCompleted`**: The last turn completed with `task_complete` with no error, or a non-quota execution error. **Never auto-resumed.**
-- **`TurnAborted`**: The turn was explicitly cancelled by the user (`turn_aborted`). **Never auto-resumed.**
+- **`TurnAborted`**: The turn was interrupted by an app restart, process crash, or interruption (`turn_aborted`). Handled via native UI inspection for the circular Play button (`isPlayButton`) to unpause paused queues without injecting 'continue' messages.
 
 ### 4. UI Hydration & Queued Message Resumption
 
