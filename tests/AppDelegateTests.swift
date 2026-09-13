@@ -599,23 +599,40 @@ struct AppDelegateTestRunner {
     assertEqual(LocalizationManager.detectSystemLanguage(preferences: ["zh-TW"]), .zhHans)
     assertEqual(LocalizationManager.detectSystemLanguage(preferences: ["vi-VN", "vi"]), .vi)
 
-    // Test localized helps URLs
-    let jaURL = HelpsDocHelper.localizedHelpsHTMLURL(languageCode: "ja")
+    // Test localized helps URLs against an isolated bundle-like fixture so this
+    // remains deterministic on clean CI runners without an installed app.
+    let helpFixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "codex-monitor-help-tests-\(UUID().uuidString)", isDirectory: true)
+    let helpFixtureResources = helpFixtureRoot.appendingPathComponent(
+      "Contents/Resources", isDirectory: true)
+    try! FileManager.default.createDirectory(
+      at: helpFixtureResources, withIntermediateDirectories: true)
+    try! Data("<html></html>".utf8).write(
+      to: helpFixtureResources.appendingPathComponent("helps.html"))
+    defer { try? FileManager.default.removeItem(at: helpFixtureRoot) }
+    let helpFixtureExecutable = helpFixtureRoot.appendingPathComponent(
+      "Contents/MacOS/CodexMonitor").path
+
+    let jaURL = HelpsDocHelper.localizedHelpsHTMLURL(
+      languageCode: "ja", arguments: [helpFixtureExecutable])
     assertTrue(
       jaURL?.absoluteString.contains("lang=ja") == true,
       "Helps URL for Japanese must contain lang=ja")
 
-    let zhURL = HelpsDocHelper.localizedHelpsHTMLURL(languageCode: "zh-Hans")
+    let zhURL = HelpsDocHelper.localizedHelpsHTMLURL(
+      languageCode: "zh-Hans", arguments: [helpFixtureExecutable])
     assertTrue(
       zhURL?.absoluteString.contains("lang=zh-Hans") == true,
       "Helps URL for zh-Hans must contain lang=zh-Hans")
 
-    let zhAliasURL = HelpsDocHelper.localizedHelpsHTMLURL(languageCode: "zh")
+    let zhAliasURL = HelpsDocHelper.localizedHelpsHTMLURL(
+      languageCode: "zh", arguments: [helpFixtureExecutable])
     assertTrue(
       zhAliasURL?.absoluteString.contains("lang=zh-Hans") == true,
       "Helps URL for zh alias must resolve to lang=zh-Hans")
 
-    let viURL = HelpsDocHelper.localizedHelpsHTMLURL(languageCode: "vi")
+    let viURL = HelpsDocHelper.localizedHelpsHTMLURL(
+      languageCode: "vi", arguments: [helpFixtureExecutable])
     assertTrue(
       viURL?.absoluteString.contains("lang=vi") == true,
       "Helps URL for Vietnamese must contain lang=vi")
@@ -934,17 +951,29 @@ struct AppDelegateTestRunner {
 
     // Verify Organization Section Headers exist in menu
     assertTrue(
-      allTitles.contains(where: { $0.contains("🏢 Destination Works Pty Ltd") }),
+      allTitles.contains(where: { $0.contains("Destination Works Pty Ltd") }),
       "Menu must contain section header for 'Destination Works Pty Ltd'"
     )
+    let businessHeader = orgMenu.items.first(where: {
+      $0.title.contains("Destination Works Pty Ltd") && $0.view is AccountSectionHeaderView
+    })?.view as? AccountSectionHeaderView
+    assertTrue(businessHeader != nil, "Business organization must use a visually distinct header")
+    assertEqual(businessHeader?.countLabel.stringValue, "1", "Business header must show account count")
+    assertEqual(businessHeader?.frame.height, 34, "Business header must have a prominent 34pt height")
     assertTrue(
-      allTitles.contains(where: { $0.contains("🏢 dstworks family") }),
+      allTitles.contains(where: { $0.contains("dstworks family") }),
       "Menu must contain section header for 'dstworks family'"
     )
     assertTrue(
-      allTitles.contains(where: { $0.contains("👤 Personal Accounts") || $0.contains("👤 Личные аккаунты") }),
+      allTitles.contains(where: { $0.contains("Personal Accounts") || $0.contains("Личные аккаунты") }),
       "Menu must contain section header for personal accounts"
     )
+    let personalHeader = orgMenu.items.first(where: {
+      ($0.title.contains("Personal Accounts") || $0.title.contains("Личные аккаунты"))
+        && $0.view is AccountSectionHeaderView
+    })?.view as? AccountSectionHeaderView
+    assertTrue(personalHeader != nil, "Personal accounts must use a visually distinct header")
+    assertEqual(personalHeader?.countLabel.stringValue, "1", "Personal header must show account count")
 
     print("  ✅ Business accounts grouping by organization with organization name verified")
 

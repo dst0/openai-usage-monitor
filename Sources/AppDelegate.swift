@@ -34,6 +34,106 @@ public final class InsetSeparatorView: NSView {
   }
 }
 
+// MARK: - Account Section Header View
+
+public final class AccountSectionHeaderView: NSView {
+  public enum Kind {
+    case business
+    case personal
+
+    fileprivate var accentColor: NSColor {
+      switch self {
+      case .business: return .systemBlue
+      case .personal: return .systemPurple
+      }
+    }
+
+    fileprivate var symbolName: String {
+      switch self {
+      case .business: return "building.2.fill"
+      case .personal: return "person.2.fill"
+      }
+    }
+  }
+
+  public let titleLabel: NSTextField
+  public let countLabel: NSTextField
+  public let kind: Kind
+
+  private let accentView = NSView()
+  private let iconView = NSImageView()
+
+  public init(frame frameRect: NSRect, title: String, count: Int, kind: Kind) {
+    self.kind = kind
+    self.titleLabel = NSTextField(labelWithString: title)
+    self.countLabel = NSTextField(labelWithString: "\(count)")
+    super.init(frame: frameRect)
+
+    wantsLayer = true
+    layer?.cornerRadius = 7
+    layer?.borderWidth = 0.75
+
+    accentView.wantsLayer = true
+    accentView.layer?.cornerRadius = 1.5
+    addSubview(accentView)
+
+    let symbolConfig = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+    iconView.image = NSImage(systemSymbolName: kind.symbolName, accessibilityDescription: title)?
+      .withSymbolConfiguration(symbolConfig)
+    iconView.imageScaling = .scaleProportionallyDown
+    iconView.contentTintColor = kind.accentColor
+    addSubview(iconView)
+
+    titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+    titleLabel.textColor = .labelColor
+    titleLabel.lineBreakMode = .byTruncatingTail
+    addSubview(titleLabel)
+
+    countLabel.alignment = .center
+    countLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
+    countLabel.textColor = kind.accentColor
+    countLabel.wantsLayer = true
+    countLabel.layer?.cornerRadius = 8
+    addSubview(countLabel)
+
+    setAccessibilityElement(true)
+    setAccessibilityRole(.group)
+    setAccessibilityLabel("\(title), \(count)")
+    applyAppearance()
+  }
+
+  public required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  public override func layout() {
+    super.layout()
+    let inset: CGFloat = 12
+    accentView.frame = NSRect(x: inset, y: 7, width: 3, height: max(0, bounds.height - 14))
+    iconView.frame = NSRect(x: 22, y: 8, width: 16, height: 16)
+    countLabel.frame = NSRect(x: bounds.width - 42, y: 8, width: 24, height: 16)
+    titleLabel.frame = NSRect(
+      x: 46,
+      y: 7,
+      width: max(0, countLabel.frame.minX - 54),
+      height: 18
+    )
+  }
+
+  public override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    applyAppearance()
+  }
+
+  private func applyAppearance() {
+    let accent = kind.accentColor
+    layer?.backgroundColor = accent.withAlphaComponent(0.10).cgColor
+    layer?.borderColor = accent.withAlphaComponent(0.28).cgColor
+    accentView.layer?.backgroundColor = accent.withAlphaComponent(0.85).cgColor
+    countLabel.layer?.backgroundColor = accent.withAlphaComponent(0.14).cgColor
+  }
+}
+
 // MARK: - Account Row View with ✕ Delete Button
 
 public final class AccountRowView: NSView {
@@ -1930,29 +2030,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
           dynamicAccountItems.append(sep)
           insertIdx += 1
         }
-        let orgTitle = "  🏢 \(orgName)"
-        let orgHeader = NSMenuItem(title: orgTitle, action: #selector(noop), keyEquivalent: "")
-        orgHeader.target = self
-        orgHeader.attributedTitle = NSAttributedString(
-          string: orgTitle,
-          attributes: [
-            .font: NSFont.boldSystemFont(ofSize: 11),
-            .foregroundColor: NSColor.secondaryLabelColor,
-          ])
+        let groupAccs = orgGroups[orgName] ?? []
+        let orgTitle = orgName
+        let orgHeader = AppDelegate.makeAccountSectionHeaderItem(
+          title: orgTitle,
+          count: groupAccs.count,
+          kind: .business
+        )
         menu.insertItem(orgHeader, at: insertIdx)
         dynamicAccountItems.append(orgHeader)
         insertIdx += 1
 
-        if let groupAccs = orgGroups[orgName] {
-          for (accIdx, acc) in groupAccs.enumerated() {
-            if accIdx > 0 {
-              let sep = AppDelegate.makeInsetSeparatorItem()
-              menu.insertItem(sep, at: insertIdx)
-              dynamicAccountItems.append(sep)
-              insertIdx += 1
-            }
-            renderReserveAccount(acc)
+        for (accIdx, acc) in groupAccs.enumerated() {
+          if accIdx > 0 {
+            let sep = AppDelegate.makeInsetSeparatorItem()
+            menu.insertItem(sep, at: insertIdx)
+            dynamicAccountItems.append(sep)
+            insertIdx += 1
           }
+          renderReserveAccount(acc)
         }
       }
 
@@ -1964,22 +2060,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
           dynamicAccountItems.append(sep)
           insertIdx += 1
 
-          let persTitle = "  👤 \(L10n.personalAccounts)"
-          let persHeader = NSMenuItem(title: persTitle, action: #selector(noop), keyEquivalent: "")
-          persHeader.target = self
-          persHeader.attributedTitle = NSAttributedString(
-            string: persTitle,
-            attributes: [
-              .font: NSFont.boldSystemFont(ofSize: 11),
-              .foregroundColor: NSColor.secondaryLabelColor,
-            ])
-          menu.insertItem(persHeader, at: insertIdx)
-          dynamicAccountItems.append(persHeader)
-          insertIdx += 1
         }
 
+        let persTitle = L10n.personalAccounts
+        let persHeader = AppDelegate.makeAccountSectionHeaderItem(
+          title: persTitle,
+          count: personalAccs.count,
+          kind: .personal
+        )
+        menu.insertItem(persHeader, at: insertIdx)
+        dynamicAccountItems.append(persHeader)
+        insertIdx += 1
+
         for (accIdx, acc) in personalAccs.enumerated() {
-          if accIdx > 0 || (!orgOrder.isEmpty && accIdx == 0) {
+          if accIdx > 0 {
             let sep = AppDelegate.makeInsetSeparatorItem()
             menu.insertItem(sep, at: insertIdx)
             dynamicAccountItems.append(sep)
@@ -2021,6 +2115,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     let view = InsetSeparatorView(
       frame: NSRect(x: 0, y: 0, width: width, height: 7), horizontalInset: inset)
     item.view = view
+    return item
+  }
+
+  public static func makeAccountSectionHeaderItem(
+    title: String,
+    count: Int,
+    kind: AccountSectionHeaderView.Kind,
+    width: CGFloat = defaultMenuWidth
+  ) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+    item.view = AccountSectionHeaderView(
+      frame: NSRect(x: 0, y: 0, width: width, height: 34),
+      title: title,
+      count: count,
+      kind: kind
+    )
     return item
   }
 

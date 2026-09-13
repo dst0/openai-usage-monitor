@@ -162,6 +162,9 @@ CLI_STAGING="$(mktemp "${LOCAL_BIN}/.codex-mon.install.XXXXXX")"
 cp "target/release/codex-mon" "${CLI_STAGING}"
 chmod 755 "${CLI_STAGING}"
 xattr -c "${CLI_STAGING}" 2>/dev/null || true
+if ! codesign --verify --strict "${CLI_STAGING}" 2>/dev/null; then
+    codesign --sign - --force "${CLI_STAGING}"
+fi
 codesign --verify --strict "${CLI_STAGING}"
 "${CLI_STAGING}" --version >/dev/null
 mv -f "${CLI_STAGING}" "${LOCAL_BIN}/codex-mon"
