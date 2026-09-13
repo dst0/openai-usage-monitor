@@ -830,13 +830,17 @@ struct AppDelegateTestRunner {
     appDelegate.updateUI(with: snapshotWithReserves)
 
     let menuTitles = menu.items.map { $0.title }
+    let reserveCards = menu.items.compactMap { $0.view as? AccountSectionCardView }
+    let reserveMetrics = reserveCards.flatMap { card in
+      card.metricLabels.map { $0.attributedStringValue.string }
+    }
     let weeklyItems = menuTitles.filter { $0.contains("Weekly:") }
     assertTrue(
-      weeklyItems.count >= 2,
-      "Expected at least 2 Weekly items in menu (active + reserve), got: \(weeklyItems)")
+      !weeklyItems.isEmpty,
+      "Expected the active account Weekly item in menu, got: \(weeklyItems)")
     assertTrue(
-      weeklyItems.contains(where: { $0.contains("52%") }),
-      "Menu must contain weekly item with 52% for reserve account")
+      reserveMetrics.contains(where: { $0.contains("Weekly:") && $0.contains("52%") }),
+      "Reserve account card must contain its 52% Weekly metric: \(reserveMetrics)")
 
     print("  ✅ Reserve accounts weekly limit bar & distinct reset times verified")
 
@@ -949,33 +953,101 @@ struct AppDelegateTestRunner {
       "Active CLI block header must mention active organization: \(allTitles)"
     )
 
-    // Verify Organization Section Headers exist in menu
+    // Verify organization cards exist and enclose their complete account groups.
     assertTrue(
       allTitles.contains(where: { $0.contains("Destination Works Pty Ltd") }),
-      "Menu must contain section header for 'Destination Works Pty Ltd'"
+      "Menu must contain a card for 'Destination Works Pty Ltd'"
     )
-    let businessHeader = orgMenu.items.first(where: {
-      $0.title.contains("Destination Works Pty Ltd") && $0.view is AccountSectionHeaderView
-    })?.view as? AccountSectionHeaderView
-    assertTrue(businessHeader != nil, "Business organization must use a visually distinct header")
-    assertEqual(businessHeader?.countLabel.stringValue, "1", "Business header must show account count")
-    assertEqual(businessHeader?.frame.height, 34, "Business header must have a prominent 34pt height")
+    let businessCard = orgMenu.items.first(where: {
+      $0.title.contains("Destination Works Pty Ltd") && $0.view is AccountSectionCardView
+    })?.view as? AccountSectionCardView
+    assertTrue(businessCard != nil, "Business organization must use a native enclosing card")
+    assertEqual(
+      businessCard?.headerView.countLabel.stringValue, "1",
+      "Business card header must show account count")
+    assertEqual(businessCard?.accountRows.count, 1, "Business card must contain its account row")
+    if let businessCard {
+      assertTrue(
+        businessCard.box.contentView === businessCard.contentContainer,
+        "The NSBox content view must be the card's actual content container")
+      assertTrue(
+        businessCard.headerView.superview === businessCard.contentContainer,
+        "Organization header must be enclosed by the native card")
+      assertTrue(
+        businessCard.accountRows.allSatisfy { $0.superview === businessCard.contentContainer },
+        "All account rows must be enclosed by the organization card")
+      assertTrue(
+        businessCard.metricLabels.allSatisfy { $0.superview === businessCard.contentContainer },
+        "All quota metrics must be enclosed by the organization card")
+      assertTrue(
+        businessCard.box.borderWidth > 0 && businessCard.box.cornerRadius > 0,
+        "Organization card must have a complete native frame")
+    }
+
+    let familyCard = orgMenu.items.first(where: {
+      $0.title.contains("dstworks family") && $0.view is AccountSectionCardView
+    })?.view as? AccountSectionCardView
+    assertEqual(familyCard?.accountRows.count, 2, "Second organization must contain both accounts")
     assertTrue(
       allTitles.contains(where: { $0.contains("dstworks family") }),
-      "Menu must contain section header for 'dstworks family'"
+      "Menu must contain a card for 'dstworks family'"
     )
     assertTrue(
       allTitles.contains(where: { $0.contains("Personal Accounts") || $0.contains("Личные аккаунты") }),
       "Menu must contain section header for personal accounts"
     )
-    let personalHeader = orgMenu.items.first(where: {
+    let personalCard = orgMenu.items.first(where: {
       ($0.title.contains("Personal Accounts") || $0.title.contains("Личные аккаунты"))
-        && $0.view is AccountSectionHeaderView
-    })?.view as? AccountSectionHeaderView
-    assertTrue(personalHeader != nil, "Personal accounts must use a visually distinct header")
-    assertEqual(personalHeader?.countLabel.stringValue, "1", "Personal header must show account count")
+        && $0.view is AccountSectionCardView
+    })?.view as? AccountSectionCardView
+    assertTrue(personalCard != nil, "Personal accounts must use a native enclosing card")
+    assertEqual(
+      personalCard?.headerView.countLabel.stringValue, "1",
+      "Personal card header must show account count")
 
-    print("  ✅ Business accounts grouping by organization with organization name verified")
+    let reserveHeader = orgMenu.items.compactMap { $0.view as? PrimaryMenuSectionHeaderView }
+      .first(where: {
+        $0.titleLabel.stringValue.contains("Reserve")
+          || $0.titleLabel.stringValue.contains("Резерв")
+      })
+    assertTrue(reserveHeader != nil, "Reserve parent must use the native primary section header")
+    if let reserveHeader, let businessCard {
+      assertTrue(
+        reserveHeader.titleLabel.font!.pointSize > businessCard.headerView.titleLabel.font!.pointSize,
+        "Parent section heading must remain visually stronger than organization headings")
+    }
+
+    var switchedAccountId: String?
+    var deletedAccountId: String?
+    let actionCard = AccountSectionCardView(
+      frame: NSRect(
+        x: 0, y: 0, width: AppDelegate.defaultMenuWidth,
+        height: AccountSectionCardView.preferredHeight(for: [
+          ReserveAccountSectionEntry(account: org1Acc2, reserveIndex: 1)
+        ])),
+      title: "Destination Works Pty Ltd",
+      kind: .business,
+      entries: [ReserveAccountSectionEntry(account: org1Acc2, reserveIndex: 1)],
+      onSwitch: { switchedAccountId = $0 },
+      onDelete: { accountId, _ in deletedAccountId = accountId },
+      onRename: { _, _, _ in }
+    )
+    actionCard.switchButtons.first?.performClick(nil)
+    actionCard.accountRows.first?.deleteButton?.performClick(nil)
+    assertEqual(
+      switchedAccountId, org1Acc2.id,
+      "Native card switch action must preserve account routing")
+    assertEqual(
+      deletedAccountId, org1Acc2.id,
+      "Native card delete action must preserve account routing")
+
+    let practicalGroup = Array(
+      repeating: ReserveAccountSectionEntry(account: org2Acc1, reserveIndex: 1), count: 4)
+    assertTrue(
+      AccountSectionCardView.preferredHeight(for: practicalGroup) < 700,
+      "A practical four-account organization card must fit within a scrollable menu viewport")
+
+    print("  ✅ Native organization cards, hierarchy, enclosure & actions verified")
 
     print("\n🎉 ALL APP DELEGATE TESTS PASSED!")
   }

@@ -34,19 +34,52 @@ public final class InsetSeparatorView: NSView {
   }
 }
 
-// MARK: - Account Section Header View
+// MARK: - Native Menu Section Views
+
+public final class PrimaryMenuSectionHeaderView: NSVisualEffectView {
+  public let titleLabel: NSTextField
+  private let iconView = NSImageView()
+
+  public init(frame frameRect: NSRect, title: String, symbolName: String) {
+    self.titleLabel = NSTextField(labelWithString: title)
+    super.init(frame: frameRect)
+
+    material = .headerView
+    blendingMode = .withinWindow
+    state = .followsWindowActiveState
+
+    let symbolConfig = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+    iconView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)?
+      .withSymbolConfiguration(symbolConfig)
+    iconView.imageScaling = .scaleProportionallyDown
+    iconView.contentTintColor = .secondaryLabelColor
+    addSubview(iconView)
+
+    titleLabel.font = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
+    titleLabel.textColor = .labelColor
+    titleLabel.lineBreakMode = .byTruncatingTail
+    addSubview(titleLabel)
+
+    setAccessibilityElement(true)
+    setAccessibilityRole(.group)
+    setAccessibilityLabel(title)
+  }
+
+  public required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  public override func layout() {
+    super.layout()
+    iconView.frame = NSRect(x: 16, y: 8, width: 16, height: 16)
+    titleLabel.frame = NSRect(x: 40, y: 7, width: max(0, bounds.width - 56), height: 18)
+  }
+}
 
 public final class AccountSectionHeaderView: NSView {
   public enum Kind {
     case business
     case personal
-
-    fileprivate var accentColor: NSColor {
-      switch self {
-      case .business: return .systemBlue
-      case .personal: return .systemPurple
-      }
-    }
 
     fileprivate var symbolName: String {
       switch self {
@@ -60,7 +93,6 @@ public final class AccountSectionHeaderView: NSView {
   public let countLabel: NSTextField
   public let kind: Kind
 
-  private let accentView = NSView()
   private let iconView = NSImageView()
 
   public init(frame frameRect: NSRect, title: String, count: Int, kind: Kind) {
@@ -69,37 +101,26 @@ public final class AccountSectionHeaderView: NSView {
     self.countLabel = NSTextField(labelWithString: "\(count)")
     super.init(frame: frameRect)
 
-    wantsLayer = true
-    layer?.cornerRadius = 7
-    layer?.borderWidth = 0.75
-
-    accentView.wantsLayer = true
-    accentView.layer?.cornerRadius = 1.5
-    addSubview(accentView)
-
-    let symbolConfig = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+    let symbolConfig = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
     iconView.image = NSImage(systemSymbolName: kind.symbolName, accessibilityDescription: title)?
       .withSymbolConfiguration(symbolConfig)
     iconView.imageScaling = .scaleProportionallyDown
-    iconView.contentTintColor = kind.accentColor
+    iconView.contentTintColor = .secondaryLabelColor
     addSubview(iconView)
 
-    titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+    titleLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
     titleLabel.textColor = .labelColor
     titleLabel.lineBreakMode = .byTruncatingTail
     addSubview(titleLabel)
 
     countLabel.alignment = .center
     countLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
-    countLabel.textColor = kind.accentColor
-    countLabel.wantsLayer = true
-    countLabel.layer?.cornerRadius = 8
+    countLabel.textColor = .tertiaryLabelColor
     addSubview(countLabel)
 
     setAccessibilityElement(true)
     setAccessibilityRole(.group)
     setAccessibilityLabel("\(title), \(count)")
-    applyAppearance()
   }
 
   public required init?(coder: NSCoder) {
@@ -108,29 +129,20 @@ public final class AccountSectionHeaderView: NSView {
 
   public override func layout() {
     super.layout()
-    let inset: CGFloat = 12
-    accentView.frame = NSRect(x: inset, y: 7, width: 3, height: max(0, bounds.height - 14))
-    iconView.frame = NSRect(x: 22, y: 8, width: 16, height: 16)
-    countLabel.frame = NSRect(x: bounds.width - 42, y: 8, width: 24, height: 16)
+    iconView.frame = NSRect(x: 14, y: 8, width: 16, height: 16)
+    countLabel.frame = NSRect(x: bounds.width - 38, y: 8, width: 22, height: 16)
     titleLabel.frame = NSRect(
-      x: 46,
+      x: 38,
       y: 7,
-      width: max(0, countLabel.frame.minX - 54),
+      width: max(0, countLabel.frame.minX - 46),
       height: 18
     )
   }
 
-  public override func viewDidChangeEffectiveAppearance() {
-    super.viewDidChangeEffectiveAppearance()
-    applyAppearance()
-  }
-
-  private func applyAppearance() {
-    let accent = kind.accentColor
-    layer?.backgroundColor = accent.withAlphaComponent(0.10).cgColor
-    layer?.borderColor = accent.withAlphaComponent(0.28).cgColor
-    accentView.layer?.backgroundColor = accent.withAlphaComponent(0.85).cgColor
-    countLabel.layer?.backgroundColor = accent.withAlphaComponent(0.14).cgColor
+  public override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    NSColor.separatorColor.withAlphaComponent(0.55).setFill()
+    NSRect(x: 12, y: 0, width: max(0, bounds.width - 24), height: 1).fill()
   }
 }
 
@@ -191,6 +203,7 @@ public final class AccountRowView: NSView {
     dotColor: NSColor,
     statusTag: String,
     statusTagColor: NSColor? = nil,
+    showsInlineSwitchButton: Bool = true,
     onDelete: @escaping (String, String) -> Void = { _, _ in },
     onRename: @escaping (String, String?, String) -> Void = { _, _, _ in },
     onSelect: @escaping (String) -> Void = { _ in }
@@ -205,12 +218,13 @@ public final class AccountRowView: NSView {
     self.onRename = onRename
     self.onSelect = onSelect
 
-    let rightOffset: CGFloat = isAppSession ? 12 : (isCurrentActive ? 28 : 56)
+    let rightOffset: CGFloat =
+      isAppSession ? 12 : (isCurrentActive || !showsInlineSwitchButton ? 28 : 56)
     let labelWidth = max(50, frame.width - rightOffset - Self.standardInset)
     self.titleLabel = NSTextField(
       frame: NSRect(x: Self.standardInset, y: 1, width: labelWidth, height: 20))
 
-    if !isAppSession && !isCurrentActive {
+    if !isAppSession && !isCurrentActive && showsInlineSwitchButton {
       let sb = NSButton(frame: NSRect(x: frame.width - 50, y: 2, width: 22, height: 18))
       sb.isBordered = false
       sb.title = "⇄"
@@ -306,6 +320,7 @@ public final class AccountRowView: NSView {
       sb.target = self
       sb.action = #selector(handleSwitchClick)
       sb.autoresizingMask = [.minXMargin]
+      sb.setAccessibilityLabel("\(L10n.switchToAccount): \(accountEmail)")
       addSubview(sb)
     }
 
@@ -314,6 +329,7 @@ public final class AccountRowView: NSView {
       db.target = self
       db.action = #selector(handleDelete)
       db.autoresizingMask = [.minXMargin]
+      db.setAccessibilityLabel("\(L10n.removeAccount): \(accountEmail)")
       addSubview(db)
     }
   }
@@ -407,6 +423,244 @@ public final class AccountRowView: NSView {
 
   @objc private func handleDeleteFromCtx() {
     onDelete(accountId, accountEmail)
+  }
+}
+
+public struct ReserveAccountSectionEntry {
+  public let account: AccountQuota
+  public let reserveIndex: Int
+
+  public init(account: AccountQuota, reserveIndex: Int) {
+    self.account = account
+    self.reserveIndex = reserveIndex
+  }
+}
+
+public final class AccountSectionCardView: NSView {
+  public let box = NSBox()
+  public let contentContainer = NSView()
+  public let headerView: AccountSectionHeaderView
+  public private(set) var accountRows: [AccountRowView] = []
+  public private(set) var metricLabels: [NSTextField] = []
+  public private(set) var switchButtons: [NSButton] = []
+
+  private let onSwitch: (String) -> Void
+  private let horizontalInset: CGFloat = 10
+
+  public static func preferredHeight(for entries: [ReserveAccountSectionEntry]) -> CGFloat {
+    let headerHeight: CGFloat = 33
+    let bottomPadding: CGFloat = 8
+    var height = headerHeight + bottomPadding
+    for (index, entry) in entries.enumerated() {
+      if index > 0 { height += 9 }
+      height += 26  // Account identity row
+      height += 18  // Sprint row
+      if entry.account.weeklyPercentage != nil { height += 18 }
+      if entry.account.credits > 0 { height += 18 }
+      height += 24  // Native inline switch action
+      if let error = entry.account.error, !error.isEmpty { height += 32 }
+      height += 5
+    }
+    return height
+  }
+
+  public init(
+    frame frameRect: NSRect,
+    title: String,
+    kind: AccountSectionHeaderView.Kind,
+    entries: [ReserveAccountSectionEntry],
+    onSwitch: @escaping (String) -> Void,
+    onDelete: @escaping (String, String) -> Void,
+    onRename: @escaping (String, String?, String) -> Void
+  ) {
+    self.headerView = AccountSectionHeaderView(
+      frame: NSRect(x: 10, y: 0, width: max(0, frameRect.width - 20), height: 33),
+      title: title,
+      count: entries.count,
+      kind: kind
+    )
+    self.onSwitch = onSwitch
+    super.init(frame: frameRect)
+
+    autoresizingMask = [.width]
+    let contentWidth = max(0, frameRect.width - (horizontalInset * 2))
+    let contentHeight = max(0, frameRect.height - 6)
+
+    box.boxType = .custom
+    box.titlePosition = .noTitle
+    box.borderWidth = 1
+    box.cornerRadius = 9
+    box.borderColor = .separatorColor
+    box.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.30)
+    box.contentViewMargins = .zero
+    box.frame = NSRect(x: horizontalInset, y: 3, width: contentWidth, height: contentHeight)
+    box.autoresizingMask = [.width, .height]
+    contentContainer.frame = NSRect(x: 0, y: 0, width: contentWidth, height: contentHeight)
+    contentContainer.autoresizingMask = [.width, .height]
+    box.contentView = contentContainer
+    addSubview(box)
+
+    headerView.frame.origin = NSPoint(x: 0, y: contentHeight - 33)
+    headerView.frame.size.width = contentWidth
+    headerView.autoresizingMask = [.width, .minYMargin]
+    contentContainer.addSubview(headerView)
+
+    var cursorY = contentHeight - 38
+    for (entryIndex, entry) in entries.enumerated() {
+      if entryIndex > 0 {
+        let separator = NSBox(
+          frame: NSRect(x: 12, y: cursorY - 5, width: max(0, contentWidth - 24), height: 1))
+        separator.boxType = .separator
+        separator.autoresizingMask = [.width]
+        contentContainer.addSubview(separator)
+        cursorY -= 9
+      }
+
+      let account = entry.account
+      let statusTag = L10n.reserveSlot(index: entry.reserveIndex)
+      let weeklyExhausted = MenuBarAppearanceHelper.isWeeklyExhausted(account.weeklyPercentage)
+      let dotColor = MenuBarAppearanceHelper.dropdownColor(
+        forPercentage: account.fiveHourPercentage,
+        weeklyPercentage: account.weeklyPercentage,
+        planMultiplier: account.planMultiplier
+      )
+
+      cursorY -= 26
+      let accountRow = AccountRowView(
+        frame: NSRect(x: 0, y: cursorY, width: contentWidth, height: 24),
+        accountId: account.id,
+        accountName: account.displayName,
+        email: account.email,
+        tier: account.planBadgeString,
+        isCurrentActive: false,
+        isAppSession: false,
+        dotColor: dotColor,
+        statusTag: statusTag,
+        showsInlineSwitchButton: false,
+        onDelete: onDelete,
+        onRename: onRename,
+        onSelect: onSwitch
+      )
+      contentContainer.addSubview(accountRow)
+      accountRows.append(accountRow)
+
+      let sprintPercentage = weeklyExhausted ? 0.0 : account.fiveHourPercentage
+      let sprintString = weeklyExhausted ? "0%" : String(format: "%.0f%%", account.fiveHourPercentage)
+      let sprintColor = MenuBarAppearanceHelper.dropdownColor(
+        forPercentage: account.fiveHourPercentage,
+        weeklyPercentage: account.weeklyPercentage,
+        planMultiplier: account.planMultiplier
+      )
+      let sprintRich = MenuBarAppearanceHelper.makeColoredProgressBar(
+        label: "⚡ 5h Sprint: \(sprintString) ",
+        percentage: sprintPercentage,
+        maxPercentage: 100.0 * account.planMultiplier,
+        fillColor: sprintColor
+      )
+      let sprintReset = account.sprintTimeUntilResetString
+      if !sprintReset.isEmpty && sprintReset != L10n.resetNow {
+        sprintRich.append(
+          NSAttributedString(
+            string: " (\(sprintReset))",
+            attributes: [
+              .font: NSFont.systemFont(ofSize: 11),
+              .foregroundColor: NSColor.secondaryLabelColor,
+            ]))
+      }
+      cursorY -= 18
+      addMetricLabel(sprintRich, at: cursorY)
+
+      if let weeklyPercentage = account.weeklyPercentage {
+        let weeklyString = String(format: "%.0f%%", weeklyPercentage)
+        let weeklyColor = MenuBarAppearanceHelper.dropdownColor(
+          forPercentage: weeklyPercentage, planMultiplier: account.planMultiplier)
+        let weeklyRich = MenuBarAppearanceHelper.makeColoredProgressBar(
+          label: "🗓️ Weekly: \(weeklyString) ",
+          percentage: weeklyPercentage,
+          maxPercentage: 100.0 * account.planMultiplier,
+          fillColor: weeklyColor
+        )
+        let weeklyReset = account.weeklyTimeUntilResetString
+        if !weeklyReset.isEmpty && weeklyReset != L10n.resetNow {
+          weeklyRich.append(
+            NSAttributedString(
+              string: " (\(weeklyReset))",
+              attributes: [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.secondaryLabelColor,
+              ]))
+        }
+        cursorY -= 18
+        addMetricLabel(weeklyRich, at: cursorY)
+      }
+
+      if account.credits > 0 {
+        cursorY -= 18
+        let credits = NSAttributedString(
+          string: "✨ \(L10n.resetCredits): \(account.credits)",
+          attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.systemIndigo,
+          ])
+        addMetricLabel(credits, at: cursorY)
+      }
+
+      cursorY -= 24
+      let switchButton = NSButton(
+        frame: NSRect(x: 23, y: cursorY, width: max(120, contentWidth - 46), height: 22))
+      switchButton.title = L10n.switchToAccount
+      switchButton.identifier = NSUserInterfaceItemIdentifier(account.id)
+      switchButton.target = self
+      switchButton.action = #selector(handleSwitchButton(_:))
+      switchButton.bezelStyle = .inline
+      switchButton.isBordered = false
+      switchButton.alignment = .left
+      switchButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+      switchButton.contentTintColor = .controlAccentColor
+      switchButton.image = NSImage(
+        systemSymbolName: "arrow.triangle.2.circlepath",
+        accessibilityDescription: L10n.switchToAccount)
+      switchButton.imagePosition = .imageLeading
+      switchButton.toolTip = "\(L10n.switchToAccount): \(account.email)"
+      switchButton.setAccessibilityLabel("\(L10n.switchToAccount): \(account.email)")
+      switchButton.autoresizingMask = [.width]
+      contentContainer.addSubview(switchButton)
+      switchButtons.append(switchButton)
+
+      if let error = account.error, !error.isEmpty {
+        cursorY -= 32
+        let errorLabel = NSTextField(wrappingLabelWithString: "⚠︎ \(error)")
+        errorLabel.frame = NSRect(x: 29, y: cursorY, width: max(100, contentWidth - 58), height: 30)
+        errorLabel.font = NSFont.systemFont(ofSize: 10.5, weight: .medium)
+        errorLabel.textColor = .systemRed
+        errorLabel.maximumNumberOfLines = 2
+        errorLabel.autoresizingMask = [.width]
+        contentContainer.addSubview(errorLabel)
+        metricLabels.append(errorLabel)
+      }
+      cursorY -= 5
+    }
+
+    setAccessibilityElement(false)
+  }
+
+  public required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  private func addMetricLabel(_ value: NSAttributedString, at y: CGFloat) {
+    let label = NSTextField(labelWithAttributedString: value)
+    label.frame = NSRect(x: 29, y: y, width: max(100, contentContainer.bounds.width - 58), height: 17)
+    label.lineBreakMode = .byClipping
+    label.autoresizingMask = [.width]
+    contentContainer.addSubview(label)
+    metricLabels.append(label)
+  }
+
+  @objc private func handleSwitchButton(_ sender: NSButton) {
+    guard let accountId = sender.identifier?.rawValue, !accountId.isEmpty else { return }
+    enclosingMenuItem?.menu?.cancelTracking()
+    onSwitch(accountId)
   }
 }
 
@@ -1459,15 +1713,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // BLOCK 1: 🖥️ Codex Desktop App (ChatGPT.app)
     // ====================================================================
     let appHeaderTitle =
-      isRu ? "🖥️ Codex Desktop App (сессия ChatGPT.app)" : "🖥️ Codex Desktop App (ChatGPT.app)"
-    let appHeader = NSMenuItem(title: appHeaderTitle, action: #selector(noop), keyEquivalent: "")
-    appHeader.target = self
-    appHeader.attributedTitle = NSAttributedString(
-      string: appHeaderTitle,
-      attributes: [
-        .font: NSFont.boldSystemFont(ofSize: 11),
-        .foregroundColor: NSColor.secondaryLabelColor,
-      ])
+      isRu ? "Codex Desktop App (сессия ChatGPT.app)" : "Codex Desktop App (ChatGPT.app)"
+    let appHeader = AppDelegate.makePrimarySectionHeaderItem(
+      title: appHeaderTitle, symbolName: "desktopcomputer")
     menu.insertItem(appHeader, at: insertIdx)
     dynamicAccountItems.append(appHeader)
     insertIdx += 1
@@ -1637,21 +1885,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
       snapshot.cliAccount ?? snapshot.accounts.first(where: { $0.isCurrentActive })
       ?? snapshot.accounts.first
     let baseCliHeader =
-      isRu ? "💻 Codex CLI (мульти-аккаунт ротация)" : "💻 Codex CLI (multi-account rotation)"
+      isRu ? "Codex CLI (мульти-аккаунт ротация)" : "Codex CLI (multi-account rotation)"
     let cliHeaderTitle: String
     if let org = cliPrimary?.effectiveOrganizationName {
-      cliHeaderTitle = "\(baseCliHeader) — 🏢 \(org)"
+      cliHeaderTitle = "\(baseCliHeader) — \(org)"
     } else {
       cliHeaderTitle = baseCliHeader
     }
-    let cliHeader = NSMenuItem(title: cliHeaderTitle, action: #selector(noop), keyEquivalent: "")
-    cliHeader.target = self
-    cliHeader.attributedTitle = NSAttributedString(
-      string: cliHeaderTitle,
-      attributes: [
-        .font: NSFont.boldSystemFont(ofSize: 11),
-        .foregroundColor: NSColor.secondaryLabelColor,
-      ])
+    let cliHeader = AppDelegate.makePrimarySectionHeaderItem(
+      title: cliHeaderTitle, symbolName: "terminal")
     menu.insertItem(cliHeader, at: insertIdx)
     dynamicAccountItems.append(cliHeader)
     insertIdx += 1
@@ -1834,16 +2076,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
       insertIdx += 1
 
       let reservesHeaderTitle =
-        isRu ? "👥 Резервные аккаунты (CLI пул)" : "👥 Reserve Accounts (CLI Pool)"
-      let resHeader = NSMenuItem(
-        title: reservesHeaderTitle, action: #selector(noop), keyEquivalent: "")
-      resHeader.target = self
-      resHeader.attributedTitle = NSAttributedString(
-        string: reservesHeaderTitle,
-        attributes: [
-          .font: NSFont.boldSystemFont(ofSize: 11),
-          .foregroundColor: NSColor.secondaryLabelColor,
-        ])
+        isRu ? "Резервные аккаунты (CLI пул)" : "Reserve Accounts (CLI Pool)"
+      let resHeader = AppDelegate.makePrimarySectionHeaderItem(
+        title: reservesHeaderTitle, symbolName: "person.3.sequence.fill")
       menu.insertItem(resHeader, at: insertIdx)
       dynamicAccountItems.append(resHeader)
       insertIdx += 1
@@ -1868,219 +2103,48 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
       var globalReserveIdx = 0
 
-      // Render helper for a single reserve account
-      let renderReserveAccount: (AccountQuota) -> Void = { [self] acc in
-        globalReserveIdx += 1
-        let statusTag = L10n.reserveSlot(index: globalReserveIdx)
-        let rWeeklyExhausted = MenuBarAppearanceHelper.isWeeklyExhausted(acc.weeklyPercentage)
-        let dotColor = MenuBarAppearanceHelper.dropdownColor(
-          forPercentage: acc.fiveHourPercentage,
-          weeklyPercentage: acc.weeklyPercentage,
-          planMultiplier: acc.planMultiplier
-        )
-
-        let accItem = NSMenuItem(
-          title: "● \(acc.email)  \(statusTag)", action: #selector(self.noop), keyEquivalent: "")
-        accItem.target = self
-
-        let rowView = AccountRowView(
-          frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 24),
-          accountId: acc.id,
-          accountName: acc.displayName,
-          email: acc.email,
-          tier: acc.planBadgeString,
-          isCurrentActive: false,
-          isAppSession: false,
-          dotColor: dotColor,
-          statusTag: statusTag,
-          onDelete: { [weak self] id, email in
-            self?.confirmAndRemoveAccount(id: id, email: email)
-          },
-          onRename: { [weak self] id, name, email in
-            self?.promptRenameAccount(id: id, currentName: name, email: email)
-          },
-          onSelect: { [weak self] id in
-            self?.executeSwitchAccount(id: id)
-          }
-        )
-        accItem.view = rowView
-        menu.insertItem(accItem, at: insertIdx)
-        self.dynamicAccountItems.append(accItem)
-        insertIdx += 1
-
-        // 5h Sprint bar for reserve
-        let pPct = acc.fiveHourPercentage
-        let pStr = rWeeklyExhausted ? "0%" : String(format: "%.0f%%", pPct)
-        let pColor = MenuBarAppearanceHelper.dropdownColor(
-          forPercentage: pPct,
-          weeklyPercentage: acc.weeklyPercentage,
-          planMultiplier: acc.planMultiplier
-        )
-        let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(
-          label: "  ⚡ 5h Sprint: \(pStr) ",
-          percentage: rWeeklyExhausted ? 0.0 : pPct,
-          maxPercentage: 100.0 * acc.planMultiplier,
-          fillColor: pColor
-        )
-        let resetDesc = acc.sprintTimeUntilResetString
-        if !resetDesc.isEmpty && resetDesc != L10n.resetNow {
-          pRich.append(
-            NSAttributedString(
-              string: " (\(resetDesc))",
-              attributes: [
-                .font: NSFont.systemFont(ofSize: 11),
-                .foregroundColor: NSColor.secondaryLabelColor,
-              ]))
-        }
-        let bar5hItem = NSMenuItem(
-          title: "  ⚡ 5h Sprint: \(pStr)", action: #selector(self.noop), keyEquivalent: "")
-        bar5hItem.target = self
-        bar5hItem.attributedTitle = pRich
-        menu.insertItem(bar5hItem, at: insertIdx)
-        self.dynamicAccountItems.append(bar5hItem)
-        insertIdx += 1
-
-        // Weekly bar for reserve
-        if let wPct = acc.weeklyPercentage {
-          let wStr = String(format: "%.0f%%", wPct)
-          let wColor = MenuBarAppearanceHelper.dropdownColor(
-            forPercentage: wPct, planMultiplier: acc.planMultiplier)
-          let wRich = MenuBarAppearanceHelper.makeColoredProgressBar(
-            label: "  🗓️ Weekly: \(wStr) ",
-            percentage: wPct,
-            maxPercentage: 100.0 * acc.planMultiplier,
-            fillColor: wColor
-          )
-          let wReset = acc.weeklyTimeUntilResetString
-          if !wReset.isEmpty && wReset != L10n.resetNow {
-            wRich.append(
-              NSAttributedString(
-                string: " (\(wReset))",
-                attributes: [
-                  .font: NSFont.systemFont(ofSize: 11),
-                  .foregroundColor: NSColor.secondaryLabelColor,
-                ]))
-          }
-          let weekItem = NSMenuItem(
-            title: "  🗓️ Weekly: \(wStr)", action: #selector(self.noop), keyEquivalent: "")
-          weekItem.target = self
-          weekItem.attributedTitle = wRich
-          menu.insertItem(weekItem, at: insertIdx)
-          self.dynamicAccountItems.append(weekItem)
-          insertIdx += 1
-        }
-
-        // Credits for reserve account
-        if acc.credits > 0 {
-          let credItem = NSMenuItem(
-            title: "  ✨ \(L10n.resetCredits): \(acc.credits)", action: #selector(self.noop),
-            keyEquivalent: "")
-          credItem.target = self
-          credItem.attributedTitle = NSAttributedString(
-            string: "  ✨ \(L10n.resetCredits): \(acc.credits)",
-            attributes: [
-              .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-              .foregroundColor: NSColor.systemIndigo,
-            ])
-          menu.insertItem(credItem, at: insertIdx)
-          self.dynamicAccountItems.append(credItem)
-          insertIdx += 1
-        }
-
-        // Explicit Clickable Switch Item
-        let switchItemTitle = "  ⇄ " + L10n.switchToAccount
-        let switchItem = NSMenuItem(
-          title: switchItemTitle,
-          action: #selector(self.handleSwitchMenuItem(_:)),
-          keyEquivalent: ""
-        )
-        switchItem.target = self
-        switchItem.representedObject = acc.id
-        switchItem.attributedTitle = NSAttributedString(
-          string: switchItemTitle,
-          attributes: [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: NSColor.systemBlue,
-          ])
-        menu.insertItem(switchItem, at: insertIdx)
-        self.dynamicAccountItems.append(switchItem)
-        insertIdx += 1
-
-        // Error display for reserve account
-        if let err = acc.error, !err.isEmpty {
-          let errItem = NSMenuItem(title: "  ⚠️ \(err)", action: #selector(self.noop), keyEquivalent: "")
-          errItem.target = self
-          errItem.attributedTitle = NSAttributedString(
-            string: "  ⚠️ \(err)",
-            attributes: [
-              .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-              .foregroundColor: NSColor.systemRed,
-            ])
-          menu.insertItem(errItem, at: insertIdx)
-          self.dynamicAccountItems.append(errItem)
-          insertIdx += 1
+      func sectionEntries(for accounts: [AccountQuota]) -> [ReserveAccountSectionEntry] {
+        accounts.map { account in
+          globalReserveIdx += 1
+          return ReserveAccountSectionEntry(account: account, reserveIndex: globalReserveIdx)
         }
       }
 
-      // Render business organization sections
-      for (orgIdx, orgName) in orgOrder.enumerated() {
-        if orgIdx > 0 {
-          let sep = AppDelegate.makeInsetSeparatorItem()
-          menu.insertItem(sep, at: insertIdx)
-          dynamicAccountItems.append(sep)
-          insertIdx += 1
-        }
-        let groupAccs = orgGroups[orgName] ?? []
-        let orgTitle = orgName
-        let orgHeader = AppDelegate.makeAccountSectionHeaderItem(
-          title: orgTitle,
-          count: groupAccs.count,
-          kind: .business
-        )
-        menu.insertItem(orgHeader, at: insertIdx)
-        dynamicAccountItems.append(orgHeader)
-        insertIdx += 1
-
-        for (accIdx, acc) in groupAccs.enumerated() {
-          if accIdx > 0 {
-            let sep = AppDelegate.makeInsetSeparatorItem()
-            menu.insertItem(sep, at: insertIdx)
-            dynamicAccountItems.append(sep)
-            insertIdx += 1
+      func insertAccountSection(
+        title: String,
+        kind: AccountSectionHeaderView.Kind,
+        accounts: [AccountQuota]
+      ) {
+        let entries = sectionEntries(for: accounts)
+        let cardItem = AppDelegate.makeAccountSectionCardItem(
+          title: title,
+          kind: kind,
+          entries: entries,
+          onSwitch: { [weak self] accountId in
+            self?.executeSwitchAccount(id: accountId)
+          },
+          onDelete: { [weak self] accountId, email in
+            self?.confirmAndRemoveAccount(id: accountId, email: email)
+          },
+          onRename: { [weak self] accountId, name, email in
+            self?.promptRenameAccount(id: accountId, currentName: name, email: email)
           }
-          renderReserveAccount(acc)
-        }
+        )
+        menu.insertItem(cardItem, at: insertIdx)
+        dynamicAccountItems.append(cardItem)
+        insertIdx += 1
+      }
+
+      // Render business organization sections
+      for orgName in orgOrder {
+        let groupAccs = orgGroups[orgName] ?? []
+        insertAccountSection(title: orgName, kind: .business, accounts: groupAccs)
       }
 
       // Render personal accounts section if any
       if !personalAccs.isEmpty {
-        if !orgOrder.isEmpty {
-          let sep = AppDelegate.makeInsetSeparatorItem()
-          menu.insertItem(sep, at: insertIdx)
-          dynamicAccountItems.append(sep)
-          insertIdx += 1
-
-        }
-
-        let persTitle = L10n.personalAccounts
-        let persHeader = AppDelegate.makeAccountSectionHeaderItem(
-          title: persTitle,
-          count: personalAccs.count,
-          kind: .personal
-        )
-        menu.insertItem(persHeader, at: insertIdx)
-        dynamicAccountItems.append(persHeader)
-        insertIdx += 1
-
-        for (accIdx, acc) in personalAccs.enumerated() {
-          if accIdx > 0 {
-            let sep = AppDelegate.makeInsetSeparatorItem()
-            menu.insertItem(sep, at: insertIdx)
-            dynamicAccountItems.append(sep)
-            insertIdx += 1
-          }
-          renderReserveAccount(acc)
-        }
+        insertAccountSection(
+          title: L10n.personalAccounts, kind: .personal, accounts: personalAccs)
       }
     }
 
@@ -2118,18 +2182,45 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     return item
   }
 
-  public static func makeAccountSectionHeaderItem(
+  public static func makePrimarySectionHeaderItem(
     title: String,
-    count: Int,
-    kind: AccountSectionHeaderView.Kind,
+    symbolName: String,
     width: CGFloat = defaultMenuWidth
   ) -> NSMenuItem {
     let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-    item.view = AccountSectionHeaderView(
-      frame: NSRect(x: 0, y: 0, width: width, height: 34),
+    item.isEnabled = true
+    item.view = PrimaryMenuSectionHeaderView(
+      frame: NSRect(x: 0, y: 0, width: width, height: 32),
       title: title,
-      count: count,
-      kind: kind
+      symbolName: symbolName
+    )
+    return item
+  }
+
+  public static func makeAccountSectionCardItem(
+    title: String,
+    kind: AccountSectionHeaderView.Kind,
+    entries: [ReserveAccountSectionEntry],
+    onSwitch: @escaping (String) -> Void = { _ in },
+    onDelete: @escaping (String, String) -> Void = { _, _ in },
+    onRename: @escaping (String, String?, String) -> Void = { _, _, _ in },
+    width: CGFloat = defaultMenuWidth
+  ) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+    item.isEnabled = true
+    item.view = AccountSectionCardView(
+      frame: NSRect(
+        x: 0,
+        y: 0,
+        width: width,
+        height: AccountSectionCardView.preferredHeight(for: entries)
+      ),
+      title: title,
+      kind: kind,
+      entries: entries,
+      onSwitch: onSwitch,
+      onDelete: onDelete,
+      onRename: onRename
     )
     return item
   }
