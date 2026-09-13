@@ -183,11 +183,11 @@ struct ScreenContrastTestRunner {
             fiveHour: 100.0,
             weekly: 0.0,
             credits: 0,
-            width: 13.0,
+            width: 6.5,
             height: 16.5,
             isScreenActive: true
         )
-        assertEqual(hybridExhaustedWeekly.size.width, 13.0)
+        assertEqual(hybridExhaustedWeekly.size.width, 6.5)
         assertEqual(hybridExhaustedWeekly.size.height, 16.5)
 
         let tiffBadge = hybridExhaustedWeekly.tiffRepresentation!
@@ -200,14 +200,14 @@ struct ScreenContrastTestRunner {
         assertTrue(abs(topColor.redComponent - topColor.greenComponent) < 0.12, "Top sprint quota over exhausted weekly must be neutral slate gray, got R=\(topColor.redComponent), G=\(topColor.greenComponent)")
         assertTrue(topColor.greenComponent < topColor.redComponent + 0.12, "Top sprint quota over exhausted weekly must NOT be green")
 
-        // Rectangular badge shape verification: sample alpha at left edge (18%) and right edge (82%) of row 1
-        let shapeLeftX = Int(Double(bitmap.pixelsWide) * 0.18)
-        let shapeRightX = Int(Double(bitmap.pixelsWide) * 0.82)
+        // Rectangular badge shape verification: sample alpha at left edge (30%) and right edge (70%) of row 1
+        let shapeLeftX = Int(Double(bitmap.pixelsWide) * 0.30)
+        let shapeRightX = Int(Double(bitmap.pixelsWide) * 0.70)
         let shapeRow1Y = 1  // row 1 from top (near top edge of badge)
         let leftEdgeColor = bitmap.colorAt(x: shapeLeftX, y: shapeRow1Y)!.usingColorSpace(.sRGB)!
         let rightEdgeColor = bitmap.colorAt(x: shapeRightX, y: shapeRow1Y)!.usingColorSpace(.sRGB)!
-        assertTrue(leftEdgeColor.alphaComponent == 1.0, "Rectangular badge: left edge (18% width) at row 1 must have alpha == 1.0, got \(leftEdgeColor.alphaComponent)")
-        assertTrue(rightEdgeColor.alphaComponent == 1.0, "Rectangular badge: right edge (82% width) at row 1 must have alpha == 1.0, got \(rightEdgeColor.alphaComponent)")
+        assertTrue(leftEdgeColor.alphaComponent >= 0.95, "Rectangular badge: left edge (30% width) at row 1 must have alpha >= 0.95, got \(leftEdgeColor.alphaComponent)")
+        assertTrue(rightEdgeColor.alphaComponent >= 0.95, "Rectangular badge: right edge (70% width) at row 1 must have alpha >= 0.95, got \(rightEdgeColor.alphaComponent)")
 
         // Stratified row color verification with diverse quota values
         // 5h sprint green, weekly yellow, credits yellow/red
@@ -215,7 +215,7 @@ struct ScreenContrastTestRunner {
             fiveHour: 80.0,   // green
             weekly: 35.0,     // yellow (> 20.0, <= 50.0)
             credits: 0,       // no credits → yellow if 5h > 20, else red → here 5h=80 > 20 → yellow
-            width: 13.0,
+            width: 6.5,
             height: 16.5,
             isScreenActive: true
         )

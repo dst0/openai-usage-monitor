@@ -36,6 +36,8 @@ public struct AccountQuota: Identifiable, Sendable {
     public let isCurrentActive: Bool
     public let fiveHourPercentage: Double
     public let weeklyPercentage: Double?
+    public let weeklyResetTime: Date?
+    public let weeklyResetAfterSeconds: Int?
     public let models: [ModelQuota]
     public let resetTime: Date?
     public let resetAfterSeconds: Int?
@@ -51,6 +53,8 @@ public struct AccountQuota: Identifiable, Sendable {
         isCurrentActive: Bool,
         fiveHourPercentage: Double,
         weeklyPercentage: Double?,
+        weeklyResetTime: Date? = nil,
+        weeklyResetAfterSeconds: Int? = nil,
         models: [ModelQuota] = [],
         resetTime: Date?,
         resetAfterSeconds: Int?,
@@ -65,6 +69,8 @@ public struct AccountQuota: Identifiable, Sendable {
         self.isCurrentActive = isCurrentActive
         self.fiveHourPercentage = max(0.0, fiveHourPercentage)
         self.weeklyPercentage = weeklyPercentage.map { max(0.0, $0) }
+        self.weeklyResetTime = weeklyResetTime
+        self.weeklyResetAfterSeconds = weeklyResetAfterSeconds
         self.models = models
         self.resetTime = resetTime
         self.resetAfterSeconds = resetAfterSeconds
@@ -130,8 +136,26 @@ public struct AccountQuota: Identifiable, Sendable {
         return isReady ? "●" : "○"
     }
 
-    public var timeUntilResetString: String {
-        guard let seconds = resetAfterSeconds, seconds > 0 else {
+    public var sprintTimeUntilResetString: String {
+        guard let seconds = resetAfterSeconds, seconds > 0, seconds <= 86400 else {
+            return ""
+        }
+        return Self.formatDurationSeconds(seconds)
+    }
+
+    public var weeklyTimeUntilResetString: String {
+        if let sec = weeklyResetAfterSeconds, sec > 0 {
+            return Self.formatDurationSeconds(sec)
+        }
+        // Fallback: If primary reset is greater than 24h, it is a weekly reset window
+        if let seconds = resetAfterSeconds, seconds > 86400 {
+            return Self.formatDurationSeconds(seconds)
+        }
+        return ""
+    }
+
+    public static func formatDurationSeconds(_ seconds: Int) -> String {
+        guard seconds > 0 else {
             return L10n.resetNow
         }
         let totalSeconds = seconds
@@ -146,6 +170,13 @@ public struct AccountQuota: Identifiable, Sendable {
             return L10n.durationMinutes(minutes: max(1, minutes))
         }
     }
+
+    public var timeUntilResetString: String {
+        guard let seconds = resetAfterSeconds, seconds > 0 else {
+            return L10n.resetNow
+        }
+        return Self.formatDurationSeconds(seconds)
+    }
 }
 
 // MARK: - Multi-Account Snapshot
@@ -156,6 +187,8 @@ public struct MultiAccountSnapshot: Sendable {
     public let activePlan: String?
     public let fiveHourPercentage: Double
     public let weeklyPercentage: Double?
+    public let weeklyResetTime: Date?
+    public let weeklyResetAfterSeconds: Int?
     public let resetTime: Date?
     public let resetAfterSeconds: Int?
     public let credits: Int
@@ -176,6 +209,8 @@ public struct MultiAccountSnapshot: Sendable {
         activePlan: String?,
         fiveHourPercentage: Double,
         weeklyPercentage: Double?,
+        weeklyResetTime: Date? = nil,
+        weeklyResetAfterSeconds: Int? = nil,
         resetTime: Date?,
         resetAfterSeconds: Int?,
         credits: Int,
@@ -195,6 +230,8 @@ public struct MultiAccountSnapshot: Sendable {
         self.activePlan = activePlan
         self.fiveHourPercentage = fiveHourPercentage
         self.weeklyPercentage = weeklyPercentage
+        self.weeklyResetTime = weeklyResetTime
+        self.weeklyResetAfterSeconds = weeklyResetAfterSeconds
         self.resetTime = resetTime
         self.resetAfterSeconds = resetAfterSeconds
         self.credits = credits
@@ -229,21 +266,28 @@ public struct MultiAccountSnapshot: Sendable {
         return "[\(bullets)]"
     }
 
+    public var sprintTimeUntilResetString: String {
+        guard let seconds = resetAfterSeconds, seconds > 0, seconds <= 86400 else {
+            return ""
+        }
+        return AccountQuota.formatDurationSeconds(seconds)
+    }
+
+    public var weeklyTimeUntilResetString: String {
+        if let sec = weeklyResetAfterSeconds, sec > 0 {
+            return AccountQuota.formatDurationSeconds(sec)
+        }
+        if let seconds = resetAfterSeconds, seconds > 86400 {
+            return AccountQuota.formatDurationSeconds(seconds)
+        }
+        return ""
+    }
+
     public var timeUntilResetString: String {
         guard let seconds = resetAfterSeconds, seconds > 0 else {
             return L10n.resetNow
         }
-        let totalSeconds = seconds
-        let days = totalSeconds / 86400
-        let hours = (totalSeconds % 86400) / 3600
-        let minutes = (totalSeconds % 3600) / 60
-        if days > 0 {
-            return L10n.duration(days: days, hours: hours)
-        } else if hours > 0 {
-            return L10n.durationHoursMinutes(hours: hours, minutes: minutes)
-        } else {
-            return L10n.durationMinutes(minutes: max(1, minutes))
-        }
+        return AccountQuota.formatDurationSeconds(seconds)
     }
 }
 

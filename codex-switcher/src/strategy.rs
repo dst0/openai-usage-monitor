@@ -185,6 +185,8 @@ mod tests {
             last_reset_time: None,
             last_reset_after_seconds: Some(reset),
             last_weekly_percentage: None,
+            last_weekly_reset_time: None,
+            last_weekly_reset_after_seconds: None,
             last_credits: credits,
             last_error: None,
             last_checked: None,

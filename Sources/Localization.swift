@@ -194,6 +194,9 @@ public final class LocalizationManager: @unchecked Sendable {
             "hours_short": "%dh",
             "hours_minutes_short": "%dh %dm",
             "minutes_short": "%d min",
+            "duration_days_hours": "%dd %dh",
+            "duration_hours_minutes": "%dh %dm",
+            "duration_minutes": "%dm",
             "help_guide": "📖 Help & Documentation",
             "restart_app": "🚀 Restart Codex Desktop App",
             "launch_at_login": "Launch at Login",
@@ -759,7 +762,11 @@ public enum L10n {
     }
     public static var resetNow: String { tr("reset_now") }
     public static func duration(days: Int, hours: Int) -> String {
-        String(format: tr("duration_days_hours"), days, hours)
+        let fmt = tr("duration_days_hours")
+        if fmt != "duration_days_hours" {
+            return String(format: fmt, days, hours)
+        }
+        return String(format: "%dd %dh", days, hours)
     }
     public static func durationHoursMinutes(hours: Int, minutes: Int) -> String {
         let fmt = tr("duration_hours_minutes")

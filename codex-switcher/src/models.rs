@@ -118,6 +118,10 @@ pub struct AccountConfig {
     pub last_reset_after_seconds: Option<i64>,
     #[serde(default)]
     pub last_weekly_percentage: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_weekly_reset_time: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_weekly_reset_after_seconds: Option<i64>,
     #[serde(default)]
     pub last_credits: Option<u32>,
     #[serde(default)]
@@ -254,6 +258,10 @@ pub struct AccountStatusEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weekly_percentage: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub weekly_reset_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weekly_reset_after_seconds: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reset_time: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reset_after_seconds: Option<i64>,
@@ -273,6 +281,10 @@ pub struct StatusFile {
     pub five_hour_percentage: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weekly_percentage: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weekly_reset_time: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weekly_reset_after_seconds: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reset_time: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

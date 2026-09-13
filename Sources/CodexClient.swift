@@ -124,6 +124,9 @@ public final class CodexClient: @unchecked Sendable {
         let activePlan = json["active_plan"] as? String
         let fiveHour = json["five_hour_percentage"] as? Double ?? 100.0
         let weekly = json["weekly_percentage"] as? Double
+        let weeklyResetTimeStr = json["weekly_reset_time"] as? String
+        let weeklyResetTime = weeklyResetTimeStr.flatMap { Self.parseDate($0) }
+        let weeklyResetAfterSec = json["weekly_reset_after_seconds"] as? Int
         let resetTimeStr = json["reset_time"] as? String
         let resetTime = resetTimeStr.flatMap { Self.parseDate($0) }
         let resetAfterSec = json["reset_after_seconds"] as? Int
@@ -143,6 +146,9 @@ public final class CodexClient: @unchecked Sendable {
                 let isAct = a["is_active"] as? Bool ?? false
                 let pct = a["five_hour_percentage"] as? Double ?? 100.0
                 let wPct = a["weekly_percentage"] as? Double
+                let wRStr = a["weekly_reset_time"] as? String
+                let wRTime = wRStr.flatMap { Self.parseDate($0) }
+                let wRSec = a["weekly_reset_after_seconds"] as? Int
                 let rStr = a["reset_time"] as? String
                 let rTime = rStr.flatMap { Self.parseDate($0) }
                 let rSec = a["reset_after_seconds"] as? Int
@@ -158,6 +164,8 @@ public final class CodexClient: @unchecked Sendable {
                     isCurrentActive: isAct,
                     fiveHourPercentage: pct,
                     weeklyPercentage: wPct,
+                    weeklyResetTime: wRTime,
+                    weeklyResetAfterSeconds: wRSec,
                     models: [],
                     resetTime: rTime,
                     resetAfterSeconds: rSec,
@@ -178,6 +186,8 @@ public final class CodexClient: @unchecked Sendable {
             activePlan: activePlan,
             fiveHourPercentage: fiveHour,
             weeklyPercentage: weekly,
+            weeklyResetTime: weeklyResetTime,
+            weeklyResetAfterSeconds: weeklyResetAfterSec,
             resetTime: resetTime,
             resetAfterSeconds: resetAfterSec,
             credits: credits,

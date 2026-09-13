@@ -431,21 +431,15 @@
     .mb-reserves-container {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
-    }
-
-    .mb-reserve-unit {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
+      gap: 2.5px;
     }
 
     /* 3D Shield Badge (3-Tier Stratified) */
     .shield-badge {
       position: relative;
-      width: 12px;
+      width: 6.5px;
       height: 16.5px;
-      border-radius: 2px;
+      border-radius: 1px;
       overflow: hidden;
       display: inline-block;
       vertical-align: middle;
@@ -1389,39 +1383,27 @@
               <span class="mb-bracket">]</span>
             </div>
 
-            <!-- Reserve Accounts: │ 🛡️ │ 🛡️ │ 🛡️ │ 🛡️ -->
+            <!-- Reserve Accounts: 🛡️ 🛡️ 🛡️ 🛡️ -->
             <div class="mb-reserves-container">
-              <div class="mb-reserve-unit">
-                <span class="mb-sep">│</span>
-                <div class="shield-badge" title="Reserve Account #1">
-                  <div class="badge-tier-top bg-red"></div>
-                  <div class="badge-tier-mid bg-green"></div>
-                  <div class="badge-tier-bot bg-green"></div>
-                </div>
+              <div class="shield-badge" title="Reserve Account #1">
+                <div class="badge-tier-top bg-red"></div>
+                <div class="badge-tier-mid bg-green"></div>
+                <div class="badge-tier-bot bg-green"></div>
               </div>
-              <div class="mb-reserve-unit">
-                <span class="mb-sep">│</span>
-                <div class="shield-badge" title="Reserve Account #2">
-                  <div class="badge-tier-top bg-red"></div>
-                  <div class="badge-tier-mid bg-green"></div>
-                  <div class="badge-tier-bot bg-green"></div>
-                </div>
+              <div class="shield-badge" title="Reserve Account #2">
+                <div class="badge-tier-top bg-red"></div>
+                <div class="badge-tier-mid bg-green"></div>
+                <div class="badge-tier-bot bg-green"></div>
               </div>
-              <div class="mb-reserve-unit">
-                <span class="mb-sep">│</span>
-                <div class="shield-badge" title="Reserve Account #3">
-                  <div class="badge-tier-top bg-red"></div>
-                  <div class="badge-tier-mid bg-green"></div>
-                  <div class="badge-tier-bot bg-green"></div>
-                </div>
+              <div class="shield-badge" title="Reserve Account #3">
+                <div class="badge-tier-top bg-red"></div>
+                <div class="badge-tier-mid bg-green"></div>
+                <div class="badge-tier-bot bg-green"></div>
               </div>
-              <div class="mb-reserve-unit">
-                <span class="mb-sep">│</span>
-                <div class="shield-badge" title="Reserve Account #4">
-                  <div class="badge-tier-top bg-red"></div>
-                  <div class="badge-tier-mid bg-green"></div>
-                  <div class="badge-tier-bot bg-green"></div>
-                </div>
+              <div class="shield-badge" title="Reserve Account #4">
+                <div class="badge-tier-top bg-red"></div>
+                <div class="badge-tier-mid bg-green"></div>
+                <div class="badge-tier-bot bg-green"></div>
               </div>
             </div>
           </div>
@@ -3437,13 +3419,10 @@
           const botClass = res_c > 0 ? 'bg-green' : (res_5h > 20 ? 'bg-yellow' : 'bg-red');
 
           resHTML += `
-            <div class="mb-reserve-unit">
-              <span class="mb-sep">│</span>
-              <div class="shield-badge" title="Reserve Account #${i}">
-                <div class="badge-tier-top ${topClass}"></div>
-                <div class="badge-tier-mid ${midClass}"></div>
-                <div class="badge-tier-bot ${botClass}"></div>
-              </div>
+            <div class="shield-badge" title="Reserve Account #${i}">
+              <div class="badge-tier-top ${topClass}"></div>
+              <div class="badge-tier-mid ${midClass}"></div>
+              <div class="badge-tier-bot ${botClass}"></div>
             </div>
           `;
         }

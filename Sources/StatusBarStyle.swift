@@ -315,7 +315,7 @@ public struct MenuBarAppearanceHelper {
         fiveHour: Double,
         weekly: Double,
         credits: Int = 0,
-        width: CGFloat = 13.0,
+        width: CGFloat = 6.5,
         height: CGFloat = 16.5,
         isScreenActive: Bool = true
     ) -> NSImage {
@@ -323,7 +323,7 @@ public struct MenuBarAppearanceHelper {
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
 
             let colorSpace = CGColorSpaceCreateDeviceRGB()
-            let cornerR: CGFloat = 1.2
+            let cornerR: CGFloat = 1.0
             // Integer-aligned chassis bounds within bounds
             let badgeRect = CGRect(x: 0.5, y: 0.5, width: width - 1.0, height: height - 1.0)
             let contour = CGPath(roundedRect: badgeRect, cornerWidth: cornerR, cornerHeight: cornerR, transform: nil)
@@ -548,33 +548,38 @@ public struct MenuBarAppearanceHelper {
                 ? NSColor(red: 1.0, green: 0.86, blue: 0.04, alpha: 1.0)
                 : NSColor(red: 0.90, green: 0.80, blue: 0.05, alpha: 1.0)
 
-            let shadowAlpha: CGFloat = isScreenActive ? 0.55 : 0.35
+            let shadowAlpha: CGFloat = isScreenActive ? 0.60 : 0.35
             let shadowColor = NSColor(white: 0.0, alpha: shadowAlpha).cgColor
-            let shadowOffset = CGSize(width: pixelSize * 0.60, height: -pixelSize * 0.60)
+            let shadowOffset = CGSize(width: 0.0, height: -0.5)
 
-            // Pass 1: Crisp directional drop shadow for razor-sharp legibility on light wallpapers
-            ctx.setFillColor(shadowColor)
-            for r in 0..<rows {
-                let y = CGFloat(r) * pixelSize + shadowOffset.height + 0.5
-                for c in 0..<cols {
-                    if bitmapRows[r][c] == 1 {
-                        let x = CGFloat(c) * pixelSize + shadowOffset.width
-                        ctx.fill(CGRect(x: x, y: y, width: pixelSize, height: pixelSize))
-                    }
-                }
-            }
-
-            // Pass 2: Uniform radiant gold gradient clipped strictly to pixel glyph contours
-            ctx.saveGState()
+            // Construct path covering all active glyph pixels
+            let path = CGMutablePath()
             for r in 0..<rows {
                 let y = CGFloat(r) * pixelSize + 0.5
                 for c in 0..<cols {
                     if bitmapRows[r][c] == 1 {
-                        let x = CGFloat(c) * pixelSize
-                        ctx.addRect(CGRect(x: x, y: y, width: pixelSize, height: pixelSize))
+                        let x = CGFloat(c) * pixelSize + 0.5
+                        path.addRect(CGRect(x: x, y: y, width: pixelSize, height: pixelSize))
                     }
                 }
             }
+
+            // Pass 1: Subtle edge shadow for menu bar contrast
+            ctx.saveGState()
+            ctx.setShadow(offset: shadowOffset, blur: 1.0, color: shadowColor)
+
+            // Pass 2: Crisp dark contour outline underlay (matches AGY Monitor standard)
+            let outlineAlpha: CGFloat = isScreenActive ? 0.95 : 0.75
+            ctx.setStrokeColor(NSColor(white: 0.0, alpha: outlineAlpha).cgColor)
+            ctx.setLineWidth(0.85)
+            ctx.setLineJoin(.round)
+            ctx.addPath(path)
+            ctx.strokePath()
+            ctx.restoreGState()
+
+            // Pass 3: Radiant gold gradient clipped strictly to pixel glyph contours
+            ctx.saveGState()
+            ctx.addPath(path)
             ctx.clip()
 
             let colors = [topColor.cgColor, midColor.cgColor, bottomColor.cgColor] as CFArray
@@ -598,7 +603,7 @@ public struct MenuBarAppearanceHelper {
     /// - Row 8 (top):    binder pegs (2 filled pixels)
     /// - Rows 5-7:       blue header bar
     /// - Rows 0-4:       white body with date dots
-    /// Each pixel has a dark 1px drop shadow for classic Win3.1/Win95 relief.
+    /// Each pixel has a dark contour outline and subtle shadow for classic Win3.1/Win95 relief.
     public static func makeWeeklyIcon(size: CGFloat = 10.0, isScreenActive: Bool = true) -> NSImage {
         // Calendar bitmap: 9 rows from row 0 (bottom) to row 8 (top).
         // 0 = empty, 1 = body (white/light), 2 = header (blue), 3 = peg (dark), 4 = date dot (dark on body)
@@ -645,23 +650,37 @@ public struct MenuBarAppearanceHelper {
             let dotColor = isScreenActive
                 ? NSColor(white: 0.28, alpha: 1.0).cgColor
                 : NSColor(white: 0.24, alpha: 1.0).cgColor
-            let shadowColor = NSColor(white: 0.0, alpha: isScreenActive ? 0.75 : 0.45).cgColor
 
-            let shadowOffset = CGSize(width: pixelSize * 0.75, height: -pixelSize * 0.75)
+            let shadowAlpha: CGFloat = isScreenActive ? 0.60 : 0.35
+            let shadowColor = NSColor(white: 0.0, alpha: shadowAlpha).cgColor
+            let shadowOffset = CGSize(width: 0.0, height: -0.5)
 
-            // Pass 1: Draw shadow for all filled pixels
-            ctx.setFillColor(shadowColor)
+            // Construct path covering all active calendar pixels
+            let path = CGMutablePath()
             for r in 0..<rows {
-                let y = CGFloat(r) * pixelSize + shadowOffset.height + 0.5
+                let y = CGFloat(r) * pixelSize + 0.5
                 for c in 0..<cols {
                     if bitmapRows[r][c] != 0 {
-                        let x = CGFloat(c) * pixelSize + shadowOffset.width
-                        ctx.fill(CGRect(x: x, y: y, width: pixelSize, height: pixelSize))
+                        let x = CGFloat(c) * pixelSize + 0.5
+                        path.addRect(CGRect(x: x, y: y, width: pixelSize, height: pixelSize))
                     }
                 }
             }
 
-            // Pass 2: Draw crisp pixel-art calendar
+            // Pass 1: Subtle edge shadow for menu bar contrast
+            ctx.saveGState()
+            ctx.setShadow(offset: shadowOffset, blur: 1.0, color: shadowColor)
+
+            // Pass 2: Crisp dark contour outline underlay (matches AGY Monitor standard)
+            let outlineAlpha: CGFloat = isScreenActive ? 0.95 : 0.75
+            ctx.setStrokeColor(NSColor(white: 0.0, alpha: outlineAlpha).cgColor)
+            ctx.setLineWidth(0.85)
+            ctx.setLineJoin(.round)
+            ctx.addPath(path)
+            ctx.strokePath()
+            ctx.restoreGState()
+
+            // Pass 3: Draw crisp pixel-art calendar
             for r in 0..<rows {
                 let y = CGFloat(r) * pixelSize + 0.5
                 for c in 0..<cols {
@@ -676,7 +695,7 @@ public struct MenuBarAppearanceHelper {
                     default: continue
                     }
                     ctx.setFillColor(color)
-                    let x = CGFloat(c) * pixelSize
+                    let x = CGFloat(c) * pixelSize + 0.5
                     ctx.fill(CGRect(x: x, y: y, width: pixelSize, height: pixelSize))
                 }
             }
@@ -714,7 +733,8 @@ public struct MenuBarAppearanceHelper {
         let weeklyIconSample = useQuotaIcons ? makeWeeklyIcon(size: 10.0, isScreenActive: isScreenActive) : nil
         let weeklyIconW: CGFloat = weeklyIconSample?.size.width ?? 10.0
         let weeklyIconH: CGFloat = weeklyIconSample?.size.height ?? 10.0
-        let iconSpacing: CGFloat = 1.5
+        let leadingPadding: CGFloat = 2.0
+        let iconSpacing: CGFloat = 2.5
         let totalHeight: CGFloat = 20.5
         let rowHeight = totalHeight / 2.0 // 10.25 pt
 
@@ -752,8 +772,8 @@ public struct MenuBarAppearanceHelper {
 
         let maxIconW = max(sprintIconW, weeklyIconW)
         let prefixWidth: CGFloat = useQuotaIcons
-            ? (maxIconW + iconSpacing)
-            : (max(f5hLabelSize.width, wLabelSize.width) + iconSpacing)
+            ? (leadingPadding + maxIconW + iconSpacing)
+            : (leadingPadding + max(f5hLabelSize.width, wLabelSize.width) + iconSpacing)
 
         let textWidth = max(f5hTextSize.width, wTextSize.width)
         let totalWidth = ceil(prefixWidth + textWidth)
@@ -769,7 +789,7 @@ public struct MenuBarAppearanceHelper {
 
             if useQuotaIcons {
                 let sprintIcon = sprintIconSample ?? makeSprintIcon(size: 8.0, isScreenActive: isScreenActive)
-                let sprintX = (prefixWidth - iconSpacing - sprintIconW) / 2.0
+                let sprintX = leadingPadding + (maxIconW - sprintIconW) / 2.0
                 let sprintIconY = row1CenterY - (sprintIconH / 2.0)
                 let iconRect = CGRect(
                     x: sprintX,
@@ -781,7 +801,7 @@ public struct MenuBarAppearanceHelper {
             } else {
                 let f5hLabelBaseline = row1CenterY - (labelF.capHeight / 2.0)
                 let f5hLabelY = f5hLabelBaseline - abs(labelF.descender)
-                f5hLabelStr.draw(at: NSPoint(x: 0, y: f5hLabelY))
+                f5hLabelStr.draw(at: NSPoint(x: leadingPadding, y: f5hLabelY))
             }
             f5hStr.draw(at: NSPoint(x: prefixWidth, y: f5hTextY))
 
@@ -793,7 +813,7 @@ public struct MenuBarAppearanceHelper {
 
             if useQuotaIcons {
                 let weeklyIcon = weeklyIconSample ?? makeWeeklyIcon(size: 10.0, isScreenActive: isScreenActive)
-                let weeklyX = (prefixWidth - iconSpacing - weeklyIconW) / 2.0
+                let weeklyX = leadingPadding + (maxIconW - weeklyIconW) / 2.0
                 let weeklyIconY = row2CenterY - (weeklyIconH / 2.0)
                 let iconRect = CGRect(
                     x: weeklyX,
@@ -805,7 +825,7 @@ public struct MenuBarAppearanceHelper {
             } else {
                 let wLabelBaseline = row2CenterY - (labelF.capHeight / 2.0)
                 let wLabelY = wLabelBaseline - abs(labelF.descender)
-                wLabelStr.draw(at: NSPoint(x: 0, y: wLabelY))
+                wLabelStr.draw(at: NSPoint(x: leadingPadding, y: wLabelY))
             }
             wStr.draw(at: NSPoint(x: prefixWidth, y: wTextY))
 

@@ -139,6 +139,8 @@ pub fn load_accounts() -> Result<AccountsFile, String> {
                     last_reset_time: None,
                     last_reset_after_seconds: None,
                     last_weekly_percentage: None,
+                    last_weekly_reset_time: None,
+                    last_weekly_reset_after_seconds: None,
                     last_credits: None,
                     last_error: None,
                     last_checked: None,

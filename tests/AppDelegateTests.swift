@@ -100,8 +100,8 @@ struct AppDelegateTestRunner {
             }
         }
 
-        // Attachment 2: badge attachment bounds must be CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5)
-        assertEqual(stackedAttachments[2].bounds, CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5), "Badge attachment bounds must match")
+        // Attachment 2: badge attachment bounds must be CGRect(x: 0, y: -5.0, width: 6.5, height: 16.5)
+        assertEqual(stackedAttachments[2].bounds, CGRect(x: 0, y: -5.0, width: 6.5, height: 16.5), "Badge attachment bounds must match")
 
         print("  ✅ Stacked mode single session layout verified")
 
@@ -184,9 +184,9 @@ struct AppDelegateTestRunner {
             }
         }
 
-        // Active badge attachment bounds in horizontal mode: CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5)
+        // Active badge attachment bounds in horizontal mode: CGRect(x: 0, y: -5.0, width: 6.5, height: 16.5)
         // The badge is the last attachment (index 3)
-        assertEqual(horizAttachments[3].bounds, CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5), "Horizontal active badge bounds must match")
+        assertEqual(horizAttachments[3].bounds, CGRect(x: 0, y: -5.0, width: 6.5, height: 16.5), "Horizontal active badge bounds must match")
 
         print("  ✅ Horizontal mode layout verified")
 
@@ -449,9 +449,9 @@ struct AppDelegateTestRunner {
         let fH = fullRep.pixelsHigh
         assertEqual(fH, 22, "Composite image pixel height must be 22")
 
-        // Scan rightmost reserve badge pixels (last 13 columns of content)
+        // Scan rightmost reserve badge pixels (last 6 columns of content for 6.5pt badge)
         var badgeMinY = 999, badgeMaxY = -1
-        for x in (fW - 13)..<fW {
+        for x in (fW - 6)..<fW {
             for y in 0..<fH {
                 if fullRep.colorAt(x: x, y: y)!.alphaComponent > 0.1 {
                     badgeMinY = min(badgeMinY, y)
@@ -502,6 +502,160 @@ struct AppDelegateTestRunner {
         }
 
         print("  ✅ Multilingual support (13 languages: JA, ZH-Hans, VI) verified")
+
+        // ====================================================================
+        // Test 10: Unified Account Row Layout & Horizontal Alignment Invariant
+        // ====================================================================
+        assertEqual(AccountRowView.standardInset, 28.0, "AccountRowView standardInset must be exactly 28.0 pt")
+
+        // 1. App Session Row View (ChatGPT.app active session)
+        let appRow = AccountRowView(
+            frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 24),
+            accountId: "desktop-app",
+            accountName: nil,
+            email: "dst.works@gmail.com",
+            tier: "Pro 20x",
+            isCurrentActive: true,
+            isAppSession: true,
+            dotColor: NSColor.systemGreen,
+            statusTag: "[ACTIVE IN APP]",
+            statusTagColor: NSColor.systemTeal
+        )
+        assertEqual(appRow.titleLabel.frame.origin.x, 28.0, "App session titleLabel must start at standardInset 28.0")
+        assertTrue(appRow.deleteButton == nil, "App session must not have deleteButton")
+        assertTrue(appRow.switchButton == nil, "App session must not have switchButton")
+
+        // 2. CLI Primary Active Account Row View
+        let cliActiveRow = AccountRowView(
+            frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 24),
+            accountId: "cli-active-1",
+            accountName: "personal",
+            email: "dst.works@gmail.com",
+            tier: "Pro 20x",
+            isCurrentActive: true,
+            isAppSession: false,
+            dotColor: NSColor.systemGreen,
+            statusTag: "[ACTIVE IN CLI]",
+            statusTagColor: NSColor.systemGreen
+        )
+        assertEqual(cliActiveRow.titleLabel.frame.origin.x, 28.0, "CLI active titleLabel must start at standardInset 28.0")
+        assertTrue(cliActiveRow.deleteButton != nil, "CLI active account must have deleteButton")
+        assertTrue(cliActiveRow.switchButton == nil, "CLI active account must not have switchButton")
+
+        // 3. CLI Reserve Account Row View
+        let cliReserveRow = AccountRowView(
+            frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 24),
+            accountId: "cli-reserve-1",
+            accountName: nil,
+            email: "dst@destinationworks.com.au",
+            tier: "Team",
+            isCurrentActive: false,
+            isAppSession: false,
+            dotColor: NSColor.systemRed,
+            statusTag: "[RESERVE #1]",
+            statusTagColor: NSColor.secondaryLabelColor
+        )
+        assertEqual(cliReserveRow.titleLabel.frame.origin.x, 28.0, "CLI reserve titleLabel must start at standardInset 28.0")
+        assertTrue(cliReserveRow.deleteButton != nil, "CLI reserve account must have deleteButton")
+        assertTrue(cliReserveRow.switchButton != nil, "CLI reserve account must have switchButton")
+
+        // 4. Horizontal Invariant: All account rows must have EXACTLY the same X origin
+        assertEqual(appRow.titleLabel.frame.origin.x, cliActiveRow.titleLabel.frame.origin.x, "App row and CLI active row must have identical X alignment")
+        assertEqual(cliActiveRow.titleLabel.frame.origin.x, cliReserveRow.titleLabel.frame.origin.x, "CLI active and CLI reserve rows must have identical X alignment")
+
+        // 5. Reserve Badge & Tier Non-Clipping Invariant: Long titles must truncate in the middle and preserve statusTag & tier completely
+        let veryLongReserveRow = AccountRowView(
+            frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 24),
+            accountId: "cli-reserve-long",
+            accountName: "extremely-long-department-account-name",
+            email: "user.very.long.address@organization.destinationworks.com.au",
+            tier: "Business Premium",
+            isCurrentActive: false,
+            isAppSession: false,
+            dotColor: NSColor.systemGreen,
+            statusTag: "[RESERVE #99]",
+            statusTagColor: NSColor.secondaryLabelColor
+        )
+        let renderedText = veryLongReserveRow.titleLabel.attributedStringValue.string
+        assertTrue(renderedText.contains("[RESERVE #99]"), "Rendered string must preserve statusTag completely: \(renderedText)")
+        assertTrue(renderedText.contains("Business Premium"), "Rendered string must preserve plan tier completely: \(renderedText)")
+        assertTrue(renderedText.contains("…"), "Rendered string must middle-truncate long title: \(renderedText)")
+
+        print("  ✅ Unified AccountRowView alignment & hierarchy invariant (28.0pt) verified")
+        print("  ✅ Reserve badge & tier non-clipping invariant verified")
+
+        // ====================================================================
+        // Test 11: Reserve Accounts Weekly Limit & Reset Partitioning Invariant
+        // ====================================================================
+        let teamAccount = AccountQuota(
+            id: "team-res-1",
+            name: "team-res",
+            email: "team@company.com",
+            planType: "team",
+            isCurrentActive: false,
+            fiveHourPercentage: 0.0,
+            weeklyPercentage: 52.0,
+            weeklyResetTime: nil,
+            weeklyResetAfterSeconds: 450000,
+            models: [],
+            resetTime: nil,
+            resetAfterSeconds: 11990,
+            credits: 3,
+            planMultiplier: 1.0
+        )
+        // 5h sprint reset is 11990s (3h 19m)
+        assertEqual(teamAccount.sprintTimeUntilResetString, "3h 19m", "Team account sprint reset should be 3h 19m")
+        // Weekly reset is 450000s (5d 5h)
+        assertEqual(teamAccount.weeklyTimeUntilResetString, "5d 5h", "Team account weekly reset should be 5d 5h")
+
+        let proAccountSingleWindow = AccountQuota(
+            id: "pro-user",
+            name: "personal",
+            email: "user@gmail.com",
+            planType: "pro",
+            isCurrentActive: true,
+            fiveHourPercentage: 860.0,
+            weeklyPercentage: 860.0,
+            weeklyResetTime: nil,
+            weeklyResetAfterSeconds: nil,
+            models: [],
+            resetTime: nil,
+            resetAfterSeconds: 544868, // 6d 7h
+            credits: 0,
+            planMultiplier: 20.0
+        )
+        // Pro account with > 86400s primary reset must NOT pollute sprint countdown
+        assertEqual(proAccountSingleWindow.sprintTimeUntilResetString, "", "Pro account weekly-only window must not show on sprint countdown")
+        // Pro account fallback: primary reset > 86400s must display on weekly countdown
+        assertEqual(proAccountSingleWindow.weeklyTimeUntilResetString, "6d 7h", "Pro account weekly countdown should display 6d 7h")
+
+        // Test Dynamic Menu Construction: Verify Reserve Accounts have "🗓️ Weekly:" progress bars
+        let appDelegate = AppDelegate()
+        let menu = appDelegate.buildMenu()
+        appDelegate.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        appDelegate.statusItem?.menu = menu
+
+        let snapshotWithReserves = MultiAccountSnapshot(
+            timestamp: Date(),
+            activeAccountId: proAccountSingleWindow.id,
+            activeEmail: proAccountSingleWindow.email,
+            activePlan: proAccountSingleWindow.planType,
+            fiveHourPercentage: 860.0,
+            weeklyPercentage: 860.0,
+            resetTime: nil,
+            resetAfterSeconds: 544868,
+            credits: 0,
+            accounts: [proAccountSingleWindow, teamAccount],
+            cliAccount: proAccountSingleWindow
+        )
+        appDelegate.updateUI(with: snapshotWithReserves)
+
+        let menuTitles = menu.items.map { $0.title }
+        let weeklyItems = menuTitles.filter { $0.contains("Weekly:") }
+        assertTrue(weeklyItems.count >= 2, "Expected at least 2 Weekly items in menu (active + reserve), got: \(weeklyItems)")
+        assertTrue(weeklyItems.contains(where: { $0.contains("52%") }), "Menu must contain weekly item with 52% for reserve account")
+
+        print("  ✅ Reserve accounts weekly limit bar & distinct reset times verified")
 
         print("\n🎉 ALL APP DELEGATE TESTS PASSED!")
     }

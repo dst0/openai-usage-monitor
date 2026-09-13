@@ -46,10 +46,10 @@ The detector scans threads using two distinct layers:
 | `read_rollout_tail_lines` max bytes | `131072` (128 KB) | Reads only the tail of `rollout-*.jsonl` via `SeekFrom::Start(len - 128KB)`. Eliminates multi-second I/O stalls on large sessions (e.g. 500 MB+ files). |
 | App shutdown cooldown | `600 ms` | Sleep after `pgrep` confirms process exit to allow macOS `LaunchServices` and `WindowServer` to clear registration before relaunching. |
 | App launch verification | `3` attempts @ `300 ms` | Polling loop verifying ChatGPT.app has launched after `open -a /Applications/ChatGPT.app`. |
-| App server init sleep | `3000 ms` | Sleep before queuing resumption messages to allow the bundled `codex app-server` to start and accept CLI socket commands. |
-| UI cycle switch delay | `400 ms` per thread | Delay after invoking `open codex://threads/<tid>` before triggering accessibility inspection. |
-| UI Accessibility polling | `3` attempts @ `200 ms` | Polling interval for locating and clicking the native "Resume" / "Retry" button via AXUIElement. |
-| Primary thread UI focus | `6` attempts @ `400 ms` | Extended polling to ensure the primary/current thread is frontmost and active when switching finishes. |
+| App server init sleep | `4000 ms` | Sleep before queuing resumption messages to allow the bundled `codex app-server` to start and accept CLI socket commands. |
+| UI cycle switch delay | `1000 ms` per thread | Delay after invoking `open codex://threads/<tid>` before triggering accessibility inspection. |
+| UI Accessibility polling | `10` attempts @ `300 ms` | Polling interval for locating and clicking the native "Resume" / "Retry" / "Steer" button via AXUIElement. |
+| Primary thread UI focus | `5` attempts @ `300 ms` | Extended polling to ensure the primary/current thread is frontmost and active when switching finishes. |
 
 ### 3. Rollout State Classification (`ThreadRolloutState`)
 
@@ -65,13 +65,17 @@ Rollout files are evaluated backwards from the tail, filtering out post-turn met
 - **`CleanCompleted`**: The last turn completed with `task_complete` with no error, or a non-quota execution error. **Never auto-resumed.**
 - **`TurnAborted`**: The turn was explicitly cancelled by the user (`turn_aborted`). **Never auto-resumed.**
 
-### 4. UI Hydration Quirk & Solution
+### 4. UI Hydration & Queued Message Resumption
 
-- **The Problem**: ChatGPT.app on macOS is an Electron/Chromium application. When a turn halts due to rate limits, the frontend displays an interrupted state banner and stops processing. If the credentials in `auth.json` are swapped in the background, background tabs do NOT automatically wake up; they remain idle until the user focuses or clicks on them.
-- **The Solution (UI Cycling)**:
-  1. `cxi` sends `continue` to each thread via `/Applications/ChatGPT.app/Contents/Resources/codex queue --thread <tid> --message continue`.
-  2. `cxi` cycles through each thread URL (`open "codex://threads/<tid>"`) with a `400 ms` delay.
-  3. For each tab opened, `cxi` triggers macOS Accessibility APIs (`AXUIElementCopyAttributeValue`) to press any unpause/resume buttons.
+- **The Problem**: ChatGPT.app on macOS is an Electron/Chromium application. When a turn halts due to rate limits or an app restart, the frontend displays an interrupted state banner (`Queue paused because you interrupted`) with a text button labeled `Resume`. **Crucially, clicking the text button in this banner does NOT work.** Furthermore, sending `codex queue --message continue` merely inserts a record into SQLite; on an idle thread, it does NOT automatically execute.
+- **The Solution (Circular Play Button & Steer Dispatch)**:
+  1. `cxi` cycles through each thread URL (`open "codex://threads/<tid>"`) with a `1000 ms` mount delay.
+  2. For each tab opened, `cxi` inspects the Accessibility hierarchy with active-zone filtering (bottom 250pt, excluding historical scrollback tool retries).
+  3. **Button Hierarchy & Target Selection**:
+     - **1st Priority — Circular "Play" Button**: Located at the bottom-right of the composer (`[AXButton] title='' desc='Resume'`, circular ~29x28pt with a white right-facing triangle). Clicking this button directly unpauses the queue and initiates execution.
+     - **2nd Priority — `Steer` Button**: Located on the queued message row (`[AXButton] title='' desc='Steer'`). If a queued `continue` is present, clicking Steer transitions it into an active turn (`thread/queue/start`).
+     - **3rd Priority — Turn `Resume`/`Retry` Button**: Located at the bottom of an interrupted assistant response turn.
+     - **Explicitly Skipped**: The non-functional text button inside the banner (`[AXButton] title='Resume' desc='' width>50`).
   4. Finally, `cxi` refocuses the user's primary/active thread.
 
 ---
@@ -113,7 +117,7 @@ An account switch is triggered when:
 
 - **Anti-Vibrancy Invariant (Composite NSImage)**: AppKit text rendering on inactive displays applies `NSTitlebarContainer` vibrancy that washes out custom text colors. To prevent this, the Menu Bar app renders a composite `NSImage` offscreen with explicit CGContext alpha blending and applies `.imagePosition = .imageOnly` on inactive screens.
 - **3D Stratified Shield Badge**:
-  - Total badge height: 16.5 pt.
+  - Total badge height: 16.5 pt, width: 6.5 pt (single-provider column, exactly half of AGY dual-model 13.0pt badge).
   - Top Tier (5h Sprint): Tallest section (7.5 pt of 16.5) with linear gradient based on sprint quota.
   - Middle Tier (Weekly Pool): Middle section (5.8 pt of 16.5). If weekly pool is exhausted or critical, overrides top tier green to gray to prevent misleading operational indicators.
   - Bottom Strip (Reset Credits): Compact strip (3.2 pt of 16.5). Green when credits > 0.

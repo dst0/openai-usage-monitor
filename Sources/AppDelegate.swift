@@ -34,18 +34,48 @@ public final class InsetSeparatorView: NSView {
 // MARK: - Account Row View with ✕ Delete Button
 
 public final class AccountRowView: NSView {
+    public static let standardInset: CGFloat = 28
+
+    public static func truncateMiddle(_ text: String, font: NSFont, maxWidth: CGFloat) -> String {
+        let currentWidth = (text as NSString).size(withAttributes: [.font: font]).width
+        if currentWidth <= maxWidth || text.count <= 6 {
+            return text
+        }
+        let ellipsis = "…"
+        let maxCharsHalf = (text.count - 1) / 2
+        var low = 1
+        var high = maxCharsHalf
+        var best = "\(text.prefix(1))\(ellipsis)\(text.suffix(1))"
+
+        while low <= high {
+            let mid = (low + high) / 2
+            let prefix = text.prefix(mid)
+            let suffix = text.suffix(mid)
+            let candidate = "\(prefix)\(ellipsis)\(suffix)"
+            let w = (candidate as NSString).size(withAttributes: [.font: font]).width
+            if w <= maxWidth {
+                best = candidate
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        return best
+    }
+
     public let accountId: String
     public let accountName: String?
     public let accountEmail: String
     public let tier: String?
     public let isCurrentActive: Bool
+    public let isAppSession: Bool
     public let onDelete: (String, String) -> Void
     public let onRename: (String, String?, String) -> Void
     public let onSelect: (String) -> Void
 
     public let titleLabel: NSTextField
     public var switchButton: NSButton?
-    public let deleteButton: NSButton
+    public var deleteButton: NSButton?
 
     public init(
         frame: NSRect,
@@ -54,27 +84,29 @@ public final class AccountRowView: NSView {
         email: String,
         tier: String?,
         isCurrentActive: Bool,
+        isAppSession: Bool = false,
         dotColor: NSColor,
         statusTag: String,
-        onDelete: @escaping (String, String) -> Void,
-        onRename: @escaping (String, String?, String) -> Void,
-        onSelect: @escaping (String) -> Void
+        statusTagColor: NSColor? = nil,
+        onDelete: @escaping (String, String) -> Void = { _, _ in },
+        onRename: @escaping (String, String?, String) -> Void = { _, _, _ in },
+        onSelect: @escaping (String) -> Void = { _ in }
     ) {
         self.accountId = accountId
         self.accountName = accountName
         self.accountEmail = email
         self.tier = tier
         self.isCurrentActive = isCurrentActive
+        self.isAppSession = isAppSession
         self.onDelete = onDelete
         self.onRename = onRename
         self.onSelect = onSelect
 
-        let rightOffset: CGFloat = isCurrentActive ? 28 : 56
-        let labelWidth = max(50, frame.width - rightOffset - 12)
-        self.titleLabel = NSTextField(frame: NSRect(x: 12, y: 1, width: labelWidth, height: 20))
-        self.deleteButton = NSButton(frame: NSRect(x: frame.width - 26, y: 2, width: 20, height: 18))
+        let rightOffset: CGFloat = isAppSession ? 12 : (isCurrentActive ? 28 : 56)
+        let labelWidth = max(50, frame.width - rightOffset - Self.standardInset)
+        self.titleLabel = NSTextField(frame: NSRect(x: Self.standardInset, y: 1, width: labelWidth, height: 20))
 
-        if !isCurrentActive {
+        if !isAppSession && !isCurrentActive {
             let sb = NSButton(frame: NSRect(x: frame.width - 50, y: 2, width: 22, height: 18))
             sb.isBordered = false
             sb.title = "⇄"
@@ -86,6 +118,18 @@ public final class AccountRowView: NSView {
             self.switchButton = nil
         }
 
+        if !isAppSession {
+            let db = NSButton(frame: NSRect(x: frame.width - 26, y: 2, width: 20, height: 18))
+            db.isBordered = false
+            db.title = "✕"
+            db.font = NSFont.systemFont(ofSize: 12, weight: .bold)
+            db.contentTintColor = NSColor.secondaryLabelColor
+            db.toolTip = L10n.removeAccount
+            self.deleteButton = db
+        } else {
+            self.deleteButton = nil
+        }
+
         super.init(frame: frame)
         self.autoresizingMask = [.width]
 
@@ -94,13 +138,12 @@ public final class AccountRowView: NSView {
         titleLabel.drawsBackground = false
         titleLabel.isEditable = false
         titleLabel.isSelectable = false
-        titleLabel.lineBreakMode = .byTruncatingMiddle
+        titleLabel.lineBreakMode = .byClipping
 
-        let rich = NSMutableAttributedString()
-        rich.append(NSAttributedString(string: "● ", attributes: [
-            .font: NSFont.systemFont(ofSize: 13, weight: .bold),
-            .foregroundColor: dotColor
-        ]))
+        let dotFont = NSFont.systemFont(ofSize: 13, weight: .bold)
+        let titleFont = isCurrentActive ? NSFont.boldSystemFont(ofSize: 13) : NSFont.systemFont(ofSize: 13)
+        let tagFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+
         let displayTitle: String
         let cleanName = accountName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let emailUsername = email.components(separatedBy: "@").first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -111,14 +154,28 @@ public final class AccountRowView: NSView {
         } else {
             displayTitle = email
         }
-        rich.append(NSAttributedString(string: displayTitle, attributes: [
-            .font: isCurrentActive ? NSFont.boldSystemFont(ofSize: 13) : NSFont.systemFont(ofSize: 13),
+
+        let planLabel = tier ?? "Team"
+        let tagString = "  \(statusTag)  \(planLabel)"
+
+        let dotWidth = ("● " as NSString).size(withAttributes: [.font: dotFont]).width
+        let tagWidth = (tagString as NSString).size(withAttributes: [.font: tagFont]).width
+        let maxTitleWidth = max(20, labelWidth - dotWidth - tagWidth - 4.0)
+        let resolvedDisplayTitle = Self.truncateMiddle(displayTitle, font: titleFont, maxWidth: maxTitleWidth)
+
+        let rich = NSMutableAttributedString()
+        rich.append(NSAttributedString(string: "● ", attributes: [
+            .font: dotFont,
+            .foregroundColor: dotColor
+        ]))
+        rich.append(NSAttributedString(string: resolvedDisplayTitle, attributes: [
+            .font: titleFont,
             .foregroundColor: NSColor.labelColor
         ]))
-        let planLabel = tier ?? "Team"
-        rich.append(NSAttributedString(string: "  \(statusTag)  \(planLabel)", attributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-            .foregroundColor: isCurrentActive ? NSColor.systemGreen : NSColor.secondaryLabelColor
+        let resolvedTagColor = statusTagColor ?? (isCurrentActive ? (isAppSession ? NSColor.systemTeal : NSColor.systemGreen) : NSColor.secondaryLabelColor)
+        rich.append(NSAttributedString(string: tagString, attributes: [
+            .font: tagFont,
+            .foregroundColor: resolvedTagColor
         ]))
         titleLabel.attributedStringValue = rich
         addSubview(titleLabel)
@@ -132,15 +189,12 @@ public final class AccountRowView: NSView {
         }
 
         // Setup Delete Button (✕)
-        deleteButton.isBordered = false
-        deleteButton.title = "✕"
-        deleteButton.font = NSFont.systemFont(ofSize: 12, weight: .bold)
-        deleteButton.contentTintColor = NSColor.secondaryLabelColor
-        deleteButton.toolTip = L10n.removeAccount
-        deleteButton.target = self
-        deleteButton.action = #selector(handleDelete)
-        deleteButton.autoresizingMask = [.minXMargin]
-        addSubview(deleteButton)
+        if let db = deleteButton {
+            db.target = self
+            db.action = #selector(handleDelete)
+            db.autoresizingMask = [.minXMargin]
+            addSubview(db)
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -158,19 +212,32 @@ public final class AccountRowView: NSView {
 
     public override func resetCursorRects() {
         super.resetCursorRects()
-        if !isCurrentActive {
+        if !isCurrentActive || isAppSession {
             addCursorRect(bounds, cursor: .pointingHand)
         }
     }
 
     public override func mouseUp(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if deleteButton.frame.contains(point) {
+        if let db = deleteButton, db.frame.contains(point) {
             handleDelete()
             return
         }
         if let sb = switchButton, sb.frame.contains(point) {
             handleSwitchClick()
+            return
+        }
+        if isAppSession {
+            enclosingMenuItem?.menu?.cancelTracking()
+            if let chatGPTApp = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.chat").first {
+                if #available(macOS 14.0, *) {
+                    chatGPTApp.activate()
+                } else {
+                    chatGPTApp.activate(options: [.activateIgnoringOtherApps])
+                }
+            } else {
+                NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/ChatGPT.app"))
+            }
             return
         }
         if !isCurrentActive {
@@ -180,6 +247,9 @@ public final class AccountRowView: NSView {
     }
 
     public override func menu(for event: NSEvent) -> NSMenu? {
+        if isAppSession {
+            return nil
+        }
         let ctxMenu = NSMenu()
         ctxMenu.autoenablesItems = false
 
@@ -218,9 +288,9 @@ public final class AccountRowView: NSView {
 
 public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     public static let refreshIntervalKey = "codex_refresh_interval"
-    public static let defaultMenuWidth: CGFloat = 380
+    public static let defaultMenuWidth: CGFloat = 440
 
-    private var statusItem: NSStatusItem!
+    var statusItem: NSStatusItem!
     private var refreshTimer: Timer?
     private var lastSnapshot: MultiAccountSnapshot?
     private var menuBarIcon: NSImage?
@@ -474,9 +544,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         var tipParts: [String] = []
         if snapshot.isAppRunning, let app = snapshot.appAccount {
             var lines = ["🖥️ Codex Desktop App (\(app.email)):"]
-            lines.append("  • 5h Sprint: \(String(format: "%.0f%%", app.fiveHourPercentage)) (resets: \(app.timeUntilResetString))")
+            let sprintReset = app.sprintTimeUntilResetString
+            let sprintResetStr = (!sprintReset.isEmpty && sprintReset != L10n.resetNow) ? " (resets: \(sprintReset))" : ""
+            lines.append("  • 5h Sprint: \(String(format: "%.0f%%", app.fiveHourPercentage))\(sprintResetStr)")
             if let w = app.weeklyPercentage {
-                lines.append("  • Weekly Limit: \(String(format: "%.0f%%", w))")
+                let wReset = app.weeklyTimeUntilResetString
+                let wResetStr = (!wReset.isEmpty && wReset != L10n.resetNow) ? " (resets: \(wReset))" : ""
+                lines.append("  • Weekly Limit: \(String(format: "%.0f%%", w))\(wResetStr)")
             }
             if app.credits > 0 {
                 lines.append("  • Reset Credits: \(app.credits)")
@@ -486,9 +560,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
         if let cli = snapshot.cliAccount ?? snapshot.accounts.first(where: { $0.isCurrentActive }) {
             var lines = ["💻 Codex CLI (\(cli.email)):"]
-            lines.append("  • 5h Sprint: \(String(format: "%.0f%%", cli.fiveHourPercentage)) (resets: \(cli.timeUntilResetString))")
+            let sprintReset = cli.sprintTimeUntilResetString
+            let sprintResetStr = (!sprintReset.isEmpty && sprintReset != L10n.resetNow) ? " (resets: \(sprintReset))" : ""
+            lines.append("  • 5h Sprint: \(String(format: "%.0f%%", cli.fiveHourPercentage))\(sprintResetStr)")
             if let w = cli.weeklyPercentage {
-                lines.append("  • Weekly Limit: \(String(format: "%.0f%%", w))")
+                let wReset = cli.weeklyTimeUntilResetString
+                let wResetStr = (!wReset.isEmpty && wReset != L10n.resetNow) ? " (resets: \(wReset))" : ""
+                lines.append("  • Weekly Limit: \(String(format: "%.0f%%", w))\(wResetStr)")
             }
             if cli.credits > 0 {
                 lines.append("  • Reset Credits: \(cli.credits)")
@@ -635,16 +713,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
         let bracketBaselineOffset = MenuBarAppearanceHelper.bracketBaselineOffset(isScreenActive: isScreenActive)
 
-        // 3D Hybrid Quota Indicators: [ 🛡️ ] │ 🛡️ │ 🛡️ (Active in brackets, reserves separated by stylized dividers)
-        attributed.append(NSAttributedString(string: " │ ", attributes: [
-            .font: sepFont,
-            .foregroundColor: sepColor,
-            .shadow: textShadow,
-            .baselineOffset: 0.0
-        ]))
-
+        // 3D Hybrid Quota Indicators: [ 🛡️ ] 🛡️ 🛡️ (Active in brackets, reserves outside)
         if accounts.isEmpty {
-            attributed.append(NSAttributedString(string: "[", attributes: [
+            attributed.append(NSAttributedString(string: "  [", attributes: [
                 .font: bracketFont,
                 .foregroundColor: bracketColor,
                 .shadow: bracketShadow,
@@ -655,13 +726,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 fiveHour: 100.0,
                 weekly: 100.0,
                 credits: 0,
-                width: 13.0,
+                width: 6.5,
                 height: 16.5,
                 isScreenActive: isScreenActive
             )
             let attach = NSTextAttachment()
             attach.image = singleBadge
-            attach.bounds = CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5)
+            attach.bounds = CGRect(x: 0, y: -5.0, width: 6.5, height: 16.5)
             attributed.append(NSAttributedString(attachment: attach))
             attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 2.5)]))
             attributed.append(NSAttributedString(string: "]", attributes: [
@@ -675,7 +746,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             let reserveAccs = accounts.filter { $0.id != activeAcc.id }
 
             // Active account in brackets: [ badge ]
-            attributed.append(NSAttributedString(string: "[", attributes: [
+            attributed.append(NSAttributedString(string: "  [", attributes: [
                 .font: bracketFont,
                 .foregroundColor: bracketColor,
                 .shadow: bracketShadow,
@@ -691,13 +762,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 fiveHour: f5h,
                 weekly: w,
                 credits: cr,
-                width: 13.0,
+                width: 6.5,
                 height: 16.5,
                 isScreenActive: isScreenActive
             )
             let activeAttach = NSTextAttachment()
             activeAttach.image = activeBadge
-            activeAttach.bounds = CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5)
+            activeAttach.bounds = CGRect(x: 0, y: -5.0, width: 6.5, height: 16.5)
             attributed.append(NSAttributedString(attachment: activeAttach))
             attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 2.5)]))
             attributed.append(NSAttributedString(string: "]", attributes: [
@@ -707,10 +778,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 .baselineOffset: bracketBaselineOffset
             ]))
 
-            // Reserve accounts outside brackets with stylized gray vertical dividers between account blocks
-            let dividerAttachment = MenuBarAppearanceHelper.makeVerticalDividerAttachment(isScreenActive: isScreenActive)
-            for acc in reserveAccs {
-                attributed.append(NSAttributedString(attachment: dividerAttachment))
+            if !reserveAccs.isEmpty {
+                attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 7.0)]))
+            }
+
+            // Reserve accounts outside brackets
+            for (idx, acc) in reserveAccs.enumerated() {
+                if idx > 0 {
+                    attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 6.5)]))
+                }
 
                 let r5h = acc.fiveHourPercentage
                 let rW = acc.weeklyPercentage ?? r5h
@@ -720,13 +796,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                     fiveHour: r5h,
                     weekly: rW,
                     credits: rCr,
-                    width: 13.0,
+                    width: 6.5,
                     height: 16.5,
                     isScreenActive: isScreenActive
                 )
                 let attach = NSTextAttachment()
                 attach.image = reserveBadge
-                attach.bounds = CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5)
+                attach.bounds = CGRect(x: 0, y: -5.0, width: 6.5, height: 16.5)
                 attributed.append(NSAttributedString(attachment: attach))
             }
         }
@@ -892,13 +968,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             fiveHour: 100.0,
             weekly: 80.0,
             credits: 2,
-            width: 13.0,
+            width: 6.5,
             height: 16.5,
             isScreenActive: true
         )
         let attach = NSTextAttachment()
         attach.image = sampleBadge
-        attach.bounds = CGRect(x: 0, y: -5.0, width: 13.0, height: 16.5)
+        attach.bounds = CGRect(x: 0, y: -5.0, width: 6.5, height: 16.5)
         legendAttr.append(NSAttributedString(attachment: attach))
         legendAttr.append(NSAttributedString(string: "  " + L10n.legendCircles, attributes: [
             .font: NSFont.systemFont(ofSize: 11),
@@ -910,7 +986,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         menu.addItem(NSMenuItem.separator())
         accountsSeparatorTop = menu.items.last!
 
-        let accPlaceholder = NSMenuItem(title: "  " + L10n.tr("loading_accounts"), action: #selector(noop), keyEquivalent: "")
+        let accPlaceholder = NSMenuItem(title: L10n.tr("loading_accounts"), action: #selector(noop), keyEquivalent: "")
         accPlaceholder.target = self
         menu.addItem(accPlaceholder)
         dynamicAccountItems = [accPlaceholder]
@@ -1052,7 +1128,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     // MARK: - Update Dynamic Menu Items
 
-    private func updateUI(with snapshot: MultiAccountSnapshot) {
+    func updateUI(with snapshot: MultiAccountSnapshot) {
         updateStatusBar(with: snapshot)
 
         autoSwitchItem?.state = snapshot.autoSwitchEnabled ? .on : .off
@@ -1095,20 +1171,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
             let appItem = NSMenuItem(title: "● \(appAcc.email)  \(appStatusTag)", action: #selector(noop), keyEquivalent: "")
             appItem.target = self
-            let rich = NSMutableAttributedString()
-            rich.append(NSAttributedString(string: "  ● ", attributes: [
-                .font: NSFont.systemFont(ofSize: 13, weight: .bold),
-                .foregroundColor: dotColor
-            ]))
-            rich.append(NSAttributedString(string: appAcc.email, attributes: [
-                .font: NSFont.boldSystemFont(ofSize: 13),
-                .foregroundColor: NSColor.labelColor
-            ]))
-            rich.append(NSAttributedString(string: "  \(appStatusTag)  \(appAcc.planBadgeString)", attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
-                .foregroundColor: NSColor.systemTeal
-            ]))
-            appItem.attributedTitle = rich
+            let rowView = AccountRowView(
+                frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 24),
+                accountId: "desktop-app",
+                accountName: nil,
+                email: appAcc.email,
+                tier: appAcc.planBadgeString,
+                isCurrentActive: true,
+                isAppSession: true,
+                dotColor: dotColor,
+                statusTag: appStatusTag,
+                statusTagColor: NSColor.systemTeal
+            )
+            appItem.view = rowView
             menu.insertItem(appItem, at: insertIdx)
             dynamicAccountItems.append(appItem)
             insertIdx += 1
@@ -1122,19 +1197,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 planMultiplier: appAcc.planMultiplier
             )
             let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(
-                label: "    ⚡ 5h Sprint: \(pStr) ",
+                label: "  ⚡ 5h Sprint: \(pStr) ",
                 percentage: appWeeklyExhausted ? 0.0 : pPct,
                 maxPercentage: 100.0 * appAcc.planMultiplier,
                 fillColor: pColor
             )
-            let resetDesc = appAcc.timeUntilResetString
+            let resetDesc = appAcc.sprintTimeUntilResetString
             if !resetDesc.isEmpty && resetDesc != L10n.resetNow {
                 pRich.append(NSAttributedString(string: " (\(resetDesc))", attributes: [
                     .font: NSFont.systemFont(ofSize: 11),
                     .foregroundColor: NSColor.secondaryLabelColor
                 ]))
             }
-            let bar5hItem = NSMenuItem(title: "    ⚡ 5h Sprint: \(pStr)", action: #selector(noop), keyEquivalent: "")
+            let bar5hItem = NSMenuItem(title: "  ⚡ 5h Sprint: \(pStr)", action: #selector(noop), keyEquivalent: "")
             bar5hItem.target = self
             bar5hItem.attributedTitle = pRich
             menu.insertItem(bar5hItem, at: insertIdx)
@@ -1145,15 +1220,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             if let wPct = appAcc.weeklyPercentage {
                 let wStr = String(format: "%.0f%%", wPct)
                 let wColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: wPct, planMultiplier: appAcc.planMultiplier)
-                let wRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    🗓️ Weekly: \(wStr) ", percentage: wPct, maxPercentage: 100.0 * appAcc.planMultiplier, fillColor: wColor)
-                let wReset = appAcc.timeUntilResetString
+                let wRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "  🗓️ Weekly: \(wStr) ", percentage: wPct, maxPercentage: 100.0 * appAcc.planMultiplier, fillColor: wColor)
+                let wReset = appAcc.weeklyTimeUntilResetString
                 if !wReset.isEmpty && wReset != L10n.resetNow {
                     wRich.append(NSAttributedString(string: " (\(wReset))", attributes: [
                         .font: NSFont.systemFont(ofSize: 11),
                         .foregroundColor: NSColor.secondaryLabelColor
                     ]))
                 }
-                let weekItem = NSMenuItem(title: "    🗓️ Weekly: \(wStr)", action: #selector(noop), keyEquivalent: "")
+                let weekItem = NSMenuItem(title: "  🗓️ Weekly: \(wStr)", action: #selector(noop), keyEquivalent: "")
                 weekItem.target = self
                 weekItem.attributedTitle = wRich
                 menu.insertItem(weekItem, at: insertIdx)
@@ -1163,9 +1238,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
             // Credits
             if appAcc.credits > 0 {
-                let credItem = NSMenuItem(title: "    ✨ \(L10n.resetCredits): \(appAcc.credits)", action: #selector(noop), keyEquivalent: "")
+                let credItem = NSMenuItem(title: "  ✨ \(L10n.resetCredits): \(appAcc.credits)", action: #selector(noop), keyEquivalent: "")
                 credItem.target = self
-                credItem.attributedTitle = NSAttributedString(string: "    ✨ \(L10n.resetCredits): \(appAcc.credits)", attributes: [
+                credItem.attributedTitle = NSAttributedString(string: "  ✨ \(L10n.resetCredits): \(appAcc.credits)", attributes: [
                     .font: NSFont.systemFont(ofSize: 11, weight: .medium),
                     .foregroundColor: NSColor.systemIndigo
                 ])
@@ -1176,9 +1251,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
             // Error display if session failed or expired
             if let err = appAcc.error, !err.isEmpty {
-                let errItem = NSMenuItem(title: "    ⚠️ \(err)", action: #selector(noop), keyEquivalent: "")
+                let errItem = NSMenuItem(title: "  ⚠️ \(err)", action: #selector(noop), keyEquivalent: "")
                 errItem.target = self
-                errItem.attributedTitle = NSAttributedString(string: "    ⚠️ \(err)", attributes: [
+                errItem.attributedTitle = NSAttributedString(string: "  ⚠️ \(err)", attributes: [
                     .font: NSFont.systemFont(ofSize: 11, weight: .medium),
                     .foregroundColor: NSColor.systemRed
                 ])
@@ -1187,7 +1262,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 insertIdx += 1
             }
         } else {
-            let notDetectedTitle = isRu ? "  ⚪ Сессия ChatGPT.app не обнаружена" : "  ⚪ ChatGPT.app session not detected"
+            let notDetectedTitle = isRu ? "⚪ Сессия ChatGPT.app не обнаружена" : "⚪ ChatGPT.app session not detected"
             let notDetectedItem = NSMenuItem(title: notDetectedTitle, action: #selector(noop), keyEquivalent: "")
             notDetectedItem.target = self
             notDetectedItem.attributedTitle = NSAttributedString(string: notDetectedTitle, attributes: [
@@ -1198,7 +1273,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             dynamicAccountItems.append(notDetectedItem)
             insertIdx += 1
 
-            let hintTitle = isRu ? "    (Запустите ChatGPT.app для синхронизации)" : "    (Start ChatGPT.app to monitor desktop session)"
+            let hintTitle = isRu ? "  (Запустите ChatGPT.app для синхронизации)" : "  (Start ChatGPT.app to monitor desktop session)"
             let hintItem = NSMenuItem(title: hintTitle, action: #selector(noop), keyEquivalent: "")
             hintItem.target = self
             hintItem.attributedTitle = NSAttributedString(string: hintTitle, attributes: [
@@ -1250,6 +1325,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 email: activeAcc.email,
                 tier: activeAcc.planBadgeString,
                 isCurrentActive: true,
+                isAppSession: false,
                 dotColor: dotColor,
                 statusTag: statusTag,
                 onDelete: { [weak self] id, email in
@@ -1274,19 +1350,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 planMultiplier: activeAcc.planMultiplier
             )
             let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(
-                label: "    ⚡ 5h Sprint: \(pStr) ",
+                label: "  ⚡ 5h Sprint: \(pStr) ",
                 percentage: cliWeeklyExhausted ? 0.0 : pPct,
                 maxPercentage: 100.0 * activeAcc.planMultiplier,
                 fillColor: pColor
             )
-            let resetDesc = activeAcc.timeUntilResetString
+            let resetDesc = activeAcc.sprintTimeUntilResetString
             if !resetDesc.isEmpty && resetDesc != L10n.resetNow {
                 pRich.append(NSAttributedString(string: " (\(resetDesc))", attributes: [
                     .font: NSFont.systemFont(ofSize: 11),
                     .foregroundColor: NSColor.secondaryLabelColor
                 ]))
             }
-            let bar5hItem = NSMenuItem(title: "    ⚡ 5h Sprint: \(pStr)", action: #selector(noop), keyEquivalent: "")
+            let bar5hItem = NSMenuItem(title: "  ⚡ 5h Sprint: \(pStr)", action: #selector(noop), keyEquivalent: "")
             bar5hItem.target = self
             bar5hItem.attributedTitle = pRich
             menu.insertItem(bar5hItem, at: insertIdx)
@@ -1297,19 +1373,32 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             if let wPct = activeAcc.weeklyPercentage {
                 let wStr = String(format: "%.0f%%", wPct)
                 let wColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: wPct, planMultiplier: activeAcc.planMultiplier)
-                let wRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "    🗓️ Weekly: \(wStr) ", percentage: wPct, maxPercentage: 100.0 * activeAcc.planMultiplier, fillColor: wColor)
-                let wReset = activeAcc.timeUntilResetString
+                let wRich = MenuBarAppearanceHelper.makeColoredProgressBar(label: "  🗓️ Weekly: \(wStr) ", percentage: wPct, maxPercentage: 100.0 * activeAcc.planMultiplier, fillColor: wColor)
+                let wReset = activeAcc.weeklyTimeUntilResetString
                 if !wReset.isEmpty && wReset != L10n.resetNow {
                     wRich.append(NSAttributedString(string: " (\(wReset))", attributes: [
                         .font: NSFont.systemFont(ofSize: 11),
                         .foregroundColor: NSColor.secondaryLabelColor
                     ]))
                 }
-                let weekItem = NSMenuItem(title: "    🗓️ Weekly: \(wStr)", action: #selector(noop), keyEquivalent: "")
+                let weekItem = NSMenuItem(title: "  🗓️ Weekly: \(wStr)", action: #selector(noop), keyEquivalent: "")
                 weekItem.target = self
                 weekItem.attributedTitle = wRich
                 menu.insertItem(weekItem, at: insertIdx)
                 dynamicAccountItems.append(weekItem)
+                insertIdx += 1
+            }
+
+            // Credits for CLI active account
+            if activeAcc.credits > 0 {
+                let credItem = NSMenuItem(title: "  ✨ \(L10n.resetCredits): \(activeAcc.credits)", action: #selector(noop), keyEquivalent: "")
+                credItem.target = self
+                credItem.attributedTitle = NSAttributedString(string: "  ✨ \(L10n.resetCredits): \(activeAcc.credits)", attributes: [
+                    .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                    .foregroundColor: NSColor.systemIndigo
+                ])
+                menu.insertItem(credItem, at: insertIdx)
+                dynamicAccountItems.append(credItem)
                 insertIdx += 1
             }
 
@@ -1351,9 +1440,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
             // Error display for CLI active account
             if let err = activeAcc.error, !err.isEmpty {
-                let errItem = NSMenuItem(title: "    ⚠️ \(err)", action: #selector(noop), keyEquivalent: "")
+                let errItem = NSMenuItem(title: "  ⚠️ \(err)", action: #selector(noop), keyEquivalent: "")
                 errItem.target = self
-                errItem.attributedTitle = NSAttributedString(string: "    ⚠️ \(err)", attributes: [
+                errItem.attributedTitle = NSAttributedString(string: "  ⚠️ \(err)", attributes: [
                     .font: NSFont.systemFont(ofSize: 11, weight: .medium),
                     .foregroundColor: NSColor.systemRed
                 ])
@@ -1410,6 +1499,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                     email: acc.email,
                     tier: acc.planBadgeString,
                     isCurrentActive: false,
+                    isAppSession: false,
                     dotColor: dotColor,
                     statusTag: statusTag,
                     onDelete: { [weak self] id, email in
@@ -1436,27 +1526,65 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
                     planMultiplier: acc.planMultiplier
                 )
                 let pRich = MenuBarAppearanceHelper.makeColoredProgressBar(
-                    label: "    ⚡ 5h Sprint: \(pStr) ",
+                    label: "  ⚡ 5h Sprint: \(pStr) ",
                     percentage: rWeeklyExhausted ? 0.0 : pPct,
                     maxPercentage: 100.0 * acc.planMultiplier,
                     fillColor: pColor
                 )
-                let resetDesc = acc.timeUntilResetString
+                let resetDesc = acc.sprintTimeUntilResetString
                 if !resetDesc.isEmpty && resetDesc != L10n.resetNow {
                     pRich.append(NSAttributedString(string: " (\(resetDesc))", attributes: [
                         .font: NSFont.systemFont(ofSize: 11),
                         .foregroundColor: NSColor.secondaryLabelColor
                     ]))
                 }
-                let bar5hItem = NSMenuItem(title: "    ⚡ 5h Sprint: \(pStr)", action: #selector(noop), keyEquivalent: "")
+                let bar5hItem = NSMenuItem(title: "  ⚡ 5h Sprint: \(pStr)", action: #selector(noop), keyEquivalent: "")
                 bar5hItem.target = self
                 bar5hItem.attributedTitle = pRich
                 menu.insertItem(bar5hItem, at: insertIdx)
                 dynamicAccountItems.append(bar5hItem)
                 insertIdx += 1
 
+                // Weekly bar for reserve
+                if let wPct = acc.weeklyPercentage {
+                    let wStr = String(format: "%.0f%%", wPct)
+                    let wColor = MenuBarAppearanceHelper.dropdownColor(forPercentage: wPct, planMultiplier: acc.planMultiplier)
+                    let wRich = MenuBarAppearanceHelper.makeColoredProgressBar(
+                        label: "  🗓️ Weekly: \(wStr) ",
+                        percentage: wPct,
+                        maxPercentage: 100.0 * acc.planMultiplier,
+                        fillColor: wColor
+                    )
+                    let wReset = acc.weeklyTimeUntilResetString
+                    if !wReset.isEmpty && wReset != L10n.resetNow {
+                        wRich.append(NSAttributedString(string: " (\(wReset))", attributes: [
+                            .font: NSFont.systemFont(ofSize: 11),
+                            .foregroundColor: NSColor.secondaryLabelColor
+                        ]))
+                    }
+                    let weekItem = NSMenuItem(title: "  🗓️ Weekly: \(wStr)", action: #selector(noop), keyEquivalent: "")
+                    weekItem.target = self
+                    weekItem.attributedTitle = wRich
+                    menu.insertItem(weekItem, at: insertIdx)
+                    dynamicAccountItems.append(weekItem)
+                    insertIdx += 1
+                }
+
+                // Credits for reserve account
+                if acc.credits > 0 {
+                    let credItem = NSMenuItem(title: "  ✨ \(L10n.resetCredits): \(acc.credits)", action: #selector(noop), keyEquivalent: "")
+                    credItem.target = self
+                    credItem.attributedTitle = NSAttributedString(string: "  ✨ \(L10n.resetCredits): \(acc.credits)", attributes: [
+                        .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                        .foregroundColor: NSColor.systemIndigo
+                    ])
+                    menu.insertItem(credItem, at: insertIdx)
+                    dynamicAccountItems.append(credItem)
+                    insertIdx += 1
+                }
+
                 // Explicit Clickable Switch Item
-                let switchItemTitle = "    ⇄ " + L10n.switchToAccount
+                let switchItemTitle = "  ⇄ " + L10n.switchToAccount
                 let switchItem = NSMenuItem(
                     title: switchItemTitle,
                     action: #selector(handleSwitchMenuItem(_:)),
@@ -1474,9 +1602,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
                 // Error display for reserve account
                 if let err = acc.error, !err.isEmpty {
-                    let errItem = NSMenuItem(title: "    ⚠️ \(err)", action: #selector(noop), keyEquivalent: "")
+                    let errItem = NSMenuItem(title: "  ⚠️ \(err)", action: #selector(noop), keyEquivalent: "")
                     errItem.target = self
-                    errItem.attributedTitle = NSAttributedString(string: "    ⚠️ \(err)", attributes: [
+                    errItem.attributedTitle = NSAttributedString(string: "  ⚠️ \(err)", attributes: [
                         .font: NSFont.systemFont(ofSize: 11, weight: .medium),
                         .foregroundColor: NSColor.systemRed
                     ])

@@ -183,27 +183,50 @@ pub fn switch_to_account(account_id: &str, restart_app: bool, notify: bool) -> R
         // Wait for Codex App and its app-server to initialize
         if !running_threads.is_empty() {
             println!("⏳ Waiting for Codex App to initialize before resuming {} thread(s)...", running_threads.len());
-            sleep(Duration::from_secs(3));
+            sleep(Duration::from_secs(4));
         } else {
             sleep(Duration::from_secs(2));
         }
 
         // Resume running threads according to their state:
-        // 1. First open thread in UI and check for a native Resume / unpause button (e.g. paused queue).
-        // 2. If UI Resume succeeds, the thread is directly resumed without queuing an extra 'continue' message.
-        // 3. If no UI Resume button exists, queue 'continue' via socket CLI.
+        // 1. First open thread in UI and check for a native circular Play button or turn Resume button.
+        // 2. If UI Resume succeeds (Play button, turn Resume, or already generating), the thread is directly
+        //    resumed without queuing an extra 'continue' message.
+        // 3. If no Resume button is detected after polling, skip queuing 'continue' to avoid queue pollution.
         for tid in &running_threads {
             println!("🔄 Navigating UI to thread '{}' to resume...", tid);
             open_thread_in_codex(tid);
-            sleep(Duration::from_millis(450));
-            let ui_resumed = poll_and_trigger_ui_resume(3, Duration::from_millis(200));
-            if ui_resumed {
-                println!("✅ Thread '{}' resumed directly via UI Resume button!", tid);
-            } else {
-                println!("ℹ️ No UI Resume button for '{}'. Sending 'continue' via queue...", tid);
-                resume_threads(&[tid.clone()], "continue");
-                sleep(Duration::from_millis(300));
-                let _ = poll_and_trigger_ui_resume(2, Duration::from_millis(200));
+            sleep(Duration::from_millis(1500));
+            let mut resumed = false;
+            for attempt in 1..=15 {
+                match trigger_codex_ui_resume_detailed() {
+                    UiResumeOutcome::PlayPressed => {
+                        println!("✅ Thread '{}' resumed directly via circular Play button! (attempt {}/15, no 'continue' queued)", tid, attempt);
+                        resumed = true;
+                        break;
+                    }
+                    UiResumeOutcome::TurnResumePressed => {
+                        println!("✅ Thread '{}' resumed directly via turn Resume/Retry button! (attempt {}/15, no 'continue' queued)", tid, attempt);
+                        resumed = true;
+                        break;
+                    }
+                    UiResumeOutcome::AlreadyActive => {
+                        println!("✅ Thread '{}' is already actively generating. No resumption needed (attempt {}/15).", tid, attempt);
+                        resumed = true;
+                        break;
+                    }
+                    UiResumeOutcome::SteerPressed => {
+                        println!("✅ Triggered Steer on existing queued message for thread '{}' (attempt {}/15)!", tid, attempt);
+                        resumed = true;
+                        break;
+                    }
+                    UiResumeOutcome::NotFound => {
+                        sleep(Duration::from_millis(300));
+                    }
+                }
+            }
+            if !resumed {
+                println!("ℹ️ Thread '{}': no paused state or Resume button detected. Skipping queueing 'continue'.", tid);
             }
         }
 
@@ -212,7 +235,7 @@ pub fn switch_to_account(account_id: &str, restart_app: bool, notify: bool) -> R
             open_thread_in_codex(tid);
             sleep(Duration::from_millis(400));
             if running_threads.iter().any(|r| r == tid) {
-                let _ = poll_and_trigger_ui_resume(3, Duration::from_millis(300));
+                let _ = poll_and_trigger_ui_resume(5, Duration::from_millis(300));
             }
         }
     }
@@ -686,6 +709,7 @@ pub fn detect_in_progress_threads() -> Vec<String> {
 }
 
 /// Resumes threads by queueing a message (e.g. "continue") via codex queue CLI.
+#[allow(dead_code)]
 pub fn resume_threads(thread_ids: &[String], message: &str) {
     if thread_ids.is_empty() {
         return;
@@ -744,29 +768,85 @@ pub fn resume_thread_interactive(thread_id: Option<&str>) -> Result<(), String> 
     println!("🚀 Resuming {} thread(s): {:?}", target_tids.len(), target_tids);
     for tid in &target_tids {
         open_thread_in_codex(tid);
-        sleep(Duration::from_millis(450));
-        let ui_resumed = poll_and_trigger_ui_resume(3, Duration::from_millis(200));
-        if ui_resumed {
-            println!("✅ Thread '{}' resumed directly via UI Resume button!", tid);
-        } else {
-            println!("ℹ️ No UI Resume button for '{}'. Sending 'continue' via queue...", tid);
-            resume_threads(&[tid.clone()], "continue");
-            sleep(Duration::from_millis(300));
-            let _ = poll_and_trigger_ui_resume(2, Duration::from_millis(200));
+        sleep(Duration::from_millis(1500));
+        let mut resumed = false;
+        for attempt in 1..=15 {
+            match trigger_codex_ui_resume_detailed() {
+                UiResumeOutcome::PlayPressed => {
+                    println!("✅ Thread '{}' resumed directly via circular Play button! (attempt {}/15, no 'continue' queued)", tid, attempt);
+                    resumed = true;
+                    break;
+                }
+                UiResumeOutcome::TurnResumePressed => {
+                    println!("✅ Thread '{}' resumed directly via turn Resume/Retry button! (attempt {}/15, no 'continue' queued)", tid, attempt);
+                    resumed = true;
+                    break;
+                }
+                UiResumeOutcome::AlreadyActive => {
+                    println!("✅ Thread '{}' is already actively generating. No resumption needed (attempt {}/15).", tid, attempt);
+                    resumed = true;
+                    break;
+                }
+                UiResumeOutcome::SteerPressed => {
+                    println!("✅ Triggered Steer on existing queued message for thread '{}' (attempt {}/15)!", tid, attempt);
+                    resumed = true;
+                    break;
+                }
+                UiResumeOutcome::NotFound => {
+                    sleep(Duration::from_millis(300));
+                }
+            }
+        }
+        if !resumed {
+            println!("ℹ️ Thread '{}': no paused state or Resume button detected. Skipping queueing 'continue'.", tid);
         }
     }
 
     if let Some(primary) = target_tids.first() {
         open_thread_in_codex(primary);
-        sleep(Duration::from_millis(300));
-        let _ = poll_and_trigger_ui_resume(3, Duration::from_millis(300));
+        sleep(Duration::from_millis(400));
+        let _ = poll_and_trigger_ui_resume(5, Duration::from_millis(300));
     }
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiResumeOutcome {
+    PlayPressed,
+    SteerPressed,
+    TurnResumePressed,
+    AlreadyActive,
+    NotFound,
+}
+
+impl UiResumeOutcome {
+    pub fn is_success(&self) -> bool {
+        matches!(
+            self,
+            Self::PlayPressed | Self::SteerPressed | Self::TurnResumePressed | Self::AlreadyActive
+        )
+    }
+}
+
+fn parse_ui_resume_output(stdout: &str, success: bool) -> UiResumeOutcome {
+    if stdout.contains("RESUMED_VIA_PLAY_BUTTON") {
+        UiResumeOutcome::PlayPressed
+    } else if stdout.contains("RESUMED_VIA_TURN_RESUME") {
+        UiResumeOutcome::TurnResumePressed
+    } else if stdout.contains("RESUMED_VIA_STEER") {
+        UiResumeOutcome::SteerPressed
+    } else if stdout.contains("ALREADY_ACTIVE") {
+        UiResumeOutcome::AlreadyActive
+    } else if success {
+        UiResumeOutcome::PlayPressed
+    } else {
+        UiResumeOutcome::NotFound
+    }
+}
+
 /// Triggers the native macOS Accessibility "Resume" action on ChatGPT.app
-/// to unpause any interrupted steer or paused queue.
-pub fn trigger_codex_ui_resume() -> bool {
+/// and returns the specific outcome of the attempt.
+pub fn trigger_codex_ui_resume_detailed() -> UiResumeOutcome {
     // 1. Check if compiled helper binary exists
     let helper_names = [
         dirs::home_dir().map(|h| h.join(".local/bin/codex-ui-resume")),
@@ -775,9 +855,11 @@ pub fn trigger_codex_ui_resume() -> bool {
 
     for candidate in helper_names.into_iter().flatten() {
         if candidate.exists() {
-            if let Ok(status) = Command::new(&candidate).status() {
-                if status.success() {
-                    return true;
+            if let Ok(output) = Command::new(&candidate).output() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let outcome = parse_ui_resume_output(&stdout, output.status.success());
+                if outcome != UiResumeOutcome::NotFound {
+                    return outcome;
                 }
             }
         }
@@ -788,82 +870,263 @@ pub fn trigger_codex_ui_resume() -> bool {
 import Cocoa
 import ApplicationServices
 
-guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first else {
-    exit(1)
+struct CandidateButton {
+    let element: AXUIElement
+    let isPlay: Bool
+    let isSteer: Bool
+    let isResume: Bool
+    let y: CGFloat
 }
-let axApp = AXUIElementCreateApplication(app.processIdentifier)
-AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, true as CFTypeRef)
-AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, true as CFTypeRef)
 
-var windows: AnyObject?
-guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windows) == .success,
-      let winList = windows as? [AXUIElement] else { exit(1) }
+/// Identifies the non-functional text button inside the "Queue paused because you interrupted" banner
+func isBannerResume(title: String, desc: String, width: CGFloat, height: CGFloat) -> Bool {
+    let t = title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    let d = desc.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    if (t == "resume" || t == "возобновить") && d.isEmpty && width > 50 {
+        return true
+    }
+    return false
+}
 
-var resumed = false
-func searchAndPress(el: AXUIElement, depth: Int = 0) {
-    if depth > 65 { return }
-    var role: AnyObject?
-    AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &role)
-    var desc: AnyObject?
-    AXUIElementCopyAttributeValue(el, kAXDescriptionAttribute as CFString, &desc)
-    var title: AnyObject?
-    AXUIElementCopyAttributeValue(el, kAXTitleAttribute as CFString, &title)
+/// Identifies the circular "Play" button at the bottom-right of the composer (white right-facing triangle)
+func isPlayButton(title: String, desc: String, width: CGFloat, height: CGFloat) -> Bool {
+    let t = title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    let d = desc.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    if (d == "resume" || d == "возобновить" || d == "play" || d == "start") && (t.isEmpty || t == "▶" || t == ">") {
+        return true
+    }
+    return false
+}
+
+func isResumeButton(title: String, desc: String) -> Bool {
+    let t = title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    let d = desc.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    if t == "resume" || d == "resume" || t == "retry" || d == "retry" ||
+       t == "возобновить" || d == "возобновить" || t == "повторить" || d == "повторить" {
+        return true
+    }
+    if t == "try again" || d == "try again" || t.starts(with: "try again") || d.starts(with: "try again") {
+        return true
+    }
+    if t == "continue generating" || d == "continue generating" ||
+       t.starts(with: "continue generating") || d.starts(with: "continue generating") ||
+       t == "продолжить" || d == "продолжить" || t.starts(with: "продолжить") {
+        return true
+    }
+    if d.contains("resume") || d.contains("try sending this queued message again") {
+        return true
+    }
+    if t.starts(with: "resume") || t.starts(with: "retry") || t.starts(with: "возобновить") || t.starts(with: "повторить") {
+        return true
+    }
+    return false
+}
+
+func isSteerButton(title: String, desc: String) -> Bool {
+    let t = title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    let d = desc.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    if t == "steer" || d == "steer" || t == "направить" || d == "направить" {
+        return true
+    }
+    if d.contains("submit without interrupting") || d.contains("steer") {
+        return true
+    }
+    return false
+}
+
+func isGeneratingButton(desc: String, title: String) -> Bool {
+    let d = desc.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    let t = title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    return d == "stop" || t == "stop" || d == "остановить" || d == "зупинити"
+}
+
+func pressButton(el: AXUIElement) -> Bool {
+    _ = AXUIElementPerformAction(el, kAXPressAction as CFString)
     
-    let r = (role as? String) ?? ""
-    let d = (desc as? String) ?? ""
-    let t = (title as? String) ?? ""
+    var posVal: AnyObject?
+    AXUIElementCopyAttributeValue(el, kAXPositionAttribute as CFString, &posVal)
+    var sizeVal: AnyObject?
+    AXUIElementCopyAttributeValue(el, kAXSizeAttribute as CFString, &sizeVal)
     
-    let isButton = r == "AXButton" || r.contains("Button")
-    let isResume = d.localizedCaseInsensitiveContains("resume") ||
-                   t.localizedCaseInsensitiveContains("resume") ||
-                   d.localizedCaseInsensitiveContains("retry") ||
-                   t.localizedCaseInsensitiveContains("retry") ||
-                   d.localizedCaseInsensitiveContains("возобновить") ||
-                   t.localizedCaseInsensitiveContains("возобновить") ||
-                   d.localizedCaseInsensitiveContains("повторить") ||
-                   t.localizedCaseInsensitiveContains("повторить")
+    var point = CGPoint.zero
+    var size = CGSize.zero
+    if let pv = posVal { AXValueGetValue(pv as! AXValue, .cgPoint, &point) }
+    if let sv = sizeVal { AXValueGetValue(sv as! AXValue, .cgSize, &size) }
     
-    if isButton && isResume {
-        _ = AXUIElementPerformAction(el, kAXPressAction as CFString)
+    if size.width > 0 && size.height > 0 {
+        let center = CGPoint(x: point.x + size.width / 2.0, y: point.y + size.height / 2.0)
+        if let mouseDown = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: center, mouseButton: .left),
+           let mouseUp = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: center, mouseButton: .left) {
+            mouseDown.post(tap: .cghidEventTap)
+            usleep(50000)
+            mouseUp.post(tap: .cghidEventTap)
+            return true
+        }
+    }
+    return true
+}
+
+/// Searches the Accessibility hierarchy of ChatGPT / Codex and performs
+/// the circular `Play` action, `Steer` action, or turn `Resume` on any interrupted session.
+func resumeChatGPT() -> (success: Bool, outcome: String) {
+    guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first ?? NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.chat").first else {
+        return (false, "APP_NOT_FOUND")
+    }
+    
+    app.activate(options: .activateIgnoringOtherApps)
+    
+    let axApp = AXUIElementCreateApplication(app.processIdentifier)
+    AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, true as CFTypeRef)
+    AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, true as CFTypeRef)
+    
+    var windows: AnyObject?
+    guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windows) == .success,
+          let winList = windows as? [AXUIElement] else {
+        return (false, "NO_WINDOWS")
+    }
+    
+    var candidates: [CandidateButton] = []
+    var isAlreadyGenerating = false
+    
+    func collectButtons(el: AXUIElement, depth: Int = 0) {
+        if depth > 75 { return }
+        var role: AnyObject?
+        AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &role)
+        var desc: AnyObject?
+        AXUIElementCopyAttributeValue(el, kAXDescriptionAttribute as CFString, &desc)
+        var title: AnyObject?
+        AXUIElementCopyAttributeValue(el, kAXTitleAttribute as CFString, &title)
         
-        var posVal: AnyObject?
-        AXUIElementCopyAttributeValue(el, kAXPositionAttribute as CFString, &posVal)
-        var sizeVal: AnyObject?
-        AXUIElementCopyAttributeValue(el, kAXSizeAttribute as CFString, &sizeVal)
+        let r = (role as? String) ?? ""
+        let d = (desc as? String) ?? ""
+        let t = (title as? String) ?? ""
         
-        var point = CGPoint.zero
-        var size = CGSize.zero
-        if let pv = posVal { AXValueGetValue(pv as! AXValue, .cgPoint, &point) }
-        if let sv = sizeVal { AXValueGetValue(sv as! AXValue, .cgSize, &size) }
-        
-        if size.width > 0 && size.height > 0 {
-            let center = CGPoint(x: point.x + size.width / 2.0, y: point.y + size.height / 2.0)
-            if let mouseDown = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: center, mouseButton: .left),
-               let mouseUp = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: center, mouseButton: .left) {
-                mouseDown.post(tap: .cghidEventTap)
-                usleep(50000)
-                mouseUp.post(tap: .cghidEventTap)
+        if r == "AXButton" || r.contains("Button") {
+            var enabledVal: AnyObject?
+            if AXUIElementCopyAttributeValue(el, kAXEnabledAttribute as CFString, &enabledVal) == .success,
+               let en = enabledVal as? Bool, !en {
+                // skip disabled buttons
+            } else {
+                var posVal: AnyObject?
+                AXUIElementCopyAttributeValue(el, kAXPositionAttribute as CFString, &posVal)
+                var sizeVal: AnyObject?
+                AXUIElementCopyAttributeValue(el, kAXSizeAttribute as CFString, &sizeVal)
+                var pt = CGPoint.zero
+                var sz = CGSize.zero
+                if let pv = posVal { AXValueGetValue(pv as! AXValue, .cgPoint, &pt) }
+                if let sv = sizeVal { AXValueGetValue(sv as! AXValue, .cgSize, &sz) }
+                
+                if isGeneratingButton(desc: d, title: t) && sz.width < 45 && sz.height < 45 {
+                    isAlreadyGenerating = true
+                }
+                
+                // Skip the non-functional "Queue paused because you interrupted [Resume]" banner button
+                if isBannerResume(title: t, desc: d, width: sz.width, height: sz.height) {
+                    // Do not add banner button
+                } else {
+                    let play = isPlayButton(title: t, desc: d, width: sz.width, height: sz.height)
+                    let steer = isSteerButton(title: t, desc: d)
+                    let resume = isResumeButton(title: t, desc: d)
+                    
+                    if play || steer || resume {
+                        if sz.width >= 16 && sz.height >= 16 {
+                            candidates.append(CandidateButton(
+                                element: el,
+                                isPlay: play,
+                                isSteer: steer,
+                                isResume: resume,
+                                y: pt.y
+                            ))
+                        }
+                    }
+                }
             }
         }
-        resumed = true
+        
+        var children: AnyObject?
+        if AXUIElementCopyAttributeValue(el, kAXChildrenAttribute as CFString, &children) == .success,
+           let childList = children as? [AXUIElement] {
+            for c in childList {
+                collectButtons(el: c, depth: depth + 1)
+            }
+        }
     }
     
-    var children: AnyObject?
-    if AXUIElementCopyAttributeValue(el, kAXChildrenAttribute as CFString, &children) == .success,
-       let childList = children as? [AXUIElement] {
-        for c in childList { searchAndPress(el: c, depth: depth + 1) }
+    for win in winList {
+        var posVal: AnyObject?
+        AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posVal)
+        var sizeVal: AnyObject?
+        AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &sizeVal)
+        var pt = CGPoint.zero
+        var sz = CGSize.zero
+        if let pv = posVal { AXValueGetValue(pv as! AXValue, .cgPoint, &pt) }
+        if let sv = sizeVal { AXValueGetValue(sv as! AXValue, .cgSize, &sz) }
+        // Only inspect visible on-screen windows
+        if pt.x >= -100 && pt.y >= 0 && sz.width > 300 && sz.height > 300 {
+            collectButtons(el: win)
+        }
     }
+    
+    if isAlreadyGenerating {
+        print("ALREADY_ACTIVE")
+        return (true, "ALREADY_ACTIVE")
+    }
+    
+    if candidates.isEmpty {
+        return (false, "NOT_FOUND")
+    }
+    
+    // Sort descending by Y so bottom-most active controls take priority over scrollback history
+    candidates.sort { $0.y > $1.y }
+    
+    guard let maxY = candidates.first?.y else { return (false, "NOT_FOUND") }
+    // Focus on active interaction zone (bottom 250pt near lowest candidate)
+    let activeZone = candidates.filter { $0.y >= maxY - 250 }
+    
+    // Priority order:
+    // 1. Circular Play button at bottom-right of composer (white right-facing triangle) -> resumes queue directly
+    if let playTarget = activeZone.first(where: { $0.isPlay }) {
+        if pressButton(el: playTarget.element) {
+            print("RESUMED_VIA_PLAY_BUTTON")
+            return (true, "RESUMED_VIA_PLAY_BUTTON")
+        }
+    }
+    
+    // 2. Steer button on queued message row
+    if let steerTarget = activeZone.first(where: { $0.isSteer }) {
+        if pressButton(el: steerTarget.element) {
+            print("RESUMED_VIA_STEER")
+            return (true, "RESUMED_VIA_STEER")
+        }
+    }
+    
+    // 3. Native turn Resume/Retry button
+    if let resumeTarget = activeZone.first(where: { $0.isResume }) {
+        if pressButton(el: resumeTarget.element) {
+            print("RESUMED_VIA_TURN_RESUME")
+            return (true, "RESUMED_VIA_TURN_RESUME")
+        }
+    }
+    
+    return (false, "NOT_FOUND")
 }
 
-for win in winList { searchAndPress(el: win) }
-exit(resumed ? 0 : 1)
+let result = resumeChatGPT()
+exit(result.success ? 0 : 1)
 "#;
 
-    if let Ok(status) = Command::new("swift").arg("-e").arg(SWIFT_SCRIPT).status() {
-        return status.success();
+    if let Ok(output) = Command::new("swift").arg("-e").arg(SWIFT_SCRIPT).output() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return parse_ui_resume_output(&stdout, output.status.success());
     }
 
-    false
+    UiResumeOutcome::NotFound
+}
+
+/// Triggers the native macOS Accessibility "Resume" action on ChatGPT.app
+/// to unpause any interrupted steer or paused queue.
+pub fn trigger_codex_ui_resume() -> bool {
+    trigger_codex_ui_resume_detailed().is_success()
 }
 
 /// Polls for the ChatGPT UI to finish hydrating and triggers Resume if needed.
@@ -939,6 +1202,8 @@ mod tests {
                 last_reset_time: None,
                 last_reset_after_seconds: None,
                 last_weekly_percentage: None,
+                last_weekly_reset_time: None,
+                last_weekly_reset_after_seconds: None,
                 last_credits: None,
                 last_error: None,
                 last_checked: None,
@@ -964,6 +1229,8 @@ mod tests {
                 last_reset_time: None,
                 last_reset_after_seconds: None,
                 last_weekly_percentage: None,
+                last_weekly_reset_time: None,
+                last_weekly_reset_after_seconds: None,
                 last_credits: None,
                 last_error: None,
                 last_checked: None,
@@ -1069,4 +1336,50 @@ mod tests {
         let in_progress = detect_in_progress_threads();
         println!("Live detected in-progress threads: {:?}", in_progress);
     }
+
+    #[test]
+    fn test_parse_ui_resume_output_tokens() {
+        assert_eq!(
+            parse_ui_resume_output("RESUMED_VIA_PLAY_BUTTON\n", true),
+            UiResumeOutcome::PlayPressed
+        );
+        assert!(UiResumeOutcome::PlayPressed.is_success());
+
+        assert_eq!(
+            parse_ui_resume_output("RESUMED_VIA_TURN_RESUME\n", true),
+            UiResumeOutcome::TurnResumePressed
+        );
+        assert!(UiResumeOutcome::TurnResumePressed.is_success());
+
+        assert_eq!(
+            parse_ui_resume_output("RESUMED_VIA_STEER\n", true),
+            UiResumeOutcome::SteerPressed
+        );
+        assert!(UiResumeOutcome::SteerPressed.is_success());
+
+        assert_eq!(
+            parse_ui_resume_output("ALREADY_ACTIVE\n", true),
+            UiResumeOutcome::AlreadyActive
+        );
+        assert!(UiResumeOutcome::AlreadyActive.is_success());
+
+        assert_eq!(
+            parse_ui_resume_output("NOT_FOUND\n", false),
+            UiResumeOutcome::NotFound
+        );
+        assert!(!UiResumeOutcome::NotFound.is_success());
+
+        // Success exit with unspecified stdout falls back to PlayPressed
+        assert_eq!(
+            parse_ui_resume_output("", true),
+            UiResumeOutcome::PlayPressed
+        );
+
+        // Failure exit with unrecognized stdout is NotFound
+        assert_eq!(
+            parse_ui_resume_output("random error", false),
+            UiResumeOutcome::NotFound
+        );
+    }
 }
+

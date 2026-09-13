@@ -235,6 +235,8 @@ pub fn run_daemon_tick_with_state(
             is_active,
             five_hour_percentage: acc.last_primary_percentage,
             weekly_percentage: acc.last_weekly_percentage,
+            weekly_reset_time: acc.last_weekly_reset_time.clone(),
+            weekly_reset_after_seconds: acc.last_weekly_reset_after_seconds,
             reset_time: acc.last_reset_time.clone(),
             reset_after_seconds: acc.last_reset_after_seconds,
             credits: acc.last_credits.unwrap_or(0),
@@ -252,6 +254,8 @@ pub fn run_daemon_tick_with_state(
             acc.last_reset_time = updated.last_reset_time.clone();
             acc.last_reset_after_seconds = updated.last_reset_after_seconds;
             acc.last_weekly_percentage = updated.last_weekly_percentage;
+            acc.last_weekly_reset_time = updated.last_weekly_reset_time.clone();
+            acc.last_weekly_reset_after_seconds = updated.last_weekly_reset_after_seconds;
             acc.last_credits = updated.last_credits;
             acc.last_error = updated.last_error.clone();
             acc.last_checked = updated.last_checked.clone();
@@ -274,6 +278,8 @@ pub fn run_daemon_tick_with_state(
         active_plan: active_acc.map(|a| a.plan_type.clone()),
         five_hour_percentage: active_acc.map(|a| a.last_primary_percentage).unwrap_or(100.0),
         weekly_percentage: active_acc.and_then(|a| a.last_weekly_percentage),
+        weekly_reset_time: active_acc.and_then(|a| a.last_weekly_reset_time.clone()),
+        weekly_reset_after_seconds: active_acc.and_then(|a| a.last_weekly_reset_after_seconds),
         reset_time: active_acc.and_then(|a| a.last_reset_time.clone()),
         reset_after_seconds: active_acc.and_then(|a| a.last_reset_after_seconds),
         credits: active_acc.and_then(|a| a.last_credits).unwrap_or(0),
@@ -483,6 +489,8 @@ mod tests {
             last_reset_time: None,
             last_reset_after_seconds: None,
             last_weekly_percentage: None,
+            last_weekly_reset_time: None,
+            last_weekly_reset_after_seconds: None,
             last_credits: None,
             last_error: Some("HTTP 401 Unauthorized".to_string()),
             last_checked: None,

@@ -368,6 +368,8 @@ pub fn deduplicate_accounts(accounts: &mut Vec<AccountConfig>) -> HashMap<String
                 existing.last_reset_time = acc.last_reset_time;
                 existing.last_reset_after_seconds = acc.last_reset_after_seconds;
                 existing.last_weekly_percentage = acc.last_weekly_percentage;
+                existing.last_weekly_reset_time = acc.last_weekly_reset_time;
+                existing.last_weekly_reset_after_seconds = acc.last_weekly_reset_after_seconds;
                 existing.last_credits = acc.last_credits;
                 existing.last_error = acc.last_error;
                 existing.last_checked = acc.last_checked;
@@ -477,6 +479,8 @@ pub fn add_account_to_accounts_file(
             last_reset_time: None,
             last_reset_after_seconds: None,
             last_weekly_percentage: None,
+            last_weekly_reset_time: None,
+            last_weekly_reset_after_seconds: None,
             last_credits: None,
             last_error: None,
             last_checked: None,
@@ -910,6 +914,8 @@ mod tests {
             last_reset_time: None,
             last_reset_after_seconds: None,
             last_weekly_percentage: None,
+            last_weekly_reset_time: None,
+            last_weekly_reset_after_seconds: None,
             last_credits: None,
             last_error: None,
             last_checked: None,

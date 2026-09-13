@@ -172,12 +172,20 @@ pub fn update_account_quota_cache(account: &mut AccountConfig) {
                     }
                     if prim.limit_window_seconds > 86400 && rl.secondary_window.is_none() {
                         account.last_weekly_percentage = Some(raw_pct * mult);
+                        account.last_weekly_reset_after_seconds = Some(prim.reset_after_seconds);
+                        account.last_weekly_reset_time = account.last_reset_time.clone();
                     }
                 }
                 if let Some(sec) = rl.secondary_window {
                     let mult = account.effective_multiplier();
                     let raw_sec_pct = (100.0 - sec.used_percent).clamp(0.0, 100.0);
                     account.last_weekly_percentage = Some(raw_sec_pct * mult);
+                    account.last_weekly_reset_after_seconds = Some(sec.reset_after_seconds);
+                    if sec.reset_at > 0 {
+                        if let Some(dt) = DateTime::from_timestamp(sec.reset_at, 0) {
+                            account.last_weekly_reset_time = Some(dt.to_rfc3339());
+                        }
+                    }
                 }
             }
             if let Some(credits) = usage.rate_limit_reset_credits {
