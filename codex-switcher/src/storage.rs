@@ -45,6 +45,7 @@ fn acquire_switcher_lock(exclusive: bool) -> Result<File, String> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(&lock_path)
         .map_err(|e| format!("Failed to open lockfile {}: {}", lock_path.display(), e))?;
     let _ = fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o600));
@@ -64,15 +65,15 @@ pub fn read_active_auth_json() -> Result<AuthJson, String> {
     if !path.exists() {
         return Err(format!("Auth file not found at {}", path.display()));
     }
-    let mut file = File::open(&path)
-        .map_err(|e| format!("Failed to open {}: {}", path.display(), e))?;
+    let mut file =
+        File::open(&path).map_err(|e| format!("Failed to open {}: {}", path.display(), e))?;
     file.lock_shared()
         .map_err(|e| format!("Failed to lock shared {}: {}", path.display(), e))?;
-    
+
     let mut content = String::new();
     file.read_to_string(&mut content)
         .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-    
+
     let auth: AuthJson = serde_json::from_str(&content)
         .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
     Ok(auth)
@@ -94,18 +95,27 @@ pub fn write_active_auth_json(auth: &AuthJson) -> Result<(), String> {
             .write(true)
             .truncate(false)
             .open(&temp_path)
-            .map_err(|e| format!("Failed to open temp auth file {}: {}", temp_path.display(), e))?;
-        
+            .map_err(|e| {
+                format!(
+                    "Failed to open temp auth file {}: {}",
+                    temp_path.display(),
+                    e
+                )
+            })?;
+
         file.lock_exclusive()
             .map_err(|e| format!("Failed to lock temp auth file: {}", e))?;
 
-        file.set_len(0).map_err(|e| format!("Failed to set_len: {}", e))?;
+        file.set_len(0)
+            .map_err(|e| format!("Failed to set_len: {}", e))?;
         use std::io::Seek;
-        file.seek(std::io::SeekFrom::Start(0)).map_err(|e| format!("Failed to seek: {}", e))?;
+        file.seek(std::io::SeekFrom::Start(0))
+            .map_err(|e| format!("Failed to seek: {}", e))?;
 
         file.write_all(content.as_bytes())
             .map_err(|e| format!("Failed to write to temp auth file: {}", e))?;
-        file.flush().map_err(|e| format!("Failed to flush: {}", e))?;
+        file.flush()
+            .map_err(|e| format!("Failed to flush: {}", e))?;
 
         let _ = fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600));
     }
@@ -123,7 +133,10 @@ pub fn load_accounts() -> Result<AccountsFile, String> {
         if let Ok(auth) = read_active_auth_json() {
             if let Some(tokens) = auth.tokens {
                 let (email, plan) = crate::oauth::extract_jwt_metadata_from_tokens(&tokens);
-                let acc_id = tokens.account_id.clone().unwrap_or_else(|| "default".to_string());
+                let acc_id = tokens
+                    .account_id
+                    .clone()
+                    .unwrap_or_else(|| "default".to_string());
                 let email_val = email.unwrap_or_else(|| "current-user".to_string());
                 let canonical_id = crate::setup::build_predictable_account_id(&email_val, &acc_id);
                 let config = AccountConfig {
@@ -147,6 +160,7 @@ pub fn load_accounts() -> Result<AccountsFile, String> {
                     plan_multiplier: None,
                     multiplier_is_manual: None,
                     last_multiplier_checked: None,
+                    organization_name: None,
                 };
                 let accounts_file = AccountsFile {
                     active_account_id: Some(canonical_id),
@@ -163,8 +177,8 @@ pub fn load_accounts() -> Result<AccountsFile, String> {
     let mut acc: AccountsFile = {
         let _lock = acquire_switcher_lock(false)?;
 
-        let mut file = File::open(&path)
-            .map_err(|e| format!("Failed to open {}: {}", path.display(), e))?;
+        let mut file =
+            File::open(&path).map_err(|e| format!("Failed to open {}: {}", path.display(), e))?;
         file.lock_shared()
             .map_err(|e| format!("Failed to lock shared {}: {}", path.display(), e))?;
 
@@ -208,13 +222,16 @@ pub fn save_accounts(acc: &AccountsFile) -> Result<(), String> {
         file.lock_exclusive()
             .map_err(|e| format!("Failed to lock temp accounts file: {}", e))?;
 
-        file.set_len(0).map_err(|e| format!("Failed to set_len: {}", e))?;
+        file.set_len(0)
+            .map_err(|e| format!("Failed to set_len: {}", e))?;
         use std::io::Seek;
-        file.seek(std::io::SeekFrom::Start(0)).map_err(|e| format!("Failed to seek: {}", e))?;
+        file.seek(std::io::SeekFrom::Start(0))
+            .map_err(|e| format!("Failed to seek: {}", e))?;
 
         file.write_all(content.as_bytes())
             .map_err(|e| format!("Failed to write: {}", e))?;
-        file.flush().map_err(|e| format!("Failed to flush: {}", e))?;
+        file.flush()
+            .map_err(|e| format!("Failed to flush: {}", e))?;
 
         let _ = fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600));
     }
@@ -245,8 +262,7 @@ pub fn write_status_file(status: &StatusFile) -> Result<(), String> {
     {
         let _ = fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600));
     }
-    fs::rename(&temp_path, &path)
-        .map_err(|e| format!("Failed to rename status file: {}", e))?;
+    fs::rename(&temp_path, &path).map_err(|e| format!("Failed to rename status file: {}", e))?;
     #[cfg(unix)]
     {
         let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
@@ -260,8 +276,8 @@ pub fn read_status_file() -> Result<StatusFile, String> {
     if !path.exists() {
         return Err(format!("Status file not found at {}", path.display()));
     }
-    let content = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read status file: {}", e))?;
+    let content =
+        fs::read_to_string(&path).map_err(|e| format!("Failed to read status file: {}", e))?;
     let status: StatusFile = serde_json::from_str(&content)
         .map_err(|e| format!("Failed to parse status file: {}", e))?;
     Ok(status)
@@ -272,7 +288,13 @@ pub fn sync_settings_to_status_file(settings: &crate::models::Settings) {
         status.auto_switch_enabled = settings.auto_switch_enabled;
         status.auto_switch_business_only = settings.auto_switch_business_only;
         status.auto_switch_business_priority = settings.auto_switch_business_priority;
+        status.auto_reset_weekly_enabled = settings.auto_reset_weekly_enabled;
+        status.auto_reset_weekly_min_remaining_seconds =
+            settings.auto_reset_weekly_min_remaining_seconds;
+        if !settings.auto_reset_weekly_enabled {
+            status.auto_reset_state = "disabled".to_string();
+            status.auto_reset_reason = None;
+        }
         let _ = write_status_file(&status);
     }
 }
-

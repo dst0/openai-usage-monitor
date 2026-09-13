@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 const CODEX_EXIT_GRACE_PERIOD: Duration = Duration::from_secs(3);
 const CODEX_EXIT_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const CODEX_APP_EXECUTABLE: &str = "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT";
 
 /// Resolves a user-provided account query to an account index.
 /// Matching order:
@@ -16,7 +17,10 @@ const CODEX_EXIT_POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// 3. Exact ChatGPT workspace account_id UUID
 /// 4. Unambiguous exact email
 /// 5. Unambiguous prefix of canonical ID, UUID, or nickname (len >= 3)
-pub fn resolve_target_account_idx(accounts: &[crate::models::AccountConfig], query: &str) -> Result<usize, String> {
+pub fn resolve_target_account_idx(
+    accounts: &[crate::models::AccountConfig],
+    query: &str,
+) -> Result<usize, String> {
     let q = query.trim();
     if q.is_empty() {
         return Err("Account identifier cannot be empty".to_string());
@@ -37,14 +41,24 @@ pub fn resolve_target_account_idx(accounts: &[crate::models::AccountConfig], que
     if nick_matches.len() == 1 {
         return Ok(nick_matches[0]);
     } else if nick_matches.len() > 1 {
-        return Err(format!("Multiple accounts share nickname '{}'. Please specify by full ID.", q));
+        return Err(format!(
+            "Multiple accounts share nickname '{}'. Please specify by full ID.",
+            q
+        ));
     }
 
     // 3. Exact account_id (workspace UUID) match
     let ws_matches: Vec<usize> = accounts
         .iter()
         .enumerate()
-        .filter(|(_, a)| a.account_id.trim().eq_ignore_ascii_case(q) || a.tokens.account_id.as_deref().map(|t| t.trim().eq_ignore_ascii_case(q)) == Some(true))
+        .filter(|(_, a)| {
+            a.account_id.trim().eq_ignore_ascii_case(q)
+                || a.tokens
+                    .account_id
+                    .as_deref()
+                    .map(|t| t.trim().eq_ignore_ascii_case(q))
+                    == Some(true)
+        })
         .map(|(i, _)| i)
         .collect();
     if ws_matches.len() == 1 {
@@ -80,7 +94,10 @@ pub fn resolve_target_account_idx(accounts: &[crate::models::AccountConfig], que
             .filter(|(_, a)| {
                 a.id.to_lowercase().starts_with(&q.to_lowercase())
                     || a.account_id.to_lowercase().starts_with(&q.to_lowercase())
-                    || a.name.as_deref().map(|n| n.to_lowercase().starts_with(&q.to_lowercase())).unwrap_or(false)
+                    || a.name
+                        .as_deref()
+                        .map(|n| n.to_lowercase().starts_with(&q.to_lowercase()))
+                        .unwrap_or(false)
             })
             .map(|(i, _)| i)
             .collect();
@@ -89,10 +106,66 @@ pub fn resolve_target_account_idx(accounts: &[crate::models::AccountConfig], que
         }
     }
 
-    Err(format!("Account with ID, nickname, or email '{}' not found", query))
+    Err(format!(
+        "Account with ID, nickname, or email '{}' not found",
+        query
+    ))
 }
 
-pub fn switch_to_account(account_id: &str, restart_app: bool, notify: bool) -> Result<(), String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwitchOutcome {
+    pub recovery_error: Option<String>,
+}
+
+fn prioritize_primary(targets: &mut Vec<String>, primary: Option<&String>) {
+    let Some(primary) = primary else { return };
+    if let Some(index) = targets.iter().position(|id| id == primary) {
+        targets.remove(index);
+    }
+    targets.insert(0, primary.clone());
+}
+
+fn prioritize_primary_if_user(
+    codex_home: &std::path::Path,
+    targets: &mut Vec<String>,
+    primary: Option<&String>,
+) -> bool {
+    if primary.is_some_and(|id| !is_user_thread(codex_home, id)) {
+        return false;
+    }
+    prioritize_primary(targets, primary);
+    true
+}
+
+fn relaunch_after_failed_transition(error: String) -> String {
+    match launch_codex_app() {
+        Ok(_) => format!("{error}; Codex was relaunched with the previous account state"),
+        Err(relaunch_error) => {
+            format!("{error}; emergency Codex relaunch also failed: {relaunch_error}")
+        }
+    }
+}
+
+fn keep_codex_available_after_failure(error: String) -> String {
+    if is_codex_app_running() {
+        return error;
+    }
+    match launch_codex_app() {
+        Ok(pids) => {
+            format!("{error}; Codex was relaunched after the failed automation with pids={pids:?}")
+        }
+        Err(relaunch_error) => {
+            format!("{error}; emergency Codex relaunch also failed: {relaunch_error}")
+        }
+    }
+}
+
+pub fn switch_to_account(
+    account_id: &str,
+    restart_app: bool,
+    notify: bool,
+) -> Result<SwitchOutcome, String> {
+    let _operation = crate::recovery::operation_lock()?;
     let mut accounts_file = load_accounts()?;
     let target_idx = resolve_target_account_idx(&accounts_file.accounts, account_id)?;
 
@@ -100,7 +173,9 @@ pub fn switch_to_account(account_id: &str, restart_app: bool, notify: bool) -> R
 
     // Redundant switch guard: if target account is already active, return Ok(()) immediately.
     let active_id = accounts_file.active_account_id.as_deref();
-    let is_already_active = active_id.map(|id| id.eq_ignore_ascii_case(&target_account.id)).unwrap_or(false)
+    let is_already_active = active_id
+        .map(|id| id.eq_ignore_ascii_case(&target_account.id))
+        .unwrap_or(false)
         || accounts_file
             .accounts
             .iter()
@@ -116,16 +191,38 @@ pub fn switch_to_account(account_id: &str, restart_app: bool, notify: bool) -> R
                 == target_account.tokens.refresh_token.as_ref());
 
     if is_already_active {
-        return Ok(());
+        return Ok(SwitchOutcome {
+            recovery_error: None,
+        });
     }
 
     let app_was_running = restart_app && is_codex_app_running();
+    if app_was_running
+        && std::env::var_os("CODEX_RESTART_WORKER").is_some()
+        && crate::recovery::restart_cancellation_requested()
+    {
+        return Err("Restart cancelled before Codex shutdown".into());
+    }
 
     // Detect in-progress threads before gracefully terminating the app
     let running_threads = if app_was_running {
-        let threads = detect_in_progress_threads();
+        let mut threads = detect_in_progress_threads();
+        if let Ok(primary) =
+            std::env::var("CODEX_PRIMARY_THREAD").or_else(|_| std::env::var("CODEX_THREAD_ID"))
+        {
+            let primary = clean_thread_id(&primary);
+            let _ = prioritize_primary_if_user(
+                &crate::storage::codex_home(),
+                &mut threads,
+                Some(&primary),
+            );
+        }
         if !threads.is_empty() {
-            println!("📋 Detected {} active in-progress thread(s) before restart: {:?}", threads.len(), threads);
+            println!(
+                "📋 Detected {} active in-progress thread(s) before restart: {:?}",
+                threads.len(),
+                threads
+            );
         }
         threads
     } else {
@@ -144,15 +241,40 @@ pub fn switch_to_account(account_id: &str, restart_app: bool, notify: bool) -> R
     current_auth.tokens = Some(target_account.tokens.clone());
     current_auth.last_refresh = Some(Utc::now().to_rfc3339());
 
+    let mut recovery_banner = if app_was_running {
+        crate::recovery::arm_automation_cooldown()?;
+        Some(crate::recovery::RecoveryBanner::start(
+            running_threads.len(),
+        )?)
+    } else {
+        None
+    };
+    if app_was_running && !running_threads.is_empty() {
+        crate::recovery::preflight_desktop_dispatch()?;
+    }
+
     // 2. Stop the desktop app before replacing credentials. A graceful exit is
     // the persistence boundary for active thread history and SQLite WAL state.
     // Never force-kill it: if it cannot flush and exit, leave auth untouched.
     if app_was_running {
+        crate::recovery::save_pending(&running_threads)?;
         stop_codex_app_gracefully()?;
+        // The first journal makes the target list durable before shutdown. The
+        // second checkpoint is the verification boundary: it excludes work and
+        // abort records flushed by the old Desktop from post-restart proof.
+        if let Err(error) = crate::recovery::save_pending(&running_threads) {
+            return Err(relaunch_after_failed_transition(error));
+        }
     }
 
     // 3. Atomically write to ~/.codex/auth.json
-    write_active_auth_json(&current_auth)?;
+    if let Err(error) = write_active_auth_json(&current_auth) {
+        return Err(if app_was_running {
+            relaunch_after_failed_transition(error)
+        } else {
+            error
+        });
+    }
 
     // 4. Update active_account_id in accounts.json. Restore the previous auth
     // if this second half of the local transaction fails.
@@ -170,76 +292,39 @@ pub fn switch_to_account(account_id: &str, restart_app: bool, notify: bool) -> R
         };
     }
 
-    // 5. Relaunch only when this switch actually stopped a running app.
-    if app_was_running {
-        launch_codex_app()?;
-
-        let codex_home = dirs::home_dir().map(|h| h.join(".codex")).unwrap_or_default();
-        // Determine primary thread to focus in ChatGPT UI
-        let primary_thread = running_threads.first().cloned().or_else(|| {
-            get_most_recent_threads(&codex_home, 1).into_iter().next()
-        });
-
-        // Wait for Codex App and its app-server to initialize
-        if !running_threads.is_empty() {
-            println!("⏳ Waiting for Codex App to initialize before resuming {} thread(s)...", running_threads.len());
-            sleep(Duration::from_secs(4));
-        } else {
-            sleep(Duration::from_secs(2));
-        }
-
-        // Resume running threads according to their state:
-        // 1. First open thread in UI and check for a native circular Play button or turn Resume button.
-        // 2. If UI Resume succeeds (Play button, turn Resume, or already generating), the thread is directly
-        //    resumed without queuing an extra 'continue' message.
-        // 3. If no Resume button is detected after polling, skip queuing 'continue' to avoid queue pollution.
-        for tid in &running_threads {
-            println!("🔄 Navigating UI to thread '{}' to resume...", tid);
-            open_thread_in_codex(tid);
-            sleep(Duration::from_millis(1500));
-            let mut resumed = false;
-            for attempt in 1..=15 {
-                match trigger_codex_ui_resume_detailed() {
-                    UiResumeOutcome::PlayPressed => {
-                        println!("✅ Thread '{}' resumed directly via circular Play button! (attempt {}/15, no 'continue' queued)", tid, attempt);
-                        resumed = true;
-                        break;
-                    }
-                    UiResumeOutcome::TurnResumePressed => {
-                        println!("✅ Thread '{}' resumed directly via turn Resume/Retry button! (attempt {}/15, no 'continue' queued)", tid, attempt);
-                        resumed = true;
-                        break;
-                    }
-                    UiResumeOutcome::AlreadyActive => {
-                        println!("✅ Thread '{}' is already actively generating. No resumption needed (attempt {}/15).", tid, attempt);
-                        resumed = true;
-                        break;
-                    }
-                    UiResumeOutcome::SteerPressed => {
-                        println!("✅ Triggered Steer on existing queued message for thread '{}' (attempt {}/15)!", tid, attempt);
-                        resumed = true;
-                        break;
-                    }
-                    UiResumeOutcome::NotFound => {
-                        sleep(Duration::from_millis(300));
-                    }
+    // 5. Relaunch the desktop first, then dispatch through its own queue/UI.
+    // A separate `codex exec resume` process would own the thread writer lock
+    // and make the desktop show "This is open in another app".
+    let recovery_error = if app_was_running {
+        match launch_codex_app() {
+            Ok(launched_pids) => {
+                let recovery_result = crate::recovery::recover_threads_with_banner(
+                    &running_threads,
+                    crate::recovery::RecoveryMode::CapturedRestart,
+                    recovery_banner.as_ref().unwrap(),
+                );
+                let stability_result = crate::recovery::verify_desktop_stable(&launched_pids);
+                match (recovery_result, stability_result) {
+                    (Ok(()), Ok(())) => None,
+                    (Err(recovery), Ok(())) => Some(recovery),
+                    (Ok(()), Err(stability)) => Some(stability),
+                    (Err(recovery), Err(stability)) => Some(format!(
+                        "{recovery}; desktop stability also failed: {stability}"
+                    )),
                 }
+                .map(keep_codex_available_after_failure)
             }
-            if !resumed {
-                println!("ℹ️ Thread '{}': no paused state or Resume button detected. Skipping queueing 'continue'.", tid);
-            }
-        }
-
-        // Navigate ChatGPT UI directly to the primary thread so it is visible to the user
-        if let Some(ref tid) = primary_thread {
-            open_thread_in_codex(tid);
-            sleep(Duration::from_millis(400));
-            if running_threads.iter().any(|r| r == tid) {
-                let _ = poll_and_trigger_ui_resume(5, Duration::from_millis(300));
+            Err(error) => {
+                drop(recovery_banner.take());
+                Some(keep_codex_available_after_failure(error))
             }
         }
+    } else {
+        None
+    };
+    if app_was_running {
+        crate::recovery::arm_automation_cooldown()?;
     }
-
     // 6. Send macOS user notification
     if notify {
         send_macos_notification(
@@ -248,27 +333,62 @@ pub fn switch_to_account(account_id: &str, restart_app: bool, notify: bool) -> R
         );
     }
 
-    Ok(())
+    Ok(SwitchOutcome { recovery_error })
+}
+
+fn parse_codex_app_pids(process_list: &str) -> Vec<u32> {
+    process_list
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            let split_at = trimmed.find(char::is_whitespace)?;
+            let (pid, executable) = trimmed.split_at(split_at);
+            if executable.trim() == CODEX_APP_EXECUTABLE {
+                pid.parse::<u32>().ok()
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn codex_app_pids() -> Vec<u32> {
+    let output = match Command::new("/bin/ps")
+        .args(["-axo", "pid=,comm="])
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+
+    parse_codex_app_pids(&String::from_utf8_lossy(&output.stdout))
+}
+
+pub(crate) fn current_codex_app_pids() -> Vec<u32> {
+    codex_app_pids()
 }
 
 pub fn is_codex_app_running() -> bool {
-    let output = Command::new("pgrep")
-        .arg("-f")
-        .arg("/Applications/ChatGPT.app/Contents/MacOS/ChatGPT")
-        .output();
+    !codex_app_pids().is_empty()
+}
 
-    matches!(output, Ok(o) if o.status.success() && !o.stdout.is_empty())
+fn signal_codex_app(signal: &str) {
+    let pids = codex_app_pids();
+    if pids.is_empty() {
+        return;
+    }
+
+    let _ = Command::new("/bin/kill")
+        .arg(signal)
+        .args(pids.iter().map(u32::to_string))
+        .status();
 }
 
 fn stop_codex_app_gracefully() -> Result<(), String> {
     // 1. Send SIGTERM to ChatGPT main process.
     // Chromium catches SIGTERM to flush SQLite databases, cookies, and WAL logs cleanly,
     // while completely bypassing the interactive GUI beforeunload ("Leave site?") prompt.
-    let _ = Command::new("pkill")
-        .arg("-TERM")
-        .arg("-f")
-        .arg("/Applications/ChatGPT.app/Contents/MacOS/ChatGPT")
-        .output();
+    signal_codex_app("-TERM");
 
     // 2. Wait up to 3 seconds for graceful process exit
     let exited = wait_for_app_exit_with(
@@ -278,17 +398,9 @@ fn stop_codex_app_gracefully() -> Result<(), String> {
     );
 
     if !exited {
-        // 3. Fallback: if not exited within 3s, terminate so account switch does not stall
-        let _ = Command::new("pkill")
-            .arg("-KILL")
-            .arg("-f")
-            .arg("/Applications/ChatGPT.app/Contents/MacOS/ChatGPT")
-            .output();
-
-        let _ = wait_for_app_exit_with(
-            is_codex_app_running,
-            Duration::from_secs(2),
-            CODEX_EXIT_POLL_INTERVAL,
+        return Err(
+            "Codex did not exit gracefully; refusing to force-kill it or replace credentials"
+                .into(),
         );
     }
 
@@ -299,16 +411,32 @@ fn stop_codex_app_gracefully() -> Result<(), String> {
     Ok(())
 }
 
-fn launch_codex_app() -> Result<(), String> {
-    // Attempt launching with verification that the application process actually appears.
-    // LaunchServices can sometimes ignore an open request if it was issued while
-    // the previous process teardown was still registering, so retry with backoff.
+pub(crate) fn launch_codex_app() -> Result<Vec<u32>, String> {
+    let existing = codex_app_pids();
+    if !existing.is_empty() {
+        return Err(format!(
+            "Refusing to claim a new Codex launch while these main processes already exist: {existing:?}"
+        ));
+    }
+    // `-n` avoids LaunchServices coalescing this request into the just-terminated
+    // application registration. A launch succeeds only when a new exact main
+    // process appears and remains alive across a short settling interval.
     for attempt in 1..=3 {
-        let status = Command::new("open")
-            .arg("-a")
-            .arg("/Applications/ChatGPT.app")
+        let before_attempt = codex_app_pids();
+        if !before_attempt.is_empty() {
+            return Err(format!(
+                "Codex main process appeared outside the verified launch attempt: {before_attempt:?}"
+            ));
+        }
+        let status = Command::new("/usr/bin/open")
+            .env_remove("CODEX_RESTART_WORKER")
+            .env_remove("CODEX_RESTART_OPERATION")
+            .env_remove("CODEX_PRIMARY_THREAD")
+            .args(["-n", "-a", "/Applications/ChatGPT.app"])
             .status()
-            .map_err(|error| format!("Account switched, but Codex could not be relaunched: {error}"))?;
+            .map_err(|error| {
+                format!("Account switched, but Codex could not be relaunched: {error}")
+            })?;
 
         if !status.success() {
             if attempt == 3 {
@@ -318,24 +446,38 @@ fn launch_codex_app() -> Result<(), String> {
             continue;
         }
 
-        // Wait up to 3 seconds to verify the process actually appeared
-        let deadline = Instant::now() + Duration::from_millis(3000);
+        let deadline = Instant::now() + Duration::from_secs(15);
         while Instant::now() < deadline {
-            if is_codex_app_running() {
-                return Ok(());
+            let launched = codex_app_pids();
+            if !launched.is_empty() {
+                if launched.len() != 1 {
+                    return Err(format!(
+                        "Codex launch created multiple main processes: {launched:?}"
+                    ));
+                }
+                sleep(Duration::from_secs(2));
+                let settled = codex_app_pids();
+                if settled == launched {
+                    return Ok(launched);
+                }
+                if settled.is_empty() {
+                    break;
+                }
+                return Err(format!(
+                    "Codex main process changed during launch settling: {launched:?} -> {settled:?}"
+                ));
             }
             sleep(Duration::from_millis(200));
         }
 
-        println!("⚠️ Codex app did not appear after attempt {}, retrying launch...", attempt);
+        println!(
+            "⚠️ Codex app did not appear after attempt {}, retrying launch...",
+            attempt
+        );
         sleep(Duration::from_millis(500));
     }
 
-    if is_codex_app_running() {
-        Ok(())
-    } else {
-        Err("Codex app launch was requested, but process did not start".to_string())
-    }
+    Err("Codex app launch was requested, but no stable main process appeared".to_string())
 }
 
 fn wait_for_app_exit_with<F>(mut is_running: F, timeout: Duration, poll_interval: Duration) -> bool
@@ -359,6 +501,23 @@ fn escape_applescript(s: &str) -> String {
 }
 
 pub fn send_macos_notification(title: &str, message: &str) {
+    if let Some(home) = std::env::var_os("HOME") {
+        let notifier = std::path::PathBuf::from(home)
+            .join("Applications/Codex Notifier.app/Contents/MacOS/notify");
+        if notifier.exists() {
+            if let Ok(status) = Command::new(&notifier)
+                .arg("Codex Switcher")
+                .arg(message)
+                .arg(title)
+                .status()
+            {
+                if status.success() {
+                    return;
+                }
+            }
+        }
+    }
+
     let script = format!(
         "display notification \"{}\" with title \"Codex Switcher\" subtitle \"{}\"",
         escape_applescript(message),
@@ -398,7 +557,7 @@ pub fn get_most_recent_threads(codex_home: &std::path::Path, limit: usize) -> Ve
         return Vec::new();
     }
     let query = format!(
-        "SELECT id FROM threads WHERE archived = 0 AND (thread_source = 'user' OR thread_source IS NULL OR thread_source = '') ORDER BY updated_at DESC LIMIT {};",
+        "SELECT id FROM threads WHERE archived = 0 AND (thread_source IS NULL OR thread_source != 'subagent') ORDER BY updated_at DESC LIMIT {};",
         limit
     );
     if let Ok(output) = Command::new("/usr/bin/sqlite3")
@@ -419,27 +578,42 @@ pub fn get_most_recent_threads(codex_home: &std::path::Path, limit: usize) -> Ve
 
 /// Helper to check if a thread is a user-level thread (not a spawned sub-agent)
 pub fn is_user_thread(codex_home: &std::path::Path, thread_id: &str) -> bool {
+    if !is_valid_thread_id(thread_id) {
+        return false;
+    }
     let state_sqlite = codex_home.join("state_5.sqlite");
     if !state_sqlite.exists() {
-        return true;
+        return false;
     }
     let query = format!(
-        "SELECT thread_source FROM threads WHERE id = '{}' LIMIT 1;",
+        "SELECT 1 FROM threads WHERE id = '{}' AND archived = 0 AND (thread_source IS NULL OR thread_source != 'subagent') LIMIT 1;",
         thread_id
     );
     if let Ok(output) = Command::new("/usr/bin/sqlite3")
+        .args(["-batch", "-cmd", ".timeout 3000"])
         .arg(state_sqlite.to_str().unwrap_or(""))
         .arg(&query)
         .output()
     {
         if output.status.success() {
-            let src = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if src == "subagent" {
-                return false;
-            }
+            return String::from_utf8_lossy(&output.stdout).trim() == "1";
         }
     }
-    true
+    // Detection must fail closed. A transient SQLite failure previously let
+    // subagent lock files into a restart manifest, guaranteeing a false
+    // recovery failure after the old Desktop process had already exited.
+    false
+}
+
+fn is_valid_thread_id(thread_id: &str) -> bool {
+    thread_id.len() == 36
+        && thread_id.bytes().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -456,11 +630,22 @@ pub enum ThreadRolloutState {
     Unknown,
 }
 
+/// A quota failure is eligible for an automatic reset only briefly after it
+/// happened. Older failed turns may have been intentionally abandoned and
+/// must never spend a reset credit.
+pub const RECENT_QUOTA_WINDOW_SECS: i64 = 4 * 3600;
+
 /// Locates the JSONL rollout file for a thread, querying SQLite first and scanning sessions as fallback.
-pub fn find_thread_rollout_path(codex_home: &std::path::Path, thread_id: &str) -> Option<std::path::PathBuf> {
+pub fn find_thread_rollout_path(
+    codex_home: &std::path::Path,
+    thread_id: &str,
+) -> Option<std::path::PathBuf> {
     let state_sqlite = codex_home.join("state_5.sqlite");
     if state_sqlite.exists() {
-        let query = format!("SELECT rollout_path FROM threads WHERE id = '{}' LIMIT 1;", thread_id);
+        let query = format!(
+            "SELECT rollout_path FROM threads WHERE id = '{}' LIMIT 1;",
+            thread_id
+        );
         if let Ok(output) = Command::new("/usr/bin/sqlite3")
             .arg(state_sqlite.to_str().unwrap_or(""))
             .arg(&query)
@@ -478,7 +663,11 @@ pub fn find_thread_rollout_path(codex_home: &std::path::Path, thread_id: &str) -
     let sessions_dir = codex_home.join("sessions");
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
 
-    fn scan_sessions(dir: &std::path::Path, thread_id: &str, matches: &mut Vec<std::path::PathBuf>) {
+    fn scan_sessions(
+        dir: &std::path::Path,
+        thread_id: &str,
+        matches: &mut Vec<std::path::PathBuf>,
+    ) {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let p = entry.path();
@@ -495,8 +684,14 @@ pub fn find_thread_rollout_path(codex_home: &std::path::Path, thread_id: &str) -
 
     scan_sessions(&sessions_dir, thread_id, &mut candidates);
     candidates.sort_by(|a, b| {
-        let m_a = a.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        let m_b = b.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let m_a = a
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let m_b = b
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
         m_b.cmp(&m_a)
     });
 
@@ -511,7 +706,7 @@ pub fn read_rollout_tail_lines(path: &std::path::Path, max_bytes: u64) -> Vec<St
         Err(_) => return Vec::new(),
     };
     let len = file.metadata().map(|m| m.len()).unwrap_or(0);
-    let seek_pos = if len > max_bytes { len - max_bytes } else { 0 };
+    let seek_pos = len.saturating_sub(max_bytes);
     if file.seek(SeekFrom::Start(seek_pos)).is_err() {
         return Vec::new();
     }
@@ -575,7 +770,8 @@ pub fn inspect_thread_rollout_state_from_lines(lines: &[String]) -> ThreadRollou
 
         if matches!(
             payload_type,
-            Some("user_message")
+            Some("task_started")
+                | Some("user_message")
                 | Some("agent_message")
                 | Some("message")
                 | Some("reasoning")
@@ -594,7 +790,10 @@ pub fn inspect_thread_rollout_state_from_lines(lines: &[String]) -> ThreadRollou
 }
 
 /// Inspects the rollout log of a thread to determine its current state.
-pub fn inspect_thread_rollout_state(codex_home: &std::path::Path, thread_id: &str) -> ThreadRolloutState {
+pub fn inspect_thread_rollout_state(
+    codex_home: &std::path::Path,
+    thread_id: &str,
+) -> ThreadRolloutState {
     if let Some(path) = find_thread_rollout_path(codex_home, thread_id) {
         let lines = read_rollout_tail_lines(&path, 131072);
         return inspect_thread_rollout_state_from_lines(&lines);
@@ -608,7 +807,10 @@ pub fn get_thread_updated_at(codex_home: &std::path::Path, thread_id: &str) -> O
     if !state_sqlite.exists() {
         return None;
     }
-    let query = format!("SELECT updated_at FROM threads WHERE id = '{}' LIMIT 1;", thread_id);
+    let query = format!(
+        "SELECT updated_at FROM threads WHERE id = '{}' LIMIT 1;",
+        thread_id
+    );
     let output = Command::new("/usr/bin/sqlite3")
         .arg(state_sqlite.to_str().unwrap_or(""))
         .arg(&query)
@@ -620,6 +822,28 @@ pub fn get_thread_updated_at(codex_home: &std::path::Path, thread_id: &str) -> O
     } else {
         None
     }
+}
+
+/// Finds only recent, unarchived, user-owned tasks whose latest terminal
+/// rollout event is a quota failure. Unlike `detect_in_progress_threads`, it
+/// intentionally excludes active, aborted, queued, and manifest-only tasks:
+/// those are safe to recover but are not proof that a weekly reset is needed.
+pub fn detect_recent_quota_blocked_user_threads() -> Vec<String> {
+    let codex_home = crate::storage::codex_home();
+    let now = chrono::Utc::now().timestamp();
+    get_most_recent_threads(&codex_home, 30)
+        .into_iter()
+        .filter(|thread_id| is_user_thread(&codex_home, thread_id))
+        .filter(|thread_id| {
+            get_thread_updated_at(&codex_home, thread_id)
+                .map(|updated| (now - updated).abs() <= RECENT_QUOTA_WINDOW_SECS)
+                .unwrap_or(false)
+        })
+        .filter(|thread_id| {
+            inspect_thread_rollout_state(&codex_home, thread_id)
+                == ThreadRolloutState::InterruptedByQuota
+        })
+        .collect()
 }
 
 /// Checks if a thread's rollout log indicates an active turn or an incomplete turn needing resumption.
@@ -638,7 +862,6 @@ pub fn detect_in_progress_threads() -> Vec<String> {
     let locks_dir = codex_home.join("thread-writer-locks");
     let mut in_progress = Vec::new();
     let now = chrono::Utc::now().timestamp();
-    const RECENT_QUOTA_WINDOW_SECS: i64 = 4 * 3600; // 4 hours
 
     // 1. Check lock files held by running processes (codex app-server)
     if let Ok(entries) = std::fs::read_dir(&locks_dir) {
@@ -655,7 +878,11 @@ pub fn detect_in_progress_threads() -> Vec<String> {
             }
 
             // Open the lock file to test if another process holds a lock on it
-            let file = match std::fs::OpenOptions::new().read(true).write(true).open(&path) {
+            let file = match std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+            {
                 Ok(f) => f,
                 Err(_) => match std::fs::File::open(&path) {
                     Ok(f) => f,
@@ -676,7 +903,7 @@ pub fn detect_in_progress_threads() -> Vec<String> {
                 ThreadRolloutState::ActiveInProgress => {
                     in_progress.push(thread_id.to_string());
                 }
-                ThreadRolloutState::InterruptedByQuota | ThreadRolloutState::TurnAborted => {
+                ThreadRolloutState::InterruptedByQuota => {
                     let is_recent = get_thread_updated_at(&codex_home, thread_id)
                         .map(|updated| (now - updated).abs() <= RECENT_QUOTA_WINDOW_SECS)
                         .unwrap_or(true);
@@ -691,458 +918,260 @@ pub fn detect_in_progress_threads() -> Vec<String> {
 
     // 2. Also check top 30 recent threads from state_5.sqlite if they were interrupted
     // or failed due to quota/credit exhaustion within the quota window.
-    let recent_threads = get_most_recent_threads(&codex_home, 30);
-    for tid in recent_threads {
+    for tid in detect_recent_quota_blocked_user_threads() {
         if !in_progress.iter().any(|existing| existing == &tid) {
-            let is_recent = get_thread_updated_at(&codex_home, &tid)
-                .map(|updated| (now - updated).abs() <= RECENT_QUOTA_WINDOW_SECS)
-                .unwrap_or(false);
-            if is_recent {
-                let state = inspect_thread_rollout_state(&codex_home, &tid);
-                if state == ThreadRolloutState::InterruptedByQuota || state == ThreadRolloutState::TurnAborted {
-                    in_progress.push(tid);
-                }
-            }
+            in_progress.push(tid);
         }
     }
 
+    // Only a pre-restart manifest can distinguish our interruption from a
+    // user's Stop. Treat it as a hint, not authority: stale manifests may
+    // contain subagents, archived tasks, or rows removed by Desktop.
+    append_eligible_pending(
+        &codex_home,
+        &mut in_progress,
+        crate::recovery::load_pending().unwrap_or_default(),
+    );
     in_progress
 }
 
-/// Resumes threads by queueing a message (e.g. "continue") via codex queue CLI.
-#[allow(dead_code)]
-pub fn resume_threads(thread_ids: &[String], message: &str) {
-    if thread_ids.is_empty() {
-        return;
-    }
-
-    let app_codex = std::path::Path::new("/Applications/ChatGPT.app/Contents/Resources/codex");
-    let codex_bin = if app_codex.exists() {
-        app_codex.to_str().unwrap()
-    } else {
-        "codex"
-    };
-
-    for tid in thread_ids {
-        println!("🚀 Auto-resuming thread '{}' with '{}'...", tid, message);
-        let status = Command::new(codex_bin)
-            .arg("queue")
-            .arg("--thread")
-            .arg(tid)
-            .arg("--message")
-            .arg(message)
-            .status();
-
-        match status {
-            Ok(s) if s.success() => {
-                println!("✅ Queued resumption message for thread '{}'", tid);
-            }
-            Ok(s) => {
-                eprintln!("⚠️ Codex queue exited with code {:?} for thread '{}'", s.code(), tid);
-            }
-            Err(e) => {
-                eprintln!("⚠️ Failed to execute codex queue for thread '{}': {}", tid, e);
-            }
+fn append_eligible_pending(
+    codex_home: &std::path::Path,
+    in_progress: &mut Vec<String>,
+    pending: Vec<String>,
+) {
+    for tid in pending {
+        if is_user_thread(codex_home, &tid) && !in_progress.contains(&tid) {
+            in_progress.push(tid);
         }
     }
 }
 
-/// Interactively resumes a specific thread or the most recent active/interrupted thread.
-/// Navigates ChatGPT UI directly to the thread, queues a continuation message,
-/// and unpauses any paused UI elements.
+/// Recovery-only entry point. Uses the same verified pipeline as account switching.
 pub fn resume_thread_interactive(thread_id: Option<&str>) -> Result<(), String> {
-    let codex_home = crate::storage::codex_home();
-    let target_tids = match thread_id {
-        Some(tid) if !tid.trim().is_empty() => vec![clean_thread_id(tid)],
-        _ => {
-            let active = detect_in_progress_threads();
-            if !active.is_empty() {
-                active
-            } else if let Some(recent) = get_most_recent_threads(&codex_home, 1).into_iter().next() {
-                vec![recent]
-            } else {
-                return Err("No active or recent thread found to resume.".to_string());
-            }
+    let _operation = crate::recovery::operation_lock()?;
+    if !is_codex_app_running() {
+        return Err("Codex is not running; launch it before using resume".into());
+    }
+    let (targets, mode) = match thread_id {
+        Some(tid) => (
+            vec![clean_thread_id(tid)],
+            crate::recovery::RecoveryMode::ExplicitTarget,
+        ),
+        None => (
+            detect_in_progress_threads(),
+            crate::recovery::RecoveryMode::DiscoveredOnly,
+        ),
+    };
+    crate::recovery::recover_threads(&targets, mode)
+}
+
+/// Self-restart is supported: a detached worker, rather than the app's child
+/// shell, owns the operation so recovery survives termination of this host.
+pub fn dispatch_self_restart(args: &[String]) -> Result<bool, String> {
+    if std::env::var_os("CODEX_RESTART_WORKER").is_some() {
+        return Ok(false);
+    }
+    let output = Command::new("/bin/ps")
+        .args(["-axo", "pid=,ppid=,comm="])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err("Cannot verify restart worker ancestry".into());
+    }
+    if !has_codex_ancestor(&String::from_utf8_lossy(&output.stdout), std::process::id())? {
+        return Ok(false);
+    }
+    let home = crate::storage::codex_home();
+    let label = "com.codex.switcher.restart-worker";
+    let previous = Command::new("launchctl")
+        .args(["list", label])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if previous.status.success() {
+        if String::from_utf8_lossy(&previous.stdout).contains("\"PID\"") {
+            return Err("A restart worker is already running".into());
+        }
+        let removed = Command::new("launchctl")
+            .args(["remove", label])
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !removed.success() {
+            return Err("Could not retire the completed restart worker".into());
+        }
+    }
+    crate::recovery::arm_automation_cooldown()?;
+    crate::recovery::clear_restart_cancellation()?;
+    let directory = home.join("recovery-runs");
+    std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    let operation_id = format!("{}-{}", Utc::now().timestamp_millis(), std::process::id());
+    let log = directory.join(format!("restart-{operation_id}.log"));
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&log)
+        .map_err(|e| e.to_string())?;
+    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut submit = Command::new("launchctl");
+    submit
+        .args(["submit", "-l", label, "-o"])
+        .arg(&log)
+        .arg("-e")
+        .arg(&log)
+        // A submitted job can be relaunched even after a short successful run.
+        // Remove the one-shot label from inside the wrapper after the child
+        // finishes. The operation claim remains the destructive at-most-once
+        // guard if the wrapper itself is interrupted before that cleanup.
+        .args([
+            "--",
+            "/bin/sh",
+            "-c",
+            "\"$@\"; /bin/launchctl remove com.codex.switcher.restart-worker >/dev/null 2>&1; exit 0",
+            "codex-restart-once",
+            "/usr/bin/env",
+            "CODEX_RESTART_WORKER=1",
+        ])
+        .arg(format!("CODEX_RESTART_OPERATION={operation_id}"))
+        .arg(format!("CODEX_HOME={}", home.display()));
+    if let Ok(primary) = std::env::var("CODEX_THREAD_ID") {
+        submit.arg(format!(
+            "CODEX_PRIMARY_THREAD={}",
+            clean_thread_id(&primary)
+        ));
+    }
+    let status = submit
+        .arg(executable)
+        .arg("--restart-worker")
+        .args(args)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err("Could not launch independent restart worker".into());
+    }
+    println!(
+        "RESTART_DISPATCHED job={label} log={} (scheduled, not yet verified)",
+        log.display()
+    );
+    Ok(true)
+}
+
+fn has_codex_ancestor(processes: &str, mut pid: u32) -> Result<bool, String> {
+    let rows: Vec<_> = processes
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.trim().splitn(3, char::is_whitespace);
+            let id = fields.next()?.parse::<u32>().ok()?;
+            let rest = line.trim().strip_prefix(&id.to_string())?.trim_start();
+            let split = rest.find(char::is_whitespace)?;
+            Some((id, rest[..split].parse::<u32>().ok()?, rest[split..].trim()))
+        })
+        .collect();
+    for _ in 0..128 {
+        if pid <= 1 {
+            return Ok(false);
+        }
+        let (_, parent, executable) = rows
+            .iter()
+            .find(|row| row.0 == pid)
+            .ok_or("Cannot resolve restart worker ancestry")?;
+        if *executable == CODEX_APP_EXECUTABLE {
+            return Ok(true);
+        }
+        pid = *parent;
+    }
+    Err("Cycle in restart worker ancestry".into())
+}
+
+pub fn restart_and_recover(
+    delay_seconds: u64,
+    primary_thread: Option<String>,
+) -> Result<(), String> {
+    let primary = primary_thread
+        .or_else(|| std::env::var("CODEX_THREAD_ID").ok())
+        .map(|id| clean_thread_id(&id));
+    let mut args = vec![
+        "restart".into(),
+        "--delay-seconds".into(),
+        delay_seconds.max(5).to_string(),
+    ];
+    if let Some(id) = &primary {
+        args.extend(["--primary-thread".into(), id.clone()]);
+    }
+    if std::env::var_os("CODEX_RESTART_WORKER").is_none() && dispatch_self_restart(&args)? {
+        return Ok(());
+    }
+    sleep(Duration::from_secs(delay_seconds));
+    if std::env::var_os("CODEX_RESTART_WORKER").is_some()
+        && crate::recovery::restart_cancellation_requested()
+    {
+        println!("WORKER_CANCELLED phase=pre_shutdown");
+        return Ok(());
+    }
+    let _operation = crate::recovery::operation_lock()?;
+    crate::recovery::arm_automation_cooldown()?;
+    if !is_codex_app_running() {
+        return Err("Codex is not running".into());
+    }
+    let mut targets = detect_in_progress_threads();
+    if !prioritize_primary_if_user(
+        &crate::storage::codex_home(),
+        &mut targets,
+        primary.as_ref(),
+    ) {
+        return Err("Primary task is absent, archived, or a subagent; refusing restart".into());
+    }
+    println!(
+        "RESTART_BEGIN old_pids={:?} targets={:?}",
+        codex_app_pids(),
+        targets
+    );
+    let banner = crate::recovery::RecoveryBanner::start(targets.len())?;
+    if !targets.is_empty() {
+        crate::recovery::preflight_desktop_dispatch()?;
+    }
+    crate::recovery::save_pending(&targets)?;
+    stop_codex_app_gracefully()?;
+    // Re-checkpoint only after the old process has fully exited, so recovery
+    // cannot be falsely verified by work flushed during shutdown.
+    crate::recovery::save_pending(&targets)?;
+    let launched_pids = match launch_codex_app() {
+        Ok(pids) => pids,
+        Err(error) => {
+            drop(banner);
+            return Err(keep_codex_available_after_failure(error));
         }
     };
-
-    println!("🚀 Resuming {} thread(s): {:?}", target_tids.len(), target_tids);
-    for tid in &target_tids {
-        open_thread_in_codex(tid);
-        sleep(Duration::from_millis(1500));
-        let mut resumed = false;
-        for attempt in 1..=15 {
-            match trigger_codex_ui_resume_detailed() {
-                UiResumeOutcome::PlayPressed => {
-                    println!("✅ Thread '{}' resumed directly via circular Play button! (attempt {}/15, no 'continue' queued)", tid, attempt);
-                    resumed = true;
-                    break;
-                }
-                UiResumeOutcome::TurnResumePressed => {
-                    println!("✅ Thread '{}' resumed directly via turn Resume/Retry button! (attempt {}/15, no 'continue' queued)", tid, attempt);
-                    resumed = true;
-                    break;
-                }
-                UiResumeOutcome::AlreadyActive => {
-                    println!("✅ Thread '{}' is already actively generating. No resumption needed (attempt {}/15).", tid, attempt);
-                    resumed = true;
-                    break;
-                }
-                UiResumeOutcome::SteerPressed => {
-                    println!("✅ Triggered Steer on existing queued message for thread '{}' (attempt {}/15)!", tid, attempt);
-                    resumed = true;
-                    break;
-                }
-                UiResumeOutcome::NotFound => {
-                    sleep(Duration::from_millis(300));
-                }
-            }
+    println!("RESTART_LAUNCHED new_pids={launched_pids:?}");
+    let recovery_result = crate::recovery::recover_threads_with_banner(
+        &targets,
+        crate::recovery::RecoveryMode::CapturedRestart,
+        &banner,
+    );
+    let stability_result = crate::recovery::verify_desktop_stable(&launched_pids);
+    match (recovery_result, stability_result) {
+        (Ok(()), Ok(())) => {}
+        (Err(recovery), Ok(())) => return Err(keep_codex_available_after_failure(recovery)),
+        (Ok(()), Err(stability)) => return Err(keep_codex_available_after_failure(stability)),
+        (Err(recovery), Err(stability)) => {
+            return Err(keep_codex_available_after_failure(format!(
+                "{recovery}; desktop stability also failed: {stability}"
+            )))
         }
-        if !resumed {
-            println!("ℹ️ Thread '{}': no paused state or Resume button detected. Skipping queueing 'continue'.", tid);
-        }
-    }
-
-    if let Some(primary) = target_tids.first() {
-        open_thread_in_codex(primary);
-        sleep(Duration::from_millis(400));
-        let _ = poll_and_trigger_ui_resume(5, Duration::from_millis(300));
-    }
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UiResumeOutcome {
-    PlayPressed,
-    SteerPressed,
-    TurnResumePressed,
-    AlreadyActive,
-    NotFound,
-}
-
-impl UiResumeOutcome {
-    pub fn is_success(&self) -> bool {
-        matches!(
-            self,
-            Self::PlayPressed | Self::SteerPressed | Self::TurnResumePressed | Self::AlreadyActive
-        )
-    }
-}
-
-fn parse_ui_resume_output(stdout: &str, success: bool) -> UiResumeOutcome {
-    if stdout.contains("RESUMED_VIA_PLAY_BUTTON") {
-        UiResumeOutcome::PlayPressed
-    } else if stdout.contains("RESUMED_VIA_TURN_RESUME") {
-        UiResumeOutcome::TurnResumePressed
-    } else if stdout.contains("RESUMED_VIA_STEER") {
-        UiResumeOutcome::SteerPressed
-    } else if stdout.contains("ALREADY_ACTIVE") {
-        UiResumeOutcome::AlreadyActive
-    } else if success {
-        UiResumeOutcome::PlayPressed
-    } else {
-        UiResumeOutcome::NotFound
-    }
-}
-
-/// Triggers the native macOS Accessibility "Resume" action on ChatGPT.app
-/// and returns the specific outcome of the attempt.
-pub fn trigger_codex_ui_resume_detailed() -> UiResumeOutcome {
-    // 1. Check if compiled helper binary exists
-    let helper_names = [
-        dirs::home_dir().map(|h| h.join(".local/bin/codex-ui-resume")),
-        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("codex-ui-resume"))),
-    ];
-
-    for candidate in helper_names.into_iter().flatten() {
-        if candidate.exists() {
-            if let Ok(output) = Command::new(&candidate).output() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let outcome = parse_ui_resume_output(&stdout, output.status.success());
-                if outcome != UiResumeOutcome::NotFound {
-                    return outcome;
-                }
+    };
+    for target in &targets {
+        match inspect_thread_rollout_state(&crate::storage::codex_home(), target) {
+            ThreadRolloutState::ActiveInProgress | ThreadRolloutState::CleanCompleted => {}
+            state => {
+                return Err(format!(
+                    "Recovered task {target} ended in delayed state {state:?} during stabilization"
+                ))
             }
         }
     }
-
-    // 2. Fallback to inline swift -e script
-    const SWIFT_SCRIPT: &str = r#"
-import Cocoa
-import ApplicationServices
-
-struct CandidateButton {
-    let element: AXUIElement
-    let isPlay: Bool
-    let isSteer: Bool
-    let isResume: Bool
-    let y: CGFloat
+    crate::recovery::arm_automation_cooldown()
 }
-
-/// Identifies the non-functional text button inside the "Queue paused because you interrupted" banner
-func isBannerResume(title: String, desc: String, width: CGFloat, height: CGFloat) -> Bool {
-    let t = title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-    let d = desc.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-    if (t == "resume" || t == "возобновить") && d.isEmpty && width > 50 {
-        return true
-    }
-    return false
-}
-
-/// Identifies the circular "Play" button at the bottom-right of the composer (white right-facing triangle)
-func isPlayButton(title: String, desc: String, width: CGFloat, height: CGFloat) -> Bool {
-    let t = title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-    let d = desc.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-    if (d == "resume" || d == "возобновить" || d == "play" || d == "start") && (t.isEmpty || t == "▶" || t == ">") {
-        return true
-    }
-    return false
-}
-
-func isResumeButton(title: String, desc: String) -> Bool {
-    let t = title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-    let d = desc.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-    if t == "resume" || d == "resume" || t == "retry" || d == "retry" ||
-       t == "возобновить" || d == "возобновить" || t == "повторить" || d == "повторить" {
-        return true
-    }
-    if t == "try again" || d == "try again" || t.starts(with: "try again") || d.starts(with: "try again") {
-        return true
-    }
-    if t == "continue generating" || d == "continue generating" ||
-       t.starts(with: "continue generating") || d.starts(with: "continue generating") ||
-       t == "продолжить" || d == "продолжить" || t.starts(with: "продолжить") {
-        return true
-    }
-    if d.contains("resume") || d.contains("try sending this queued message again") {
-        return true
-    }
-    if t.starts(with: "resume") || t.starts(with: "retry") || t.starts(with: "возобновить") || t.starts(with: "повторить") {
-        return true
-    }
-    return false
-}
-
-func isSteerButton(title: String, desc: String) -> Bool {
-    let t = title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-    let d = desc.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-    if t == "steer" || d == "steer" || t == "направить" || d == "направить" {
-        return true
-    }
-    if d.contains("submit without interrupting") || d.contains("steer") {
-        return true
-    }
-    return false
-}
-
-func isGeneratingButton(desc: String, title: String) -> Bool {
-    let d = desc.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-    let t = title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-    return d == "stop" || t == "stop" || d == "остановить" || d == "зупинити"
-}
-
-func pressButton(el: AXUIElement) -> Bool {
-    _ = AXUIElementPerformAction(el, kAXPressAction as CFString)
-    
-    var posVal: AnyObject?
-    AXUIElementCopyAttributeValue(el, kAXPositionAttribute as CFString, &posVal)
-    var sizeVal: AnyObject?
-    AXUIElementCopyAttributeValue(el, kAXSizeAttribute as CFString, &sizeVal)
-    
-    var point = CGPoint.zero
-    var size = CGSize.zero
-    if let pv = posVal { AXValueGetValue(pv as! AXValue, .cgPoint, &point) }
-    if let sv = sizeVal { AXValueGetValue(sv as! AXValue, .cgSize, &size) }
-    
-    if size.width > 0 && size.height > 0 {
-        let center = CGPoint(x: point.x + size.width / 2.0, y: point.y + size.height / 2.0)
-        if let mouseDown = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: center, mouseButton: .left),
-           let mouseUp = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: center, mouseButton: .left) {
-            mouseDown.post(tap: .cghidEventTap)
-            usleep(50000)
-            mouseUp.post(tap: .cghidEventTap)
-            return true
-        }
-    }
-    return true
-}
-
-/// Searches the Accessibility hierarchy of ChatGPT / Codex and performs
-/// the circular `Play` action, `Steer` action, or turn `Resume` on any interrupted session.
-func resumeChatGPT() -> (success: Bool, outcome: String) {
-    guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first ?? NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.chat").first else {
-        return (false, "APP_NOT_FOUND")
-    }
-    
-    app.activate(options: .activateIgnoringOtherApps)
-    
-    let axApp = AXUIElementCreateApplication(app.processIdentifier)
-    AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, true as CFTypeRef)
-    AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, true as CFTypeRef)
-    
-    var windows: AnyObject?
-    guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windows) == .success,
-          let winList = windows as? [AXUIElement] else {
-        return (false, "NO_WINDOWS")
-    }
-    
-    var candidates: [CandidateButton] = []
-    var isAlreadyGenerating = false
-    
-    func collectButtons(el: AXUIElement, depth: Int = 0) {
-        if depth > 75 { return }
-        var role: AnyObject?
-        AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &role)
-        var desc: AnyObject?
-        AXUIElementCopyAttributeValue(el, kAXDescriptionAttribute as CFString, &desc)
-        var title: AnyObject?
-        AXUIElementCopyAttributeValue(el, kAXTitleAttribute as CFString, &title)
-        
-        let r = (role as? String) ?? ""
-        let d = (desc as? String) ?? ""
-        let t = (title as? String) ?? ""
-        
-        if r == "AXButton" || r.contains("Button") {
-            var enabledVal: AnyObject?
-            if AXUIElementCopyAttributeValue(el, kAXEnabledAttribute as CFString, &enabledVal) == .success,
-               let en = enabledVal as? Bool, !en {
-                // skip disabled buttons
-            } else {
-                var posVal: AnyObject?
-                AXUIElementCopyAttributeValue(el, kAXPositionAttribute as CFString, &posVal)
-                var sizeVal: AnyObject?
-                AXUIElementCopyAttributeValue(el, kAXSizeAttribute as CFString, &sizeVal)
-                var pt = CGPoint.zero
-                var sz = CGSize.zero
-                if let pv = posVal { AXValueGetValue(pv as! AXValue, .cgPoint, &pt) }
-                if let sv = sizeVal { AXValueGetValue(sv as! AXValue, .cgSize, &sz) }
-                
-                if isGeneratingButton(desc: d, title: t) && sz.width < 45 && sz.height < 45 {
-                    isAlreadyGenerating = true
-                }
-                
-                // Skip the non-functional "Queue paused because you interrupted [Resume]" banner button
-                if isBannerResume(title: t, desc: d, width: sz.width, height: sz.height) {
-                    // Do not add banner button
-                } else {
-                    let play = isPlayButton(title: t, desc: d, width: sz.width, height: sz.height)
-                    let steer = isSteerButton(title: t, desc: d)
-                    let resume = isResumeButton(title: t, desc: d)
-                    
-                    if play || steer || resume {
-                        if sz.width >= 16 && sz.height >= 16 {
-                            candidates.append(CandidateButton(
-                                element: el,
-                                isPlay: play,
-                                isSteer: steer,
-                                isResume: resume,
-                                y: pt.y
-                            ))
-                        }
-                    }
-                }
-            }
-        }
-        
-        var children: AnyObject?
-        if AXUIElementCopyAttributeValue(el, kAXChildrenAttribute as CFString, &children) == .success,
-           let childList = children as? [AXUIElement] {
-            for c in childList {
-                collectButtons(el: c, depth: depth + 1)
-            }
-        }
-    }
-    
-    for win in winList {
-        var posVal: AnyObject?
-        AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posVal)
-        var sizeVal: AnyObject?
-        AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &sizeVal)
-        var pt = CGPoint.zero
-        var sz = CGSize.zero
-        if let pv = posVal { AXValueGetValue(pv as! AXValue, .cgPoint, &pt) }
-        if let sv = sizeVal { AXValueGetValue(sv as! AXValue, .cgSize, &sz) }
-        // Only inspect visible on-screen windows
-        if pt.x >= -100 && pt.y >= 0 && sz.width > 300 && sz.height > 300 {
-            collectButtons(el: win)
-        }
-    }
-    
-    if isAlreadyGenerating {
-        print("ALREADY_ACTIVE")
-        return (true, "ALREADY_ACTIVE")
-    }
-    
-    if candidates.isEmpty {
-        return (false, "NOT_FOUND")
-    }
-    
-    // Sort descending by Y so bottom-most active controls take priority over scrollback history
-    candidates.sort { $0.y > $1.y }
-    
-    guard let maxY = candidates.first?.y else { return (false, "NOT_FOUND") }
-    // Focus on active interaction zone (bottom 250pt near lowest candidate)
-    let activeZone = candidates.filter { $0.y >= maxY - 250 }
-    
-    // Priority order:
-    // 1. Circular Play button at bottom-right of composer (white right-facing triangle) -> resumes queue directly
-    if let playTarget = activeZone.first(where: { $0.isPlay }) {
-        if pressButton(el: playTarget.element) {
-            print("RESUMED_VIA_PLAY_BUTTON")
-            return (true, "RESUMED_VIA_PLAY_BUTTON")
-        }
-    }
-    
-    // 2. Steer button on queued message row
-    if let steerTarget = activeZone.first(where: { $0.isSteer }) {
-        if pressButton(el: steerTarget.element) {
-            print("RESUMED_VIA_STEER")
-            return (true, "RESUMED_VIA_STEER")
-        }
-    }
-    
-    // 3. Native turn Resume/Retry button
-    if let resumeTarget = activeZone.first(where: { $0.isResume }) {
-        if pressButton(el: resumeTarget.element) {
-            print("RESUMED_VIA_TURN_RESUME")
-            return (true, "RESUMED_VIA_TURN_RESUME")
-        }
-    }
-    
-    return (false, "NOT_FOUND")
-}
-
-let result = resumeChatGPT()
-exit(result.success ? 0 : 1)
-"#;
-
-    if let Ok(output) = Command::new("swift").arg("-e").arg(SWIFT_SCRIPT).output() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        return parse_ui_resume_output(&stdout, output.status.success());
-    }
-
-    UiResumeOutcome::NotFound
-}
-
-/// Triggers the native macOS Accessibility "Resume" action on ChatGPT.app
-/// to unpause any interrupted steer or paused queue.
-pub fn trigger_codex_ui_resume() -> bool {
-    trigger_codex_ui_resume_detailed().is_success()
-}
-
-/// Polls for the ChatGPT UI to finish hydrating and triggers Resume if needed.
-pub fn poll_and_trigger_ui_resume(retries: usize, interval: Duration) -> bool {
-    for i in 1..=retries {
-        if trigger_codex_ui_resume() {
-            println!("✅ Triggered UI Resume for active Codex thread (attempt {i}/{retries})");
-            return true;
-        }
-        sleep(interval);
-    }
-    false
-}
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1181,6 +1210,27 @@ mod tests {
     }
 
     #[test]
+    fn parses_only_the_exact_codex_app_executable() {
+        let process_list = format!(
+            "  42 {CODEX_APP_EXECUTABLE}\n\
+             43 /Applications/ChatGPT.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper\n\
+             44 /Applications/Other.app/Contents/MacOS/ChatGPT\n"
+        );
+
+        assert_eq!(parse_codex_app_pids(&process_list), vec![42]);
+    }
+
+    #[test]
+    fn explicit_primary_is_always_first_and_never_duplicated() {
+        let primary = "01a098c2-0fae-74d2-a80c-45d89e910e79".to_string();
+        let mut targets = vec!["other".to_string(), primary.clone()];
+        prioritize_primary(&mut targets, Some(&primary));
+        assert_eq!(targets, [primary.clone(), "other".to_string()]);
+        prioritize_primary(&mut targets, Some(&primary));
+        assert_eq!(targets, [primary, "other".to_string()]);
+    }
+
+    #[test]
     fn test_resolve_target_account_idx() {
         use crate::models::{AccountConfig, AuthTokens};
 
@@ -1211,6 +1261,7 @@ mod tests {
                 plan_multiplier: None,
                 multiplier_is_manual: None,
                 last_multiplier_checked: None,
+                organization_name: None,
             },
             AccountConfig {
                 id: "dev@company.com:26a1ef5c-ad94-460e".to_string(),
@@ -1238,11 +1289,15 @@ mod tests {
                 plan_multiplier: None,
                 multiplier_is_manual: None,
                 last_multiplier_checked: None,
+                organization_name: None,
             },
         ];
 
         // 1. Resolve by exact canonical ID
-        assert_eq!(resolve_target_account_idx(&accounts, "user@example.com:3f533057-4bac-44ea"), Ok(0));
+        assert_eq!(
+            resolve_target_account_idx(&accounts, "user@example.com:3f533057-4bac-44ea"),
+            Ok(0)
+        );
 
         // 2. Resolve by nickname
         assert_eq!(resolve_target_account_idx(&accounts, "personal"), Ok(0));
@@ -1253,7 +1308,10 @@ mod tests {
         assert_eq!(resolve_target_account_idx(&accounts, "26a1ef"), Ok(1));
 
         // 4. Resolve by email
-        assert_eq!(resolve_target_account_idx(&accounts, "dev@company.com"), Ok(1));
+        assert_eq!(
+            resolve_target_account_idx(&accounts, "dev@company.com"),
+            Ok(1)
+        );
 
         // 5. Unknown account
         assert!(resolve_target_account_idx(&accounts, "unknown").is_err());
@@ -1281,6 +1339,69 @@ mod tests {
             clean_thread_id("  codex://threads/01a07d3c-3008-75c2-87a6-2c5c75f0e48b  "),
             "01a07d3c-3008-75c2-87a6-2c5c75f0e48b"
         );
+    }
+
+    #[test]
+    fn user_thread_lookup_fails_closed_for_missing_archived_and_subagent_rows() {
+        let root = std::env::temp_dir().join(format!(
+            "codex-user-thread-test-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("unnamed")
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let user_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e48b";
+        let subagent_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e48c";
+        let archived_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e48d";
+        let missing_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e48e";
+
+        assert!(!is_user_thread(&root, user_id));
+        let database = root.join("state_5.sqlite");
+        let sql = format!(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, archived INTEGER, thread_source TEXT);\
+             INSERT INTO threads VALUES ('{user_id}', 0, 'cli');\
+             INSERT INTO threads VALUES ('{subagent_id}', 0, 'subagent');\
+             INSERT INTO threads VALUES ('{archived_id}', 1, 'cli');"
+        );
+        let result = Command::new("/usr/bin/sqlite3")
+            .arg(&database)
+            .arg(sql)
+            .status()
+            .unwrap();
+        assert!(result.success());
+        assert!(is_user_thread(&root, user_id));
+        assert!(!is_user_thread(&root, subagent_id));
+        assert!(!is_user_thread(&root, archived_id));
+        assert!(!is_user_thread(&root, missing_id));
+        assert!(!is_user_thread(&root, "not-a-thread-id' OR 1=1 --"));
+
+        let mut detected = vec![user_id.to_string()];
+        append_eligible_pending(
+            &root,
+            &mut detected,
+            vec![
+                user_id.to_string(),
+                subagent_id.to_string(),
+                archived_id.to_string(),
+                missing_id.to_string(),
+            ],
+        );
+        assert_eq!(detected, vec![user_id.to_string()]);
+
+        let mut primary_targets = Vec::new();
+        assert!(!prioritize_primary_if_user(
+            &root,
+            &mut primary_targets,
+            Some(&subagent_id.to_string())
+        ));
+        assert!(primary_targets.is_empty());
+        assert!(prioritize_primary_if_user(
+            &root,
+            &mut primary_targets,
+            Some(&user_id.to_string())
+        ));
+        assert_eq!(primary_targets, vec![user_id.to_string()]);
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1312,9 +1433,12 @@ mod tests {
     #[test]
     fn test_rollout_turn_aborted_by_user() {
         let lines = vec![
-            r#"{"type":"event_msg","payload":{"type":"user_message","message":"Investigate bug"}}"#.to_string(),
-            r#"{"type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}"#.to_string(),
-            r#"{"type":"event_msg","payload":{"type":"item_completed","thread_id":"th-3"}}"#.to_string(),
+            r#"{"type":"event_msg","payload":{"type":"user_message","message":"Investigate bug"}}"#
+                .to_string(),
+            r#"{"type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}"#
+                .to_string(),
+            r#"{"type":"event_msg","payload":{"type":"item_completed","thread_id":"th-3"}}"#
+                .to_string(),
         ];
 
         let state = inspect_thread_rollout_state_from_lines(&lines);
@@ -1339,48 +1463,10 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_ui_resume_output_tokens() {
-        assert_eq!(
-            parse_ui_resume_output("RESUMED_VIA_PLAY_BUTTON\n", true),
-            UiResumeOutcome::PlayPressed
-        );
-        assert!(UiResumeOutcome::PlayPressed.is_success());
-
-        assert_eq!(
-            parse_ui_resume_output("RESUMED_VIA_TURN_RESUME\n", true),
-            UiResumeOutcome::TurnResumePressed
-        );
-        assert!(UiResumeOutcome::TurnResumePressed.is_success());
-
-        assert_eq!(
-            parse_ui_resume_output("RESUMED_VIA_STEER\n", true),
-            UiResumeOutcome::SteerPressed
-        );
-        assert!(UiResumeOutcome::SteerPressed.is_success());
-
-        assert_eq!(
-            parse_ui_resume_output("ALREADY_ACTIVE\n", true),
-            UiResumeOutcome::AlreadyActive
-        );
-        assert!(UiResumeOutcome::AlreadyActive.is_success());
-
-        assert_eq!(
-            parse_ui_resume_output("NOT_FOUND\n", false),
-            UiResumeOutcome::NotFound
-        );
-        assert!(!UiResumeOutcome::NotFound.is_success());
-
-        // Success exit with unspecified stdout falls back to PlayPressed
-        assert_eq!(
-            parse_ui_resume_output("", true),
-            UiResumeOutcome::PlayPressed
-        );
-
-        // Failure exit with unrecognized stdout is NotFound
-        assert_eq!(
-            parse_ui_resume_output("random error", false),
-            UiResumeOutcome::NotFound
-        );
+    fn detects_when_self_restart_needs_an_independent_worker() {
+        let rows = format!("1 0 /sbin/launchd\n100 1 {CODEX_APP_EXECUTABLE}\n200 100 /app-server\n300 200 /bin/zsh\n400 300 /cxi\n500 1 /cxi");
+        assert!(has_codex_ancestor(&rows, 400).unwrap());
+        assert!(!has_codex_ancestor(&rows, 500).unwrap());
+        assert!(has_codex_ancestor(&rows, 999).is_err());
     }
 }
-

@@ -134,6 +134,8 @@ pub struct AccountConfig {
     pub multiplier_is_manual: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_multiplier_checked: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization_name: Option<String>,
 }
 
 impl AccountConfig {
@@ -173,7 +175,11 @@ impl AccountConfig {
         }
         if let Some(ref n) = self.name {
             let n_lower = n.trim().to_lowercase();
-            if n_lower == "business" || n_lower == "team" || n_lower.contains("business") || n_lower.contains("corporate") {
+            if n_lower == "business"
+                || n_lower == "team"
+                || n_lower.contains("business")
+                || n_lower.contains("corporate")
+            {
                 return true;
             }
         }
@@ -190,6 +196,9 @@ fn default_plan() -> String {
 }
 fn default_true() -> bool {
     true
+}
+fn default_auto_reset_state() -> String {
+    "disabled".to_string()
 }
 fn default_100() -> f64 {
     100.0
@@ -213,6 +222,15 @@ pub struct Settings {
     pub auto_switch_business_only: bool,
     #[serde(default)]
     pub auto_switch_business_priority: bool,
+    /// Spend one reset credit when the active account's weekly pool is empty
+    /// and a recent user task is blocked by that quota.  This is deliberately
+    /// opt-in because a reset credit is a consumable account resource.
+    #[serde(default)]
+    pub auto_reset_weekly_enabled: bool,
+    /// Minimum number of seconds that must remain before the ordinary weekly
+    /// reset.  Zero means "always when weekly availability is exactly 0%".
+    #[serde(default)]
+    pub auto_reset_weekly_min_remaining_seconds: u64,
 }
 
 fn default_poll_interval() -> u64 {
@@ -233,6 +251,8 @@ impl Default for Settings {
             auto_switch_enabled: true,
             auto_switch_business_only: false,
             auto_switch_business_priority: false,
+            auto_reset_weekly_enabled: false,
+            auto_reset_weekly_min_remaining_seconds: 0,
         }
     }
 }
@@ -270,6 +290,8 @@ pub struct AccountStatusEntry {
     pub error: Option<String>,
     #[serde(default = "default_1_0")]
     pub plan_multiplier: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -295,6 +317,16 @@ pub struct StatusFile {
     pub auto_switch_business_only: bool,
     #[serde(default)]
     pub auto_switch_business_priority: bool,
+    #[serde(default)]
+    pub auto_reset_weekly_enabled: bool,
+    #[serde(default)]
+    pub auto_reset_weekly_min_remaining_seconds: u64,
+    #[serde(default = "default_auto_reset_state")]
+    pub auto_reset_state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_reset_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_reset_last_event_at: Option<String>,
     #[serde(default = "default_1_0")]
     pub plan_multiplier: f64,
     pub accounts: Vec<AccountStatusEntry>,

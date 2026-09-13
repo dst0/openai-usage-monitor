@@ -193,6 +193,7 @@ mod tests {
             plan_multiplier: None,
             multiplier_is_manual: None,
             last_multiplier_checked: None,
+            organization_name: None,
         }
     }
 
@@ -212,8 +213,14 @@ mod tests {
     #[test]
     fn test_single_account_never_switches() {
         let accounts = vec![make_acc("acc-1", 0.0, 3600)];
-        assert_eq!(select_best_switch(Some("acc-1"), &accounts, 10.0, "reset-first", false, false), None);
-        assert_eq!(select_best_switch(None, &accounts, 10.0, "reset-first", false, false), None);
+        assert_eq!(
+            select_best_switch(Some("acc-1"), &accounts, 10.0, "reset-first", false, false),
+            None
+        );
+        assert_eq!(
+            select_best_switch(None, &accounts, 10.0, "reset-first", false, false),
+            None
+        );
     }
 
     #[test]
@@ -228,18 +235,25 @@ mod tests {
 
         // With threshold = 10.0, neither reserve has quota > threshold (0% and 5%)
         // Crucial test: MUST return None, NEVER switch or exit pro-user!
-        let chosen = select_best_switch(Some("pro-user"), &accounts, 10.0, "reset-first", false, false);
+        let chosen = select_best_switch(
+            Some("pro-user"),
+            &accounts,
+            10.0,
+            "reset-first",
+            false,
+            false,
+        );
         assert_eq!(chosen, None);
     }
 
     #[test]
     fn test_candidate_must_have_greater_quota_than_active() {
-        let accounts = vec![
-            make_acc("acc-1", 50.0, 3600),
-            make_acc("acc-2", 30.0, 1800),
-        ];
+        let accounts = vec![make_acc("acc-1", 50.0, 3600), make_acc("acc-2", 30.0, 1800)];
         // acc-2 has 30% > threshold (10%), but less than active (50%) -> should NOT switch
-        assert_eq!(select_best_switch(Some("acc-1"), &accounts, 10.0, "reset-first", false, false), None);
+        assert_eq!(
+            select_best_switch(Some("acc-1"), &accounts, 10.0, "reset-first", false, false),
+            None
+        );
     }
 
     #[test]
@@ -253,7 +267,14 @@ mod tests {
         ];
 
         // acc-2 has MORE resets (credits: 3 vs 0), so it must be selected first!
-        let chosen = select_best_switch(Some("acc-active"), &accounts, 0.0, "reset-first", false, false);
+        let chosen = select_best_switch(
+            Some("acc-active"),
+            &accounts,
+            0.0,
+            "reset-first",
+            false,
+            false,
+        );
         assert_eq!(chosen, Some("acc-2".to_string()));
     }
 
@@ -268,7 +289,14 @@ mod tests {
         ];
 
         // In business_only mode: personal-1 is ignored, biz-2 is selected
-        let chosen = select_best_switch(Some("biz-active"), &accounts, 0.0, "reset-first", true, false);
+        let chosen = select_best_switch(
+            Some("biz-active"),
+            &accounts,
+            0.0,
+            "reset-first",
+            true,
+            false,
+        );
         assert_eq!(chosen, Some("biz-2".to_string()));
 
         // If all business accounts are exhausted, business_only returns None even if personal has quota
@@ -277,7 +305,14 @@ mod tests {
             make_acc_with_credits_and_plan("personal-1", 100.0, 1000, Some(5), "plus"),
             make_acc_with_credits_and_plan("biz-2", 0.0, 2000, Some(1), "business"),
         ];
-        let chosen_exhausted = select_best_switch(Some("biz-active"), &exhausted_biz, 0.0, "reset-first", true, false);
+        let chosen_exhausted = select_best_switch(
+            Some("biz-active"),
+            &exhausted_biz,
+            0.0,
+            "reset-first",
+            true,
+            false,
+        );
         assert_eq!(chosen_exhausted, None);
     }
 
@@ -295,7 +330,14 @@ mod tests {
 
         // In business_priority: business accounts are used FIRST.
         // Between biz-1 and biz-2: biz-2 has more credits (2 > 1), so biz-2 is selected!
-        let chosen = select_best_switch(Some("active-acc"), &accounts, 0.0, "reset-first", false, true);
+        let chosen = select_best_switch(
+            Some("active-acc"),
+            &accounts,
+            0.0,
+            "reset-first",
+            false,
+            true,
+        );
         assert_eq!(chosen, Some("biz-2".to_string()));
 
         // When all business accounts are exhausted, fallback to personal-1:
@@ -305,7 +347,14 @@ mod tests {
             make_acc_with_credits_and_plan("biz-2", 0.0, 2000, Some(2), "business"),
             make_acc_with_credits_and_plan("personal-1", 90.0, 1000, Some(3), "plus"),
         ];
-        let fallback_chosen = select_best_switch(Some("active-acc"), &exhausted_biz_accounts, 0.0, "reset-first", false, true);
+        let fallback_chosen = select_best_switch(
+            Some("active-acc"),
+            &exhausted_biz_accounts,
+            0.0,
+            "reset-first",
+            false,
+            true,
+        );
         assert_eq!(fallback_chosen, Some("personal-1".to_string()));
     }
 
@@ -313,13 +362,21 @@ mod tests {
     fn test_needs_switch_and_preemption_when_business_quota_restores() {
         let active_pro = make_acc_with_credits_and_plan("pro-active", 95.0, 7200, Some(10), "pro");
         let exhausted_biz = make_acc_with_credits_and_plan("biz-1", 0.0, 3600, Some(2), "team");
-        let restored_biz = make_acc_with_credits_and_plan("biz-restored", 80.0, 1800, Some(4), "business");
+        let restored_biz =
+            make_acc_with_credits_and_plan("biz-restored", 80.0, 1800, Some(4), "business");
 
         // 1. While business account is exhausted, active Pro (95%) does NOT need switch
         let accounts_exhausted = vec![active_pro.clone(), exhausted_biz.clone()];
         assert!(!needs_switch(&active_pro, 0.0, true, &accounts_exhausted));
         assert_eq!(
-            select_best_switch(Some("pro-active"), &accounts_exhausted, 0.0, "reset-first", false, true),
+            select_best_switch(
+                Some("pro-active"),
+                &accounts_exhausted,
+                0.0,
+                "reset-first",
+                false,
+                true
+            ),
             None
         );
 
@@ -328,7 +385,14 @@ mod tests {
         assert!(needs_switch(&active_pro, 0.0, true, &accounts_restored));
 
         // 3. select_best_switch MUST preempt Pro (95%) in favor of restored business account (80%)!
-        let chosen = select_best_switch(Some("pro-active"), &accounts_restored, 0.0, "reset-first", false, true);
+        let chosen = select_best_switch(
+            Some("pro-active"),
+            &accounts_restored,
+            0.0,
+            "reset-first",
+            false,
+            true,
+        );
         assert_eq!(chosen, Some("biz-restored".to_string()));
 
         // 4. Once on business account, even if another business account has more quota, needs_switch is false (no switch triggered)
@@ -336,14 +400,31 @@ mod tests {
             make_acc_with_credits_and_plan("biz-current", 60.0, 3600, Some(1), "team"),
             make_acc_with_credits_and_plan("biz-other", 100.0, 1800, Some(5), "business"),
         ];
-        assert!(!needs_switch(&accounts_two_biz[0], 0.0, true, &accounts_two_biz));
+        assert!(!needs_switch(
+            &accounts_two_biz[0],
+            0.0,
+            true,
+            &accounts_two_biz
+        ));
 
         // When biz-current exhausts its quota (0%), needs_switch triggers and switches to biz-other
         let mut biz_current_exhausted = accounts_two_biz.clone();
         biz_current_exhausted[0].last_primary_percentage = 0.0;
-        assert!(needs_switch(&biz_current_exhausted[0], 0.0, true, &biz_current_exhausted));
+        assert!(needs_switch(
+            &biz_current_exhausted[0],
+            0.0,
+            true,
+            &biz_current_exhausted
+        ));
         assert_eq!(
-            select_best_switch(Some("biz-current"), &biz_current_exhausted, 0.0, "reset-first", false, true),
+            select_best_switch(
+                Some("biz-current"),
+                &biz_current_exhausted,
+                0.0,
+                "reset-first",
+                false,
+                true
+            ),
             Some("biz-other".to_string())
         );
     }

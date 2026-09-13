@@ -18,3 +18,5 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"
 clap = { version = "4.4", features = ["derive"] }
 fs2 = "0.4"
+libc = "0.2"
+getrandom = "0.2"

@@ -29,16 +29,21 @@ if [ -f "${SCRIPT_SOURCE}" ]; then
 fi
 
 CLEANUP_TMP=0
+CLI_STAGING=""
+cleanup() {
+    if [ -n "${CLI_STAGING}" ] && [ -f "${CLI_STAGING}" ]; then
+        rm -f "${CLI_STAGING}"
+    fi
+    if [ "${CLEANUP_TMP}" -eq 1 ] && [ -d "${TMP_DIR:-}" ]; then
+        rm -rf "${TMP_DIR}"
+    fi
+}
+trap cleanup EXIT INT TERM
+
 if [ -z "${PROJECT_DIR}" ]; then
     echo "🌐 Remote installation detected. Preparing temporary build environment..."
     TMP_DIR="$(mktemp -d -t codex-mon-install-XXXXXX)"
     CLEANUP_TMP=1
-    cleanup() {
-        if [ "${CLEANUP_TMP}" -eq 1 ] && [ -d "${TMP_DIR:-}" ]; then
-            rm -rf "${TMP_DIR}"
-        fi
-    }
-    trap cleanup EXIT INT TERM
 
     echo "📥 Fetching source code from ${REPO_URL}..."
     if command -v git >/dev/null 2>&1; then
@@ -149,21 +154,35 @@ cd "${PROJECT_DIR}/codex-switcher"
 cargo build --release
 
 echo "📦 Installing CLI to ${LOCAL_BIN}..."
-cp "target/release/codex-mon" "${LOCAL_BIN}/codex-mon"
-chmod +x "${LOCAL_BIN}/codex-mon"
-xattr -c "${LOCAL_BIN}/codex-mon" 2>/dev/null || true
-codesign -s - -f "${LOCAL_BIN}/codex-mon" 2>/dev/null || true
+# The daemon may be executing the current CLI binary. Rewriting that inode in
+# place invalidates its mapped code signature and can make subsequent settings
+# commands die with SIGKILL. Prepare and verify a fresh inode, then atomically
+# replace the pathname so the old daemon can finish safely.
+CLI_STAGING="$(mktemp "${LOCAL_BIN}/.codex-mon.install.XXXXXX")"
+cp "target/release/codex-mon" "${CLI_STAGING}"
+chmod 755 "${CLI_STAGING}"
+xattr -c "${CLI_STAGING}" 2>/dev/null || true
+codesign --verify --strict "${CLI_STAGING}"
+"${CLI_STAGING}" --version >/dev/null
+mv -f "${CLI_STAGING}" "${LOCAL_BIN}/codex-mon"
+CLI_STAGING=""
 ln -sfn "${LOCAL_BIN}/codex-mon" "${LOCAL_BIN}/cxi"
 
 # Ensure transparent codex CLI shim exists
 echo "🔗 Configuring codex CLI shim..."
 "${LOCAL_BIN}/codex-mon" install-shim || true
 
-# Compile codex-ui-resume helper for Accessibility automation
+# Compile the native recovery banner and visibility helper
 if [ -f "${PROJECT_DIR}/scripts/codex-ui-resume.swift" ]; then
     echo "⚡ Compiling codex-ui-resume helper..."
     swiftc -O -target "${ARCH}-apple-macosx13.0" -o "${LOCAL_BIN}/codex-ui-resume" "${PROJECT_DIR}/scripts/codex-ui-resume.swift"
     chmod +x "${LOCAL_BIN}/codex-ui-resume"
+fi
+
+# Compile and install native Codex Notifier helper
+if [ -f "${PROJECT_DIR}/codex-notifier/build.sh" ]; then
+    echo "🔔 Building and installing Codex Notifier..."
+    "${PROJECT_DIR}/codex-notifier/build.sh"
 fi
 
 # ------------------------------------------------------------------------------
@@ -265,16 +284,16 @@ osascript -e "tell application \"System Events\"
     make login item at end with properties {name:\"${APP_NAME}\", path:\"${INSTALL_DIR}/${BUNDLE_NAME}\", hidden:false}
 end tell" 2>/dev/null || true
 
-# Configure launchd background daemon automatically
+# Configure the launchd daemon. Codex Monitor owns its lifecycle: opening the
+# menu app loads it, and Quit unloads it together with any restart worker.
 if [ -f "${PROJECT_DIR}/com.codex.switcher.plist" ]; then
     echo "⚙️  Configuring background monitoring daemon (launchd)..."
     LAUNCH_AGENTS="${HOME}/Library/LaunchAgents"
     mkdir -p "${LAUNCH_AGENTS}"
     TARGET_PLIST="${LAUNCH_AGENTS}/com.codex.switcher.plist"
-    sed "s|__HOME__|${HOME}|g" "${PROJECT_DIR}/com.codex.switcher.plist" > "${TARGET_PLIST}"
     launchctl unload "${TARGET_PLIST}" 2>/dev/null || true
-    launchctl load "${TARGET_PLIST}" 2>/dev/null || true
-    echo "  -> Loaded background daemon at ${TARGET_PLIST}"
+    sed "s|__HOME__|${HOME}|g" "${PROJECT_DIR}/com.codex.switcher.plist" > "${TARGET_PLIST}"
+    echo "  -> Installed background daemon at ${TARGET_PLIST}; Codex Monitor will load it"
 fi
 
 # ------------------------------------------------------------------------------

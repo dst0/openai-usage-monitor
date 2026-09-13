@@ -7,7 +7,9 @@ pub const OAUTH_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 pub const OAUTH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 
 pub fn extract_jwt_metadata(token: Option<&str>) -> (Option<String>, Option<String>) {
-    let Some(t) = token else { return (None, None); };
+    let Some(t) = token else {
+        return (None, None);
+    };
     let parts: Vec<&str> = t.split('.').collect();
     if parts.len() < 2 {
         return (None, None);
@@ -20,8 +22,10 @@ pub fn extract_jwt_metadata(token: Option<&str>) -> (Option<String>, Option<Stri
         padded.push('=');
     }
 
-    let Ok(decoded_bytes) = URL_SAFE_NO_PAD.decode(payload_b64)
-        .or_else(|_| base64::engine::general_purpose::STANDARD.decode(&padded)) else {
+    let Ok(decoded_bytes) = URL_SAFE_NO_PAD
+        .decode(payload_b64)
+        .or_else(|_| base64::engine::general_purpose::STANDARD.decode(&padded))
+    else {
         return (None, None);
     };
 
@@ -29,16 +33,19 @@ pub fn extract_jwt_metadata(token: Option<&str>) -> (Option<String>, Option<Stri
         return (None, None);
     };
 
-    let email = json_val.get("email")
+    let email = json_val
+        .get("email")
         .and_then(|v| v.as_str())
         .or_else(|| {
-            json_val.get("https://api.openai.com/profile")
+            json_val
+                .get("https://api.openai.com/profile")
                 .and_then(|p| p.get("email"))
                 .and_then(|v| v.as_str())
         })
         .map(|s| s.to_string());
 
-    let plan = json_val.get("https://api.openai.com/auth")
+    let plan = json_val
+        .get("https://api.openai.com/auth")
         .and_then(|a| a.get("chatgpt_plan_type"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
@@ -57,7 +64,9 @@ pub fn extract_jwt_metadata_from_tokens(tokens: &AuthTokens) -> (Option<String>,
 }
 
 pub fn refresh_access_token(tokens: &mut AuthTokens) -> Result<(), String> {
-    let refresh_token = tokens.refresh_token.as_ref()
+    let refresh_token = tokens
+        .refresh_token
+        .as_ref()
         .ok_or_else(|| "No refresh token available to refresh access token".to_string())?;
 
     let resp = match ureq::post(OAUTH_TOKEN_URL)
@@ -83,7 +92,8 @@ pub fn refresh_access_token(tokens: &mut AuthTokens) -> Result<(), String> {
         Err(e) => return Err(format!("OAuth token refresh request failed: {}", e)),
     };
 
-    let token_resp: OAuthTokenResponse = resp.into_json()
+    let token_resp: OAuthTokenResponse = resp
+        .into_json()
         .map_err(|e| format!("Failed to parse OAuth token response: {}", e))?;
 
     tokens.access_token = token_resp.access_token;

@@ -40,7 +40,10 @@ pub fn find_existing_account_idx_from_parts(
     let email_trimmed = email.trim();
     let is_valid_email = |e: &str| -> bool {
         let t = e.trim();
-        !t.is_empty() && t.contains('@') && !t.eq_ignore_ascii_case("user@openai.com") && !t.eq_ignore_ascii_case("current-user")
+        !t.is_empty()
+            && t.contains('@')
+            && !t.eq_ignore_ascii_case("user@openai.com")
+            && !t.eq_ignore_ascii_case("current-user")
     };
     let has_real_email = is_valid_email(email_trimmed);
     let id_trimmed = id.trim();
@@ -62,7 +65,12 @@ pub fn find_existing_account_idx_from_parts(
         if !has_acc_id {
             return false;
         }
-        let cand_tok_acc_id = candidate.tokens.account_id.as_deref().map(str::trim).unwrap_or("");
+        let cand_tok_acc_id = candidate
+            .tokens
+            .account_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("");
         let cand_acc_id = if !cand_tok_acc_id.is_empty() && cand_tok_acc_id != "default" {
             cand_tok_acc_id
         } else {
@@ -75,7 +83,9 @@ pub fn find_existing_account_idx_from_parts(
     // Helper: check if candidate has a known plan that conflicts with incoming plan
     let has_plan_conflict = |candidate: &AccountConfig| -> bool {
         let cand_plan = candidate.plan_type.trim();
-        !incoming_plan.is_empty() && !cand_plan.is_empty() && !cand_plan.eq_ignore_ascii_case(incoming_plan)
+        !incoming_plan.is_empty()
+            && !cand_plan.is_empty()
+            && !cand_plan.eq_ignore_ascii_case(incoming_plan)
     };
 
     // Helper: check if candidate has a distinct ID that would be clobbered
@@ -109,7 +119,10 @@ pub fn find_existing_account_idx_from_parts(
             if has_email_conflict(a) || has_workspace_conflict(a) || has_plan_conflict(a) {
                 return false;
             }
-            a.name.as_deref().map(|n| n.trim().eq_ignore_ascii_case(id_trimmed)) == Some(true)
+            a.name
+                .as_deref()
+                .map(|n| n.trim().eq_ignore_ascii_case(id_trimmed))
+                == Some(true)
         }) {
             return Some(pos);
         }
@@ -124,7 +137,8 @@ pub fn find_existing_account_idx_from_parts(
                 a.id.trim().eq_ignore_ascii_case(&canonical_id)
                     || (a.email.trim().eq_ignore_ascii_case(email_trimmed)
                         && (a.account_id.trim() == acc_id_trimmed
-                            || a.tokens.account_id.as_deref().map(str::trim) == Some(acc_id_trimmed)))
+                            || a.tokens.account_id.as_deref().map(str::trim)
+                                == Some(acc_id_trimmed)))
             }) {
                 return Some(pos);
             }
@@ -132,14 +146,18 @@ pub fn find_existing_account_idx_from_parts(
 
         // 4. Token match (same session credentials being updated)
         if !rt_trimmed.is_empty() {
-            if let Some(pos) = accounts.iter().position(|a| {
-                a.tokens.refresh_token.as_deref().map(str::trim) == Some(rt_trimmed)
-            }) {
+            if let Some(pos) = accounts
+                .iter()
+                .position(|a| a.tokens.refresh_token.as_deref().map(str::trim) == Some(rt_trimmed))
+            {
                 return Some(pos);
             }
         }
         if !at_trimmed.is_empty() {
-            if let Some(pos) = accounts.iter().position(|a| a.tokens.access_token.trim() == at_trimmed) {
+            if let Some(pos) = accounts
+                .iter()
+                .position(|a| a.tokens.access_token.trim() == at_trimmed)
+            {
                 return Some(pos);
             }
         }
@@ -151,16 +169,20 @@ pub fn find_existing_account_idx_from_parts(
 
     // Tier 1: Refresh token match across all accounts
     if !rt_trimmed.is_empty() {
-        if let Some(pos) = accounts.iter().position(|a| {
-            a.tokens.refresh_token.as_deref().map(str::trim) == Some(rt_trimmed)
-        }) {
+        if let Some(pos) = accounts
+            .iter()
+            .position(|a| a.tokens.refresh_token.as_deref().map(str::trim) == Some(rt_trimmed))
+        {
             return Some(pos);
         }
     }
 
     // Tier 2: Access token match across all accounts
     if !at_trimmed.is_empty() {
-        if let Some(pos) = accounts.iter().position(|a| a.tokens.access_token.trim() == at_trimmed) {
+        if let Some(pos) = accounts
+            .iter()
+            .position(|a| a.tokens.access_token.trim() == at_trimmed)
+        {
             return Some(pos);
         }
     }
@@ -168,9 +190,10 @@ pub fn find_existing_account_idx_from_parts(
     // Tier 2.5: Canonical predictable ID match (email + workspace UUID)
     if has_real_email && has_acc_id {
         let canonical_id = build_predictable_account_id(email_trimmed, acc_id_trimmed);
-        if let Some(pos) = accounts.iter().position(|a| {
-            a.id.trim().eq_ignore_ascii_case(&canonical_id)
-        }) {
+        if let Some(pos) = accounts
+            .iter()
+            .position(|a| a.id.trim().eq_ignore_ascii_case(&canonical_id))
+        {
             return Some(pos);
         }
     }
@@ -181,7 +204,11 @@ pub fn find_existing_account_idx_from_parts(
             .iter()
             .enumerate()
             .filter(|(_, a)| {
-                if has_email_conflict(a) || has_workspace_conflict(a) || has_plan_conflict(a) || has_id_conflict(a) {
+                if has_email_conflict(a)
+                    || has_workspace_conflict(a)
+                    || has_plan_conflict(a)
+                    || has_id_conflict(a)
+                {
                     return false;
                 }
                 a.account_id.trim() == acc_id_trimmed
@@ -305,13 +332,15 @@ pub fn deduplicate_accounts(accounts: &mut Vec<AccountConfig>) -> HashMap<String
             let existing_is_placeholder = existing.name.is_none()
                 || existing.name.as_deref() == Some("")
                 || existing.name.as_deref() == Some("main");
-            if existing_is_placeholder && acc.name.is_some() && acc.name.as_deref() != Some("main") {
+            if existing_is_placeholder && acc.name.is_some() && acc.name.as_deref() != Some("main")
+            {
                 existing.name = acc.name;
             }
 
             // Ensure existing has canonical predictable ID
             if is_real_email {
-                let canonical_id = build_predictable_account_id(&existing.email, &existing.account_id);
+                let canonical_id =
+                    build_predictable_account_id(&existing.email, &existing.account_id);
                 if existing.id != canonical_id {
                     merged_ids.insert(existing.id.clone(), canonical_id.clone());
                     existing.id = canonical_id;
@@ -357,7 +386,9 @@ pub fn deduplicate_accounts(accounts: &mut Vec<AccountConfig>) -> HashMap<String
 
             // Upgrade plan type if incoming is more specific
             if existing.plan_type.is_empty()
-                || (existing.plan_type == "team" && acc.plan_type != "team" && !acc.plan_type.is_empty())
+                || (existing.plan_type == "team"
+                    && acc.plan_type != "team"
+                    && !acc.plan_type.is_empty())
             {
                 existing.plan_type = acc.plan_type;
             }
@@ -373,6 +404,10 @@ pub fn deduplicate_accounts(accounts: &mut Vec<AccountConfig>) -> HashMap<String
                 existing.last_credits = acc.last_credits;
                 existing.last_error = acc.last_error;
                 existing.last_checked = acc.last_checked;
+            }
+
+            if existing.organization_name.is_none() && acc.organization_name.is_some() {
+                existing.organization_name = acc.organization_name;
             }
 
             existing.enabled = existing.enabled || acc.enabled;
@@ -419,7 +454,10 @@ pub fn add_account_to_accounts_file(
     let (email, plan) = extract_jwt_metadata_from_tokens(&tokens);
     let email_val = email.unwrap_or_else(|| "user@openai.com".to_string());
     let plan_val = plan.unwrap_or_else(|| "team".to_string());
-    let acc_id_val = tokens.account_id.clone().unwrap_or_else(|| "default".to_string());
+    let acc_id_val = tokens
+        .account_id
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
     let canonical_id = build_predictable_account_id(&email_val, &acc_id_val);
     let nick_trimmed = nickname_or_id.trim();
 
@@ -431,7 +469,8 @@ pub fn add_account_to_accounts_file(
         &acc_id_val,
         Some(&plan_val),
         Some(&tokens),
-    ).or_else(|| {
+    )
+    .or_else(|| {
         if !nick_trimmed.is_empty() {
             find_existing_account_idx(
                 &accounts_file.accounts,
@@ -449,7 +488,10 @@ pub fn add_account_to_accounts_file(
     let target_id = if let Some(idx) = existing_idx {
         let existing = &mut accounts_file.accounts[idx];
         existing.id = canonical_id.clone();
-        if !nick_trimmed.is_empty() && !nick_trimmed.contains(':') && !nick_trimmed.eq_ignore_ascii_case(&email_val) {
+        if !nick_trimmed.is_empty()
+            && !nick_trimmed.contains(':')
+            && !nick_trimmed.eq_ignore_ascii_case(&email_val)
+        {
             existing.name = Some(nick_trimmed.to_string());
         }
         existing.tokens = tokens;
@@ -459,7 +501,10 @@ pub fn add_account_to_accounts_file(
         existing.enabled = true;
         canonical_id
     } else {
-        let resolved_name = if !nick_trimmed.is_empty() && !nick_trimmed.contains(':') && !nick_trimmed.eq_ignore_ascii_case(&email_val) {
+        let resolved_name = if !nick_trimmed.is_empty()
+            && !nick_trimmed.contains(':')
+            && !nick_trimmed.eq_ignore_ascii_case(&email_val)
+        {
             Some(nick_trimmed.to_string())
         } else {
             let prefix = email_val.split('@').next().unwrap_or("account").to_string();
@@ -487,6 +532,7 @@ pub fn add_account_to_accounts_file(
             plan_multiplier: None,
             multiplier_is_manual: None,
             last_multiplier_checked: None,
+            organization_name: None,
         };
         accounts_file.accounts.push(acc);
         canonical_id
@@ -516,7 +562,11 @@ pub fn add_account_from_tokens(
     let target_id = add_account_to_accounts_file(accounts_file, id, tokens, preserve_active);
 
     // Update quota cache for the target account
-    if let Some(pos) = accounts_file.accounts.iter().position(|a| a.id == target_id) {
+    if let Some(pos) = accounts_file
+        .accounts
+        .iter()
+        .position(|a| a.id == target_id)
+    {
         let mut account = accounts_file.accounts[pos].clone();
         update_account_quota_cache(&mut account);
         accounts_file.accounts[pos] = account;
@@ -528,7 +578,9 @@ pub fn add_account_from_tokens(
 
 pub fn save_current_as(id: &str) -> Result<(), String> {
     let auth = read_active_auth_json()?;
-    let tokens = auth.tokens.ok_or_else(|| "No tokens found in auth.json".to_string())?;
+    let tokens = auth
+        .tokens
+        .ok_or_else(|| "No tokens found in auth.json".to_string())?;
 
     let mut accounts_file = load_accounts().unwrap_or_default();
     let target_id = add_account_from_tokens(&mut accounts_file, id, tokens, false)?;
@@ -538,7 +590,10 @@ pub fn save_current_as(id: &str) -> Result<(), String> {
         .find(|a| a.id == target_id)
         .map(|a| a.email.as_str())
         .unwrap_or("");
-    println!("✅ Current session saved as '{}' ({})", target_id, saved_email);
+    println!(
+        "✅ Current session saved as '{}' ({})",
+        target_id, saved_email
+    );
     Ok(())
 }
 
@@ -548,23 +603,41 @@ pub fn remove_account(id: &str) -> Result<(), String> {
     let id_trimmed = id.trim();
 
     // Match by exact canonical ID, nickname, email, or workspace UUID
-    let has_id_match = accounts_file.accounts.iter().any(|a| a.id.trim().eq_ignore_ascii_case(id_trimmed));
+    let has_id_match = accounts_file
+        .accounts
+        .iter()
+        .any(|a| a.id.trim().eq_ignore_ascii_case(id_trimmed));
     if has_id_match {
-        accounts_file.accounts.retain(|a| !a.id.trim().eq_ignore_ascii_case(id_trimmed));
+        accounts_file
+            .accounts
+            .retain(|a| !a.id.trim().eq_ignore_ascii_case(id_trimmed));
     } else {
         let has_name_match = accounts_file.accounts.iter().any(|a| {
-            a.name.as_deref().map(|n| n.trim().eq_ignore_ascii_case(id_trimmed)) == Some(true)
+            a.name
+                .as_deref()
+                .map(|n| n.trim().eq_ignore_ascii_case(id_trimmed))
+                == Some(true)
         });
         if has_name_match {
             accounts_file.accounts.retain(|a| {
-                a.name.as_deref().map(|n| n.trim().eq_ignore_ascii_case(id_trimmed)) != Some(true)
+                a.name
+                    .as_deref()
+                    .map(|n| n.trim().eq_ignore_ascii_case(id_trimmed))
+                    != Some(true)
             });
         } else {
-            let has_email_match = accounts_file.accounts.iter().any(|a| a.email.trim().eq_ignore_ascii_case(id_trimmed));
+            let has_email_match = accounts_file
+                .accounts
+                .iter()
+                .any(|a| a.email.trim().eq_ignore_ascii_case(id_trimmed));
             if has_email_match {
-                accounts_file.accounts.retain(|a| !a.email.trim().eq_ignore_ascii_case(id_trimmed));
+                accounts_file
+                    .accounts
+                    .retain(|a| !a.email.trim().eq_ignore_ascii_case(id_trimmed));
             } else {
-                accounts_file.accounts.retain(|a| !a.account_id.trim().eq_ignore_ascii_case(id_trimmed));
+                accounts_file
+                    .accounts
+                    .retain(|a| !a.account_id.trim().eq_ignore_ascii_case(id_trimmed));
             }
         }
     }
@@ -574,7 +647,10 @@ pub fn remove_account(id: &str) -> Result<(), String> {
     }
 
     if accounts_file.active_account_id.as_deref() == Some(id_trimmed)
-        || !accounts_file.accounts.iter().any(|a| Some(&a.id) == accounts_file.active_account_id.as_ref())
+        || !accounts_file
+            .accounts
+            .iter()
+            .any(|a| Some(&a.id) == accounts_file.active_account_id.as_ref())
     {
         accounts_file.active_account_id = accounts_file.accounts.first().map(|a| a.id.clone());
     }
@@ -590,14 +666,23 @@ pub fn run_interactive_setup() -> Result<(), String> {
     println!("==================================================");
 
     let accounts_file = load_accounts().unwrap_or_default();
-    println!("Current configured accounts: {}", accounts_file.accounts.len());
+    println!(
+        "Current configured accounts: {}",
+        accounts_file.accounts.len()
+    );
     for acc in &accounts_file.accounts {
         let active = if accounts_file.active_account_id.as_deref() == Some(&acc.id) {
             " (active)"
         } else {
             ""
         };
-        println!("  - {} <{}> [{}]{}", acc.display_name(), acc.email, acc.plan_type, active);
+        println!(
+            "  - {} <{}> [{}]{}",
+            acc.display_name(),
+            acc.email,
+            acc.plan_type,
+            active
+        );
     }
     println!("--------------------------------------------------");
     println!("1. Save current session as a new/updated account");
@@ -609,7 +694,10 @@ pub fn run_interactive_setup() -> Result<(), String> {
 
     let mut line = String::new();
     let stdin = io::stdin();
-    stdin.lock().read_line(&mut line).map_err(|e| e.to_string())?;
+    stdin
+        .lock()
+        .read_line(&mut line)
+        .map_err(|e| e.to_string())?;
 
     match line.trim() {
         "1" => {
@@ -652,7 +740,10 @@ pub fn login_and_add_account(id: &str) -> Result<(), String> {
     if id_trimmed.is_empty() {
         println!("🌐 Launching Codex login in browser...");
     } else {
-        println!("🌐 Launching Codex login in browser for account '{}'...", id_trimmed);
+        println!(
+            "🌐 Launching Codex login in browser for account '{}'...",
+            id_trimmed
+        );
     }
 
     // 1. Create a secure, isolated temporary directory for CODEX_HOME
@@ -704,7 +795,9 @@ pub fn login_and_add_account(id: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to read new auth file: {}", e))?;
     let new_auth: AuthJson = serde_json::from_str(&auth_content)
         .map_err(|e| format!("Failed to parse new auth file: {}", e))?;
-    let tokens = new_auth.tokens.ok_or_else(|| "No tokens found in new auth session".to_string())?;
+    let tokens = new_auth
+        .tokens
+        .ok_or_else(|| "No tokens found in new auth session".to_string())?;
 
     let mut accounts_file = load_accounts().unwrap_or_default();
 
@@ -753,7 +846,10 @@ pub fn login_and_add_account(id: &str) -> Result<(), String> {
         .find(|a| a.id == target_id)
         .map(|a| a.email.as_str())
         .unwrap_or("");
-    println!("🎉 Successfully logged in and added account '{}' ({})! Active account preserved.", target_id, saved_email);
+    println!(
+        "🎉 Successfully logged in and added account '{}' ({})! Active account preserved.",
+        target_id, saved_email
+    );
 
     Ok(())
 }
@@ -772,7 +868,10 @@ pub fn rename_account(query: &str, new_name: Option<&str>) -> Result<(), String>
             if i != idx {
                 if let Some(existing_name) = &a.name {
                     if existing_name.trim().eq_ignore_ascii_case(name) {
-                        return Err(format!("Nickname '{}' is already used by another account ({})", name, a.email));
+                        return Err(format!(
+                            "Nickname '{}' is already used by another account ({})",
+                            name, a.email
+                        ));
                     }
                 }
             }
@@ -827,7 +926,10 @@ pub fn set_config_auto_switch_business_only(enabled: bool) -> Result<(), String>
     }
     save_accounts(&file)?;
     sync_settings_to_status_file(&file.settings);
-    println!("✅ Setting updated: auto_switch_business_only = {}", enabled);
+    println!(
+        "✅ Setting updated: auto_switch_business_only = {}",
+        enabled
+    );
     Ok(())
 }
 
@@ -841,7 +943,39 @@ pub fn set_config_auto_switch_business_priority(enabled: bool) -> Result<(), Str
     }
     save_accounts(&file)?;
     sync_settings_to_status_file(&file.settings);
-    println!("✅ Setting updated: auto_switch_business_priority = {}", enabled);
+    println!(
+        "✅ Setting updated: auto_switch_business_priority = {}",
+        enabled
+    );
+    Ok(())
+}
+
+/// Updates the opt-in weekly reset-credit policy. A threshold of zero means
+/// that the policy may act whenever the weekly pool is exactly exhausted;
+/// non-zero thresholds require that many seconds to remain before the normal
+/// weekly reset. Keeping this as one atomic accounts.json write prevents the
+/// daemon from observing a half-updated policy when the menu changes both
+/// values together.
+pub fn set_config_auto_reset_weekly(
+    enabled: bool,
+    min_remaining_seconds: u64,
+) -> Result<(), String> {
+    const MAX_REMAINING_SECONDS: u64 = 167 * 3600;
+    if min_remaining_seconds > MAX_REMAINING_SECONDS {
+        return Err(format!(
+            "Weekly reset threshold must be between 0 and 167 hours (got {})",
+            min_remaining_seconds / 3600
+        ));
+    }
+    let mut file = load_accounts()?;
+    file.settings.auto_reset_weekly_enabled = enabled;
+    file.settings.auto_reset_weekly_min_remaining_seconds = min_remaining_seconds;
+    save_accounts(&file)?;
+    sync_settings_to_status_file(&file.settings);
+    println!(
+        "✅ Setting updated: auto_reset_weekly_enabled = {}, auto_reset_weekly_min_remaining_seconds = {}",
+        enabled, min_remaining_seconds
+    );
     Ok(())
 }
 
@@ -851,28 +985,45 @@ pub fn set_account_multiplier(account_id: &str, multiplier: f64) -> Result<(), S
         return Err("Multiplier must be greater than 0".to_string());
     }
     let mut file = load_accounts()?;
-    let acc = file.accounts.iter_mut().find(|a| {
-        a.id == account_id
-            || a.name.as_deref().map(|n| n.eq_ignore_ascii_case(account_id)).unwrap_or(false)
-            || a.email.eq_ignore_ascii_case(account_id)
-    }).ok_or_else(|| format!("Account '{}' not found", account_id))?;
+    let acc = file
+        .accounts
+        .iter_mut()
+        .find(|a| {
+            a.id == account_id
+                || a.name
+                    .as_deref()
+                    .map(|n| n.eq_ignore_ascii_case(account_id))
+                    .unwrap_or(false)
+                || a.email.eq_ignore_ascii_case(account_id)
+        })
+        .ok_or_else(|| format!("Account '{}' not found", account_id))?;
 
     acc.plan_multiplier = Some(multiplier);
     acc.multiplier_is_manual = Some(true);
     let name = acc.display_name().to_string();
     save_accounts(&file)?;
-    println!("✅ Account '{}' multiplier manually set to {:.1}x", name, multiplier);
+    println!(
+        "✅ Account '{}' multiplier manually set to {:.1}x",
+        name, multiplier
+    );
     Ok(())
 }
 
 /// Clears manual multiplier override and re-runs auto-detection.
 pub fn reset_account_multiplier(account_id: &str) -> Result<(), String> {
     let mut file = load_accounts()?;
-    let acc = file.accounts.iter_mut().find(|a| {
-        a.id == account_id
-            || a.name.as_deref().map(|n| n.eq_ignore_ascii_case(account_id)).unwrap_or(false)
-            || a.email.eq_ignore_ascii_case(account_id)
-    }).ok_or_else(|| format!("Account '{}' not found", account_id))?;
+    let acc = file
+        .accounts
+        .iter_mut()
+        .find(|a| {
+            a.id == account_id
+                || a.name
+                    .as_deref()
+                    .map(|n| n.eq_ignore_ascii_case(account_id))
+                    .unwrap_or(false)
+                || a.email.eq_ignore_ascii_case(account_id)
+        })
+        .ok_or_else(|| format!("Account '{}' not found", account_id))?;
 
     acc.multiplier_is_manual = None;
     acc.plan_multiplier = None;
@@ -880,7 +1031,10 @@ pub fn reset_account_multiplier(account_id: &str) -> Result<(), String> {
     let detected = crate::quota::detect_account_multiplier(acc);
     let name = acc.display_name().to_string();
     save_accounts(&file)?;
-    println!("✅ Account '{}' multiplier reset and auto-detected as {:.1}x", name, detected);
+    println!(
+        "✅ Account '{}' multiplier reset and auto-detected as {:.1}x",
+        name, detected
+    );
     Ok(())
 }
 
@@ -922,6 +1076,7 @@ mod tests {
             plan_multiplier: None,
             multiplier_is_manual: None,
             last_multiplier_checked: None,
+            organization_name: None,
         }
     }
 
@@ -944,19 +1099,41 @@ mod tests {
     #[test]
     fn test_find_existing_account_idx_multi_vector() {
         let accounts = vec![
-            make_test_account("main", "dev.user@example.com", "uuid-1", Some("rt_1"), "at_1"),
+            make_test_account(
+                "main",
+                "dev.user@example.com",
+                "uuid-1",
+                Some("rt_1"),
+                "at_1",
+            ),
             make_test_account("work", "work@company.com", "uuid-2", Some("rt_2"), "at_2"),
         ];
 
         // 1. Match by refresh token
         assert_eq!(
-            find_existing_account_idx_from_parts(&accounts, "other", "other@foo.com", "uuid-x", None, Some("rt_1"), None),
+            find_existing_account_idx_from_parts(
+                &accounts,
+                "other",
+                "other@foo.com",
+                "uuid-x",
+                None,
+                Some("rt_1"),
+                None
+            ),
             Some(0)
         );
 
         // 2. Match by access token
         assert_eq!(
-            find_existing_account_idx_from_parts(&accounts, "other", "other@foo.com", "uuid-x", None, None, Some("at_2")),
+            find_existing_account_idx_from_parts(
+                &accounts,
+                "other",
+                "other@foo.com",
+                "uuid-x",
+                None,
+                None,
+                Some("at_2")
+            ),
             Some(1)
         );
 
@@ -968,7 +1145,15 @@ mod tests {
 
         // 4. Match by email case-insensitively when workspace is unassigned
         assert_eq!(
-            find_existing_account_idx_from_parts(&accounts, "", "  DEV.USER@EXAMPLE.COM  ", "", None, None, None),
+            find_existing_account_idx_from_parts(
+                &accounts,
+                "",
+                "  DEV.USER@EXAMPLE.COM  ",
+                "",
+                None,
+                None,
+                None
+            ),
             Some(0)
         );
 
@@ -980,22 +1165,42 @@ mod tests {
 
         // 6. Same account_id but conflicting email must NOT match
         assert_eq!(
-            find_existing_account_idx_from_parts(&accounts, "other", "other@foo.com", "uuid-1", None, None, None),
+            find_existing_account_idx_from_parts(
+                &accounts,
+                "other",
+                "other@foo.com",
+                "uuid-1",
+                None,
+                None,
+                None
+            ),
             None
         );
 
         // 7. Distinct account
         assert_eq!(
-            find_existing_account_idx_from_parts(&accounts, "new_id", "new@foo.com", "uuid-3", None, Some("rt_3"), Some("at_3")),
+            find_existing_account_idx_from_parts(
+                &accounts,
+                "new_id",
+                "new@foo.com",
+                "uuid-3",
+                None,
+                Some("rt_3"),
+                Some("at_3")
+            ),
             None
         );
     }
 
     #[test]
     fn test_same_email_different_workspaces_or_plans_never_merge() {
-        let accounts = vec![
-            make_test_account("business", "dev.user@example.com", "uuid-team", Some("rt_team"), "at_team"),
-        ];
+        let accounts = vec![make_test_account(
+            "business",
+            "dev.user@example.com",
+            "uuid-team",
+            Some("rt_team"),
+            "at_team",
+        )];
 
         // 1. Adding personal account with same email, but different label and different account_id
         let res1 = find_existing_account_idx_from_parts(
@@ -1037,8 +1242,20 @@ mod tests {
     #[test]
     fn test_same_team_workspace_different_emails_never_merge() {
         let mut accounts = vec![
-            make_test_account("dev-alt", "dev.alt@example.com", "3f533057", Some("rt_1"), "at_1"),
-            make_test_account("dev-primary", "dev.user@example.com", "3f533057", Some("rt_2"), "at_2"),
+            make_test_account(
+                "dev-alt",
+                "dev.alt@example.com",
+                "3f533057",
+                Some("rt_1"),
+                "at_1",
+            ),
+            make_test_account(
+                "dev-primary",
+                "dev.user@example.com",
+                "3f533057",
+                Some("rt_2"),
+                "at_2",
+            ),
         ];
 
         let _ = deduplicate_accounts(&mut accounts);
@@ -1052,8 +1269,20 @@ mod tests {
     #[test]
     fn test_deduplicate_accounts_merges_identical_user() {
         let mut accounts = vec![
-            make_test_account("main", "dev.user@example.com", "3f533057", Some("rt_same"), "at_old"),
-            make_test_account("dev-primary", "dev.user@example.com", "3f533057", Some("rt_same"), "at_new"),
+            make_test_account(
+                "main",
+                "dev.user@example.com",
+                "3f533057",
+                Some("rt_same"),
+                "at_old",
+            ),
+            make_test_account(
+                "dev-primary",
+                "dev.user@example.com",
+                "3f533057",
+                Some("rt_same"),
+                "at_new",
+            ),
         ];
 
         let merged_map = deduplicate_accounts(&mut accounts);
@@ -1061,7 +1290,10 @@ mod tests {
         assert_eq!(accounts[0].id, "dev.user@example.com:3f533057");
         assert_eq!(accounts[0].name.as_deref(), Some("dev-primary"));
         assert_eq!(accounts[0].tokens.access_token, "at_new");
-        assert_eq!(merged_map.get("main").map(String::as_str), Some("dev.user@example.com:3f533057"));
+        assert_eq!(
+            merged_map.get("main").map(String::as_str),
+            Some("dev.user@example.com:3f533057")
+        );
     }
 
     fn make_test_jwt(email: &str) -> String {
@@ -1077,9 +1309,13 @@ mod tests {
         let mut file = AccountsFile {
             active_account_id: Some("dev-account".to_string()),
             settings: Default::default(),
-            accounts: vec![
-                make_test_account("dev-account", "dev@enterprise.example.com", "uuid-team", Some("rt_1"), "at_1"),
-            ],
+            accounts: vec![make_test_account(
+                "dev-account",
+                "dev@enterprise.example.com",
+                "uuid-team",
+                Some("rt_1"),
+                "at_1",
+            )],
         };
 
         // User tries saving current session under new nickname "dev-account-3"
@@ -1103,15 +1339,30 @@ mod tests {
             active_account_id: Some("main".to_string()),
             settings: Default::default(),
             accounts: vec![
-                make_test_account("main", "dev.user@example.com", "3f533057", Some("rt_same"), "at_old"),
-                make_test_account("dev-primary", "dev.user@example.com", "3f533057", Some("rt_same"), "at_new"),
+                make_test_account(
+                    "main",
+                    "dev.user@example.com",
+                    "3f533057",
+                    Some("rt_same"),
+                    "at_old",
+                ),
+                make_test_account(
+                    "dev-primary",
+                    "dev.user@example.com",
+                    "3f533057",
+                    Some("rt_same"),
+                    "at_new",
+                ),
             ],
         };
 
         let changed = deduplicate_accounts_file(&mut file);
         assert!(changed);
         assert_eq!(file.accounts.len(), 1);
-        assert_eq!(file.active_account_id.as_deref(), Some("dev.user@example.com:3f533057"));
+        assert_eq!(
+            file.active_account_id.as_deref(),
+            Some("dev.user@example.com:3f533057")
+        );
     }
 
     #[test]
@@ -1119,9 +1370,13 @@ mod tests {
         let mut file = AccountsFile {
             active_account_id: Some("primary@example.com:uuid-1".to_string()),
             settings: Default::default(),
-            accounts: vec![
-                make_test_account("primary@example.com:uuid-1", "primary@example.com", "uuid-1", Some("rt_1"), "at_1"),
-            ],
+            accounts: vec![make_test_account(
+                "primary@example.com:uuid-1",
+                "primary@example.com",
+                "uuid-1",
+                Some("rt_1"),
+                "at_1",
+            )],
         };
 
         let new_tokens = AuthTokens {
@@ -1136,7 +1391,10 @@ mod tests {
         assert_eq!(file.accounts.len(), 2);
         assert_eq!(file.accounts[1].name.as_deref(), Some("secondary"));
         // CRITICAL INVARIANT: active account MUST NOT be replaced!
-        assert_eq!(file.active_account_id.as_deref(), Some("primary@example.com:uuid-1"));
+        assert_eq!(
+            file.active_account_id.as_deref(),
+            Some("primary@example.com:uuid-1")
+        );
     }
 
     #[test]
@@ -1157,7 +1415,10 @@ mod tests {
         let added_id = add_account_to_accounts_file(&mut file, "first", new_tokens, true);
         assert_eq!(added_id, "user@openai.com:uuid-1");
         assert_eq!(file.accounts.len(), 1);
-        assert_eq!(file.active_account_id.as_deref(), Some("user@openai.com:uuid-1"));
+        assert_eq!(
+            file.active_account_id.as_deref(),
+            Some("user@openai.com:uuid-1")
+        );
     }
 
     #[test]
@@ -1165,9 +1426,13 @@ mod tests {
         let mut file = AccountsFile {
             active_account_id: Some("old@example.com:uuid-1".to_string()),
             settings: Default::default(),
-            accounts: vec![
-                make_test_account("old@example.com:uuid-1", "old@example.com", "uuid-1", Some("rt_1"), "at_1"),
-            ],
+            accounts: vec![make_test_account(
+                "old@example.com:uuid-1",
+                "old@example.com",
+                "uuid-1",
+                Some("rt_1"),
+                "at_1",
+            )],
         };
 
         let current_tokens = AuthTokens {
@@ -1180,12 +1445,16 @@ mod tests {
         let saved_id = add_account_to_accounts_file(&mut file, "new_active", current_tokens, false);
         assert_eq!(saved_id, "user@openai.com:uuid-2");
         assert_eq!(file.accounts.len(), 2);
-        assert_eq!(file.active_account_id.as_deref(), Some("user@openai.com:uuid-2"));
+        assert_eq!(
+            file.active_account_id.as_deref(),
+            Some("user@openai.com:uuid-2")
+        );
     }
 
     #[test]
     fn test_rename_account_updates_nickname() {
-        let temp_dir = std::env::temp_dir().join(format!("codex_rename_test_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("codex_rename_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         std::env::set_var("CODEX_HOME", &temp_dir);
 
@@ -1193,8 +1462,20 @@ mod tests {
             active_account_id: Some("user1@example.com:uuid-1".to_string()),
             settings: Default::default(),
             accounts: vec![
-                make_test_account("user1@example.com:uuid-1", "user1@example.com", "uuid-1", Some("rt_1"), "at_1"),
-                make_test_account("user2@example.com:uuid-2", "user2@example.com", "uuid-2", Some("rt_2"), "at_2"),
+                make_test_account(
+                    "user1@example.com:uuid-1",
+                    "user1@example.com",
+                    "uuid-1",
+                    Some("rt_1"),
+                    "at_1",
+                ),
+                make_test_account(
+                    "user2@example.com:uuid-2",
+                    "user2@example.com",
+                    "uuid-2",
+                    Some("rt_2"),
+                    "at_2",
+                ),
             ],
         };
         file.accounts[0].name = Some("first".to_string());

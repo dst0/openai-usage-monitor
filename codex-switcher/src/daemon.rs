@@ -1,7 +1,8 @@
-use crate::models::{AccountStatusEntry, AccountsFile, StatusFile};
+use crate::models::{AccountConfig, AccountStatusEntry, AccountsFile, StatusFile};
 use crate::quota::update_account_quota_cache;
 use crate::storage::{
-    daemon_lock_path, load_accounts, read_active_auth_json, save_accounts, write_active_auth_json, write_status_file,
+    daemon_lock_path, load_accounts, read_active_auth_json, save_accounts, write_active_auth_json,
+    write_status_file,
 };
 use crate::strategy::{needs_switch, select_best_switch};
 use crate::switcher::switch_to_account;
@@ -36,7 +37,7 @@ pub fn should_notify_switch(
 }
 
 pub fn should_skip_redundant_switch(
-    last_switched_id: Option<&str>,
+    _last_switched_id: Option<&str>,
     target_id: &str,
     active_account_id: Option<&str>,
     last_switched_time: Option<Instant>,
@@ -46,11 +47,9 @@ pub fn should_skip_redundant_switch(
     if active_account_id == Some(target_id) {
         return true;
     }
-    if last_switched_id == Some(target_id) && active_account_id.is_none() {
-        if let Some(last_time) = last_switched_time {
-            if now.duration_since(last_time) < cooldown {
-                return true;
-            }
+    if let Some(last_time) = last_switched_time {
+        if now.duration_since(last_time) < cooldown {
+            return true;
         }
     }
     false
@@ -120,10 +119,16 @@ pub fn sync_active_tokens_from_auth_obj(
     } else {
         // Active session in auth.json is for an account NOT yet in accounts.json!
         // Only auto-register if it represents a genuinely authenticated account with an identifiable email.
-        let valid_email = auth_email.as_ref().map(|e| {
-            let t = e.trim();
-            !t.is_empty() && t.contains('@') && !t.eq_ignore_ascii_case("user@openai.com") && !t.eq_ignore_ascii_case("current-user")
-        }).unwrap_or(false);
+        let valid_email = auth_email
+            .as_ref()
+            .map(|e| {
+                let t = e.trim();
+                !t.is_empty()
+                    && t.contains('@')
+                    && !t.eq_ignore_ascii_case("user@openai.com")
+                    && !t.eq_ignore_ascii_case("current-user")
+            })
+            .unwrap_or(false);
 
         if !valid_email {
             return false;
@@ -143,7 +148,10 @@ pub fn sync_active_tokens_from_auth_obj(
             .map(|a| a.email.clone())
             .unwrap_or_else(|| auth_email.unwrap_or_else(|| added_id.clone()));
 
-        println!("✨ Auto-saved newly logged-in account '{}' ({}) from Codex app", added_id, added_email);
+        println!(
+            "✨ Auto-saved newly logged-in account '{}' ({}) from Codex app",
+            added_id, added_email
+        );
         crate::switcher::send_macos_notification(
             &format!("New Account Added: {}", added_id),
             &format!("Auto-saved {} from Codex app", added_email),
@@ -166,6 +174,33 @@ pub fn sync_active_tokens(accounts_file: &mut AccountsFile) -> Result<bool, Stri
     }
 
     Ok(changed)
+}
+
+/// Cross-pollinates known organization names across accounts that share the same workspace account_id.
+pub fn cross_pollinate_organization_names(accounts: &mut [AccountConfig]) {
+    let mut org_by_workspace: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for acc in accounts.iter() {
+        if let Some(ref org) = acc.organization_name {
+            let ws = acc.account_id.trim();
+            if !ws.is_empty() && ws != "default" {
+                org_by_workspace.insert(ws.to_string(), org.clone());
+            }
+        }
+    }
+
+    if org_by_workspace.is_empty() {
+        return;
+    }
+
+    for acc in accounts.iter_mut() {
+        let ws = acc.account_id.trim();
+        if acc.organization_name.is_none() && !ws.is_empty() && ws != "default" {
+            if let Some(known_org) = org_by_workspace.get(ws) {
+                acc.organization_name = Some(known_org.clone());
+            }
+        }
+    }
 }
 
 pub fn run_daemon_tick_with_state(
@@ -205,7 +240,13 @@ pub fn run_daemon_tick_with_state(
             update_account_quota_cache(acc);
 
             // If query failed with 401 on the active account, re-read auth.json and retry once
-            if is_active && acc.last_error.as_deref().map(|e| e.contains("401")).unwrap_or(false) {
+            if is_active
+                && acc
+                    .last_error
+                    .as_deref()
+                    .map(|e| e.contains("401"))
+                    .unwrap_or(false)
+            {
                 if let Ok(fresh_auth) = read_active_auth_json() {
                     if let Some(fresh_tokens) = fresh_auth.tokens {
                         if fresh_tokens != acc.tokens {
@@ -226,7 +267,14 @@ pub fn run_daemon_tick_with_state(
                 }
             }
         }
+    }
 
+    // Pass 2: Cross-pollinate organization_name for accounts in the same workspace that didn't have it
+    cross_pollinate_organization_names(&mut accounts_file.accounts);
+
+    // Pass 3: Build status entries
+    for acc in &accounts_file.accounts {
+        let is_active = acc.id == current_active_id;
         status_entries.push(AccountStatusEntry {
             id: acc.id.clone(),
             name: acc.name.clone(),
@@ -242,6 +290,7 @@ pub fn run_daemon_tick_with_state(
             credits: acc.last_credits.unwrap_or(0),
             error: acc.last_error.clone(),
             plan_multiplier: acc.effective_multiplier(),
+            organization_name: acc.organization_name.clone(),
         });
     }
 
@@ -260,6 +309,7 @@ pub fn run_daemon_tick_with_state(
             acc.last_error = updated.last_error.clone();
             acc.last_checked = updated.last_checked.clone();
             acc.tokens = updated.tokens.clone();
+            acc.organization_name = updated.organization_name.clone();
             if updated.multiplier_is_manual != Some(true) {
                 acc.plan_multiplier = updated.plan_multiplier;
                 acc.last_multiplier_checked = updated.last_multiplier_checked.clone();
@@ -271,12 +321,16 @@ pub fn run_daemon_tick_with_state(
 
     // 3. Write usage-status.json for Swift Menu Bar app
     let active_acc = active_entry_idx.map(|i| &accounts_file.accounts[i]);
-    let status = StatusFile {
+    let auto_reset_status =
+        crate::auto_reset::status_for_active(&accounts_file.settings, active_acc);
+    let mut status = StatusFile {
         timestamp: Utc::now().to_rfc3339(),
         active_account_id: Some(current_active_id.clone()),
         active_email: active_acc.map(|a| a.email.clone()),
         active_plan: active_acc.map(|a| a.plan_type.clone()),
-        five_hour_percentage: active_acc.map(|a| a.last_primary_percentage).unwrap_or(100.0),
+        five_hour_percentage: active_acc
+            .map(|a| a.last_primary_percentage)
+            .unwrap_or(100.0),
         weekly_percentage: active_acc.and_then(|a| a.last_weekly_percentage),
         weekly_reset_time: active_acc.and_then(|a| a.last_weekly_reset_time.clone()),
         weekly_reset_after_seconds: active_acc.and_then(|a| a.last_weekly_reset_after_seconds),
@@ -286,18 +340,70 @@ pub fn run_daemon_tick_with_state(
         auto_switch_enabled: accounts_file.settings.auto_switch_enabled,
         auto_switch_business_only: accounts_file.settings.auto_switch_business_only,
         auto_switch_business_priority: accounts_file.settings.auto_switch_business_priority,
+        auto_reset_weekly_enabled: accounts_file.settings.auto_reset_weekly_enabled,
+        auto_reset_weekly_min_remaining_seconds: accounts_file
+            .settings
+            .auto_reset_weekly_min_remaining_seconds,
+        auto_reset_state: auto_reset_status.state,
+        auto_reset_reason: auto_reset_status.reason,
+        auto_reset_last_event_at: auto_reset_status.last_event_at,
         plan_multiplier: active_acc.map(|a| a.effective_multiplier()).unwrap_or(1.0),
         accounts: status_entries,
     };
     write_status_file(&status)?;
+
+    // A weekly reset is its own opt-in automation. It is deliberately not
+    // coupled to `auto_switch_enabled`: users may want to preserve the active
+    // account and resume its blocked work even when cross-account rotation is
+    // disabled. Manual refreshes pass `auto_switch = false` and never spend.
+    if auto_switch && accounts_file.settings.auto_reset_weekly_enabled {
+        if let Some(active) = active_acc {
+            let reset_report = match crate::auto_reset::maybe_consume_weekly_reset(
+                &accounts_file.settings,
+                active,
+            ) {
+                Ok(report) => report,
+                Err(error) => crate::auto_reset::AutoResetReport {
+                    status: crate::auto_reset::AutoResetStatus {
+                        state: "journal_error".into(),
+                        reason: Some(error),
+                        last_event_at: None,
+                    },
+                    // An invalid/missing journal means an earlier request may
+                    // have been in flight. Fail closed instead of rotating the
+                    // account and hiding a potentially spent credit.
+                    suppress_auto_switch: true,
+                },
+            };
+            status.auto_reset_state = reset_report.status.state;
+            status.auto_reset_reason = reset_report.status.reason;
+            status.auto_reset_last_event_at = reset_report.status.last_event_at;
+            write_status_file(&status)?;
+            if reset_report.suppress_auto_switch {
+                return Ok(());
+            }
+        }
+    }
 
     // 4. Auto-switch check (only when auto_switch and auto_switch_enabled are true)
     if auto_switch && accounts_file.settings.auto_switch_enabled {
         if let Some(active) = active_acc {
             let threshold = accounts_file.settings.switch_threshold_percent;
             let biz_priority = accounts_file.settings.auto_switch_business_priority;
+            if active.last_primary_percentage > threshold {
+                if let Some(remaining) = crate::recovery::automation_cooldown_remaining()? {
+                    println!(
+                        "ℹ️ Business-priority preemption deferred for {}s while Codex recovery stabilizes",
+                        remaining.as_secs().saturating_add(1)
+                    );
+                    return Ok(());
+                }
+            }
             if needs_switch(active, threshold, biz_priority, &accounts_file.accounts) {
-                if biz_priority && !active.is_business() && active.last_primary_percentage > threshold {
+                if biz_priority
+                    && !active.is_business()
+                    && active.last_primary_percentage > threshold
+                {
                     println!(
                         "⚡ Active account '{}' is non-business ({:.1}%). Business quota is available. Preempting to business account...",
                         active.id, active.last_primary_percentage
@@ -329,7 +435,10 @@ pub fn run_daemon_tick_with_state(
                         now,
                         switch_cooldown,
                     ) {
-                        println!("ℹ️ Switch to [{}] deferred (recent attempt in cooldown)", next_id);
+                        println!(
+                            "ℹ️ Switch to [{}] deferred (recent attempt in cooldown)",
+                            next_id
+                        );
                     } else {
                         let should_notify = should_notify_switch(
                             last_notified_id.as_deref(),
@@ -341,18 +450,28 @@ pub fn run_daemon_tick_with_state(
                             notify_cooldown,
                         );
                         println!("🔄 Auto-switching to account '{}'...", next_id);
-                        switch_to_account(
+                        // Record the destructive attempt before it starts. Account
+                        // replacement can succeed while UI recovery later fails;
+                        // that must never erase the cooldown and trigger a loop.
+                        *last_switched_id = Some(next_id.clone());
+                        *last_switched_time = Some(now);
+                        let outcome = switch_to_account(
                             &next_id,
                             accounts_file.settings.restart_app_on_switch,
                             should_notify,
                         )?;
-                        *last_switched_id = Some(next_id.clone());
-                        *last_switched_time = Some(now);
                         if should_notify {
                             *last_notified_id = Some(next_id.clone());
                             *last_notified_time = Some(now);
                         }
-                        println!("✅ Successfully switched to '{}'!", next_id);
+                        if let Some(error) = outcome.recovery_error {
+                            eprintln!(
+                                "⚠️ Account '{}' switched, but recovery is incomplete; no automatic restart retry: {}",
+                                next_id, error
+                            );
+                        } else {
+                            println!("✅ Successfully switched to '{}'!", next_id);
+                        }
                     }
                 } else {
                     println!("⚠️ No alternate account with available quota found.");
@@ -470,6 +589,35 @@ mod tests {
     use super::*;
     use crate::models::{AccountConfig, AuthJson, AuthTokens, Settings};
 
+    #[test]
+    fn failed_or_partial_switch_attempt_still_enters_cooldown() {
+        let now = Instant::now();
+        assert!(should_skip_redundant_switch(
+            Some("target"),
+            "target",
+            Some("previous-account"),
+            Some(now - Duration::from_secs(10)),
+            now,
+            Duration::from_secs(120),
+        ));
+        assert!(!should_skip_redundant_switch(
+            Some("target"),
+            "target",
+            Some("previous-account"),
+            Some(now - Duration::from_secs(121)),
+            now,
+            Duration::from_secs(120),
+        ));
+        assert!(should_skip_redundant_switch(
+            Some("first-target"),
+            "different-target",
+            Some("previous-account"),
+            Some(now - Duration::from_secs(10)),
+            now,
+            Duration::from_secs(120),
+        ));
+    }
+
     fn make_test_account(id: &str, email: &str, acc_id: &str, access_tok: &str) -> AccountConfig {
         AccountConfig {
             id: id.to_string(),
@@ -497,6 +645,7 @@ mod tests {
             plan_multiplier: None,
             multiplier_is_manual: None,
             last_multiplier_checked: None,
+            organization_name: None,
         }
     }
 
@@ -527,7 +676,10 @@ mod tests {
         assert!(changed);
         assert_eq!(file.active_account_id.as_deref(), Some("main"));
         assert_eq!(file.accounts[1].tokens.access_token, "tok_new_fresh");
-        assert_eq!(file.accounts[1].tokens.refresh_token.as_deref(), Some("rt_new"));
+        assert_eq!(
+            file.accounts[1].tokens.refresh_token.as_deref(),
+            Some("rt_new")
+        );
         assert!(file.accounts[1].last_error.is_none());
         assert_eq!(file.accounts[0].tokens.access_token, "tok_work"); // work unchanged
     }
@@ -537,7 +689,12 @@ mod tests {
         let mut file = AccountsFile {
             active_account_id: Some("main".to_string()),
             settings: Settings::default(),
-            accounts: vec![make_test_account("main", "user@home.com", "uuid-main", "tok_current")],
+            accounts: vec![make_test_account(
+                "main",
+                "user@home.com",
+                "uuid-main",
+                "tok_current",
+            )],
         };
 
         let auth = AuthJson {
@@ -569,9 +726,12 @@ mod tests {
         let mut file = AccountsFile {
             active_account_id: Some("dev-alt".to_string()),
             settings: Settings::default(),
-            accounts: vec![
-                make_test_account("dev-alt", "dev.alt@example.com", "team-uuid", "tok_au"),
-            ],
+            accounts: vec![make_test_account(
+                "dev-alt",
+                "dev.alt@example.com",
+                "team-uuid",
+                "tok_au",
+            )],
         };
 
         // User logs in to dev.user@example.com in ChatGPT.app (same team workspace UUID)
@@ -599,7 +759,10 @@ mod tests {
         assert_eq!(file.accounts[1].name.as_deref(), Some("dev.user"));
         assert_eq!(file.accounts[1].email, "dev.user@example.com");
         assert_eq!(file.accounts[1].tokens.access_token, "tok_works");
-        assert_eq!(file.active_account_id.as_deref(), Some("dev.user@example.com:team-uuid"));
+        assert_eq!(
+            file.active_account_id.as_deref(),
+            Some("dev.user@example.com:team-uuid")
+        );
     }
 
     #[test]
@@ -607,7 +770,12 @@ mod tests {
         let mut file = AccountsFile {
             active_account_id: Some("main".to_string()),
             settings: Settings::default(),
-            accounts: vec![make_test_account("main", "user@home.com", "uuid-main", "tok_valid")],
+            accounts: vec![make_test_account(
+                "main",
+                "user@home.com",
+                "uuid-main",
+                "tok_valid",
+            )],
         };
 
         let auth = AuthJson {
@@ -633,7 +801,12 @@ mod tests {
         let mut file = AccountsFile {
             active_account_id: Some("main".to_string()),
             settings: Settings::default(),
-            accounts: vec![make_test_account("main", "user@home.com", "uuid-main", "tok_valid")],
+            accounts: vec![make_test_account(
+                "main",
+                "user@home.com",
+                "uuid-main",
+                "tok_valid",
+            )],
         };
 
         // Unknown token without valid email or with placeholder email
@@ -652,5 +825,25 @@ mod tests {
         let changed = sync_active_tokens_from_auth_obj(&mut file, &auth);
         assert!(!changed);
         assert_eq!(file.accounts.len(), 1);
+    }
+
+    #[test]
+    fn test_cross_pollinate_organization_names() {
+        let acc1 = make_test_account("acc1", "user1@org.com", "ws-team-123", "tok1");
+        let mut acc2 = make_test_account("acc2", "user2@org.com", "ws-team-123", "tok2");
+        let acc3 = make_test_account("acc3", "other@gmail.com", "default", "tok3");
+
+        // acc2 has the organization name discovered, acc1 and acc3 do not
+        acc2.organization_name = Some("Acme Corp".to_string());
+
+        let mut accounts = vec![acc1, acc2, acc3];
+        cross_pollinate_organization_names(&mut accounts);
+
+        // acc1 should have inherited Acme Corp from acc2 because they share ws-team-123
+        assert_eq!(accounts[0].organization_name.as_deref(), Some("Acme Corp"));
+        // acc2 still has Acme Corp
+        assert_eq!(accounts[1].organization_name.as_deref(), Some("Acme Corp"));
+        // acc3 has default workspace, should remain None
+        assert_eq!(accounts[2].organization_name, None);
     }
 }

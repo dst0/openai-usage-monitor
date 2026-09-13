@@ -40,7 +40,8 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
 6. **Automated Session & Thread Resumption Across Switches**:
    - Automatically detects active mid-turn worker tasks and threads halted by rate limits or credit exhaustion within the last 4 hours (`RECENT_QUOTA_WINDOW_SECS = 14400s`).
    - Scans up to 30 recent threads via `state_5.sqlite` with instantaneous 128 KB tail reads (`read_rollout_tail_lines`), eliminating I/O stalls even on 500 MB+ session files.
-   - Automatically queues resumption messages (`codex queue --thread <id> --message continue`) and cycles ChatGPT.app UI tabs to trigger Accessibility-level unpauses (`cxi resume`).
+   - Resumes through the running Desktop owner's IPC connection; it never launches a second Codex runtime or clicks UI controls. For an interrupted turn it sends one protocol-valid text input, `continue`, through `thread-follower-start-turn`.
+   - Shows a verified semi-transparent banner while recovery is active and requires a new exact-ID `task_started`, real agent work, and a 90-second error-free observation window before reporting success.
    - Filters out internal subagent threads and never resumes cleanly completed or user-aborted tasks.
 
 7. **Native macOS Menu Bar App (`Codex Monitor.app`)**:
@@ -176,6 +177,13 @@ cxi config --auto-switch-business-priority true
 
 # Enable/disable automatic ChatGPT.app restart on switch:
 cxi config --restart-app-on-switch true
+
+# Opt in to one reset credit when a recent user task is blocked at exactly 0%
+# of the weekly pool. Zero means no time gate (the menu default once enabled):
+cxi config --auto-reset-weekly-enabled true --auto-reset-weekly-min-hours 0
+
+# Or require more than one day before the ordinary weekly reset:
+cxi config --auto-reset-weekly-enabled true --auto-reset-weekly-min-hours 24
 ```
 
 ### 8. Set or Reset Account Plan Multipliers
@@ -199,13 +207,24 @@ cxi wrap exec "fix bug in auth"
 
 ### 11. Resume Active or Paused Threads
 ```bash
-# Resume the most recent active or rate-limited thread:
+# Verify/resume all detected active, rate-limited, or pending-restart tasks:
 cxi resume
 
 # Or resume a specific thread by ID or URL:
 cxi resume 01a07d3c-3008-75c2-87a6-2c5c75f0e48b
 cxi resume "codex://threads/01a07d3c-3008-75c2-87a6-2c5c75f0e48b"
+
+# Real restart plus verified recovery; no account change. Safe to invoke inside Codex:
+cxi restart
 ```
+
+Self-restart is handed to an independent one-shot launchd worker. A failed
+underlying recovery is recorded as `WORKER_RESULT failed`, while the wrapper
+exits cleanly so launchd cannot repeat the destructive restart. `RESTART_DISPATCHED`
+means scheduled, not completed; the printed log records old/new app PIDs and
+per-task `RECOVERY_VERIFIED` or `RECOVERY_FAILED` outcomes. Active logs remain
+plain text for live tailing. The tiny atomic `desktop-recovery.json` stores only
+pending task UUIDs and survives a killed worker.
 
 ### 12. Open Interactive Documentation
 ```bash
@@ -260,29 +279,51 @@ Detection runs through a two-phase analysis pipeline before terminating or resta
 | `recent_threads` SQLite limit | `30` | Number of recent unarchived user threads queried from `state_5.sqlite` (`ORDER BY updated_at DESC LIMIT 30`). |
 | `read_rollout_tail_lines` buffer | `131072` bytes (128 KB) | Tail seek window for inspecting `.jsonl` rollout events, avoiding reading entire multi-hundred MB logs into RAM. |
 | App shutdown cooldown | `600 ms` | Grace period after `pgrep` exit for macOS `LaunchServices` cleanup. |
-| App launch verification | `3` attempts @ `300 ms` | Polling loop confirming ChatGPT.app is running after `open -a`. |
-| App server init delay | `3000 ms` | Wait time for ChatGPT's internal `codex app-server` socket to begin accepting CLI queue commands. |
-| UI cycle delay | `400 ms` per thread | Delay between cycling thread URLs (`codex://threads/<tid>`). |
-| Accessibility unpause polling | `3` attempts @ `200 ms` | Polling loop for finding and pressing native AXUIElement "Resume" buttons. |
-| Primary thread focus | `6` attempts @ `400 ms` | Extended polling to ensure the primary foreground thread is unpaused and focused. |
+| App launch verification | `3` attempts, up to `15 s` each + `2 s` settle | Uses `open -n`, requires exactly one new exact-main PID, and rejects a PID that changes during settling. |
+| Desktop IPC startup | up to `120 s` | Waits for the relaunched Desktop's same-user IPC socket, validating owner, mode, peer UID, and socket identity. |
+| Owner discovery | up to `15 s` | Resolves the Desktop window that owns a task. A deep link is used only when no owner exists. |
+| Pre-dispatch activity grace | `3 s` | Detects a task that the user or Desktop has already resumed before any command is sent. |
+| Recovery verification | `180 s` to start, `600 s` to produce work, then `90 s` soak | Requires the IPC-confirmed turn ID, substantive agent work, and no later abort/error; IPC acknowledgement is not success. |
+| Desktop stabilization | `90 s` | Requires the same singleton main PID throughout, then verifies an on-screen, non-minimized layer-0 window for that exact PID. |
+| Banner minimum visibility | `30 s` | Keeps the semi-transparent recovery banner visible long enough to make automation explicit. |
 
 ### 🚦 Rollout Lifecycle States (`ThreadRolloutState`)
 
 - **`InterruptedByQuota`**: The turn's final `task_complete` contains an `error` payload matching `usage_limit_exceeded`, `workspace_owner_credits_depleted`, `out of credits`, or active `rate_limit_reached_type`. **Automatically resumed.**
-- **`ActiveInProgress`**: The latest event is a mid-turn event (`user_message`, `reasoning`, `custom_tool_call`, etc.) with no closing `task_complete`. **Automatically resumed.**
+- **`ActiveInProgress`**: The latest event is a mid-turn event (`user_message`, `reasoning`, `custom_tool_call`, etc.) with no closing `task_complete`. A captured restart may resume it from its post-shutdown checkpoint. Discovery-only recovery refuses this ambiguous state so it cannot duplicate or stop a task the user already resumed.
 - **`CleanCompleted`**: The last turn completed cleanly with no error, or a non-quota execution error. **Never auto-resumed.**
-- **`TurnAborted`**: The turn was explicitly cancelled by the user (`turn_aborted`). **Never auto-resumed.**
+- **`TurnAborted`**: Ambiguous user/app interruption. Auto-recovered only when captured in the pre-restart manifest; an explicit `cxi resume <id>` can also recover it. Historical user Stop actions are not automatically revived.
 - **Filtered Metadata**: Events such as `thread_settings_applied`, `item_completed`, and `token_count` are filtered out during tail inspection so they never mask or falsify turn completion states.
 
-### 💡 Why Desktop UI Cycling is Necessary
+### 💡 Desktop-Owned IPC Recovery
 
-In macOS `ChatGPT.app` (Chromium/Electron architecture), background threads remain unhydrated. When a thread pauses on a quota limit, simply switching `auth.json` in the background will not wake up idle background tabs until they are opened in the UI. 
+The monitor is a remote-control client of the Desktop runtime that already owns each task. It never starts `codex exec resume`, which would compete for the writer lock and can produce “This is open in another app.”
 
-To solve this, `codex-mon`:
-1. Dispatches `codex queue --thread <id> --message continue` via the CLI socket.
-2. Cycles through all detected interrupted threads via `open "codex://threads/<id>"`.
-3. Invokes macOS Accessibility APIs to trigger any pending UI resume buttons.
-4. Returns focus to your active/primary thread.
+The recovery algorithm is:
+
+1. Detect eligible, unarchived non-subagent tasks and atomically journal their IDs before shutdown. Stale manifest IDs and a caller-provided primary task are revalidated against SQLite and can never force an internal subagent into recovery.
+2. Gracefully stop Desktop, wait for the exact main process to exit, then record a second rollout checkpoint. This excludes old work and shutdown-flush events from recovery proof.
+3. Relaunch Desktop, validate its same-user IPC socket, and resolve the owner of every task. Only ownerless cold tasks are opened once for mounting; already-owned tasks are never cycled through the UI.
+4. Preserve any queued payloads exactly. Only the exact restart-generated pause reason is removed; user-paused queues are rejected. Otherwise send one `app_update_resume` turn-start request containing the short text `continue`. An uncertain send is never retried.
+5. Bind proof to the exact turn ID returned by Desktop IPC. Require a post-checkpoint `task_started`, substantive agent reasoning/message/tool/web-search work, and then 90 seconds without an abort or error. An acknowledgement, writer lock, navigation, or start alone is not success.
+6. Restore the primary task once only if recovery had to mount a different cold task, then require the relaunched singleton PID to remain unchanged for another 90 seconds and verify its visible window. Recovery and account switching share an operation lock and the same pipeline.
+
+### ♻️ Account-Bound Weekly Reset Credits
+
+The weekly reset option is off by default and is intentionally independent of account rotation. When enabled, the daemon acts only when all of the following are true: the active account's fresh weekly availability is exactly `0%`, a reset credit is available, the selected strict remaining-time threshold is met, and a recent (up to four hours), unarchived, user-owned task ended with a quota error. It never spends a credit for an idle account, an active task, an aborted task, or a subagent.
+
+The monitor writes a private, atomic `~/.codex/auto-reset-state.json` journal before requesting a reset. It contains an opaque idempotency key, account/window marker, and task ID, is mode `0600`, and is deliberately not a log. A timeout or unknown result is retried only with that same key; a successfully applied reset is never consumed again for the same weekly window.
+
+The reset is account-scoped and does not participate in thread ownership:
+
+1. After taking the same operation lock as account switching, the monitor reloads the active account and revalidates its exact weekly exhaustion, selected threshold, reset-credit count, and account routing ID.
+2. It sends one authenticated request to the ChatGPT reset service used by Codex, with the active account header and the journaled idempotency key. No token, email, or response body is logged.
+3. `reset` and `already_redeemed` are treated as idempotent success. `nothing_to_reset` and `no_credit` permit normal auto-switch fallback. A transport failure or unknown response retains the same key and suppresses switching until the result is settled.
+4. Only after a confirmed success does the monitor use Desktop's existing owner-routed IPC recovery path to resume the blocked task(s).
+
+The monitor never starts a second app-server and never asks another runtime to load the task. Desktop remains the only thread writer; the direct service call is limited to the account-level reset operation. Desktop does not need a custom reset IPC handler.
+
+The Monitor owns the launchd daemon lifecycle. Explicit Quit writes a private durable cancellation marker and unloads the recurring daemon. A scheduled worker that has not crossed the shutdown boundary stops; a worker already between shutdown and relaunch is allowed to restore Codex to a safe running state, but cannot begin another restart cycle. Starting Monitor clears the stale cancellation marker.
 
 ---
 
@@ -319,4 +360,3 @@ Both the native macOS Menu Bar application (`Codex Monitor.app`) and the offline
 
 - **Automatic Locale Detection**: `Codex Monitor.app` inspects `Locale.preferredLanguages` with priority prefix matching (e.g. `ja-JP` → `ja`, `zh-Hans-CN` / `zh-CN` → `zh-Hans`, `vi-VN` → `vi`).
 - **Interactive Guide Selection**: The guide automatically resolves the active language via URL query parameter (`helps.html?lang=ja`), hash anchor (`#ja`), localStorage preference, or browser navigator languages, with an instant-switch dropdown selector in the navigation header.
-
