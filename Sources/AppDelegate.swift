@@ -491,6 +491,20 @@ public final class ResetCreditsRowView: NSView {
     enclosingMenuItem?.menu?.cancelTracking()
     onReset()
   }
+
+  public override func resetCursorRects() {
+    super.resetCursorRects()
+    addCursorRect(resetButton.frame, cursor: .pointingHand)
+  }
+
+  public override func mouseUp(with event: NSEvent) {
+    let point = convert(event.locationInWindow, from: nil)
+    if resetButton.frame.contains(point) {
+      handleResetClick()
+      return
+    }
+    super.mouseUp(with: event)
+  }
 }
 
 public final class AccountSectionCardView: NSView {
@@ -665,7 +679,7 @@ public final class AccountSectionCardView: NSView {
             .font: NSFont.systemFont(ofSize: 11, weight: .medium),
             .foregroundColor: NSColor.systemIndigo,
           ])
-        addMetricLabel(credits, at: cursorY)
+        addMetricLabel(credits, at: cursorY, marginRight: 52)
 
         let resetBtn = NSButton(
           frame: NSRect(x: contentWidth - 44, y: cursorY - 1, width: 22, height: 18))
@@ -735,13 +749,44 @@ public final class AccountSectionCardView: NSView {
     fatalError("init(coder:) has not been implemented")
   }
 
-  private func addMetricLabel(_ value: NSAttributedString, at y: CGFloat) {
+  private func addMetricLabel(_ value: NSAttributedString, at y: CGFloat, marginRight: CGFloat = 29) {
     let label = NSTextField(labelWithAttributedString: value)
-    label.frame = NSRect(x: 29, y: y, width: max(100, contentContainer.bounds.width - 58), height: 17)
+    let width = max(50, contentContainer.bounds.width - 29 - marginRight)
+    label.frame = NSRect(x: 29, y: y, width: width, height: 17)
     label.lineBreakMode = .byClipping
     label.autoresizingMask = [.width]
     contentContainer.addSubview(label)
     metricLabels.append(label)
+  }
+
+  public override func resetCursorRects() {
+    super.resetCursorRects()
+    for btn in resetButtons {
+      let rectInSelf = convert(btn.frame, from: contentContainer)
+      addCursorRect(rectInSelf, cursor: .pointingHand)
+    }
+    for btn in switchButtons {
+      let rectInSelf = convert(btn.frame, from: contentContainer)
+      addCursorRect(rectInSelf, cursor: .pointingHand)
+    }
+  }
+
+  public override func mouseUp(with event: NSEvent) {
+    let pointInSelf = convert(event.locationInWindow, from: nil)
+    let pointInContainer = contentContainer.convert(pointInSelf, from: self)
+    for btn in resetButtons {
+      if btn.frame.contains(pointInContainer) {
+        handleResetButton(btn)
+        return
+      }
+    }
+    for btn in switchButtons {
+      if btn.frame.contains(pointInContainer) {
+        handleSwitchButton(btn)
+        return
+      }
+    }
+    super.mouseUp(with: event)
   }
 
   @objc private func handleSwitchButton(_ sender: NSButton) {
@@ -2549,6 +2594,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         self?.refreshNow()
         if !success, let msg = errMsg, !msg.isEmpty {
           self?.showAlert(title: L10n.resetAccountTitle, message: msg, style: .warning)
+        } else if success {
+          self?.showAlert(
+            title: L10n.resetAccountTitle,
+            message: L10n.resetSuccessMsg(email: email),
+            style: .informational
+          )
         }
       }
     }

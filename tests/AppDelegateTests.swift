@@ -1124,6 +1124,21 @@ struct AppDelegateTestRunner {
       "Clicking reset button must invoke onReset with account email"
     )
 
+    // 1. Verify non-overlapping layout between credits metric label and reset button
+    let creditsMetricLabel = cardWithResets.metricLabels.first {
+      $0.attributedStringValue.string.contains(L10n.resetCredits)
+    }
+    assertTrue(creditsMetricLabel != nil, "Must find credits metric label in card")
+    let labelMaxX = creditsMetricLabel!.frame.maxX
+    let btnMinX = cardResetBtn.frame.minX
+    assertTrue(
+      labelMaxX <= btnMinX - 6,
+      "Credits metric label (maxX: \(labelMaxX)) must not overlap reset button (minX: \(btnMinX))"
+    )
+
+    // 2. Verify resetCursorRects executes cleanly on both views
+    cardWithResets.resetCursorRects()
+
     var rowResetClicked = false
     let resetRow = ResetCreditsRowView(
       frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 20),
@@ -1132,6 +1147,7 @@ struct AppDelegateTestRunner {
       leftPadding: 20,
       onReset: { rowResetClicked = true }
     )
+    resetRow.resetCursorRects()
     assertTrue(
       resetRow.label.stringValue.contains(L10n.resetCredits),
       "ResetCreditsRowView must display reset credits label"
@@ -1143,7 +1159,111 @@ struct AppDelegateTestRunner {
     resetRow.resetButton.performClick(nil)
     assertTrue(rowResetClicked, "Clicking reset button in ResetCreditsRowView must invoke onReset")
 
+    // 3. Verify mouseUp hit-testing on ResetCreditsRowView
+    var rowMouseUpTriggered = false
+    let testResetRow = ResetCreditsRowView(
+      frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 20),
+      credits: 2,
+      accountDisplayName: "test@example.com",
+      leftPadding: 20,
+      onReset: { rowMouseUpTriggered = true }
+    )
+    let btnCenter = NSPoint(
+      x: testResetRow.resetButton.frame.midX,
+      y: testResetRow.resetButton.frame.midY
+    )
+    let mouseUpEvent = NSEvent.mouseEvent(
+      with: .leftMouseUp,
+      location: btnCenter,
+      modifierFlags: [],
+      timestamp: 0,
+      windowNumber: 0,
+      context: nil,
+      eventNumber: 0,
+      clickCount: 1,
+      pressure: 1.0
+    )!
+    testResetRow.mouseUp(with: mouseUpEvent)
+    assertTrue(
+      rowMouseUpTriggered,
+      "mouseUp within resetButton.frame in ResetCreditsRowView must trigger onReset"
+    )
+
+    rowMouseUpTriggered = false
+    let outsideEvent = NSEvent.mouseEvent(
+      with: .leftMouseUp,
+      location: NSPoint(x: 10, y: 10),
+      modifierFlags: [],
+      timestamp: 0,
+      windowNumber: 0,
+      context: nil,
+      eventNumber: 0,
+      clickCount: 1,
+      pressure: 1.0
+    )!
+    testResetRow.mouseUp(with: outsideEvent)
+    assertTrue(
+      !rowMouseUpTriggered,
+      "mouseUp outside resetButton.frame must not trigger onReset"
+    )
+
+    // 4. Verify mouseUp hit-testing on AccountSectionCardView
+    var cardMouseUpId = ""
+    var cardMouseUpEmail = ""
+    let testCard = AccountSectionCardView(
+      frame: NSRect(
+        x: 0, y: 0, width: AppDelegate.defaultMenuWidth,
+        height: AccountSectionCardView.preferredHeight(for: [
+          ReserveAccountSectionEntry(account: accWithCredits, reserveIndex: 1),
+        ])),
+      title: "HitTest Org",
+      kind: .business,
+      entries: [
+        ReserveAccountSectionEntry(account: accWithCredits, reserveIndex: 1),
+      ],
+      onSwitch: { _ in },
+      onDelete: { _, _ in },
+      onRename: { _, _, _ in },
+      onReset: { id, email in
+        cardMouseUpId = id
+        cardMouseUpEmail = email
+      }
+    )
+    let cardBtn = testCard.resetButtons.first!
+    let cardBtnCenterInCard = testCard.convert(
+      NSPoint(x: cardBtn.frame.midX, y: cardBtn.frame.midY),
+      from: testCard.contentContainer
+    )
+    let cardEvent = NSEvent.mouseEvent(
+      with: .leftMouseUp,
+      location: cardBtnCenterInCard,
+      modifierFlags: [],
+      timestamp: 0,
+      windowNumber: 0,
+      context: nil,
+      eventNumber: 0,
+      clickCount: 1,
+      pressure: 1.0
+    )!
+    testCard.mouseUp(with: cardEvent)
+    assertEqual(
+      cardMouseUpId, accWithCredits.id,
+      "mouseUp over reset button in AccountSectionCardView must trigger onReset with account id"
+    )
+    assertEqual(
+      cardMouseUpEmail, accWithCredits.email,
+      "mouseUp over reset button in AccountSectionCardView must trigger onReset with account email"
+    )
+
+    // 5. Verify localized reset success message
+    let successMsg = L10n.resetSuccessMsg(email: "test@example.com")
+    assertTrue(
+      successMsg.contains("test@example.com"),
+      "resetSuccessMsg must contain target email"
+    )
+
     print("  ✅ Tiny reset button where resets available on resets line verified")
+    print("  ✅ Reset button mouseUp hit-testing, non-overlapping layout & cursor rects verified")
 
     print("\n🎉 ALL APP DELEGATE TESTS PASSED!")
   }
