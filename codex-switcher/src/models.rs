@@ -153,6 +153,25 @@ impl AccountConfig {
         }
     }
 
+    pub fn needs_relogin(&self) -> bool {
+        if self.tokens.access_token.trim().is_empty() {
+            return true;
+        }
+        if let Some(ref err) = self.last_error {
+            let lower = err.to_ascii_lowercase();
+            return lower.contains("401")
+                || lower.contains("re-login")
+                || lower.contains("relogin")
+                || lower.contains("session ended")
+                || lower.contains("logged out")
+                || lower.contains("unauthorized")
+                || lower.contains("token_revoked")
+                || lower.contains("invalid_grant")
+                || lower.contains("refresh_token_invalidated");
+        }
+        false
+    }
+
     pub fn effective_multiplier(&self) -> f64 {
         if let Some(m) = self.plan_multiplier {
             if m > 0.0 {

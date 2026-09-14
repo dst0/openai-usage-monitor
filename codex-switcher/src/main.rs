@@ -124,6 +124,18 @@ enum Commands {
         /// Account ID to remove
         account_id: String,
     },
+    /// Re-authenticate an existing account via browser login
+    Relogin {
+        /// Account ID, nickname, or email to re-authenticate (defaults to active account)
+        #[arg(default_value = "")]
+        account: String,
+        /// Force restart ChatGPT desktop app on re-login
+        #[arg(long)]
+        restart: bool,
+        /// Do not restart ChatGPT desktop app
+        #[arg(long)]
+        no_restart: bool,
+    },
     /// Run background monitor and auto-switcher daemon
     Daemon,
     /// Run API connectivity test
@@ -230,6 +242,10 @@ fn print_status_table(refresh: bool) -> Result<(), String> {
 
         if let Some(err) = &acc.last_error {
             println!("      ↳ ⚠️ Error: {}", err);
+            if acc.needs_relogin() {
+                let hint = acc.name.as_deref().unwrap_or(&acc.id);
+                println!("        🔑 Re-login required: run `cxi relogin \"{}\"`", hint);
+            }
         }
     }
 
@@ -485,6 +501,27 @@ fn main() {
         Some(Commands::Add { account_id }) => setup::login_and_add_account(&account_id),
         Some(Commands::SaveCurrent { account_id }) => setup::save_current_as(&account_id),
         Some(Commands::Remove { account_id }) => setup::remove_account(&account_id),
+        Some(Commands::Relogin {
+            account,
+            restart,
+            no_restart,
+        }) => (|| {
+            let target = if account.trim().is_empty() {
+                let accounts = storage::load_accounts().unwrap_or_default();
+                if let Some(active_id) = accounts.active_account_id {
+                    active_id
+                } else if accounts.accounts.len() == 1 {
+                    accounts.accounts[0].id.clone()
+                } else {
+                    return Err(
+                        "Please specify an account to re-login (e.g. `codex-mon relogin <name|email>`)".into(),
+                    );
+                }
+            } else {
+                account
+            };
+            setup::relogin_account(&target, restart, no_restart)
+        })(),
         Some(Commands::Daemon) => {
             daemon::run_daemon_loop();
             Ok(())

@@ -30,6 +30,7 @@ fi
 
 CLEANUP_TMP=0
 CLI_STAGING=""
+PERSISTENT_SKILL_ROOT=""
 cleanup() {
     if [ -n "${CLI_STAGING}" ] && [ -f "${CLI_STAGING}" ]; then
         rm -f "${CLI_STAGING}"
@@ -54,6 +55,9 @@ if [ -z "${PROJECT_DIR}" ]; then
         exit 1
     fi
     PROJECT_DIR="${TMP_DIR}"
+    # The temporary clone is removed on exit, so remote installs must retain a
+    # small, app-owned copy of the skills before linking them into agent homes.
+    PERSISTENT_SKILL_ROOT="${HOME}/.local/share/codex-monitor/skills"
 fi
 
 BUILD_DIR="${PROJECT_DIR}/build"
@@ -126,6 +130,14 @@ if ! command -v cargo >/dev/null 2>&1; then
     echo "   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
     echo "After installation completes, re-run this script."
     exit 1
+fi
+
+# Desktop recovery is an optional integration. Keep CLI-only installation
+# usable, but make the standard Desktop prerequisite visible before building.
+CODEX_DESKTOP_APP="/Applications/ChatGPT.app"
+if [ ! -x "${CODEX_DESKTOP_APP}/Contents/Resources/codex" ]; then
+    echo "⚠️  Official Codex Desktop was not found at ${CODEX_DESKTOP_APP}."
+    echo "   CLI quota monitoring will work; Desktop restart/recovery needs the normal OpenAI app installation."
 fi
 
 # Ensure ~/.local/bin is in PATH
@@ -218,6 +230,13 @@ if [ -f "${PROJECT_DIR}/resources/helps.html" ]; then
     cp "${PROJECT_DIR}/resources/helps.html" "${HOME}/.codex/helps.html"
 fi
 
+# Bundle the confirmation-gated uninstaller so the running Menu Bar app can
+# remove itself even when the installation came from a temporary remote clone.
+if [ -f "${PROJECT_DIR}/scripts/uninstall.sh" ]; then
+    cp "${PROJECT_DIR}/scripts/uninstall.sh" "${APP_DIR}/Contents/Resources/uninstall.sh"
+    chmod 755 "${APP_DIR}/Contents/Resources/uninstall.sh"
+fi
+
 # Copy localization bundles (*.lproj)
 for lproj in "${PROJECT_DIR}/resources/"*.lproj; do
     if [ -d "$lproj" ]; then
@@ -307,10 +326,18 @@ echo "🧠 [4/4] Installing skills for Codex, Claude Code, and Agent Swarms..."
 for skill_name in "cxi" "codex-mon"; do
     canonical_skill="${PROJECT_DIR}/skills/${skill_name}"
     if [ -d "${canonical_skill}" ]; then
+        skill_target="${canonical_skill}"
+        if [ -n "${PERSISTENT_SKILL_ROOT}" ]; then
+            mkdir -p "${PERSISTENT_SKILL_ROOT}"
+            rm -rf "${PERSISTENT_SKILL_ROOT}/${skill_name}"
+            cp -R "${canonical_skill}" "${PERSISTENT_SKILL_ROOT}/${skill_name}"
+            skill_target="${PERSISTENT_SKILL_ROOT}/${skill_name}"
+            echo "  -> Retained remote skill source at ${skill_target}"
+        fi
         for skill_dir in "${HOME}/.claude/skills" "${HOME}/.codex/skills" "${HOME}/.agents/skills"; do
             mkdir -p "${skill_dir}"
             rm -rf "${skill_dir}/${skill_name}"
-            ln -sfn "${canonical_skill}" "${skill_dir}/${skill_name}"
+            ln -sfn "${skill_target}" "${skill_dir}/${skill_name}"
             echo "  -> Linked ${skill_dir}/${skill_name}"
         done
 

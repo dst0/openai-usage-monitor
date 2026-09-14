@@ -37,15 +37,28 @@ pub fn should_notify_switch(
 }
 
 pub fn should_skip_redundant_switch(
-    _last_switched_id: Option<&str>,
+    last_switched_id: Option<&str>,
     target_id: &str,
     active_account_id: Option<&str>,
+    active_depleted: bool,
     last_switched_time: Option<Instant>,
     now: Instant,
     cooldown: Duration,
 ) -> bool {
     if active_account_id == Some(target_id) {
         return true;
+    }
+    if active_depleted {
+        // If active account is depleted, allow switching to a DIFFERENT candidate immediately!
+        // Only skip if attempting to re-switch to the exact same target during cooldown.
+        if last_switched_id == Some(target_id) {
+            if let Some(last_time) = last_switched_time {
+                if now.duration_since(last_time) < cooldown {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
     if let Some(last_time) = last_switched_time {
         if now.duration_since(last_time) < cooldown {
@@ -239,14 +252,8 @@ pub fn run_daemon_tick_with_state(
             let prev_tokens = acc.tokens.clone();
             update_account_quota_cache(acc);
 
-            // If query failed with 401 on the active account, re-read auth.json and retry once
-            if is_active
-                && acc
-                    .last_error
-                    .as_deref()
-                    .map(|e| e.contains("401"))
-                    .unwrap_or(false)
-            {
+            // If query failed with an auth/relogin error on the active account, re-read auth.json and retry once
+            if is_active && acc.needs_relogin() {
                 if let Ok(fresh_auth) = read_active_auth_json() {
                     if let Some(fresh_tokens) = fresh_auth.tokens {
                         if fresh_tokens != acc.tokens {
@@ -390,7 +397,8 @@ pub fn run_daemon_tick_with_state(
         if let Some(active) = active_acc {
             let threshold = accounts_file.settings.switch_threshold_percent;
             let biz_priority = accounts_file.settings.auto_switch_business_priority;
-            if active.last_primary_percentage > threshold {
+            let active_depleted = crate::strategy::is_account_depleted(active, threshold);
+            if !active_depleted {
                 if let Some(remaining) = crate::recovery::automation_cooldown_remaining()? {
                     println!(
                         "ℹ️ Business-priority preemption deferred for {}s while Codex recovery stabilizes",
@@ -402,7 +410,7 @@ pub fn run_daemon_tick_with_state(
             if needs_switch(active, threshold, biz_priority, &accounts_file.accounts) {
                 if biz_priority
                     && !active.is_business()
-                    && active.last_primary_percentage > threshold
+                    && !active_depleted
                 {
                     println!(
                         "⚡ Active account '{}' is non-business ({:.1}%). Business quota is available. Preempting to business account...",
@@ -410,8 +418,11 @@ pub fn run_daemon_tick_with_state(
                     );
                 } else {
                     println!(
-                        "⚠️ Active account '{}' reached {:.1}% (threshold: {:.1}%). Searching for switch candidate...",
-                        active.id, active.last_primary_percentage, threshold
+                        "⚠️ Active account '{}' reached {:.1}% (weekly: {:.1}%, credits: {}). Searching for switch candidate...",
+                        active.id,
+                        active.last_primary_percentage,
+                        active.last_weekly_percentage.unwrap_or(100.0),
+                        active.last_credits.unwrap_or(0)
                     );
                 }
 
@@ -431,6 +442,7 @@ pub fn run_daemon_tick_with_state(
                         last_switched_id.as_deref(),
                         &next_id,
                         accounts_file.active_account_id.as_deref(),
+                        active_depleted,
                         *last_switched_time,
                         now,
                         switch_cooldown,
@@ -455,11 +467,17 @@ pub fn run_daemon_tick_with_state(
                         // that must never erase the cooldown and trigger a loop.
                         *last_switched_id = Some(next_id.clone());
                         *last_switched_time = Some(now);
-                        let outcome = switch_to_account(
+                        let outcome = match switch_to_account(
                             &next_id,
                             accounts_file.settings.restart_app_on_switch,
                             should_notify,
-                        )?;
+                        ) {
+                            Ok(outcome) => outcome,
+                            Err(err) => {
+                                eprintln!("❌ Failed to auto-switch to '{}': {}", next_id, err);
+                                return Ok(());
+                            }
+                        };
                         if should_notify {
                             *last_notified_id = Some(next_id.clone());
                             *last_notified_time = Some(now);
@@ -513,6 +531,27 @@ pub fn refresh_quotas_and_status() -> Result<(), String> {
         &mut last_notified_time,
         false,
     )
+}
+
+/// Lightweight local watchdog check: returns true if active account quota was marked depleted
+/// or if any recent user task was interrupted by quota exhaustion.
+pub fn watchdog_needs_immediate_check() -> bool {
+    if let Ok(accounts_file) = load_accounts() {
+        if let Some(active_id) = &accounts_file.active_account_id {
+            if let Some(active) = accounts_file.accounts.iter().find(|a| a.id == *active_id) {
+                let threshold = accounts_file.settings.switch_threshold_percent;
+                if crate::strategy::is_account_depleted(active, threshold) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    if !crate::switcher::detect_recent_quota_blocked_user_threads().is_empty() {
+        return true;
+    }
+
+    false
 }
 
 pub fn run_daemon_loop() {
@@ -571,13 +610,22 @@ pub fn run_daemon_loop() {
         let sleep_start = Instant::now();
         let target_duration = Duration::from_secs(interval_secs);
 
+        let mut watchdog_ticks: u32 = 0;
         // Responsive sleep: check every 1 second if auth.json was modified externally (e.g. login in Codex app)
+        // and every 2 seconds run the lightweight local quota watchdog.
         while sleep_start.elapsed() < target_duration {
             sleep(Duration::from_secs(1));
+            watchdog_ticks = watchdog_ticks.wrapping_add(1);
+
             let current_auth_mtime = std::fs::metadata(crate::storage::auth_json_path())
                 .and_then(|m| m.modified())
                 .ok();
             if current_auth_mtime != last_auth_mtime && current_auth_mtime.is_some() {
+                break;
+            }
+
+            if watchdog_ticks % 2 == 0 && watchdog_needs_immediate_check() {
+                println!("⚡ Watchdog: immediate quota exhaustion or blocked thread detected; waking daemon");
                 break;
             }
         }
@@ -592,10 +640,12 @@ mod tests {
     #[test]
     fn failed_or_partial_switch_attempt_still_enters_cooldown() {
         let now = Instant::now();
+        // Same target within cooldown is skipped even if active is depleted
         assert!(should_skip_redundant_switch(
             Some("target"),
             "target",
             Some("previous-account"),
+            true,
             Some(now - Duration::from_secs(10)),
             now,
             Duration::from_secs(120),
@@ -604,14 +654,27 @@ mod tests {
             Some("target"),
             "target",
             Some("previous-account"),
+            true,
             Some(now - Duration::from_secs(121)),
             now,
             Duration::from_secs(120),
         ));
+        // Different target when active is NOT depleted is skipped (cooldown prevents preemption thrashing)
         assert!(should_skip_redundant_switch(
             Some("first-target"),
             "different-target",
             Some("previous-account"),
+            false,
+            Some(now - Duration::from_secs(10)),
+            now,
+            Duration::from_secs(120),
+        ));
+        // Different target when active IS depleted is ALLOWED immediately!
+        assert!(!should_skip_redundant_switch(
+            Some("first-target"),
+            "different-target",
+            Some("previous-account"),
+            true,
             Some(now - Duration::from_secs(10)),
             now,
             Duration::from_secs(120),

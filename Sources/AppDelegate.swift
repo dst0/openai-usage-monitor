@@ -184,9 +184,11 @@ public final class AccountRowView: NSView {
   public let tier: String?
   public let isCurrentActive: Bool
   public let isAppSession: Bool
+  public let needsRelogin: Bool
   public let onDelete: (String, String) -> Void
   public let onRename: (String, String?, String) -> Void
   public let onSelect: (String) -> Void
+  public let onRelogin: (String, String) -> Void
 
   public let titleLabel: NSTextField
   public var switchButton: NSButton?
@@ -200,13 +202,15 @@ public final class AccountRowView: NSView {
     tier: String?,
     isCurrentActive: Bool,
     isAppSession: Bool = false,
+    needsRelogin: Bool = false,
     dotColor: NSColor,
     statusTag: String,
     statusTagColor: NSColor? = nil,
     showsInlineSwitchButton: Bool = true,
     onDelete: @escaping (String, String) -> Void = { _, _ in },
     onRename: @escaping (String, String?, String) -> Void = { _, _, _ in },
-    onSelect: @escaping (String) -> Void = { _ in }
+    onSelect: @escaping (String) -> Void = { _ in },
+    onRelogin: @escaping (String, String) -> Void = { _, _ in }
   ) {
     self.accountId = accountId
     self.accountName = accountName
@@ -214,17 +218,19 @@ public final class AccountRowView: NSView {
     self.tier = tier
     self.isCurrentActive = isCurrentActive
     self.isAppSession = isAppSession
+    self.needsRelogin = needsRelogin
     self.onDelete = onDelete
     self.onRename = onRename
     self.onSelect = onSelect
+    self.onRelogin = onRelogin
 
     let rightOffset: CGFloat =
-      isAppSession ? 12 : (isCurrentActive || !showsInlineSwitchButton ? 28 : 56)
+      isAppSession ? 12 : (isCurrentActive || !showsInlineSwitchButton || needsRelogin ? 28 : 56)
     let labelWidth = max(50, frame.width - rightOffset - Self.standardInset)
     self.titleLabel = NSTextField(
       frame: NSRect(x: Self.standardInset, y: 1, width: labelWidth, height: 20))
 
-    if !isAppSession && !isCurrentActive && showsInlineSwitchButton {
+    if !isAppSession && !isCurrentActive && showsInlineSwitchButton && !needsRelogin {
       let sb = NSButton(frame: NSRect(x: frame.width - 50, y: 2, width: 22, height: 18))
       sb.isBordered = false
       sb.title = "⇄"
@@ -349,7 +355,7 @@ public final class AccountRowView: NSView {
 
   public override func resetCursorRects() {
     super.resetCursorRects()
-    if !isCurrentActive || isAppSession {
+    if (!isCurrentActive || needsRelogin) || isAppSession {
       addCursorRect(bounds, cursor: .pointingHand)
     }
   }
@@ -379,6 +385,11 @@ public final class AccountRowView: NSView {
       }
       return
     }
+    if needsRelogin {
+      enclosingMenuItem?.menu?.cancelTracking()
+      onRelogin(accountId, accountEmail)
+      return
+    }
     if !isCurrentActive {
       enclosingMenuItem?.menu?.cancelTracking()
       onSelect(accountId)
@@ -392,13 +403,18 @@ public final class AccountRowView: NSView {
     let ctxMenu = NSMenu()
     ctxMenu.autoenablesItems = false
 
-    if !isCurrentActive {
+    if !isCurrentActive && !needsRelogin {
       let switchItem = NSMenuItem(
         title: L10n.switchToAccount, action: #selector(handleSwitchFromCtx), keyEquivalent: "")
       switchItem.target = self
       ctxMenu.addItem(switchItem)
       ctxMenu.addItem(NSMenuItem.separator())
     }
+
+    let reloginItem = NSMenuItem(
+      title: L10n.reloginAccount, action: #selector(handleReloginFromCtx), keyEquivalent: "")
+    reloginItem.target = self
+    ctxMenu.addItem(reloginItem)
 
     let renameItem = NSMenuItem(
       title: L10n.renameAccount, action: #selector(handleRenameFromCtx), keyEquivalent: "")
@@ -415,6 +431,10 @@ public final class AccountRowView: NSView {
 
   @objc private func handleSwitchFromCtx() {
     onSelect(accountId)
+  }
+
+  @objc private func handleReloginFromCtx() {
+    onRelogin(accountId, accountEmail)
   }
 
   @objc private func handleRenameFromCtx() {
@@ -443,8 +463,11 @@ public final class AccountSectionCardView: NSView {
   public private(set) var accountRows: [AccountRowView] = []
   public private(set) var metricLabels: [NSTextField] = []
   public private(set) var switchButtons: [NSButton] = []
+  public private(set) var reloginButtons: [NSButton] = []
+  public let entries: [ReserveAccountSectionEntry]
 
   private let onSwitch: (String) -> Void
+  private let onRelogin: (String, String) -> Void
   private let horizontalInset: CGFloat = 10
 
   public static func preferredHeight(for entries: [ReserveAccountSectionEntry]) -> CGFloat {
@@ -457,7 +480,11 @@ public final class AccountSectionCardView: NSView {
       height += 18  // Sprint row
       if entry.account.weeklyPercentage != nil { height += 18 }
       if entry.account.credits > 0 { height += 18 }
-      height += 24  // Native inline switch action
+      if entry.account.needsRelogin {
+        height += 24  // Native inline re-login action
+      } else {
+        height += 24  // Native inline switch action
+      }
       if let error = entry.account.error, !error.isEmpty { height += 32 }
       height += 5
     }
@@ -471,8 +498,10 @@ public final class AccountSectionCardView: NSView {
     entries: [ReserveAccountSectionEntry],
     onSwitch: @escaping (String) -> Void,
     onDelete: @escaping (String, String) -> Void,
-    onRename: @escaping (String, String?, String) -> Void
+    onRename: @escaping (String, String?, String) -> Void,
+    onRelogin: @escaping (String, String) -> Void = { _, _ in }
   ) {
+    self.entries = entries
     self.headerView = AccountSectionHeaderView(
       frame: NSRect(x: 10, y: 0, width: max(0, frameRect.width - 20), height: 33),
       title: title,
@@ -480,6 +509,7 @@ public final class AccountSectionCardView: NSView {
       kind: kind
     )
     self.onSwitch = onSwitch
+    self.onRelogin = onRelogin
     super.init(frame: frameRect)
 
     autoresizingMask = [.width]
@@ -534,12 +564,14 @@ public final class AccountSectionCardView: NSView {
         tier: account.planBadgeString,
         isCurrentActive: false,
         isAppSession: false,
+        needsRelogin: account.needsRelogin,
         dotColor: dotColor,
         statusTag: statusTag,
         showsInlineSwitchButton: false,
         onDelete: onDelete,
         onRename: onRename,
-        onSelect: onSwitch
+        onSelect: onSwitch,
+        onRelogin: onRelogin
       )
       contentContainer.addSubview(accountRow)
       accountRows.append(accountRow)
@@ -605,27 +637,29 @@ public final class AccountSectionCardView: NSView {
         addMetricLabel(credits, at: cursorY)
       }
 
-      cursorY -= 24
-      let switchButton = NSButton(
-        frame: NSRect(x: 23, y: cursorY, width: max(120, contentWidth - 46), height: 22))
-      switchButton.title = L10n.switchToAccount
-      switchButton.identifier = NSUserInterfaceItemIdentifier(account.id)
-      switchButton.target = self
-      switchButton.action = #selector(handleSwitchButton(_:))
-      switchButton.bezelStyle = .inline
-      switchButton.isBordered = false
-      switchButton.alignment = .left
-      switchButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-      switchButton.contentTintColor = .controlAccentColor
-      switchButton.image = NSImage(
-        systemSymbolName: "arrow.triangle.2.circlepath",
-        accessibilityDescription: L10n.switchToAccount)
-      switchButton.imagePosition = .imageLeading
-      switchButton.toolTip = "\(L10n.switchToAccount): \(account.email)"
-      switchButton.setAccessibilityLabel("\(L10n.switchToAccount): \(account.email)")
-      switchButton.autoresizingMask = [.width]
-      contentContainer.addSubview(switchButton)
-      switchButtons.append(switchButton)
+      if !account.needsRelogin {
+        cursorY -= 24
+        let switchButton = NSButton(
+          frame: NSRect(x: 23, y: cursorY, width: max(120, contentWidth - 46), height: 22))
+        switchButton.title = L10n.switchToAccount
+        switchButton.identifier = NSUserInterfaceItemIdentifier(account.id)
+        switchButton.target = self
+        switchButton.action = #selector(handleSwitchButton(_:))
+        switchButton.bezelStyle = .inline
+        switchButton.isBordered = false
+        switchButton.alignment = .left
+        switchButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        switchButton.contentTintColor = .controlAccentColor
+        switchButton.image = NSImage(
+          systemSymbolName: "arrow.triangle.2.circlepath",
+          accessibilityDescription: L10n.switchToAccount)
+        switchButton.imagePosition = .imageLeading
+        switchButton.toolTip = "\(L10n.switchToAccount): \(account.email)"
+        switchButton.setAccessibilityLabel("\(L10n.switchToAccount): \(account.email)")
+        switchButton.autoresizingMask = [.width]
+        contentContainer.addSubview(switchButton)
+        switchButtons.append(switchButton)
+      }
 
       if let error = account.error, !error.isEmpty {
         cursorY -= 32
@@ -637,6 +671,30 @@ public final class AccountSectionCardView: NSView {
         errorLabel.autoresizingMask = [.width]
         contentContainer.addSubview(errorLabel)
         metricLabels.append(errorLabel)
+      }
+
+      if account.needsRelogin {
+        cursorY -= 24
+        let reloginBtn = NSButton(
+          frame: NSRect(x: 23, y: cursorY, width: max(120, contentWidth - 46), height: 22))
+        reloginBtn.title = L10n.reloginToAccount
+        reloginBtn.identifier = NSUserInterfaceItemIdentifier(account.id)
+        reloginBtn.target = self
+        reloginBtn.action = #selector(handleReloginButton(_:))
+        reloginBtn.bezelStyle = .inline
+        reloginBtn.isBordered = false
+        reloginBtn.alignment = .left
+        reloginBtn.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        reloginBtn.contentTintColor = .systemOrange
+        reloginBtn.image = NSImage(
+          systemSymbolName: "arrow.clockwise.circle.fill",
+          accessibilityDescription: L10n.reloginToAccount)
+        reloginBtn.imagePosition = .imageLeading
+        reloginBtn.toolTip = "\(L10n.reloginToAccount): \(account.email)"
+        reloginBtn.setAccessibilityLabel("\(L10n.reloginToAccount): \(account.email)")
+        reloginBtn.autoresizingMask = [.width]
+        contentContainer.addSubview(reloginBtn)
+        reloginButtons.append(reloginBtn)
       }
       cursorY -= 5
     }
@@ -661,6 +719,13 @@ public final class AccountSectionCardView: NSView {
     guard let accountId = sender.identifier?.rawValue, !accountId.isEmpty else { return }
     enclosingMenuItem?.menu?.cancelTracking()
     onSwitch(accountId)
+  }
+
+  @objc private func handleReloginButton(_ sender: NSButton) {
+    guard let accountId = sender.identifier?.rawValue, !accountId.isEmpty else { return }
+    let email = entries.first(where: { $0.account.id == accountId })?.account.email ?? ""
+    enclosingMenuItem?.menu?.cancelTracking()
+    onRelogin(accountId, email)
   }
 }
 
@@ -1665,6 +1730,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     launchAtLoginItem = autostart
     menu.addItem(autostart)
 
+    // Destructive action: require an explicit uppercase confirmation in the
+    // modal prompt before starting the bundled, confirmation-gated uninstaller.
+    menu.addItem(NSMenuItem.separator())
+    let uninstallItem = NSMenuItem(
+      title: L10n.uninstallAction, action: #selector(handleUninstall), keyEquivalent: "")
+    uninstallItem.target = self
+    menu.addItem(uninstallItem)
+
     // Quit
     let quitItem = NSMenuItem(title: L10n.quit, action: #selector(quitApp), keyEquivalent: "q")
     quitItem.target = self
@@ -1919,6 +1992,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         tier: activeAcc.planBadgeString,
         isCurrentActive: true,
         isAppSession: false,
+        needsRelogin: activeAcc.needsRelogin,
         dotColor: dotColor,
         statusTag: statusTag,
         onDelete: { [weak self] id, email in
@@ -1927,7 +2001,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         onRename: { [weak self] id, name, email in
           self?.promptRenameAccount(id: id, currentName: name, email: email)
         },
-        onSelect: { _ in }
+        onSelect: { _ in },
+        onRelogin: { [weak self] id, email in
+          self?.promptReloginAccount(id: id, email: email)
+        }
       )
       accItem.view = rowView
       menu.insertItem(accItem, at: insertIdx)
@@ -2062,6 +2139,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         menu.insertItem(errItem, at: insertIdx)
         dynamicAccountItems.append(errItem)
         insertIdx += 1
+
+        if activeAcc.needsRelogin {
+          let reloginItem = NSMenuItem(
+            title: "  🔄 \(L10n.reloginToAccount)...",
+            action: #selector(handleActiveAccountRelogin(_:)),
+            keyEquivalent: ""
+          )
+          reloginItem.target = self
+          reloginItem.representedObject = activeAcc
+          reloginItem.attributedTitle = NSAttributedString(
+            string: "  🔄 \(L10n.reloginToAccount)...",
+            attributes: [
+              .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+              .foregroundColor: NSColor.systemOrange,
+            ])
+          menu.insertItem(reloginItem, at: insertIdx)
+          dynamicAccountItems.append(reloginItem)
+          insertIdx += 1
+        }
       }
     }
 
@@ -2128,6 +2224,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
           },
           onRename: { [weak self] accountId, name, email in
             self?.promptRenameAccount(id: accountId, currentName: name, email: email)
+          },
+          onRelogin: { [weak self] accountId, email in
+            self?.promptReloginAccount(id: accountId, email: email)
           }
         )
         menu.insertItem(cardItem, at: insertIdx)
@@ -2204,6 +2303,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     onSwitch: @escaping (String) -> Void = { _ in },
     onDelete: @escaping (String, String) -> Void = { _, _ in },
     onRename: @escaping (String, String?, String) -> Void = { _, _, _ in },
+    onRelogin: @escaping (String, String) -> Void = { _, _ in },
     width: CGFloat = defaultMenuWidth
   ) -> NSMenuItem {
     let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -2220,7 +2320,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
       entries: entries,
       onSwitch: onSwitch,
       onDelete: onDelete,
-      onRename: onRename
+      onRename: onRename,
+      onRelogin: onRelogin
     )
     return item
   }
@@ -2427,6 +2528,50 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     }
   }
 
+  @objc internal func handleActiveAccountRelogin(_ sender: NSMenuItem) {
+    if let account = sender.representedObject as? AccountQuota {
+      promptReloginAccount(id: account.id, email: account.email)
+    } else if let activeAcc = lastSnapshot?.accounts.first(where: { $0.id == (lastSnapshot?.activeAccountId ?? "") }) {
+      promptReloginAccount(id: activeAcc.id, email: activeAcc.email)
+    }
+  }
+
+  internal func promptReloginAccount(id: String, email: String) {
+    let alert = NSAlert()
+    alert.messageText = L10n.reloginAccountTitle
+    alert.informativeText = L10n.reloginAccountMsg(email: email)
+    alert.alertStyle = .informational
+    alert.addButton(withTitle: L10n.reloginToAccount)
+    alert.addButton(withTitle: L10n.cancelBtn)
+
+    NSApp.activate(ignoringOtherApps: true)
+    let response = alert.runModal()
+    guard response == .alertFirstButtonReturn else { return }
+
+    executeRelogin(id: id, email: email)
+  }
+
+  internal func executeRelogin(id: String, email: String) {
+    client.reloginAccount(id: id) { [weak self] success, errMsg in
+      DispatchQueue.main.async {
+        if success {
+          self?.refreshNow()
+          self?.showAlert(
+            title: L10n.reloginSuccessTitle,
+            message: L10n.reloginSuccessMsg(email: email)
+          )
+        } else {
+          let desc = (errMsg?.isEmpty == false) ? errMsg! : L10n.reloginFailedDesc
+          self?.showAlert(
+            title: L10n.reloginFailedTitle,
+            message: desc,
+            style: .warning
+          )
+        }
+      }
+    }
+  }
+
   internal func promptRenameAccount(id: String, currentName: String?, email: String) {
     let alert = NSAlert()
     alert.messageText = L10n.renameAccountTitle
@@ -2620,19 +2765,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     let isDepleted =
       activeAcc.fiveHourPercentage <= 0.0
+      || activeAcc.needsRelogin
       || (activeAcc.error?.localizedCaseInsensitiveContains("429") == true)
       || (activeAcc.error?.localizedCaseInsensitiveContains("limit") == true)
 
     let shouldPreemptForBusiness =
       businessPriority && !activeAcc.isBusiness
       && accounts.contains { acc in
-        acc.id != activeAcc.id && acc.isBusiness && acc.fiveHourPercentage > 0.0 && acc.error == nil
+        acc.id != activeAcc.id && acc.isBusiness && acc.fiveHourPercentage > 0.0 && !acc.needsRelogin
+          && (acc.error == nil || acc.error?.isEmpty == true)
       }
 
     guard isDepleted || shouldPreemptForBusiness else { return nil }
 
     var candidates = accounts.filter { acc in
-      acc.id != activeAcc.id && acc.fiveHourPercentage > 0.0 && acc.error == nil
+      acc.id != activeAcc.id && acc.fiveHourPercentage > 0.0 && !acc.needsRelogin
+        && (acc.error == nil || acc.error?.isEmpty == true)
     }
 
     if businessOnly || shouldPreemptForBusiness {
@@ -2666,6 +2814,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
   }
 
   internal func executeSwitchAccount(id: String) {
+    let target = lastSnapshot?.accounts.first(where: {
+      $0.id.caseInsensitiveCompare(id) == .orderedSame
+        || $0.email.caseInsensitiveCompare(id) == .orderedSame
+        || ($0.name?.caseInsensitiveCompare(id) == .orderedSame)
+    })
+    if let target = target, target.needsRelogin {
+      promptReloginAccount(id: target.id, email: target.email)
+      return
+    }
     if let currentSnapshot = self.lastSnapshot {
       let updatedAccounts = currentSnapshot.accounts.map { acc in
         AccountQuota(
@@ -2727,6 +2884,75 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
       NSWorkspace.shared.open(url)
     } else if let fallbackURL = HelpsDocHelper.findHelpsHTMLURL() {
       NSWorkspace.shared.open(fallbackURL)
+    }
+  }
+
+  @objc private func handleUninstall() {
+    let alert = NSAlert()
+    alert.alertStyle = .critical
+    alert.messageText = L10n.uninstallTitle
+    alert.informativeText = L10n.uninstallMessage
+
+    let confirmationField = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+    confirmationField.placeholderString = L10n.uninstallConfirm
+    confirmationField.setAccessibilityLabel(L10n.uninstallConfirm)
+    let purgeToggle = NSButton(
+      checkboxWithTitle: L10n.uninstallPurgeData, target: nil, action: nil)
+    purgeToggle.setAccessibilityLabel(L10n.uninstallPurgeData)
+    let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 58))
+    confirmationField.frame = NSRect(x: 0, y: 32, width: 280, height: 24)
+    purgeToggle.frame = NSRect(x: 0, y: 0, width: 360, height: 24)
+    accessory.addSubview(confirmationField)
+    accessory.addSubview(purgeToggle)
+    alert.accessoryView = accessory
+    alert.addButton(withTitle: L10n.uninstallConfirm)
+    alert.addButton(withTitle: L10n.cancelBtn)
+
+    NSApp.activate(ignoringOtherApps: true)
+    alert.window.initialFirstResponder = confirmationField
+    let response = alert.runModal()
+
+    guard response == .alertFirstButtonReturn else { return }
+    guard confirmationField.stringValue == "UNINSTALL" else {
+      showAlert(title: L10n.uninstallTitle, message: L10n.uninstallInvalid, style: .warning)
+      return
+    }
+    launchBundledUninstaller(purgeData: purgeToggle.state == .on)
+  }
+
+  private func launchBundledUninstaller(purgeData: Bool) {
+    guard let scriptURL = Bundle.main.url(forResource: "uninstall", withExtension: "sh") else {
+      showAlert(title: L10n.uninstallFailedTitle, message: L10n.uninstallFailedMessage, style: .warning)
+      return
+    }
+
+    do {
+      let script = try Data(contentsOf: scriptURL)
+      guard !script.isEmpty else {
+        showAlert(title: L10n.uninstallFailedTitle, message: L10n.uninstallFailedMessage, style: .warning)
+        return
+      }
+
+      let input = Pipe()
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/bin/bash")
+      process.arguments = ["-s", "--", "--yes"] + (purgeData ? ["--purge-data"] : [])
+      process.standardInput = input
+      process.standardOutput = FileHandle.nullDevice
+      process.standardError = FileHandle.nullDevice
+      try process.run()
+
+      // Feed the script over stdin before terminating the app. This avoids a
+      // race where the uninstaller removes the bundle while bash is opening it.
+      input.fileHandleForWriting.write(script)
+      input.fileHandleForWriting.closeFile()
+      // The child uninstaller now owns daemon shutdown and cancellation-marker
+      // cleanup. Prevent applicationWillTerminate from writing a marker after
+      // the child has removed it.
+      ownsBackgroundAutomation = false
+      NSApp.terminate(nil)
+    } catch {
+      showAlert(title: L10n.uninstallFailedTitle, message: L10n.uninstallFailedMessage, style: .warning)
     }
   }
 

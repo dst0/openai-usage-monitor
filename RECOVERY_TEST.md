@@ -16,3 +16,8 @@
 ## Invariants
 
 Recovery uses the existing Codex Desktop owner's IPC connection, never a second app-server or headless `codex resume`. A dispatch/IPC acknowledgement is not success. Proof requires the exact returned turn ID, a post-checkpoint start, substantive work, a 90-second error-free soak, and then stable/visible Desktop verification. Recovery manifests contain UUIDs and offsets only, are atomically replaced with mode `0600`, and never contain prompts, transcripts, account data, or credentials. Active logs remain plaintext for live inspection; completed logs are archived with Brotli Q6.
+
+The native Accessibility helper is not a recovery transport and does not press
+Play, Resume, Retry, or Steer controls. It is limited to the best-effort
+recovery banner and visibility checks; authoritative Desktop visibility proof is
+bound to the exact main-process PID and its on-screen layer-0 window.

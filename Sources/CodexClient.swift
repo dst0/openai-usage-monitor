@@ -424,6 +424,41 @@ public final class CodexClient: @unchecked Sendable {
     }
   }
 
+  public func reloginAccount(id: String, completion: @escaping (Bool, String?) -> Void) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      let bin = Self.cliExecutableURL.path
+      let proc = Process()
+      proc.executableURL = URL(fileURLWithPath: bin)
+      proc.arguments = ["relogin", id]
+      let outPipe = Pipe()
+      let errPipe = Pipe()
+      proc.standardOutput = outPipe
+      proc.standardError = errPipe
+      do {
+        try proc.run()
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        let success = proc.terminationStatus == 0
+        var errMsg: String? = nil
+        if !success {
+          let errStr = String(data: errData, encoding: .utf8)?.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+          let outStr = String(data: outData, encoding: .utf8)?.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+          errMsg = !(errStr?.isEmpty ?? true) ? errStr : outStr
+        }
+        DispatchQueue.main.async {
+          completion(success, errMsg)
+        }
+      } catch {
+        DispatchQueue.main.async {
+          completion(false, error.localizedDescription)
+        }
+      }
+    }
+  }
+
   public func saveCurrentSession(id: String, completion: @escaping (Bool, String?) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
       let bin = Self.cliExecutableURL.path

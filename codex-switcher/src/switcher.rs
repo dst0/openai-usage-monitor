@@ -171,6 +171,17 @@ pub fn switch_to_account(
 
     let target_account = accounts_file.accounts[target_idx].clone();
 
+    // Guard: reject switching to an account that requires re-login until relogin is completed
+    if target_account.needs_relogin() {
+        let relogin_hint = target_account.name.as_deref().unwrap_or(&target_account.id);
+        return Err(format!(
+            "Account '{}' ({}) requires re-login before switching. Please run 'cxi relogin \"{}\"' first.",
+            target_account.display_name(),
+            target_account.email,
+            relogin_hint
+        ));
+    }
+
     // Redundant switch guard: if target account is already active, return Ok(()) immediately.
     let active_id = accounts_file.active_account_id.as_deref();
     let is_already_active = active_id
@@ -303,6 +314,7 @@ pub fn switch_to_account(
                     crate::recovery::RecoveryMode::CapturedRestart,
                     recovery_banner.as_ref().unwrap(),
                 );
+                drop(recovery_banner.take());
                 let stability_result = crate::recovery::verify_desktop_stable(&launched_pids);
                 match (recovery_result, stability_result) {
                     (Ok(()), Ok(())) => None,
@@ -1149,6 +1161,7 @@ pub fn restart_and_recover(
         crate::recovery::RecoveryMode::CapturedRestart,
         &banner,
     );
+    drop(banner);
     let stability_result = crate::recovery::verify_desktop_stable(&launched_pids);
     match (recovery_result, stability_result) {
         (Ok(()), Ok(())) => {}
@@ -1468,5 +1481,56 @@ mod tests {
         assert!(has_codex_ancestor(&rows, 400).unwrap());
         assert!(!has_codex_ancestor(&rows, 500).unwrap());
         assert!(has_codex_ancestor(&rows, 999).is_err());
+    }
+
+    #[test]
+    fn test_switch_to_account_rejects_relogin_needed() {
+        let _lock = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
+        let temp_dir =
+            std::env::temp_dir().join(format!("codex_relogin_guard_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        std::env::set_var("CODEX_HOME", &temp_dir);
+
+        let acc = crate::models::AccountConfig {
+            id: "user@example.com:uuid-1".to_string(),
+            name: None,
+            email: "user@example.com".to_string(),
+            plan_type: "team".to_string(),
+            account_id: "uuid-1".to_string(),
+            tokens: crate::models::AuthTokens {
+                access_token: "at_1".to_string(),
+                refresh_token: Some("rt_1".to_string()),
+                id_token: None,
+                account_id: Some("uuid-1".to_string()),
+            },
+            enabled: true,
+            priority: 1,
+            last_primary_percentage: 100.0,
+            last_reset_time: None,
+            last_reset_after_seconds: None,
+            last_weekly_percentage: None,
+            last_weekly_reset_time: None,
+            last_weekly_reset_after_seconds: None,
+            last_credits: None,
+            last_error: Some("401 Unauthorized (Session ended)".to_string()),
+            last_checked: None,
+            plan_multiplier: None,
+            multiplier_is_manual: None,
+            last_multiplier_checked: None,
+            organization_name: None,
+        };
+
+        let file = crate::models::AccountsFile {
+            active_account_id: Some("other@example.com:uuid-2".to_string()),
+            settings: Default::default(),
+            accounts: vec![acc],
+        };
+        crate::storage::save_accounts(&file).unwrap();
+
+        let err = switch_to_account("user@example.com:uuid-1", false, false).unwrap_err();
+        assert!(err.contains("requires re-login"));
+        assert!(err.contains("cxi relogin"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
