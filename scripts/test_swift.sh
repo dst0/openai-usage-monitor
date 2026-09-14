@@ -26,7 +26,27 @@ swiftc -parse-as-library \
     Sources/CodexClient.swift \
     Sources/AutoLaunchManager.swift \
     Sources/SingleInstanceGuard.swift \
+    Sources/MenuIconButton.swift \
+    Sources/InsetSeparatorView.swift \
+    Sources/PrimaryMenuSectionHeaderView.swift \
+    Sources/AccountSectionHeaderView.swift \
+    Sources/ReserveAccountSectionEntry.swift \
+    Sources/ResetCreditsRowView.swift \
+    Sources/AccountRowView.swift \
+    Sources/AccountSectionCardView.swift \
     Sources/AppDelegate.swift \
+    Sources/AppDelegate+FileWatchers.swift \
+    Sources/AppDelegate+StatusBar.swift \
+    Sources/AppDelegate+StatusBarOverloads.swift \
+    Sources/AppDelegate+Menu.swift \
+    Sources/AppDelegate+AppBlock.swift \
+    Sources/AppDelegate+CliBlock.swift \
+    Sources/AppDelegate+ReserveCards.swift \
+    Sources/AppDelegate+DynamicItems.swift \
+    Sources/AppDelegate+AccountActions.swift \
+    Sources/AppDelegate+AutoSwitch.swift \
+    Sources/AppDelegate+AutoReset.swift \
+    Sources/AppDelegate+SettingsActions.swift \
     tests/AppDelegateTests.swift \
     -o "${TMP_BIN_DIR}/app_delegate_test"
 "${TMP_BIN_DIR}/app_delegate_test"

@@ -1112,6 +1112,18 @@ pub fn set_config_restart_app_on_switch(enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Updates the preserve_window_bounds_on_restart setting in accounts.json.
+pub fn set_config_preserve_window_bounds(enabled: bool) -> Result<(), String> {
+    let mut file = load_accounts()?;
+    file.settings.preserve_window_bounds_on_restart = enabled;
+    save_accounts(&file)?;
+    println!(
+        "✅ Setting updated: preserve_window_bounds_on_restart = {}",
+        enabled
+    );
+    Ok(())
+}
+
 /// Updates the auto_switch_enabled setting in accounts.json.
 pub fn set_config_auto_switch_enabled(enabled: bool) -> Result<(), String> {
     let mut file = load_accounts()?;

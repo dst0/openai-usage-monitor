@@ -1,6 +1,6 @@
 use crate::storage::load_accounts;
 use crate::strategy::{needs_switch, select_best_switch};
-use crate::switcher::{dispatch_self_restart, is_codex_app_running, switch_to_account};
+use crate::switcher::{dispatch_self_restart, is_codex_app_running, switch_to_account, SwitchTrigger};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
@@ -68,6 +68,8 @@ pub fn run_codex_with_auto_switch(args: &[String]) -> Result<(), String> {
                                 "switch".into(),
                                 next_id.clone(),
                                 "--restart".into(),
+                                "--trigger".into(),
+                                "shim".into(),
                             ])?
                         {
                             return Err(
@@ -79,6 +81,7 @@ pub fn run_codex_with_auto_switch(args: &[String]) -> Result<(), String> {
                             &next_id,
                             should_restart,
                             accounts_file.settings.notify_on_switch,
+                            SwitchTrigger::Shim,
                         )?;
                     }
                 }

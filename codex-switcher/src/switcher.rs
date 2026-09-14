@@ -160,10 +160,48 @@ fn keep_codex_available_after_failure(error: String) -> String {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwitchTrigger {
+    User,
+    Auto,
+    Shim,
+}
+
+impl SwitchTrigger {
+    pub fn as_category(&self) -> &'static str {
+        match self {
+            SwitchTrigger::User => "USER_SWITCH",
+            SwitchTrigger::Auto => "AUTO_SWITCH",
+            SwitchTrigger::Shim => "SHIM_SWITCH",
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SwitchTrigger::User => "user",
+            SwitchTrigger::Auto => "auto",
+            SwitchTrigger::Shim => "shim",
+        }
+    }
+}
+
+impl std::str::FromStr for SwitchTrigger {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "auto" => Ok(SwitchTrigger::Auto),
+            "shim" => Ok(SwitchTrigger::Shim),
+            _ => Ok(SwitchTrigger::User),
+        }
+    }
+}
+
 pub fn switch_to_account(
     account_id: &str,
     restart_app: bool,
     notify: bool,
+    trigger: SwitchTrigger,
 ) -> Result<SwitchOutcome, String> {
     let _operation = crate::recovery::operation_lock()?;
     let mut accounts_file = load_accounts()?;
@@ -240,6 +278,19 @@ pub fn switch_to_account(
         Vec::new()
     };
 
+    let previous_account_id = accounts_file.active_account_id.as_deref().unwrap_or("unknown");
+    crate::logger::log(
+        "INFO",
+        trigger.as_category(),
+        &format!(
+            "Starting account switch from '{}' to '{}' ({}) [running_threads={}]",
+            previous_account_id,
+            target_account.display_name(),
+            target_account.email,
+            running_threads.len()
+        ),
+    );
+
     // 1. Prepare new auth.json
     let mut current_auth = read_active_auth_json().unwrap_or(AuthJson {
         auth_mode: Some("chatgpt".to_string()),
@@ -268,6 +319,7 @@ pub fn switch_to_account(
     // the persistence boundary for active thread history and SQLite WAL state.
     // Never force-kill it: if it cannot flush and exit, leave auth untouched.
     if app_was_running {
+        let _ = crate::recovery::save_desktop_window_bounds();
         crate::recovery::save_pending(&running_threads)?;
         stop_codex_app_gracefully()?;
         // The first journal makes the target list durable before shutdown. The
@@ -309,6 +361,7 @@ pub fn switch_to_account(
     let recovery_error = if app_was_running {
         match launch_codex_app() {
             Ok(launched_pids) => {
+                let _ = crate::recovery::restore_desktop_window_bounds(launched_pids[0]);
                 let recovery_result = crate::recovery::recover_threads_with_banner(
                     &running_threads,
                     crate::recovery::RecoveryMode::CapturedRestart,
@@ -344,6 +397,30 @@ pub fn switch_to_account(
             &format!("5h Limit: {:.0}%", target_account.last_primary_percentage),
         );
     }
+
+    if let Some(ref err) = recovery_error {
+        crate::logger::log(
+            "WARN",
+            trigger.as_category(),
+            &format!(
+                "Switched to '{}' ({}) but recovery had error: {}",
+                target_account.display_name(),
+                target_account.email,
+                err
+            ),
+        );
+    }
+
+    crate::logger::log(
+        "INFO",
+        trigger.as_category(),
+        &format!(
+            "Successfully switched to '{}' ({}) [recovery_error={:?}]",
+            target_account.display_name(),
+            target_account.email,
+            recovery_error
+        ),
+    );
 
     Ok(SwitchOutcome { recovery_error })
 }
@@ -444,7 +521,7 @@ pub(crate) fn launch_codex_app() -> Result<Vec<u32>, String> {
             .env_remove("CODEX_RESTART_WORKER")
             .env_remove("CODEX_RESTART_OPERATION")
             .env_remove("CODEX_PRIMARY_THREAD")
-            .args(["-n", "-a", "/Applications/ChatGPT.app"])
+            .args(["-g", "-n", "-a", "/Applications/ChatGPT.app"])
             .status()
             .map_err(|error| {
                 format!("Account switched, but Codex could not be relaunched: {error}")
@@ -550,15 +627,20 @@ pub fn clean_thread_id(raw: &str) -> String {
     }
 }
 
-/// Navigates ChatGPT desktop application directly to a specific thread URL.
+/// Navigates ChatGPT desktop application directly to a specific thread URL in the background without stealing focus.
 pub fn open_thread_in_codex(thread_id: &str) {
     let clean = clean_thread_id(thread_id);
     if clean.is_empty() {
         return;
     }
-    println!("🧭 Opening thread '{}' in ChatGPT...", clean);
-    let _ = Command::new("open")
-        .arg(format!("codex://threads/{}", clean))
+    println!("🧭 Opening thread '{}' in ChatGPT (background)...", clean);
+    let _ = Command::new("/usr/bin/open")
+        .args([
+            "-g",
+            "-a",
+            "/Applications/ChatGPT.app",
+            &format!("codex://threads/{}", clean),
+        ])
         .status();
 }
 
@@ -836,11 +918,8 @@ pub fn get_thread_updated_at(codex_home: &std::path::Path, thread_id: &str) -> O
     }
 }
 
-/// Finds only recent, unarchived, user-owned tasks whose latest terminal
-/// rollout event is a quota failure. Unlike `detect_in_progress_threads`, it
-/// intentionally excludes active, aborted, queued, and manifest-only tasks:
-/// those are safe to recover but are not proof that a weekly reset is needed.
-pub fn detect_recent_quota_blocked_user_threads() -> Vec<String> {
+/// Finds user-owned tasks whose latest terminal rollout event is a quota failure within a custom window.
+pub fn detect_quota_blocked_user_threads_since(window_secs: i64) -> Vec<String> {
     let codex_home = crate::storage::codex_home();
     let now = chrono::Utc::now().timestamp();
     get_most_recent_threads(&codex_home, 30)
@@ -848,7 +927,7 @@ pub fn detect_recent_quota_blocked_user_threads() -> Vec<String> {
         .filter(|thread_id| is_user_thread(&codex_home, thread_id))
         .filter(|thread_id| {
             get_thread_updated_at(&codex_home, thread_id)
-                .map(|updated| (now - updated).abs() <= RECENT_QUOTA_WINDOW_SECS)
+                .map(|updated| (now - updated).abs() <= window_secs)
                 .unwrap_or(false)
         })
         .filter(|thread_id| {
@@ -856,6 +935,14 @@ pub fn detect_recent_quota_blocked_user_threads() -> Vec<String> {
                 == ThreadRolloutState::InterruptedByQuota
         })
         .collect()
+}
+
+/// Finds only recent, unarchived, user-owned tasks whose latest terminal
+/// rollout event is a quota failure. Unlike `detect_in_progress_threads`, it
+/// intentionally excludes active, aborted, queued, and manifest-only tasks:
+/// those are safe to recover but are not proof that a weekly reset is needed.
+pub fn detect_recent_quota_blocked_user_threads() -> Vec<String> {
+    detect_quota_blocked_user_threads_since(RECENT_QUOTA_WINDOW_SECS)
 }
 
 /// Checks if a thread's rollout log indicates an active turn or an incomplete turn needing resumption.
@@ -1143,6 +1230,7 @@ pub fn restart_and_recover(
     if !targets.is_empty() {
         crate::recovery::preflight_desktop_dispatch()?;
     }
+    let _ = crate::recovery::save_desktop_window_bounds();
     crate::recovery::save_pending(&targets)?;
     stop_codex_app_gracefully()?;
     // Re-checkpoint only after the old process has fully exited, so recovery
@@ -1156,6 +1244,7 @@ pub fn restart_and_recover(
         }
     };
     println!("RESTART_LAUNCHED new_pids={launched_pids:?}");
+    let _ = crate::recovery::restore_desktop_window_bounds(launched_pids[0]);
     let recovery_result = crate::recovery::recover_threads_with_banner(
         &targets,
         crate::recovery::RecoveryMode::CapturedRestart,
@@ -1527,7 +1616,7 @@ mod tests {
         };
         crate::storage::save_accounts(&file).unwrap();
 
-        let err = switch_to_account("user@example.com:uuid-1", false, false).unwrap_err();
+        let err = switch_to_account("user@example.com:uuid-1", false, false, SwitchTrigger::User).unwrap_err();
         assert!(err.contains("requires re-login"));
         assert!(err.contains("cxi relogin"));
 

@@ -1468,6 +1468,179 @@ struct AppDelegateTestRunner {
     print("  ✅ Tiny reset button where resets available on resets line verified")
     print("  ✅ Reset button mouseUp hit-testing, non-overlapping layout & cursor rects verified")
 
+    // ====================================================================
+    // Test 17: Drop-Down Menu Hover, A11y, MenuIconButton & Architecture Invariants
+    // ====================================================================
+    // 1. MenuIconButton interaction & hover tint
+    let testIconButton = MenuIconButton(
+      frame: NSRect(x: 0, y: 0, width: 22, height: 18),
+      symbolName: "arrow.triangle.2.circlepath",
+      pointSize: 11,
+      weight: .semibold,
+      tintColor: .systemBlue,
+      hoverTintColor: .controlAccentColor,
+      tooltip: "Switch",
+      accessibilityLabel: "Switch Account"
+    )
+    assertEqual(testIconButton.isHovered, false, "MenuIconButton must start unhovered")
+    assertEqual(testIconButton.contentTintColor, NSColor.systemBlue, "MenuIconButton must have normal tint color")
+
+    let enterEvent = NSEvent.enterExitEvent(
+      with: .mouseEntered, location: NSPoint(x: 10, y: 10), modifierFlags: [], timestamp: 0,
+      windowNumber: 0, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil
+    )!
+    let exitEvent = NSEvent.enterExitEvent(
+      with: .mouseExited, location: NSPoint(x: -10, y: -10), modifierFlags: [], timestamp: 0,
+      windowNumber: 0, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil
+    )!
+
+    testIconButton.mouseEntered(with: enterEvent)
+    assertEqual(testIconButton.isHovered, true, "MenuIconButton must be hovered after mouseEntered")
+    assertEqual(testIconButton.contentTintColor, NSColor.controlAccentColor, "MenuIconButton must shift to hoverTintColor")
+
+    testIconButton.mouseExited(with: exitEvent)
+    assertEqual(testIconButton.isHovered, false, "MenuIconButton must reset isHovered on mouseExited")
+    assertEqual(testIconButton.contentTintColor, NSColor.systemBlue, "MenuIconButton must restore normal tint on mouseExited")
+
+    // 1.5 Capsule MenuIconButton
+    let capsuleBtn = MenuIconButton(
+      frame: NSRect(x: 0, y: 0, width: 140, height: 24),
+      title: "Switch Account",
+      symbolName: "arrow.triangle.2.circlepath",
+      isCapsule: true
+    )
+    assertEqual(capsuleBtn.isCapsule, true, "MenuIconButton must support capsule styling")
+    capsuleBtn.mouseEntered(with: enterEvent)
+    assertEqual(capsuleBtn.isHovered, true, "Capsule button must be hovered on mouseEntered")
+    capsuleBtn.mouseExited(with: exitEvent)
+    assertEqual(capsuleBtn.isHovered, false, "Capsule button must unhover on mouseExited")
+
+    // 2. AccountRowView hover & accessibility
+    var rowPressTriggered = false
+    let hoverRow = AccountRowView(
+      frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 24),
+      accountId: "acc-hover-test",
+      accountName: "Hover User",
+      email: "hover@example.com",
+      tier: "team",
+      isCurrentActive: false,
+      dotColor: .systemGreen,
+      statusTag: "[reserve #1]",
+      onSelect: { _ in rowPressTriggered = true }
+    )
+    hoverRow.updateTrackingAreas()
+    assertEqual(hoverRow.isHovered, false, "AccountRowView must initialize with isHovered = false")
+    hoverRow.mouseEntered(with: enterEvent)
+    assertEqual(hoverRow.isHovered, true, "AccountRowView must set isHovered = true on mouseEntered")
+    hoverRow.mouseExited(with: exitEvent)
+    assertEqual(hoverRow.isHovered, false, "AccountRowView must set isHovered = false on mouseExited")
+
+    let activeRow = AccountRowView(
+      frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 24),
+      accountId: "acc-active-test",
+      accountName: "Active User",
+      email: "active@example.com",
+      tier: "pro",
+      isCurrentActive: true,
+      dotColor: .systemGreen,
+      statusTag: "[active in cli]"
+    )
+    activeRow.updateTrackingAreas()
+    activeRow.mouseEntered(with: enterEvent)
+    assertEqual(activeRow.isHovered, true, "Active AccountRowView must set isHovered = true on mouseEntered")
+
+    assertEqual(hoverRow.accessibilityRole(), .menuItem, "AccountRowView must declare role .menuItem for VoiceOver")
+    let canPress = hoverRow.accessibilityPerformPress()
+    assertTrue(canPress, "AccountRowView must handle accessibilityPerformPress")
+    assertTrue(rowPressTriggered, "accessibilityPerformPress must invoke onSelect for inactive row")
+
+    let customActions = hoverRow.accessibilityCustomActions() ?? []
+    assertTrue(!customActions.isEmpty, "AccountRowView must provide accessibilityCustomActions for VoiceOver rotor")
+    assertTrue(customActions.contains(where: { $0.name == L10n.switchToAccount }), "Must contain Switch action")
+    assertTrue(customActions.contains(where: { $0.name == L10n.renameAccount }), "Must contain Rename action")
+    assertTrue(customActions.contains(where: { $0.name == L10n.removeAccount }), "Must contain Remove action")
+
+    // 3. PrimaryMenuSectionHeaderView Apple HIG compliance (non-selectable header, group role)
+    let headerView = PrimaryMenuSectionHeaderView(
+      frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 32),
+      title: "Test Section",
+      symbolName: "terminal"
+    )
+    assertEqual(headerView.titleLabel.stringValue, "Test Section", "Header must show section title")
+    assertEqual(headerView.accessibilityRole(), .group, "Header must declare role .group for VoiceOver")
+    assertEqual(headerView.accessibilityLabel(), "Test Section", "Header accessibility label must match title")
+
+    // 4. AccountSectionCardView hover & row click
+    var cardSwitchTriggered = false
+    let cardHoverView = AccountSectionCardView(
+      frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 100),
+      title: "Hover Card",
+      kind: .business,
+      entries: [ReserveAccountSectionEntry(account: accWithoutCredits, reserveIndex: 1)],
+      onSwitch: { id in if id == accWithoutCredits.id { cardSwitchTriggered = true } },
+      onDelete: { _, _ in },
+      onRename: { _, _, _ in }
+    )
+    cardHoverView.updateTrackingAreas()
+    assertEqual(cardHoverView.isCardHovered, false, "AccountSectionCardView must initialize with isCardHovered = false")
+    cardHoverView.mouseEntered(with: enterEvent)
+    assertEqual(cardHoverView.isCardHovered, true, "AccountSectionCardView must highlight border/fill on mouseEntered")
+    cardHoverView.mouseExited(with: exitEvent)
+    assertEqual(cardHoverView.isCardHovered, false, "AccountSectionCardView must restore border/fill on mouseExited")
+
+    if let firstRow = cardHoverView.accountRows.first {
+      let centerInRow = NSPoint(x: firstRow.frame.midX, y: firstRow.frame.midY)
+      let centerInWindow = cardHoverView.convert(cardHoverView.contentContainer.convert(centerInRow, to: cardHoverView), to: nil)
+      let clickEvent = NSEvent.mouseEvent(
+        with: .leftMouseUp,
+        location: centerInWindow,
+        modifierFlags: [],
+        timestamp: 1.0,
+        windowNumber: 1,
+        context: nil,
+        eventNumber: 1,
+        clickCount: 1,
+        pressure: 1.0
+      )!
+      cardHoverView.mouseUp(with: clickEvent)
+      assertTrue(cardSwitchTriggered, "Clicking accountRow inside AccountSectionCardView must trigger onSwitch")
+    }
+
+    print("  ✅ Drop-down menu hover, mouse tracking, accessibility & a11y actions verified")
+
+    // 5. 300-Line Limit & Single Entity Invariant Verification
+    let sourceFilesToCheck = [
+      "Sources/MenuIconButton.swift",
+      "Sources/InsetSeparatorView.swift",
+      "Sources/PrimaryMenuSectionHeaderView.swift",
+      "Sources/AccountSectionHeaderView.swift",
+      "Sources/ReserveAccountSectionEntry.swift",
+      "Sources/ResetCreditsRowView.swift",
+      "Sources/AccountRowView.swift",
+      "Sources/AccountSectionCardView.swift",
+      "Sources/AppDelegate.swift",
+      "Sources/AppDelegate+FileWatchers.swift",
+      "Sources/AppDelegate+StatusBar.swift",
+      "Sources/AppDelegate+StatusBarOverloads.swift",
+      "Sources/AppDelegate+Menu.swift",
+      "Sources/AppDelegate+AppBlock.swift",
+      "Sources/AppDelegate+CliBlock.swift",
+      "Sources/AppDelegate+ReserveCards.swift",
+      "Sources/AppDelegate+DynamicItems.swift",
+      "Sources/AppDelegate+AccountActions.swift",
+      "Sources/AppDelegate+AutoSwitch.swift",
+      "Sources/AppDelegate+AutoReset.swift",
+      "Sources/AppDelegate+SettingsActions.swift",
+    ]
+    for relPath in sourceFilesToCheck {
+      let fullPath = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(relPath)
+      if let content = try? String(contentsOf: fullPath, encoding: .utf8) {
+        let lineCount = content.components(separatedBy: "\n").count
+        assertTrue(lineCount <= 300, "File \(relPath) line count (\(lineCount)) must be <= 300 lines")
+      }
+    }
+    print("  ✅ Swift <= 300 lines architectural invariant verified for all menu components")
+
     print("\n🎉 ALL APP DELEGATE TESTS PASSED!")
   }
 }

@@ -2,6 +2,7 @@ mod auto_reset;
 mod daemon;
 mod models;
 mod oauth;
+pub mod logger;
 mod quota;
 mod recovery;
 mod setup;
@@ -46,6 +47,9 @@ enum Commands {
         /// Force restart ChatGPT desktop app on switch
         #[arg(long)]
         restart: bool,
+        /// Switch trigger reason (user, auto, shim)
+        #[arg(long, hide = true, default_value = "user")]
+        trigger: String,
     },
     /// Resume an active, interrupted, or credit-exhausted thread in ChatGPT
     Resume {
@@ -92,6 +96,9 @@ enum Commands {
         /// Hours that must remain before the ordinary weekly reset (0 = always)
         #[arg(long, value_parser = clap::value_parser!(u64).range(0..=167))]
         auto_reset_weekly_min_hours: Option<u64>,
+        /// Remember and restore Codex Desktop window location and size across restart/switch
+        #[arg(long)]
+        preserve_window_bounds: Option<bool>,
     },
     /// Set custom multiplier override for an account (e.g. 20 for Pro 20x, 5 for Pro 5x / Business Premium)
     SetMultiplier {
@@ -154,9 +161,36 @@ enum Commands {
     },
     /// Open interactive HTML guide in default browser
     Helps,
+    /// View switcher action logs or manage Brotli-compressed archives
+    Logs {
+        /// Number of recent lines to display (default: 40)
+        #[arg(short = 'n', long, default_value_t = 40)]
+        lines: usize,
+        /// List all Brotli-compressed log archives
+        #[arg(long)]
+        archives: bool,
+        /// Force immediate log rotation and Brotli compression
+        #[arg(long)]
+        rotate: bool,
+    },
+    /// Inspect or manage Codex Desktop window position and size persistence
+    Window {
+        #[command(subcommand)]
+        action: Option<WindowAction>,
+    },
     /// Diagnose the Desktop-owned recovery transport without changing a task
     #[command(hide = true)]
     RecoveryPreflight,
+}
+
+#[derive(Subcommand, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowAction {
+    /// Show current saved window bounds and active window state
+    Status,
+    /// Save current Codex window position and size to disk
+    Save,
+    /// Restore saved window position and size to active Codex app
+    Restore,
 }
 
 fn print_status_table(refresh: bool) -> Result<(), String> {
@@ -381,18 +415,26 @@ fn main() {
             account,
             no_restart,
             restart,
+            trigger,
         }) => {
             let accounts = storage::load_accounts().unwrap_or_default();
             let should_restart =
                 (restart || accounts.settings.restart_app_on_switch) && !no_restart;
             let notify = accounts.settings.notify_on_switch;
+            let switch_trigger: switcher::SwitchTrigger =
+                trigger.parse().unwrap_or(switcher::SwitchTrigger::User);
             println!("🔄 Switching to account '{}'...", account);
             let dispatch = if should_restart && switcher::is_codex_app_running() {
-                switcher::dispatch_self_restart(&[
-                    "switch".into(),
+                let mut restart_args = vec![
+                    "switch".to_string(),
                     account.clone(),
-                    "--restart".into(),
-                ])
+                    "--restart".to_string(),
+                ];
+                if switch_trigger != switcher::SwitchTrigger::User {
+                    restart_args.push("--trigger".to_string());
+                    restart_args.push(switch_trigger.as_str().to_string());
+                }
+                switcher::dispatch_self_restart(&restart_args)
             } else {
                 Ok(false)
             };
@@ -400,7 +442,7 @@ fn main() {
                 if scheduled {
                     return Ok((true, None));
                 }
-                switcher::switch_to_account(&account, should_restart, notify)
+                switcher::switch_to_account(&account, should_restart, notify, switch_trigger)
                     .map(|outcome| (false, outcome.recovery_error))
             }) {
                 Ok((scheduled, recovery_error)) => {
@@ -441,6 +483,7 @@ fn main() {
             auto_switch_business_priority,
             auto_reset_weekly_enabled,
             auto_reset_weekly_min_hours,
+            preserve_window_bounds,
         }) => (|| {
             if let Some(val) = restart_app_on_switch {
                 setup::set_config_restart_app_on_switch(val)?;
@@ -453,6 +496,9 @@ fn main() {
             }
             if let Some(val) = auto_switch_business_priority {
                 setup::set_config_auto_switch_business_priority(val)?;
+            }
+            if let Some(val) = preserve_window_bounds {
+                setup::set_config_preserve_window_bounds(val)?;
             }
             if auto_reset_weekly_enabled.is_some() || auto_reset_weekly_min_hours.is_some() {
                 let current = storage::load_accounts().unwrap_or_default();
@@ -468,6 +514,7 @@ fn main() {
                 && auto_switch_business_priority.is_none()
                 && auto_reset_weekly_enabled.is_none()
                 && auto_reset_weekly_min_hours.is_none()
+                && preserve_window_bounds.is_none()
             {
                 let accounts = storage::load_accounts().unwrap_or_default();
                 println!(
@@ -494,8 +541,62 @@ fn main() {
                     "auto_reset_weekly_min_hours: {}",
                     accounts.settings.auto_reset_weekly_min_remaining_seconds / 3600
                 );
+                println!(
+                    "preserve_window_bounds_on_restart: {}",
+                    accounts.settings.preserve_window_bounds_on_restart
+                );
             }
             Ok(())
+        })(),
+        Some(Commands::Window { action }) => (|| {
+            match action.unwrap_or(WindowAction::Status) {
+                WindowAction::Status => {
+                    let saved = recovery::get_saved_desktop_window_bounds()?;
+                    if let Some(b) = saved {
+                        println!(
+                            "💾 Saved window bounds: x={:.1}, y={:.1}, w={:.1}, h={:.1} (updated: {})",
+                            b.x, b.y, b.width, b.height, b.updated_at
+                        );
+                    } else {
+                        println!("💾 Saved window bounds: None");
+                    }
+                    match recovery::get_active_desktop_window_bounds() {
+                        Ok(active) => {
+                            println!(
+                                "🖥️  Active window bounds: x={:.1}, y={:.1}, w={:.1}, h={:.1}",
+                                active.x, active.y, active.width, active.height
+                            );
+                        }
+                        Err(err) => {
+                            println!("🖥️  Active window bounds: Unavailable ({err})");
+                        }
+                    }
+                    let enabled = recovery::should_preserve_window_bounds();
+                    println!("⚙️  preserve_window_bounds_on_restart: {enabled}");
+                    Ok(())
+                }
+                WindowAction::Save => {
+                    let saved = recovery::save_desktop_window_bounds()?;
+                    if let Some(b) = saved {
+                        println!(
+                            "✅ Window bounds saved: x={:.1}, y={:.1}, w={:.1}, h={:.1}",
+                            b.x, b.y, b.width, b.height
+                        );
+                    } else {
+                        println!("⚠️ Could not save window bounds (window not found or helper unavailable)");
+                    }
+                    Ok(())
+                }
+                WindowAction::Restore => {
+                    let pids = switcher::current_codex_app_pids();
+                    if pids.is_empty() {
+                        return Err("Codex Desktop app is not running".into());
+                    }
+                    recovery::restore_desktop_window_bounds(pids[0])?;
+                    println!("✅ Window bounds restore dispatched for PID {}", pids[0]);
+                    Ok(())
+                }
+            }
         })(),
         Some(Commands::SetMultiplier {
             account,
@@ -542,6 +643,77 @@ fn main() {
         Some(Commands::InstallShim) => shim::install_shim(),
         Some(Commands::Wrap { args }) => shim::run_codex_with_auto_switch(&args),
         Some(Commands::Helps) => open_helps_in_browser(),
+        Some(Commands::Logs {
+            lines,
+            archives,
+            rotate,
+        }) => {
+            if rotate {
+                println!("🔄 Rotating switcher logs with Brotli Q6 compression...");
+                let results = logger::rotate_all_logs(0, logger::DEFAULT_MAX_ARCHIVES);
+                if results.is_empty() {
+                    println!("ℹ️ No non-empty log files found to rotate.");
+                } else {
+                    for r in results {
+                        let savings = if r.original_bytes > 0 {
+                            (1.0 - (r.compressed_bytes as f64 / r.original_bytes as f64)) * 100.0
+                        } else {
+                            0.0
+                        };
+                        println!(
+                            "📦 Archived: {} ({} -> {} bytes, {:.1}% saved)",
+                            r.archive_path.file_name().unwrap_or_default().to_string_lossy(),
+                            r.original_bytes,
+                            r.compressed_bytes,
+                            savings
+                        );
+                    }
+                }
+                return;
+            }
+
+            if archives {
+                match logger::list_archives() {
+                    Ok(list) => {
+                        if list.is_empty() {
+                            println!("ℹ️ No compressed log archives found in ~/.codex/log/archive/.");
+                        } else {
+                            println!("\n📦 Brotli-Compressed Log Archives (Q6):");
+                            println!("{:<44} {:>12} {:>14} {:>10}", "ARCHIVE", "COMPRESSED", "UNCOMPRESSED", "SAVINGS");
+                            println!("{}", "-".repeat(84));
+                            for a in list {
+                                let uncomp_str = a.uncompressed_size.map(|s| format!("{s} B")).unwrap_or_else(|| "--".into());
+                                let savings_str = a.savings_percent.map(|p| format!("{p:.1}%")).unwrap_or_else(|| "--".into());
+                                println!("{:<44} {:>10} B {:>14} {:>10}", a.filename, a.compressed_size, uncomp_str, savings_str);
+                            }
+                            println!();
+                        }
+                        return;
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Failed to list archives: {e}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+
+            match logger::read_recent_logs(lines) {
+                Ok(recent) => {
+                    if recent.is_empty() {
+                        println!("ℹ️ No logs found in ~/.codex/log/switcher.log");
+                    } else {
+                        for line in recent {
+                            println!("{}", line);
+                        }
+                    }
+                    return;
+                }
+                Err(e) => {
+                    eprintln!("❌ Failed to read logs: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         Some(Commands::RecoveryPreflight) => recovery::preflight_desktop_dispatch(),
     };
 

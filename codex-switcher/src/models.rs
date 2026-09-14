@@ -250,6 +250,9 @@ pub struct Settings {
     /// reset.  Zero means "always when weekly availability is exactly 0%".
     #[serde(default)]
     pub auto_reset_weekly_min_remaining_seconds: u64,
+    /// Remember and restore Codex Desktop window location and size across restart/switch.
+    #[serde(default = "default_true")]
+    pub preserve_window_bounds_on_restart: bool,
 }
 
 fn default_poll_interval() -> u64 {
@@ -257,6 +260,21 @@ fn default_poll_interval() -> u64 {
 }
 fn default_strategy() -> String {
     "reset-first".to_string()
+}
+fn default_version_1() -> u8 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DesktopWindowBounds {
+    #[serde(default = "default_version_1")]
+    pub version: u8,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    #[serde(default)]
+    pub updated_at: u64,
 }
 
 impl Default for Settings {
@@ -272,6 +290,7 @@ impl Default for Settings {
             auto_switch_business_priority: false,
             auto_reset_weekly_enabled: false,
             auto_reset_weekly_min_remaining_seconds: 0,
+            preserve_window_bounds_on_restart: true,
         }
     }
 }

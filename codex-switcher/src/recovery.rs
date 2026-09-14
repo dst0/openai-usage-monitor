@@ -1,6 +1,6 @@
 //! Recovery is successful only when the target rollout records new agent work.
 //! A deep link, AXPress, task_started, or a queue acknowledgement is not proof.
-use crate::{storage, switcher};
+use crate::{models::DesktopWindowBounds, storage, switcher};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -16,8 +16,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const IPC_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 const IPC_PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(30);
-const IPC_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
-const IPC_OWNER_TIMEOUT: Duration = Duration::from_secs(30);
+const IPC_STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
+const IPC_OWNER_TIMEOUT: Duration = Duration::from_secs(90);
 // Current Desktop routers allow each registered client 10 seconds to answer a
 // discovery probe. The forwarded request timeout starts only after a client is
 // selected, so our transport deadline must cover both bounded phases.
@@ -30,16 +30,16 @@ const IPC_RESPONSE_GRACE: Duration = Duration::from_secs(2);
 const MAX_LINE: usize = 131072;
 const MAX_IPC_FRAME: usize = 2 * 1024 * 1024;
 const MAX_QUEUE_STATE: usize = 512 * 1024;
-const SQLITE_READ_ATTEMPTS: usize = 6;
-const SQLITE_BUSY_TIMEOUT_MS: u64 = 3000;
+const SQLITE_READ_ATTEMPTS: usize = 12;
+const SQLITE_BUSY_TIMEOUT_MS: u64 = 10000;
 const MIN_BANNER_VISIBLE: Duration = Duration::from_secs(5);
-const RECOVERY_DISPATCH_TIMEOUT: Duration = Duration::from_secs(180);
+const RECOVERY_DISPATCH_TIMEOUT: Duration = Duration::from_secs(90);
 const RECOVERY_EXECUTION_TIMEOUT: Duration = Duration::from_secs(600);
 const PRE_DISPATCH_ACTIVITY_GRACE: Duration = Duration::from_secs(3);
 const INTERRUPTED_QUEUE_PAUSE: &str = "Interrupted before the steer was accepted.";
-pub(crate) const AUTOMATION_COOLDOWN: Duration = Duration::from_secs(180);
+pub(crate) const AUTOMATION_COOLDOWN: Duration = Duration::from_secs(30);
 pub(crate) const RECOVERY_SOAK_WINDOW: Duration = Duration::from_secs(10);
-pub(crate) const DESKTOP_STABILITY_WINDOW: Duration = Duration::from_secs(10);
+pub(crate) const DESKTOP_STABILITY_WINDOW: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RecoveryMode {
@@ -262,7 +262,7 @@ fn helper_candidates() -> [Option<PathBuf>; 2] {
     ]
 }
 
-pub(crate) fn activate_and_verify_desktop(expected_pid: u32) -> Result<(), String> {
+pub(crate) fn verify_desktop_window_passive(expected_pid: u32) -> Result<(), String> {
     for helper in helper_candidates().into_iter().flatten() {
         if !helper.exists() {
             continue;
@@ -287,6 +287,102 @@ pub(crate) fn activate_and_verify_desktop(expected_pid: u32) -> Result<(), Strin
     ))
 }
 
+pub fn desktop_window_bounds_path() -> PathBuf {
+    storage::codex_home().join("desktop-window.json")
+}
+
+pub fn should_preserve_window_bounds() -> bool {
+    storage::load_accounts()
+        .map(|acc| acc.settings.preserve_window_bounds_on_restart)
+        .unwrap_or(true)
+}
+
+pub fn get_saved_desktop_window_bounds() -> Result<Option<DesktopWindowBounds>, String> {
+    let path = desktop_window_bounds_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+    let data = std::fs::read(&path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let bounds: DesktopWindowBounds = serde_json::from_slice(&data)
+        .map_err(|e| format!("Failed to parse {}: {e}", path.display()))?;
+    Ok(Some(bounds))
+}
+
+pub fn get_active_desktop_window_bounds() -> Result<DesktopWindowBounds, String> {
+    for helper in helper_candidates().into_iter().flatten() {
+        if !helper.exists() {
+            continue;
+        }
+        let output = Command::new(helper)
+            .arg("--get-window-bounds")
+            .output()
+            .map_err(|e| e.to_string())?;
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Ok(bounds) = serde_json::from_str::<DesktopWindowBounds>(stdout.trim()) {
+                return Ok(bounds);
+            }
+        }
+    }
+    Err("Could not retrieve active desktop window bounds".into())
+}
+
+pub(crate) fn save_desktop_window_bounds() -> Result<Option<DesktopWindowBounds>, String> {
+    if !should_preserve_window_bounds() {
+        return Ok(None);
+    }
+    for helper in helper_candidates().into_iter().flatten() {
+        if !helper.exists() {
+            continue;
+        }
+        let output = Command::new(helper)
+            .arg("--save-window-bounds")
+            .output()
+            .map_err(|e| e.to_string())?;
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("WINDOW_BOUNDS_SAVED") {
+                let saved = get_saved_desktop_window_bounds().ok().flatten();
+                if let Some(ref b) = saved {
+                    println!(
+                        "WINDOW_BOUNDS_SAVED x={:.1} y={:.1} w={:.1} h={:.1}",
+                        b.x, b.y, b.width, b.height
+                    );
+                }
+                return Ok(saved);
+            }
+        }
+    }
+    Ok(None)
+}
+
+pub(crate) fn restore_desktop_window_bounds(expected_pid: u32) -> Result<(), String> {
+    if !should_preserve_window_bounds() {
+        return Ok(());
+    }
+    for helper in helper_candidates().into_iter().flatten() {
+        if !helper.exists() {
+            continue;
+        }
+        let output = Command::new(helper)
+            .args([
+                "--restore-window-bounds",
+                "--expected-pid",
+                &expected_pid.to_string(),
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("WINDOW_BOUNDS_RESTORED") {
+                println!("WINDOW_BOUNDS_RESTORED pid={expected_pid}");
+            }
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn verify_desktop_stable(expected_pids: &[u32]) -> Result<(), String> {
     if expected_pids.len() != 1 {
         return Err(format!(
@@ -305,7 +401,8 @@ pub(crate) fn verify_desktop_stable(expected_pids: &[u32]) -> Result<(), String>
         }
         sleep(Duration::from_millis(250));
     }
-    activate_and_verify_desktop(expected_pids[0])?;
+    verify_desktop_window_passive(expected_pids[0])?;
+    let _ = restore_desktop_window_bounds(expected_pids[0]);
     println!(
         "RESTART_STABLE pids={expected_pids:?} observation_secs={}",
         DESKTOP_STABILITY_WINDOW.as_secs()
@@ -547,6 +644,7 @@ impl DesktopIpc {
 
     fn discover_owner_info_with_retry(&mut self, thread_id: &str) -> Result<OwnerInfo, String> {
         let deadline = Instant::now() + IPC_OWNER_TIMEOUT;
+        let mut loop_count: usize = 0;
         loop {
             let last_error = match self.discover_owner_info_once(thread_id) {
                 Ok(owner) => return Ok(owner),
@@ -561,6 +659,12 @@ impl DesktopIpc {
                 ));
             }
             sleep(Duration::from_millis(200));
+            loop_count += 1;
+            // Every 2 seconds (10 ticks), re-issue background deep link in case ChatGPT was
+            // still initializing its URL handler when the initial command was run.
+            if loop_count % 10 == 0 {
+                switcher::open_thread_in_codex(thread_id);
+            }
         }
     }
 
@@ -856,6 +960,7 @@ pub fn save_pending(ids: &[String]) -> Result<(), String> {
 }
 
 fn query(database: &Path, sql: &str) -> Result<String, String> {
+    let mut last_error = String::new();
     for attempt in 0..SQLITE_READ_ATTEMPTS {
         let output = Command::new("/usr/bin/sqlite3")
             .args([
@@ -870,11 +975,18 @@ fn query(database: &Path, sql: &str) -> Result<String, String> {
         if output.status.success() {
             return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
         }
+        last_error = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if attempt + 1 < SQLITE_READ_ATTEMPTS {
-            sleep(Duration::from_millis(250 * (attempt as u64 + 1)));
+            let sleep_ms = 250 + (attempt as u64 * 100);
+            sleep(Duration::from_millis(sleep_ms));
         }
     }
-    Err("Could not read Codex recovery state after bounded startup retries".into())
+    Err(format!(
+        "Could not read Codex recovery state from {} after {} retries: {}",
+        database.file_name().and_then(|n| n.to_str()).unwrap_or("db"),
+        SQLITE_READ_ATTEMPTS,
+        if last_error.is_empty() { "timeout or database busy" } else { &last_error }
+    ))
 }
 
 fn pending_count(home: &Path, id: &str) -> Result<usize, String> {
@@ -927,6 +1039,7 @@ fn queued_messages(home: &Path, id: &str) -> Result<Vec<Value>, String> {
     let sql = format!(
         "SELECT payload_json FROM queued_items WHERE thread_id = '{id}' ORDER BY queue_order;"
     );
+    let mut last_error = String::new();
     for attempt in 0..SQLITE_READ_ATTEMPTS {
         let mut child = Command::new("/usr/bin/sqlite3")
             .args([
@@ -938,7 +1051,7 @@ fn queued_messages(home: &Path, id: &str) -> Result<Vec<Value>, String> {
             .arg(&db)
             .arg(&sql)
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| error.to_string())?;
         let mut bytes = Vec::new();
@@ -971,11 +1084,21 @@ fn queued_messages(home: &Path, id: &str) -> Result<Vec<Value>, String> {
             }
             return Ok(messages);
         }
+        if let Some(mut err_pipe) = child.stderr.take() {
+            let mut err_buf = Vec::new();
+            let _ = err_pipe.read_to_end(&mut err_buf);
+            last_error = String::from_utf8_lossy(&err_buf).trim().to_string();
+        }
         if attempt + 1 < SQLITE_READ_ATTEMPTS {
-            sleep(Duration::from_millis(250 * (attempt as u64 + 1)));
+            let sleep_ms = 250 + (attempt as u64 * 100);
+            sleep(Duration::from_millis(sleep_ms));
         }
     }
-    Err("Could not read Codex queued messages after bounded retries".into())
+    Err(format!(
+        "Could not read Codex queued messages after {} retries: {}",
+        SQLITE_READ_ATTEMPTS,
+        if last_error.is_empty() { "timeout or database busy" } else { &last_error }
+    ))
 }
 
 fn prepare_interrupted_queue(messages: &mut [Value]) -> Result<bool, String> {
@@ -1335,7 +1458,7 @@ fn record_target_state_at(target: &mut RecoveryTarget, now: Instant) -> Result<(
         });
         if proof_survived_stability_window(observed_at, now) {
             if !target.completed {
-                println!(
+                let msg = format!(
                     "RECOVERY_VERIFIED thread={} turn={} stable_secs={}",
                     target.id,
                     target
@@ -1344,6 +1467,8 @@ fn record_target_state_at(target: &mut RecoveryTarget, now: Instant) -> Result<(
                         .unwrap_or("desktop-native"),
                     RECOVERY_SOAK_WINDOW.as_secs()
                 );
+                println!("{msg}");
+                crate::logger::log("INFO", "RECOVERY", &msg);
             }
             target.completed = true;
         }
@@ -1597,6 +1722,15 @@ pub(crate) fn recover_threads_with_banner(
         "RECOVERY_RESULT verified_or_completed={} failed={}",
         ids.len().saturating_sub(failures.len()),
         failures.len()
+    );
+    crate::logger::log(
+        if failures.is_empty() { "INFO" } else { "WARN" },
+        "RECOVERY",
+        &format!(
+            "RECOVERY_RESULT verified_or_completed={} failed={}",
+            ids.len().saturating_sub(failures.len()),
+            failures.len()
+        ),
     );
     if failures.is_empty() {
         Ok(())
@@ -2010,5 +2144,40 @@ mod tests {
         assert!(!valid_id(
             "codex://threads/01a098c2-0fae-74d2-a80c-45d89e910e79"
         ));
+    }
+
+    #[test]
+    fn desktop_window_bounds_roundtrip_and_defaults() {
+        let json = r#"{"version":1,"x":-2561.0,"y":-139.0,"width":1281.0,"height":1410.0,"updated_at":1789388770}"#;
+        let bounds: DesktopWindowBounds = serde_json::from_str(json).unwrap();
+        assert_eq!(bounds.x, -2561.0);
+        assert_eq!(bounds.y, -139.0);
+        assert_eq!(bounds.width, 1281.0);
+        assert_eq!(bounds.height, 1410.0);
+        assert_eq!(bounds.version, 1);
+
+        let without_version = r#"{"x":100.0,"y":200.0,"width":800.0,"height":600.0}"#;
+        let parsed: DesktopWindowBounds = serde_json::from_str(without_version).unwrap();
+        assert_eq!(parsed.version, 1);
+        assert_eq!(parsed.width, 800.0);
+
+        let serialized = serde_json::to_string(&bounds).unwrap();
+        let back: DesktopWindowBounds = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(back, bounds);
+    }
+
+    #[test]
+    fn settings_preserve_window_bounds_defaults_to_true() {
+        let settings = crate::models::Settings::default();
+        assert!(settings.preserve_window_bounds_on_restart);
+
+        let json = r#"{}"#;
+        let parsed: crate::models::Settings = serde_json::from_str(json).unwrap();
+        assert!(parsed.preserve_window_bounds_on_restart);
+
+        let json_disabled = r#"{"preserve_window_bounds_on_restart":false}"#;
+        let parsed_disabled: crate::models::Settings =
+            serde_json::from_str(json_disabled).unwrap();
+        assert!(!parsed_disabled.preserve_window_bounds_on_restart);
     }
 }

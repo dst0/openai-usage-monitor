@@ -19,34 +19,10 @@ func verifyVisibleCodex() -> Never {
     exit(1)
   }
 
-  if app.isHidden { app.unhide() }
-  _ = app.activate(options: [.activateAllWindows])
-
-  let axApp = AXUIElementCreateApplication(app.processIdentifier)
-  AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, true as CFTypeRef)
-  AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, true as CFTypeRef)
-
+  // Purely passive window verification: NEVER activate, unhide, or raise the app.
+  // The user must remain completely uninterrupted in their active application.
   let deadline = Date().addingTimeInterval(15)
   repeat {
-    var windowsValue: AnyObject?
-    if AXUIElementCopyAttributeValue(
-      axApp, kAXWindowsAttribute as CFString, &windowsValue) == .success,
-      let windows = windowsValue as? [AXUIElement]
-    {
-      for window in windows {
-        var minimizedValue: AnyObject?
-        let minimized =
-          AXUIElementCopyAttributeValue(
-            window, kAXMinimizedAttribute as CFString, &minimizedValue) == .success
-          && (minimizedValue as? Bool) == true
-        if minimized {
-          AXUIElementSetAttributeValue(
-            window, kAXMinimizedAttribute as CFString, false as CFTypeRef)
-        }
-        _ = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-      }
-    }
-
     let windowInfo =
       CGWindowListCopyWindowInfo(
         [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
@@ -62,10 +38,6 @@ func verifyVisibleCodex() -> Never {
       return frame.width >= 300 && frame.height >= 300
     }
 
-    // AX access is best-effort: a launchd worker may not inherit the GUI
-    // process's Accessibility grant. CGWindow is the authoritative visibility
-    // proof because it is scoped to the exact PID and only on-screen layer-0
-    // windows satisfy the size/alpha checks above.
     if hasOnScreenWindow && !app.isTerminated {
       print("APP_VISIBLE pid=\(expectedPID)")
       exit(0)
@@ -78,6 +50,272 @@ func verifyVisibleCodex() -> Never {
 
   print("APP_NOT_VISIBLE pid=\(expectedPID)")
   exit(1)
+}
+
+func codexHomeURL() -> URL {
+  if let home = ProcessInfo.processInfo.environment["CODEX_HOME"], !home.isEmpty {
+    return URL(fileURLWithPath: home)
+  }
+  return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
+}
+
+func defaultWindowBoundsURL() -> URL {
+  if let custom = argumentValue(after: "--bounds-file"), !custom.isEmpty {
+    return URL(fileURLWithPath: custom)
+  }
+  return codexHomeURL().appendingPathComponent("desktop-window.json")
+}
+
+func findCodexTargetPID() -> pid_t? {
+  if let rawPID = argumentValue(after: "--expected-pid"),
+    let expectedPID = Int32(rawPID), expectedPID > 1
+  {
+    return pid_t(expectedPID)
+  }
+  if let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first
+    ?? NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.chat").first
+  {
+    return app.processIdentifier
+  }
+  let apps = NSWorkspace.shared.runningApplications
+  if let app = apps.first(where: { $0.executableURL?.lastPathComponent == "ChatGPT" }) {
+    return app.processIdentifier
+  }
+  return nil
+}
+
+func findCodexWindowFrame(targetPID: pid_t? = nil) -> (pid: pid_t, frame: CGRect)? {
+  let pid = targetPID ?? findCodexTargetPID()
+  let windowInfo =
+    CGWindowListCopyWindowInfo(
+      [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+    as? [[String: Any]] ?? []
+
+  for info in windowInfo {
+    let ownerPID = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
+    let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1
+    let alpha = (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0
+    guard layer == 0, alpha > 0 else { continue }
+    if let pid = pid, ownerPID != pid { continue }
+    guard let boundsValue = info[kCGWindowBounds as String],
+      let frame = CGRect(dictionaryRepresentation: boundsValue as! CFDictionary),
+      frame.width >= 300 && frame.height >= 300
+    else { continue }
+    return (pid_t(ownerPID), frame)
+  }
+  return nil
+}
+
+func saveWindowBounds() -> Never {
+  guard let (pid, frame) = findCodexWindowFrame() else {
+    print("NO_WINDOW_FOUND")
+    exit(1)
+  }
+  let targetURL = defaultWindowBoundsURL()
+  let codexDir = targetURL.deletingLastPathComponent()
+  try? FileManager.default.createDirectory(at: codexDir, withIntermediateDirectories: true)
+
+  let payload: [String: Any] = [
+    "version": 1,
+    "x": Double(frame.origin.x),
+    "y": Double(frame.origin.y),
+    "width": Double(frame.size.width),
+    "height": Double(frame.size.height),
+    "updated_at": Int(Date().timeIntervalSince1970),
+  ]
+
+  guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted])
+  else {
+    print("JSON_SERIALIZATION_FAILED")
+    exit(1)
+  }
+
+  let tmpPath = targetURL.path + ".\(getpid()).tmp"
+  FileManager.default.createFile(
+    atPath: tmpPath, contents: data, attributes: [.posixPermissions: 0o600])
+  let tmpURL = URL(fileURLWithPath: tmpPath)
+  do {
+    _ = try FileManager.default.replaceItemAt(targetURL, withItemAt: tmpURL)
+  } catch {
+    _ = try? FileManager.default.removeItem(at: targetURL)
+    _ = try? FileManager.default.moveItem(at: tmpURL, to: targetURL)
+  }
+  chmod(targetURL.path, 0o600)
+
+  print(
+    "WINDOW_BOUNDS_SAVED x=\(frame.origin.x) y=\(frame.origin.y) width=\(frame.size.width) height=\(frame.size.height) pid=\(pid)"
+  )
+  exit(0)
+}
+
+func getWindowBounds() -> Never {
+  if let (pid, frame) = findCodexWindowFrame() {
+    let payload: [String: Any] = [
+      "version": 1,
+      "x": Double(frame.origin.x),
+      "y": Double(frame.origin.y),
+      "width": Double(frame.size.width),
+      "height": Double(frame.size.height),
+      "pid": Int(pid),
+      "updated_at": Int(Date().timeIntervalSince1970),
+    ]
+    if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted]),
+      let str = String(data: data, encoding: .utf8)
+    {
+      print(str)
+      exit(0)
+    }
+  }
+
+  let targetURL = defaultWindowBoundsURL()
+  if let data = try? Data(contentsOf: targetURL),
+    let str = String(data: data, encoding: .utf8)
+  {
+    print(str)
+    exit(0)
+  }
+
+  print("NO_WINDOW_BOUNDS")
+  exit(1)
+}
+
+func restoreWindowBounds() -> Never {
+  var targetX: CGFloat?
+  var targetY: CGFloat?
+  var targetW: CGFloat?
+  var targetH: CGFloat?
+
+  if let sx = argumentValue(after: "--x"), let x = Double(sx),
+    let sy = argumentValue(after: "--y"), let y = Double(sy),
+    let sw = argumentValue(after: "--width"), let w = Double(sw),
+    let sh = argumentValue(after: "--height"), let h = Double(sh)
+  {
+    targetX = CGFloat(x)
+    targetY = CGFloat(y)
+    targetW = CGFloat(w)
+    targetH = CGFloat(h)
+  } else {
+    let targetURL = defaultWindowBoundsURL()
+    guard let data = try? Data(contentsOf: targetURL),
+      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let x = json["x"] as? NSNumber,
+      let y = json["y"] as? NSNumber,
+      let w = json["width"] as? NSNumber,
+      let h = json["height"] as? NSNumber
+    else {
+      print("NO_BOUNDS_SAVED")
+      exit(0)
+    }
+    targetX = CGFloat(x.doubleValue)
+    targetY = CGFloat(y.doubleValue)
+    targetW = CGFloat(w.doubleValue)
+    targetH = CGFloat(h.doubleValue)
+  }
+
+  guard let x = targetX, let y = targetY, let width = targetW, let height = targetH,
+    width >= 300, height >= 300
+  else {
+    print("INVALID_BOUNDS")
+    exit(1)
+  }
+
+  var targetFrame = CGRect(x: x, y: y, width: width, height: height)
+
+  var displayCount: UInt32 = 0
+  CGGetActiveDisplayList(0, nil, &displayCount)
+  var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+  CGGetActiveDisplayList(displayCount, &displays, &displayCount)
+  let displayFrames = displays.map { CGDisplayBounds($0) }
+
+  let isVisible = displayFrames.contains { display in
+    let inter = display.intersection(targetFrame)
+    return inter.width >= 100 && inter.height >= 100
+  }
+
+  if !isVisible, let mainDisplay = displayFrames.first {
+    let safeW = min(targetFrame.width, mainDisplay.width - 40)
+    let safeH = min(targetFrame.height, mainDisplay.height - 60)
+    let safeX = mainDisplay.minX + max(0, (mainDisplay.width - safeW) / 2)
+    let safeY = mainDisplay.minY + max(0, (mainDisplay.height - safeH) / 2)
+    targetFrame = CGRect(x: safeX, y: safeY, width: safeW, height: safeH)
+  }
+
+  let deadline = Date().addingTimeInterval(15)
+  var targetPID: pid_t? = nil
+  repeat {
+    if let pid = findCodexTargetPID() {
+      let windowInfo =
+        CGWindowListCopyWindowInfo(
+          [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+        as? [[String: Any]] ?? []
+      let hasWindow = windowInfo.contains { info in
+        let ownerPID = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
+        let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1
+        let alpha = (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0
+        guard let boundsValue = info[kCGWindowBounds as String],
+          let frame = CGRect(dictionaryRepresentation: boundsValue as! CFDictionary)
+        else { return false }
+        return ownerPID == pid && layer == 0 && alpha > 0 && frame.width >= 300 && frame.height >= 300
+      }
+      if hasWindow {
+        targetPID = pid
+        break
+      }
+    }
+    _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.25))
+  } while Date() < deadline
+
+  guard let pid = targetPID else {
+    print("TARGET_WINDOW_NOT_FOUND")
+    exit(1)
+  }
+
+  let axApp = AXUIElementCreateApplication(pid)
+  var windowsVal: AnyObject?
+  guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsVal) == .success,
+    let winList = windowsVal as? [AXUIElement], !winList.isEmpty
+  else {
+    print("FAILED_TO_COPY_AX_WINDOWS")
+    exit(1)
+  }
+
+  var targetWin: AXUIElement?
+  for win in winList {
+    var minVal: AnyObject?
+    if AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minVal) == .success,
+      (minVal as? Bool) == true
+    {
+      continue
+    }
+    var szVal: AnyObject?
+    AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &szVal)
+    var sz = CGSize.zero
+    if let sv = szVal { AXValueGetValue(sv as! AXValue, .cgSize, &sz) }
+    if sz.width >= 200 && sz.height >= 200 {
+      targetWin = win
+      break
+    }
+  }
+
+  guard let win = targetWin ?? winList.first else {
+    print("NO_VALID_AX_WINDOW")
+    exit(1)
+  }
+
+  var pt = targetFrame.origin
+  let pVal = AXValueCreate(.cgPoint, &pt)!
+  _ = AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pVal)
+
+  var sz = targetFrame.size
+  let sVal = AXValueCreate(.cgSize, &sz)!
+  _ = AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sVal)
+
+  _ = AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pVal)
+
+  print(
+    "WINDOW_BOUNDS_RESTORED x=\(targetFrame.origin.x) y=\(targetFrame.origin.y) width=\(targetFrame.size.width) height=\(targetFrame.size.height) pid=\(pid)"
+  )
+  exit(0)
 }
 
 func runAutomationBanner() -> Never {
@@ -502,6 +740,15 @@ if CommandLine.arguments.contains("--automation-banner") {
 }
 if CommandLine.arguments.contains("--verify-visible") {
   verifyVisibleCodex()
+}
+if CommandLine.arguments.contains("--save-window-bounds") {
+  saveWindowBounds()
+}
+if CommandLine.arguments.contains("--restore-window-bounds") {
+  restoreWindowBounds()
+}
+if CommandLine.arguments.contains("--get-window-bounds") {
+  getWindowBounds()
 }
 
 let result = resumeChatGPT()

@@ -359,6 +359,23 @@ pub fn run_daemon_tick_with_state(
     };
     write_status_file(&status)?;
 
+    if auto_switch {
+        if let Some(active) = active_acc {
+            crate::logger::log(
+                "INFO",
+                "AUDIT",
+                &format!(
+                    "Active account '{}' ({}) sprint: {:.1}%, weekly: {:.1}%, credits: {}",
+                    active.display_name(),
+                    active.email,
+                    active.last_primary_percentage,
+                    active.last_weekly_percentage.unwrap_or(100.0),
+                    active.last_credits.unwrap_or(0)
+                ),
+            );
+        }
+    }
+
     // A weekly reset is its own opt-in automation. It is deliberately not
     // coupled to `auto_switch_enabled`: users may want to preserve the active
     // account and resume its blocked work even when cross-account rotation is
@@ -462,6 +479,18 @@ pub fn run_daemon_tick_with_state(
                             notify_cooldown,
                         );
                         println!("🔄 Auto-switching to account '{}'...", next_id);
+                        crate::logger::log(
+                            "INFO",
+                            "AUTO_SWITCH",
+                            &format!(
+                                "Triggering auto-switch from '{}' to '{}' (sprint: {:.1}%, weekly: {:.1}%, credits: {})",
+                                active.id,
+                                next_id,
+                                active.last_primary_percentage,
+                                active.last_weekly_percentage.unwrap_or(100.0),
+                                active.last_credits.unwrap_or(0)
+                            ),
+                        );
                         // Record the destructive attempt before it starts. Account
                         // replacement can succeed while UI recovery later fails;
                         // that must never erase the cooldown and trigger a loop.
@@ -471,6 +500,7 @@ pub fn run_daemon_tick_with_state(
                             &next_id,
                             accounts_file.settings.restart_app_on_switch,
                             should_notify,
+                            crate::switcher::SwitchTrigger::Auto,
                         ) {
                             Ok(outcome) => outcome,
                             Err(err) => {
@@ -547,7 +577,7 @@ pub fn watchdog_needs_immediate_check() -> bool {
         }
     }
 
-    if !crate::switcher::detect_recent_quota_blocked_user_threads().is_empty() {
+    if !crate::switcher::detect_quota_blocked_user_threads_since(30).is_empty() {
         return true;
     }
 
@@ -589,6 +619,11 @@ pub fn run_daemon_loop() {
     let mut last_auth_mtime: Option<std::time::SystemTime>;
 
     loop {
+        let _ = crate::logger::rotate_all_logs(
+            crate::logger::DEFAULT_MAX_LOG_SIZE,
+            crate::logger::DEFAULT_MAX_ARCHIVES,
+        );
+
         if let Err(e) = run_daemon_tick_with_state(
             &mut last_switched_id,
             &mut last_switched_time,
@@ -597,6 +632,7 @@ pub fn run_daemon_loop() {
             true,
         ) {
             eprintln!("Error in daemon tick: {}", e);
+            crate::logger::log("ERROR", "DAEMON", &format!("Error in daemon tick: {e}"));
         }
 
         last_auth_mtime = std::fs::metadata(crate::storage::auth_json_path())
@@ -626,6 +662,11 @@ pub fn run_daemon_loop() {
 
             if watchdog_ticks % 2 == 0 && watchdog_needs_immediate_check() {
                 println!("⚡ Watchdog: immediate quota exhaustion or blocked thread detected; waking daemon");
+                crate::logger::log(
+                    "INFO",
+                    "WATCHDOG",
+                    "Immediate quota exhaustion or blocked thread detected; waking daemon",
+                );
                 break;
             }
         }

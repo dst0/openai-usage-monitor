@@ -140,6 +140,7 @@ ALWAYS_STATE_PATHS=(
     "${CODEX_HOME}/desktop-recovery.lock"
     "${CODEX_HOME}/desktop-automation-cooldown"
     "${CODEX_HOME}/desktop-recovery.json"
+    "${CODEX_HOME}/desktop-window.json"
     "${CODEX_HOME}/auto-reset-state.json"
     "${CODEX_HOME}/account-switcher-daemon.log"
     "${CODEX_HOME}/account-switcher-daemon.err"
@@ -630,7 +631,7 @@ fi
 remove_matching_files "$CODEX_HOME" \
     'auth.*.tmp.json' 'accounts.*.tmp.json' 'usage-status.*.tmp.json' \
     'desktop-recovery.*.tmp' 'desktop-automation-cooldown.*.tmp' \
-    '.auto-reset-state.*.tmp'
+    'desktop-window.*.tmp' '.auto-reset-state.*.tmp'
 remove_matching_files "$RECOVERY_DIR" \
     'restart-*.log' 'restart-*.claimed' 'banner-*.ready'
 
