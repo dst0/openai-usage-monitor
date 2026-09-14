@@ -1049,6 +1049,102 @@ struct AppDelegateTestRunner {
 
     print("  ✅ Native organization cards, hierarchy, enclosure & actions verified")
 
+    // ====================================================================
+    // Test 15: Tiny Icon Button to Reset Account Where Resets Available
+    // ====================================================================
+    var resetCardAccountId: String?
+    var resetCardAccountEmail: String?
+    let accWithCredits = AccountQuota(
+      id: "acc-with-credits",
+      name: "Team Account",
+      email: "team@example.com",
+      planType: "team",
+      isCurrentActive: false,
+      fiveHourPercentage: 0.0,
+      weeklyPercentage: 0.0,
+      resetTime: nil,
+      resetAfterSeconds: 3600,
+      credits: 2,
+      error: nil
+    )
+    let accWithoutCredits = AccountQuota(
+      id: "acc-without-credits",
+      name: "Zero Credits Account",
+      email: "zero@example.com",
+      planType: "team",
+      isCurrentActive: false,
+      fiveHourPercentage: 50.0,
+      weeklyPercentage: 50.0,
+      resetTime: nil,
+      resetAfterSeconds: 3600,
+      credits: 0,
+      error: nil
+    )
+    let cardWithResets = AccountSectionCardView(
+      frame: NSRect(
+        x: 0, y: 0, width: AppDelegate.defaultMenuWidth,
+        height: AccountSectionCardView.preferredHeight(for: [
+          ReserveAccountSectionEntry(account: accWithCredits, reserveIndex: 1),
+          ReserveAccountSectionEntry(account: accWithoutCredits, reserveIndex: 2),
+        ])),
+      title: "Team Resets Org",
+      kind: .business,
+      entries: [
+        ReserveAccountSectionEntry(account: accWithCredits, reserveIndex: 1),
+        ReserveAccountSectionEntry(account: accWithoutCredits, reserveIndex: 2),
+      ],
+      onSwitch: { _ in },
+      onDelete: { _, _ in },
+      onRename: { _, _, _ in },
+      onReset: { id, email in
+        resetCardAccountId = id
+        resetCardAccountEmail = email
+      }
+    )
+    assertEqual(
+      cardWithResets.resetButtons.count, 1,
+      "Only accounts with credits > 0 must have a reset button in AccountSectionCardView"
+    )
+    let cardResetBtn = cardWithResets.resetButtons.first!
+    assertEqual(
+      cardResetBtn.identifier?.rawValue, accWithCredits.id,
+      "Reset button identifier must match the account id"
+    )
+    assertTrue(
+      cardResetBtn.toolTip?.contains(L10n.resetAccountTooltip) == true,
+      "Reset button tooltip must describe resetting account"
+    )
+    cardResetBtn.performClick(nil)
+    assertEqual(
+      resetCardAccountId, accWithCredits.id,
+      "Clicking reset button must invoke onReset with account id"
+    )
+    assertEqual(
+      resetCardAccountEmail, accWithCredits.email,
+      "Clicking reset button must invoke onReset with account email"
+    )
+
+    var rowResetClicked = false
+    let resetRow = ResetCreditsRowView(
+      frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 20),
+      credits: 3,
+      accountDisplayName: "active@example.com",
+      leftPadding: 20,
+      onReset: { rowResetClicked = true }
+    )
+    assertTrue(
+      resetRow.label.stringValue.contains(L10n.resetCredits),
+      "ResetCreditsRowView must display reset credits label"
+    )
+    assertTrue(
+      resetRow.label.stringValue.contains("3"),
+      "ResetCreditsRowView must display the credit count number on the line"
+    )
+    resetRow.resetButton.performClick(nil)
+    assertTrue(rowResetClicked, "Clicking reset button in ResetCreditsRowView must invoke onReset")
+
+    print("  ✅ Tiny reset button where resets available on resets line verified")
+
     print("\n🎉 ALL APP DELEGATE TESTS PASSED!")
   }
 }

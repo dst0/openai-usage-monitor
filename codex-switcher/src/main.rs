@@ -105,6 +105,11 @@ enum Commands {
         /// Current account ID, nickname, or email
         account: String,
     },
+    /// Consume an available rate-limit reset credit to restore account quota
+    ResetAccount {
+        /// Current account ID, nickname, or email
+        account: String,
+    },
     /// Interactive account setup wizard
     Setup,
     /// Log in via browser and add as a named account
@@ -481,6 +486,7 @@ fn main() {
             multiplier,
         }) => setup::set_account_multiplier(&account, multiplier),
         Some(Commands::ResetMultiplier { account }) => setup::reset_account_multiplier(&account),
+        Some(Commands::ResetAccount { account }) => setup::reset_account(&account),
         Some(Commands::Setup) => setup::run_interactive_setup(),
         Some(Commands::Add { account_id }) => setup::login_and_add_account(&account_id),
         Some(Commands::SaveCurrent { account_id }) => setup::save_current_as(&account_id),

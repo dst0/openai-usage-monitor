@@ -1038,6 +1038,83 @@ pub fn reset_account_multiplier(account_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Consumes an available rate-limit reset credit for the specified account, restoring its quota.
+pub fn reset_account(account_id: &str) -> Result<(), String> {
+    let mut file = load_accounts()?;
+    let name = reset_account_in_file(
+        &mut file,
+        account_id,
+        crate::quota::consume_rate_limit_reset_credit,
+    )?;
+    let active_id = file.active_account_id.clone();
+    save_accounts(&file)?;
+
+    if active_id.as_deref() == Some(account_id) {
+        let _ = crate::daemon::refresh_quotas_and_status();
+    }
+
+    println!(
+        "✅ Successfully reset quota for account '{}'! 1 reset credit consumed.",
+        name
+    );
+    Ok(())
+}
+
+pub(crate) fn reset_account_in_file<F>(
+    file: &mut crate::models::AccountsFile,
+    account_id: &str,
+    consume_fn: F,
+) -> Result<String, String>
+where
+    F: FnOnce(&AccountConfig, &str) -> crate::quota::ResetCreditConsumeOutcome,
+{
+    let acc_idx = file
+        .accounts
+        .iter()
+        .position(|a| {
+            a.id == account_id
+                || a.name
+                    .as_deref()
+                    .map(|n| n.eq_ignore_ascii_case(account_id))
+                    .unwrap_or(false)
+                || a.email.eq_ignore_ascii_case(account_id)
+        })
+        .ok_or_else(|| format!("Account '{}' not found", account_id))?;
+
+    let acc = &file.accounts[acc_idx];
+    let available_credits = acc.last_credits.unwrap_or(0);
+    if available_credits <= 0 {
+        return Err(format!(
+            "Account '{}' has no reset credits available",
+            acc.display_name()
+        ));
+    }
+
+    let idempotency_key = crate::auto_reset::new_idempotency_key()?;
+    let outcome = consume_fn(acc, &idempotency_key);
+
+    match outcome {
+        crate::quota::ResetCreditConsumeOutcome::Applied => {
+            file.accounts[acc_idx].last_credits = Some(available_credits.saturating_sub(1));
+            // Only attempt cache refresh in real runtime (ignore failure in offline / test)
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::quota::update_account_quota_cache(&mut file.accounts[acc_idx]);
+            }));
+            let name = file.accounts[acc_idx].display_name().to_string();
+            Ok(name)
+        }
+        crate::quota::ResetCreditConsumeOutcome::NotConsumed(reason) => {
+            Err(format!("Reset credit was not consumed: {reason}"))
+        }
+        crate::quota::ResetCreditConsumeOutcome::Unavailable(reason) => {
+            Err(format!("Reset credit service is unavailable: {reason}"))
+        }
+        crate::quota::ResetCreditConsumeOutcome::Unknown(reason) => {
+            Err(format!("Reset credit outcome uncertain: {reason}"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1496,5 +1573,98 @@ mod tests {
         assert_eq!(loaded.accounts[0].name, None);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_reset_account_in_file_success() {
+        let mut file = crate::models::AccountsFile {
+            active_account_id: Some("user1@example.com:uuid-1".to_string()),
+            settings: Default::default(),
+            accounts: vec![
+                make_test_account(
+                    "user1@example.com:uuid-1",
+                    "user1@example.com",
+                    "uuid-1",
+                    Some("rt_1"),
+                    "at_1",
+                ),
+            ],
+        };
+        file.accounts[0].last_credits = Some(2);
+
+        let result = reset_account_in_file(
+            &mut file,
+            "user1@example.com",
+            |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Applied,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(file.accounts[0].last_credits, Some(1));
+    }
+
+    #[test]
+    fn test_reset_account_in_file_no_credits() {
+        let mut file = crate::models::AccountsFile {
+            active_account_id: Some("user1@example.com:uuid-1".to_string()),
+            settings: Default::default(),
+            accounts: vec![
+                make_test_account(
+                    "user1@example.com:uuid-1",
+                    "user1@example.com",
+                    "uuid-1",
+                    Some("rt_1"),
+                    "at_1",
+                ),
+            ],
+        };
+        file.accounts[0].last_credits = Some(0);
+
+        let result = reset_account_in_file(
+            &mut file,
+            "user1@example.com",
+            |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Applied,
+        );
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("no reset credits available"));
+        assert_eq!(file.accounts[0].last_credits, Some(0));
+    }
+
+    #[test]
+    fn test_reset_account_in_file_outcome_handling() {
+        let mut file = crate::models::AccountsFile {
+            active_account_id: Some("user1@example.com:uuid-1".to_string()),
+            settings: Default::default(),
+            accounts: vec![
+                make_test_account(
+                    "user1@example.com:uuid-1",
+                    "user1@example.com",
+                    "uuid-1",
+                    Some("rt_1"),
+                    "at_1",
+                ),
+            ],
+        };
+        file.accounts[0].last_credits = Some(1);
+
+        // NotConsumed
+        let res1 = reset_account_in_file(
+            &mut file,
+            "user1@example.com",
+            |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::NotConsumed("nothing_to_reset".into()),
+        );
+        assert!(res1.is_err());
+        assert!(res1.unwrap_err().contains("Reset credit was not consumed"));
+        assert_eq!(file.accounts[0].last_credits, Some(1));
+
+        // Unavailable
+        let res2 = reset_account_in_file(
+            &mut file,
+            "user1@example.com",
+            |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Unavailable("service_busy".into()),
+        );
+        assert!(res2.is_err());
+        assert!(res2.unwrap_err().contains("service is unavailable"));
+        assert_eq!(file.accounts[0].last_credits, Some(1));
     }
 }

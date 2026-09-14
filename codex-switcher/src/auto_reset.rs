@@ -191,7 +191,7 @@ fn now_string() -> String {
     Utc::now().to_rfc3339()
 }
 
-fn new_idempotency_key() -> Result<String, String> {
+pub(crate) fn new_idempotency_key() -> Result<String, String> {
     let mut bytes = [0_u8; 16];
     getrandom::getrandom(&mut bytes)
         .map_err(|error| format!("Unable to generate reset idempotency key: {error}"))?;
