@@ -436,6 +436,63 @@ public struct ReserveAccountSectionEntry {
   }
 }
 
+public final class ResetCreditsRowView: NSView {
+  public let label: NSTextField
+  public let resetButton: NSButton
+  private let onReset: () -> Void
+
+  public init(
+    frame frameRect: NSRect,
+    credits: Int,
+    accountDisplayName: String,
+    leftPadding: CGFloat = 20,
+    onReset: @escaping () -> Void
+  ) {
+    self.onReset = onReset
+    self.label = NSTextField(labelWithAttributedString: NSAttributedString(
+      string: "✨ \(L10n.resetCredits): \(credits)",
+      attributes: [
+        .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+        .foregroundColor: NSColor.systemIndigo,
+      ]))
+    self.resetButton = NSButton(frame: NSRect(x: frameRect.width - 44, y: 1, width: 22, height: 18))
+    super.init(frame: frameRect)
+
+    autoresizingMask = [.width]
+
+    label.frame = NSRect(x: leftPadding, y: 1, width: max(100, frameRect.width - leftPadding - 50), height: 18)
+    label.lineBreakMode = .byClipping
+    label.autoresizingMask = [.width]
+    addSubview(label)
+
+    resetButton.isBordered = false
+    resetButton.target = self
+    resetButton.action = #selector(handleResetClick)
+    resetButton.contentTintColor = .systemIndigo
+    resetButton.toolTip = "\(L10n.resetAccountTooltip): \(accountDisplayName)"
+    resetButton.setAccessibilityLabel("\(L10n.resetAccountTooltip): \(accountDisplayName)")
+    let symbolConfig = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+    if let icon = NSImage(systemSymbolName: "arrow.counterclockwise", accessibilityDescription: L10n.resetAccountTooltip) {
+      resetButton.image = icon.withSymbolConfiguration(symbolConfig)
+      resetButton.imagePosition = .imageOnly
+    } else {
+      resetButton.title = "↺"
+      resetButton.font = NSFont.systemFont(ofSize: 12, weight: .bold)
+    }
+    resetButton.autoresizingMask = [.minXMargin]
+    addSubview(resetButton)
+  }
+
+  public required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  @objc private func handleResetClick() {
+    enclosingMenuItem?.menu?.cancelTracking()
+    onReset()
+  }
+}
+
 public final class AccountSectionCardView: NSView {
   public let box = NSBox()
   public let contentContainer = NSView()
@@ -443,8 +500,11 @@ public final class AccountSectionCardView: NSView {
   public private(set) var accountRows: [AccountRowView] = []
   public private(set) var metricLabels: [NSTextField] = []
   public private(set) var switchButtons: [NSButton] = []
+  public private(set) var resetButtons: [NSButton] = []
+  public let entries: [ReserveAccountSectionEntry]
 
   private let onSwitch: (String) -> Void
+  private let onReset: (String, String) -> Void
   private let horizontalInset: CGFloat = 10
 
   public static func preferredHeight(for entries: [ReserveAccountSectionEntry]) -> CGFloat {
@@ -471,8 +531,10 @@ public final class AccountSectionCardView: NSView {
     entries: [ReserveAccountSectionEntry],
     onSwitch: @escaping (String) -> Void,
     onDelete: @escaping (String, String) -> Void,
-    onRename: @escaping (String, String?, String) -> Void
+    onRename: @escaping (String, String?, String) -> Void,
+    onReset: @escaping (String, String) -> Void = { _, _ in }
   ) {
+    self.entries = entries
     self.headerView = AccountSectionHeaderView(
       frame: NSRect(x: 10, y: 0, width: max(0, frameRect.width - 20), height: 33),
       title: title,
@@ -480,6 +542,7 @@ public final class AccountSectionCardView: NSView {
       kind: kind
     )
     self.onSwitch = onSwitch
+    self.onReset = onReset
     super.init(frame: frameRect)
 
     autoresizingMask = [.width]
@@ -603,6 +666,30 @@ public final class AccountSectionCardView: NSView {
             .foregroundColor: NSColor.systemIndigo,
           ])
         addMetricLabel(credits, at: cursorY)
+
+        let resetBtn = NSButton(
+          frame: NSRect(x: contentWidth - 44, y: cursorY - 1, width: 22, height: 18))
+        resetBtn.isBordered = false
+        resetBtn.identifier = NSUserInterfaceItemIdentifier(account.id)
+        resetBtn.target = self
+        resetBtn.action = #selector(handleResetButton(_:))
+        resetBtn.contentTintColor = .systemIndigo
+        resetBtn.toolTip = "\(L10n.resetAccountTooltip): \(account.displayName)"
+        resetBtn.setAccessibilityLabel("\(L10n.resetAccountTooltip): \(account.displayName)")
+        let symbolConfig = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        if let icon = NSImage(
+          systemSymbolName: "arrow.counterclockwise",
+          accessibilityDescription: L10n.resetAccountTooltip)
+        {
+          resetBtn.image = icon.withSymbolConfiguration(symbolConfig)
+          resetBtn.imagePosition = .imageOnly
+        } else {
+          resetBtn.title = "↺"
+          resetBtn.font = NSFont.systemFont(ofSize: 12, weight: .bold)
+        }
+        resetBtn.autoresizingMask = [.minXMargin]
+        contentContainer.addSubview(resetBtn)
+        resetButtons.append(resetBtn)
       }
 
       cursorY -= 24
@@ -661,6 +748,14 @@ public final class AccountSectionCardView: NSView {
     guard let accountId = sender.identifier?.rawValue, !accountId.isEmpty else { return }
     enclosingMenuItem?.menu?.cancelTracking()
     onSwitch(accountId)
+  }
+
+  @objc private func handleResetButton(_ sender: NSButton) {
+    guard let accountId = sender.identifier?.rawValue, !accountId.isEmpty else { return }
+    let entry = entries.first(where: { $0.account.id == accountId })
+    let email = entry?.account.email ?? accountId
+    enclosingMenuItem?.menu?.cancelTracking()
+    onReset(accountId, email)
   }
 }
 
@@ -1814,12 +1909,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
           title: "  ✨ \(L10n.resetCredits): \(appAcc.credits)", action: #selector(noop),
           keyEquivalent: "")
         credItem.target = self
-        credItem.attributedTitle = NSAttributedString(
-          string: "  ✨ \(L10n.resetCredits): \(appAcc.credits)",
-          attributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-            .foregroundColor: NSColor.systemIndigo,
-          ])
+        credItem.view = ResetCreditsRowView(
+          frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 20),
+          credits: appAcc.credits,
+          accountDisplayName: appAcc.displayName,
+          leftPadding: 20,
+          onReset: { [weak self] in
+            self?.confirmAndResetAccount(id: appAcc.id, email: appAcc.email)
+          }
+        )
         menu.insertItem(credItem, at: insertIdx)
         dynamicAccountItems.append(credItem)
         insertIdx += 1
@@ -1999,12 +2097,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
           title: "  ✨ \(L10n.resetCredits): \(activeAcc.credits)", action: #selector(noop),
           keyEquivalent: "")
         credItem.target = self
-        credItem.attributedTitle = NSAttributedString(
-          string: "  ✨ \(L10n.resetCredits): \(activeAcc.credits)",
-          attributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-            .foregroundColor: NSColor.systemIndigo,
-          ])
+        credItem.view = ResetCreditsRowView(
+          frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 20),
+          credits: activeAcc.credits,
+          accountDisplayName: activeAcc.displayName,
+          leftPadding: 20,
+          onReset: { [weak self] in
+            self?.confirmAndResetAccount(id: activeAcc.id, email: activeAcc.email)
+          }
+        )
         menu.insertItem(credItem, at: insertIdx)
         dynamicAccountItems.append(credItem)
         insertIdx += 1
@@ -2128,6 +2229,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
           },
           onRename: { [weak self] accountId, name, email in
             self?.promptRenameAccount(id: accountId, currentName: name, email: email)
+          },
+          onReset: { [weak self] accountId, email in
+            self?.confirmAndResetAccount(id: accountId, email: email)
           }
         )
         menu.insertItem(cardItem, at: insertIdx)
@@ -2204,6 +2308,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     onSwitch: @escaping (String) -> Void = { _ in },
     onDelete: @escaping (String, String) -> Void = { _, _ in },
     onRename: @escaping (String, String?, String) -> Void = { _, _, _ in },
+    onReset: @escaping (String, String) -> Void = { _, _ in },
     width: CGFloat = defaultMenuWidth
   ) -> NSMenuItem {
     let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -2220,7 +2325,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
       entries: entries,
       onSwitch: onSwitch,
       onDelete: onDelete,
-      onRename: onRename
+      onRename: onRename,
+      onReset: onReset
     )
     return item
   }
@@ -2423,6 +2529,27 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     if response == .alertFirstButtonReturn {
       client.removeAccount(id: id) { [weak self] _ in
         self?.refreshNow()
+      }
+    }
+  }
+
+  internal func confirmAndResetAccount(id: String, email: String) {
+    statusItem?.menu?.cancelTracking()
+    let alert = NSAlert()
+    alert.messageText = L10n.resetAccountTitle
+    alert.informativeText = L10n.resetAccountConfirm(email: email)
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: L10n.resetConfirmBtn)
+    alert.addButton(withTitle: L10n.cancelBtn)
+
+    NSApp.activate(ignoringOtherApps: true)
+    let response = alert.runModal()
+    if response == .alertFirstButtonReturn {
+      client.resetAccount(id: id) { [weak self] success, errMsg in
+        self?.refreshNow()
+        if !success, let msg = errMsg, !msg.isEmpty {
+          self?.showAlert(title: L10n.resetAccountTitle, message: msg, style: .warning)
+        }
       }
     }
   }

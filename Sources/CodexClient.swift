@@ -694,4 +694,30 @@ public final class CodexClient: @unchecked Sendable {
       ?? 0
     return (enabled, min(167, max(0, seconds / 3600)))
   }
+
+  public func resetAccount(id: String, completion: ((Bool, String?) -> Void)? = nil) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      let bin = Self.cliExecutableURL.path
+      let proc = Process()
+      proc.executableURL = URL(fileURLWithPath: bin)
+      proc.arguments = ["reset-account", id]
+      let pipe = Pipe()
+      proc.standardOutput = pipe
+      proc.standardError = pipe
+      do {
+        try proc.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let success = proc.terminationStatus == 0
+        DispatchQueue.main.async {
+          completion?(success, output)
+        }
+      } catch {
+        DispatchQueue.main.async {
+          completion?(false, error.localizedDescription)
+        }
+      }
+    }
+  }
 }

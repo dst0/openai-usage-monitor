@@ -192,6 +192,10 @@ public final class LocalizationManager: @unchecked Sendable {
       "auto_reset_weekly_enable_title": "Включить автосброс недельного лимита?",
       "auto_reset_weekly_enable_message": "Когда недельная квота активного аккаунта будет ровно 0%, есть недавняя заблокированная задача и до обычного сброса останется выбранное время, Monitor использует один кредит через сервис Codex. После подтверждённого сброса задача возобновится через её владельца в Desktop.",
       "auto_reset_weekly_enable_button": "Включить",
+      "reset_account_tooltip": "Сбросить лимит (1 доступный кредит)",
+      "reset_account_title": "Сбросить лимит аккаунта",
+      "reset_account_confirm": "Вы уверены, что хотите использовать 1 кредит сброса для %@? Лимиты будут восстановлены немедленно.",
+      "reset_confirm_btn": "Сбросить лимит",
     ],
     .en: [
       "menu_title": "OpenAI Codex Quota Monitor",
@@ -258,6 +262,10 @@ public final class LocalizationManager: @unchecked Sendable {
       "auto_reset_weekly_enable_title": "Enable automatic weekly reset?",
       "auto_reset_weekly_enable_message": "When the active account's weekly quota is exactly 0%, a recent user task is blocked, and the selected time remains before the ordinary reset, Monitor will use one credit through the Codex service. After a confirmed reset, the task is resumed through its Desktop owner.",
       "auto_reset_weekly_enable_button": "Enable",
+      "reset_account_tooltip": "Reset quota using 1 available credit",
+      "reset_account_title": "Reset Account Quota",
+      "reset_account_confirm": "Are you sure you want to use 1 reset credit for %@? This will restore quota limits immediately.",
+      "reset_confirm_btn": "Reset Quota",
     ],
     .uk: [
       "menu_title": "OpenAI Codex Quota Monitor",
@@ -793,6 +801,12 @@ public enum L10n {
   public static var fiveHourSprint: String { tr("five_hour_sprint") }
   public static var weeklyLimit: String { tr("weekly_limit") }
   public static var resetCredits: String { tr("reset_credits") }
+  public static var resetAccountTooltip: String { tr("reset_account_tooltip") }
+  public static var resetAccountTitle: String { tr("reset_account_title") }
+  public static func resetAccountConfirm(email: String) -> String {
+    String(format: tr("reset_account_confirm"), email)
+  }
+  public static var resetConfirmBtn: String { tr("reset_confirm_btn") }
   public static func resetIn(hours: Int, minutes: Int) -> String {
     String(format: tr("reset_in_hours_minutes"), hours, minutes)
   }
