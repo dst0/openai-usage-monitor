@@ -70,7 +70,9 @@ func findCodexTargetPID() -> pid_t? {
   if let rawPID = argumentValue(after: "--expected-pid"),
     let expectedPID = Int32(rawPID), expectedPID > 1
   {
-    return pid_t(expectedPID)
+    if Darwin.kill(pid_t(expectedPID), 0) == 0 {
+      return pid_t(expectedPID)
+    }
   }
   if let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first
     ?? NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.chat").first
@@ -84,10 +86,140 @@ func findCodexTargetPID() -> pid_t? {
   return nil
 }
 
+func getWindowViaOsascript(pid: pid_t?) -> (pid: pid_t, frame: CGRect)? {
+  let pidClause = pid != nil ? "try\nset targetProc to (first process whose unix id is \(pid!))\nend try" : ""
+  let script = """
+  tell application "System Events"
+    set targetProc to missing value
+    \(pidClause)
+    if targetProc is missing value then
+      try
+        set targetProc to process "ChatGPT"
+      end try
+    end if
+    if targetProc is not missing value then
+      tell targetProc
+        set matched to missing value
+        repeat with w in windows
+          try
+            set subr to subrole of w
+            set sz to size of w
+            set nm to name of w
+            if (subr is "AXStandardWindow" or nm is "ChatGPT") and (item 1 of sz >= 300 and item 2 of sz >= 250) then
+              set matched to w
+              exit repeat
+            end if
+          end try
+        end repeat
+        if matched is not missing value then
+          set pos to position of matched
+          set sz to size of matched
+          set actualPid to unix id
+          return ((item 1 of pos as integer) as text) & " " & ((item 2 of pos as integer) as text) & " " & ((item 1 of sz as integer) as text) & " " & ((item 2 of sz as integer) as text) & " " & (actualPid as text)
+        end if
+      end tell
+    end if
+    error "NO_WINDOW_FOUND"
+  end tell
+  """
+
+  let proc = Process()
+  proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+  proc.arguments = ["-e", script]
+  let pipe = Pipe()
+  proc.standardOutput = pipe
+  proc.standardError = Pipe()
+  do {
+    try proc.run()
+    proc.waitUntilExit()
+    guard proc.terminationStatus == 0 else { return nil }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    guard let out = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+    let parts = out.split(separator: " ").compactMap { Int($0) }
+    if parts.count == 5 {
+      return (pid_t(parts[4]), CGRect(x: parts[0], y: parts[1], width: parts[2], height: parts[3]))
+    }
+  } catch {}
+  return nil
+}
+
+func restoreViaOsascript(pid: pid_t?, targetFrame: CGRect, deadline: Date) -> (CGPoint, CGSize, pid_t)? {
+  let targetX = Int(targetFrame.origin.x.rounded())
+  let targetY = Int(targetFrame.origin.y.rounded())
+  let targetW = Int(targetFrame.size.width.rounded())
+  let targetH = Int(targetFrame.size.height.rounded())
+  let pidClause = pid != nil ? "try\nset targetProc to (first process whose unix id is \(pid!))\nend try" : ""
+  let script = """
+  tell application "System Events"
+    set targetProc to missing value
+    \(pidClause)
+    if targetProc is missing value then
+      try
+        set targetProc to process "ChatGPT"
+      end try
+    end if
+    if targetProc is not missing value then
+      tell targetProc
+        set matched to missing value
+        repeat with w in windows
+          try
+            set subr to subrole of w
+            set sz to size of w
+            set nm to name of w
+            if (subr is "AXStandardWindow" or nm is "ChatGPT") and (item 1 of sz >= 300 and item 2 of sz >= 250) then
+              set matched to w
+              exit repeat
+            end if
+          end try
+        end repeat
+        if matched is not missing value then
+          set position of matched to {\(targetX), \(targetY)}
+          delay 0.15
+          set size of matched to {\(targetW), \(targetH)}
+          delay 0.1
+          set position of matched to {\(targetX), \(targetY)}
+          set pos to position of matched
+          set sz to size of matched
+          set actualPid to unix id
+          return ((item 1 of pos as integer) as text) & " " & ((item 2 of pos as integer) as text) & " " & ((item 1 of sz as integer) as text) & " " & ((item 2 of sz as integer) as text) & " " & (actualPid as text)
+        end if
+      end tell
+    end if
+    error "NO_WINDOW_FOUND"
+  end tell
+  """
+
+  while Date() < deadline {
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    proc.arguments = ["-e", script]
+    let pipe = Pipe()
+    proc.standardOutput = pipe
+    proc.standardError = Pipe()
+    do {
+      try proc.run()
+      proc.waitUntilExit()
+      if proc.terminationStatus == 0 {
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        if let out = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
+          let parts = out.split(separator: " ").compactMap { Int($0) }
+          if parts.count == 5 {
+            return (CGPoint(x: parts[0], y: parts[1]), CGSize(width: parts[2], height: parts[3]), pid_t(parts[4]))
+          }
+        }
+      }
+    } catch {}
+    _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.5))
+  }
+  return nil
+}
+
 func findCodexWindowFrame(targetPID: pid_t? = nil) -> (pid: pid_t, frame: CGRect)? {
   let pid = targetPID ?? findCodexTargetPID()
   if let pid = pid {
     let axApp = AXUIElementCreateApplication(pid)
+    _ = AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, true as CFTypeRef)
+    _ = AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, true as CFTypeRef)
     var windowsVal: AnyObject?
     if AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsVal) == .success,
       let winList = windowsVal as? [AXUIElement], !winList.isEmpty
@@ -160,6 +292,9 @@ func findCodexWindowFrame(targetPID: pid_t? = nil) -> (pid: pid_t, frame: CGRect
 
   if let best = bestCandidate {
     return (best.pid, best.frame)
+  }
+  if let osascriptRes = getWindowViaOsascript(pid: pid) {
+    return osascriptRes
   }
   return nil
 }
@@ -298,128 +433,179 @@ func restoreWindowBounds() -> Never {
     targetFrame = CGRect(x: safeX, y: safeY, width: safeW, height: safeH)
   }
 
-  let deadline = Date().addingTimeInterval(15)
-  var targetPID: pid_t? = nil
-  repeat {
+  // Poll for the actual main Codex window up to 35 seconds.
+  // On startup or restart, an initial splash or loading window may appear first
+  // before the main document window opens. We wait until the standard document
+  // window (AXStandardWindow / named "ChatGPT" / largest area) is available.
+  let deadline = Date().addingTimeInterval(35)
+  var matchedWin: AXUIElement? = nil
+  var matchedPID: pid_t? = nil
+  var lastErr: Int32 = 0
+
+  while Date() < deadline {
     if let pid = findCodexTargetPID() {
-      let windowInfo =
-        CGWindowListCopyWindowInfo(
-          [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-        as? [[String: Any]] ?? []
-      let hasWindow = windowInfo.contains { info in
-        let ownerPID = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
-        let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1
-        let alpha = (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0
-        guard let boundsValue = info[kCGWindowBounds as String],
-          let frame = CGRect(dictionaryRepresentation: boundsValue as! CFDictionary)
-        else { return false }
-        return ownerPID == pid && layer == 0 && alpha > 0 && frame.width >= 300 && frame.height >= 300
+      matchedPID = pid
+      let axApp = AXUIElementCreateApplication(pid)
+      _ = AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, true as CFTypeRef)
+      _ = AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, false as CFTypeRef)
+
+      var candidateWindows: [AXUIElement] = []
+      var windowsVal: AnyObject?
+      let err = AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsVal)
+      if err == .success, let list = windowsVal as? [AXUIElement] {
+        candidateWindows.append(contentsOf: list)
+      } else {
+        lastErr = err.rawValue
+        if err.rawValue == -25211 { // kAXErrorAPIDisabled
+          if let res = restoreViaOsascript(pid: pid, targetFrame: targetFrame, deadline: deadline) {
+            print("WINDOW_BOUNDS_RESTORED x=\(res.0.x) y=\(res.0.y) width=\(res.1.width) height=\(res.1.height) pid=\(res.2)")
+            exit(0)
+          }
+          print("FAILED_TO_COPY_AX_WINDOWS err=-25211")
+          exit(1)
+        }
       }
-      if hasWindow {
-        targetPID = pid
+
+      var mainWinVal: AnyObject?
+      if AXUIElementCopyAttributeValue(axApp, kAXMainWindowAttribute as CFString, &mainWinVal) == .success,
+        let mw = mainWinVal
+      {
+        let mainEl = mw as! AXUIElement
+        if !candidateWindows.contains(where: { CFEqual($0, mainEl) }) {
+          candidateWindows.append(mainEl)
+        }
+      }
+
+      var focusedWinVal: AnyObject?
+      if AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWinVal) == .success,
+        let fw = focusedWinVal
+      {
+        let focusedEl = fw as! AXUIElement
+        if !candidateWindows.contains(where: { CFEqual($0, focusedEl) }) {
+          candidateWindows.append(focusedEl)
+        }
+      }
+
+      var bestStandardWin: AXUIElement?
+      var maxStandardArea: CGFloat = 0
+      var fallbackWin: AXUIElement?
+      var maxFallbackArea: CGFloat = 0
+
+      for win in candidateWindows {
+        var minVal: AnyObject?
+        if AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minVal) == .success,
+          (minVal as? Bool) == true
+        {
+          continue
+        }
+        var szVal: AnyObject?
+        AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &szVal)
+        var sz = CGSize.zero
+        if let sv = szVal { AXValueGetValue(sv as! AXValue, .cgSize, &sz) }
+        guard sz.width >= 300 && sz.height >= 250 else { continue }
+
+        let area = sz.width * sz.height
+        var subroleVal: AnyObject?
+        AXUIElementCopyAttributeValue(win, kAXSubroleAttribute as CFString, &subroleVal)
+        let subrole = subroleVal as? String ?? ""
+
+        var titleVal: AnyObject?
+        AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleVal)
+        let title = titleVal as? String ?? ""
+
+        let isStandard = (subrole == (kAXStandardWindowSubrole as String)) || title == "ChatGPT"
+
+        if isStandard {
+          if area > maxStandardArea {
+            maxStandardArea = area
+            bestStandardWin = win
+          }
+        }
+        if area > maxFallbackArea {
+          maxFallbackArea = area
+          fallbackWin = win
+        }
+      }
+
+      // If we found the real standard window, or if at least 15 seconds have passed
+      // and we have a fallback window with substantial area (>= 500x400):
+      if let win = bestStandardWin {
+        matchedWin = win
+        break
+      } else if let fallback = fallbackWin, maxFallbackArea >= 500 * 400,
+        deadline.timeIntervalSinceNow < 20
+      {
+        matchedWin = fallback
         break
       }
     }
-    _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.25))
-  } while Date() < deadline
-
-  guard let pid = targetPID else {
-    print("TARGET_WINDOW_NOT_FOUND")
-    exit(1)
+    _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.3))
   }
 
-  let axApp = AXUIElementCreateApplication(pid)
-  var winList: [AXUIElement] = []
-  let axDeadline = Date().addingTimeInterval(5)
-  while Date() < axDeadline {
-    var windowsVal: AnyObject?
-    if AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsVal) == .success,
-      let list = windowsVal as? [AXUIElement], !list.isEmpty
-    {
-      winList = list
-      break
-    }
-    _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
-  }
+  if let win = matchedWin, let pid = matchedPID {
+    var pt = targetFrame.origin
+    let pVal = AXValueCreate(.cgPoint, &pt)!
+    var sz = targetFrame.size
+    let sVal = AXValueCreate(.cgSize, &sz)!
 
-  guard !winList.isEmpty else {
-    print("FAILED_TO_COPY_AX_WINDOWS")
-    exit(1)
-  }
+    // Multi-display reliable positioning (avoids WindowServer scale/display snapping):
+    // 1. Move to target display
+    _ = AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pVal)
+    usleep(100_000)
 
-  var targetWin: AXUIElement?
-  var maxArea: CGFloat = 0
-  var bestStandardWin: AXUIElement?
-  var maxStandardArea: CGFloat = 0
+    // 2. Set size on target display
+    _ = AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sVal)
+    usleep(50_000)
 
-  for win in winList {
-    var minVal: AnyObject?
-    if AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minVal) == .success,
-      (minVal as? Bool) == true
-    {
-      continue
-    }
+    // 3. Re-apply target position
+    _ = AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pVal)
+    usleep(50_000)
+
+    // 4. Final size pass
+    _ = AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sVal)
+
+    var resPt = targetFrame.origin
+    var resSz = targetFrame.size
+    var posVal: AnyObject?
     var szVal: AnyObject?
-    AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &szVal)
-    var sz = CGSize.zero
-    if let sv = szVal { AXValueGetValue(sv as! AXValue, .cgSize, &sz) }
-    guard sz.width >= 200 && sz.height >= 200 else { continue }
-
-    let area = sz.width * sz.height
-    var subroleVal: AnyObject?
-    AXUIElementCopyAttributeValue(win, kAXSubroleAttribute as CFString, &subroleVal)
-    let subrole = subroleVal as? String ?? ""
-
-    if subrole == (kAXStandardWindowSubrole as String) {
-      if area > maxStandardArea {
-        maxStandardArea = area
-        bestStandardWin = win
-      }
+    if AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posVal) == .success,
+      let pv = posVal
+    {
+      AXValueGetValue(pv as! AXValue, .cgPoint, &resPt)
     }
-    if area > maxArea {
-      maxArea = area
-      targetWin = win
+    if AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &szVal) == .success,
+      let sv = szVal
+    {
+      AXValueGetValue(sv as! AXValue, .cgSize, &resSz)
+    }
+
+    let sizeDiff = abs(resSz.width - targetFrame.size.width) + abs(resSz.height - targetFrame.size.height)
+    let posDiff = abs(resPt.x - targetFrame.origin.x) + abs(resPt.y - targetFrame.origin.y)
+    if sizeDiff <= 60 && posDiff <= 60 {
+      print(
+        "WINDOW_BOUNDS_RESTORED x=\(resPt.x) y=\(resPt.y) width=\(resSz.width) height=\(resSz.height) pid=\(pid)"
+      )
+      exit(0)
     }
   }
 
-  guard let win = bestStandardWin ?? targetWin ?? winList.first else {
-    print("NO_VALID_AX_WINDOW")
+  // Fallback: Use AppleScript via System Events if AX did not find the window
+  if let res = restoreViaOsascript(pid: matchedPID, targetFrame: targetFrame, deadline: Date().addingTimeInterval(10)) {
+    print("WINDOW_BOUNDS_RESTORED x=\(res.0.x) y=\(res.0.y) width=\(res.1.width) height=\(res.1.height) pid=\(res.2)")
+    exit(0)
+  }
+
+  guard let _ = matchedPID else {
+    print("TARGET_PROCESS_NOT_FOUND")
     exit(1)
   }
 
-  var pt = targetFrame.origin
-  let pVal = AXValueCreate(.cgPoint, &pt)!
-  _ = AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pVal)
-
-  var sz = targetFrame.size
-  let sVal = AXValueCreate(.cgSize, &sz)!
-  _ = AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sVal)
-
-  _ = AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pVal)
-
-  var resPt = targetFrame.origin
-  var resSz = targetFrame.size
-  var posVal: AnyObject?
-  var szVal: AnyObject?
-  if AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posVal) == .success,
-    let pv = posVal
-  {
-    AXValueGetValue(pv as! AXValue, .cgPoint, &resPt)
-  }
-  if AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &szVal) == .success,
-    let sv = szVal
-  {
-    AXValueGetValue(sv as! AXValue, .cgSize, &resSz)
-  }
-
-  print(
-    "WINDOW_BOUNDS_RESTORED x=\(resPt.x) y=\(resPt.y) width=\(resSz.width) height=\(resSz.height) pid=\(pid)"
-  )
-  exit(0)
+  print("FAILED_TO_COPY_AX_WINDOWS err=\(lastErr)")
+  exit(1)
 }
 
 func runAutomationBanner() -> Never {
-  let taskCount = max(1, Int(argumentValue(after: "--tasks") ?? "1") ?? 1)
+  let taskCount = max(0, Int(argumentValue(after: "--tasks") ?? "0") ?? 0)
   let parentPID = pid_t(Int32(argumentValue(after: "--parent-pid") ?? "0") ?? 0)
   let readyFile = argumentValue(after: "--ready-file")
   guard parentPID > 1, Darwin.kill(parentPID, 0) == 0, let readyFile,
@@ -430,7 +616,7 @@ func runAutomationBanner() -> Never {
   let app = NSApplication.shared
   app.setActivationPolicy(.accessory)
 
-  let width: CGFloat = 470
+  let width: CGFloat = 530
   let height: CGFloat = 82
   func makePanel(on screen: NSScreen) -> NSPanel {
     let panel = NSPanel(
@@ -458,15 +644,26 @@ func runAutomationBanner() -> Never {
     effect.layer?.borderWidth = 0.6
     effect.layer?.borderColor = NSColor.white.withAlphaComponent(0.24).cgColor
 
-    let title = NSTextField(
-      labelWithString: "Codex Monitor is restoring \(taskCount) task\(taskCount == 1 ? "" : "s")")
+    let isRussian = Locale.preferredLanguages.first?.hasPrefix("ru") == true
+    let titleStr: String
+    if taskCount > 1 {
+      titleStr = isRussian ? "Codex Monitor восстанавливает \(taskCount) задач" : "Codex Monitor is restoring \(taskCount) tasks"
+    } else if taskCount == 1 {
+      titleStr = isRussian ? "Codex Monitor восстанавливает 1 задачу" : "Codex Monitor is restoring 1 task"
+    } else {
+      titleStr = isRussian ? "Codex Monitor перезапускает Codex" : "Codex Monitor is restarting Codex"
+    }
+
+    let detailStr = isRussian
+      ? "Положение и размеры окна, а также задачи будут восстановлены автоматически."
+      : "Tasks and desktop window geometry will be restored automatically."
+
+    let title = NSTextField(labelWithString: titleStr)
     title.font = .systemFont(ofSize: 15, weight: .semibold)
     title.textColor = .labelColor
     title.frame = NSRect(x: 22, y: 43, width: width - 44, height: 21)
 
-    let detail = NSTextField(
-      labelWithString: "Tasks may switch briefly. You do not need to resume them manually."
-    )
+    let detail = NSTextField(labelWithString: detailStr)
     detail.font = .systemFont(ofSize: 12, weight: .regular)
     detail.textColor = .secondaryLabelColor
     detail.frame = NSRect(x: 22, y: 19, width: width - 44, height: 18)

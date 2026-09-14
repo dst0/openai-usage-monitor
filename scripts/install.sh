@@ -272,6 +272,7 @@ SWIFT_SOURCES=(
     "${PROJECT_DIR}/Sources/AppDelegate+AutoSwitch.swift"
     "${PROJECT_DIR}/Sources/AppDelegate+AutoReset.swift"
     "${PROJECT_DIR}/Sources/AppDelegate+SettingsActions.swift"
+    "${PROJECT_DIR}/Sources/AppDelegate+WindowBounds.swift"
     "${PROJECT_DIR}/Sources/main.swift"
 )
 

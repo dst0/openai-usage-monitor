@@ -47,6 +47,7 @@ swiftc -parse-as-library \
     Sources/AppDelegate+AutoSwitch.swift \
     Sources/AppDelegate+AutoReset.swift \
     Sources/AppDelegate+SettingsActions.swift \
+    Sources/AppDelegate+WindowBounds.swift \
     tests/AppDelegateTests.swift \
     -o "${TMP_BIN_DIR}/app_delegate_test"
 "${TMP_BIN_DIR}/app_delegate_test"
