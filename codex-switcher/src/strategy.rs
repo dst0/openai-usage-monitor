@@ -1,13 +1,75 @@
 use crate::models::AccountConfig;
 
+pub fn is_quota_depleted(
+    five_hour_percentage: f64,
+    weekly_percentage: Option<f64>,
+    credits: u32,
+    error: Option<&str>,
+    threshold: f64,
+) -> bool {
+    // 1. Primary 5-hour sprint reached or fell below threshold
+    if five_hour_percentage <= threshold {
+        return true;
+    }
+
+    // 2. Weekly quota reached or fell below threshold with no reset credits available
+    if let Some(weekly) = weekly_percentage {
+        if weekly <= threshold && credits == 0 {
+            return true;
+        }
+    }
+
+    // 3. Error indicates quota / rate limit exhaustion or fatal authentication error
+    if let Some(err) = error {
+        let lower = err.to_ascii_lowercase();
+        if lower.contains("429")
+            || lower.contains("401")
+            || lower.contains("403")
+            || lower.contains("unauthorized")
+            || lower.contains("usage_limit_exceeded")
+            || lower.contains("workspace_owner_credits_depleted")
+            || lower.contains("credits_depleted")
+            || lower.contains("out of credits")
+            || lower.contains("rate limit")
+            || lower.contains("rate_limit")
+            || lower.contains("quota")
+            || lower.contains("session ended")
+            || lower.contains("logged out")
+            || lower.contains("re-login")
+            || lower.contains("relogin")
+            || lower.contains("token_revoked")
+            || lower.contains("invalid_grant")
+            || lower.contains("refresh_token_invalidated")
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+pub fn is_account_depleted(account: &AccountConfig, threshold: f64) -> bool {
+    if account.needs_relogin() {
+        return true;
+    }
+    is_quota_depleted(
+        account.last_primary_percentage,
+        account.last_weekly_percentage,
+        account.last_credits.unwrap_or(0),
+        account.last_error.as_deref(),
+        threshold,
+    )
+}
+
 pub fn needs_switch(
     account: &AccountConfig,
     threshold: f64,
     business_priority: bool,
     accounts: &[AccountConfig],
 ) -> bool {
-    // 1. Normal exhaustion: active account reached or fell below threshold
-    if account.last_primary_percentage <= threshold {
+    // 1. Normal exhaustion: active account reached or fell below threshold,
+    // or weekly quota exhausted with 0 credits, or rate-limit error encountered.
+    if is_account_depleted(account, threshold) {
         return true;
     }
 
@@ -19,8 +81,9 @@ pub fn needs_switch(
                 && !a.email.eq_ignore_ascii_case(&account.email)
                 && a.enabled
                 && a.is_business()
-                && a.last_error.is_none()
-                && a.last_primary_percentage > threshold
+                && !a.needs_relogin()
+                && a.last_error.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true)
+                && !is_account_depleted(a, threshold)
         });
         if has_available_business {
             return true;
@@ -49,8 +112,8 @@ pub fn select_best_switch(
             .find(|a| a.id == id || a.email.eq_ignore_ascii_case(id))
     });
     let active_is_non_business = active.map(|a| !a.is_business()).unwrap_or(false);
+    let active_depleted = active.map(|a| is_account_depleted(a, threshold)).unwrap_or(false);
     let active_pct = active.map(|a| a.last_primary_percentage).unwrap_or(0.0);
-    let active_depleted = active_pct <= threshold;
 
     let candidates: Vec<&AccountConfig> = accounts
         .iter()
@@ -64,7 +127,9 @@ pub fn select_best_switch(
                 true
             }
         })
-        .filter(|a| a.last_error.is_none())
+        .filter(|a| !a.needs_relogin())
+        .filter(|a| a.last_error.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true))
+        .filter(|a| !is_account_depleted(a, threshold))
         .collect();
 
     if candidates.is_empty() {
@@ -73,15 +138,12 @@ pub fn select_best_switch(
 
     // Usable candidates MUST have quota strictly above threshold.
     // In addition:
-    // - If active is depleted, any candidate above threshold is ready.
-    // - If business_priority is ON and active is non-business, any business candidate above threshold is ready (preemption).
+    // - If active is depleted, any non-depleted candidate is ready.
+    // - If business_priority is ON and active is non-business, any non-depleted business candidate is ready (preemption).
     // - Otherwise, candidate must have strictly higher quota than active.
     let mut ready_candidates: Vec<&AccountConfig> = candidates
         .into_iter()
         .filter(|a| {
-            if a.last_primary_percentage <= threshold {
-                return false;
-            }
             if active_depleted {
                 return true;
             }
@@ -427,5 +489,150 @@ mod tests {
             ),
             Some("biz-other".to_string())
         );
+    }
+
+    #[test]
+    fn test_weekly_quota_exhaustion_with_zero_credits_triggers_switch() {
+        let mut active = make_acc_with_credits_and_plan("active-team", 64.0, 18000, Some(0), "team");
+        active.last_weekly_percentage = Some(0.0);
+        let candidate = make_acc_with_credits_and_plan("reserve-plus", 100.0, 18000, Some(2), "plus");
+        let accounts = vec![active.clone(), candidate.clone()];
+
+        // Active has 64% 5h sprint, but 0% weekly and 0 credits -> depleted!
+        assert!(needs_switch(&active, 0.0, false, &accounts));
+        let chosen = select_best_switch(
+            Some("active-team"),
+            &accounts,
+            0.0,
+            "reset-first",
+            false,
+            false,
+        );
+        assert_eq!(chosen, Some("reserve-plus".to_string()));
+    }
+
+    #[test]
+    fn test_weekly_quota_zero_with_available_credits_is_not_depleted() {
+        let mut active = make_acc_with_credits_and_plan("active-team", 64.0, 18000, Some(2), "team");
+        active.last_weekly_percentage = Some(0.0);
+        assert!(!is_account_depleted(&active, 0.0));
+    }
+
+    #[test]
+    fn test_quota_error_triggers_switch() {
+        let mut active = make_acc_with_credits_and_plan("active-team", 50.0, 18000, Some(0), "team");
+        active.last_error = Some("429 Too Many Requests (usage_limit_exceeded)".to_string());
+        let candidate = make_acc_with_credits_and_plan("reserve-plus", 100.0, 18000, Some(2), "plus");
+        let accounts = vec![active.clone(), candidate.clone()];
+
+        assert!(needs_switch(&active, 0.0, false, &accounts));
+        let chosen = select_best_switch(
+            Some("active-team"),
+            &accounts,
+            0.0,
+            "reset-first",
+            false,
+            false,
+        );
+        assert_eq!(chosen, Some("reserve-plus".to_string()));
+    }
+
+    #[test]
+    fn test_candidate_with_zero_weekly_quota_and_zero_credits_is_not_selected() {
+        let active = make_acc_with_credits_and_plan("active-acc", 0.0, 18000, Some(0), "team");
+        let mut depleted_candidate =
+            make_acc_with_credits_and_plan("candidate-1", 80.0, 18000, Some(0), "team");
+        depleted_candidate.last_weekly_percentage = Some(0.0);
+        let healthy_candidate =
+            make_acc_with_credits_and_plan("candidate-2", 40.0, 18000, Some(1), "team");
+
+        let accounts = vec![active.clone(), depleted_candidate, healthy_candidate];
+        let chosen = select_best_switch(
+            Some("active-acc"),
+            &accounts,
+            0.0,
+            "reset-first",
+            false,
+            false,
+        );
+        // candidate-1 has 80% sprint but 0% weekly and 0 credits, so candidate-2 (40%) MUST be chosen
+        assert_eq!(chosen, Some("candidate-2".to_string()));
+    }
+
+    #[test]
+    fn test_needs_relogin_detection() {
+        let mut acc = make_acc_with_credits_and_plan("test", 100.0, 18000, Some(0), "team");
+        assert!(!acc.needs_relogin());
+
+        // Error keyword checks
+        let error_cases = [
+            "401 Unauthorized",
+            "Session ended (logged out in app). Re-login required.",
+            "User logged out",
+            "unauthorized request",
+            "token_revoked",
+            "invalid_grant: refresh token expired",
+            "refresh_token_invalidated",
+            "relogin needed",
+            "re-login required",
+        ];
+        for err in error_cases {
+            acc.last_error = Some(err.to_string());
+            assert!(acc.needs_relogin(), "Error '{}' must require relogin", err);
+            assert!(is_account_depleted(&acc, 0.0), "Account with error '{}' must be depleted", err);
+        }
+
+        // Quota error must NOT require relogin
+        acc.last_error = Some("429 Too Many Requests (Rate limit reached)".to_string());
+        assert!(!acc.needs_relogin());
+
+        // Empty access token requires relogin
+        acc.last_error = None;
+        acc.tokens.access_token = "   ".to_string();
+        assert!(acc.needs_relogin(), "Empty access token must require relogin");
+    }
+
+    #[test]
+    fn test_active_account_needing_relogin_triggers_switch() {
+        let mut active = make_acc_with_credits_and_plan("active-acc", 100.0, 18000, Some(2), "team");
+        active.last_error = Some("401 Unauthorized (Session ended)".to_string());
+        let candidate = make_acc_with_credits_and_plan("reserve-acc", 80.0, 18000, Some(0), "team");
+        let accounts = vec![active.clone(), candidate.clone()];
+
+        // Active account must be considered depleted and trigger switch
+        assert!(is_account_depleted(&active, 0.0));
+        assert!(needs_switch(&active, 0.0, false, &accounts));
+
+        let chosen = select_best_switch(
+            Some("active-acc"),
+            &accounts,
+            0.0,
+            "reset-first",
+            false,
+            false,
+        );
+        assert_eq!(chosen, Some("reserve-acc".to_string()));
+    }
+
+    #[test]
+    fn test_candidate_needing_relogin_is_never_selected() {
+        let active = make_acc_with_credits_and_plan("active-acc", 0.0, 18000, Some(0), "team");
+        let mut expired_candidate =
+            make_acc_with_credits_and_plan("expired-cand", 100.0, 18000, Some(5), "team");
+        expired_candidate.last_error = Some("Session ended (logged out in app)".to_string());
+        let healthy_candidate =
+            make_acc_with_credits_and_plan("healthy-cand", 40.0, 18000, Some(0), "team");
+
+        let accounts = vec![active.clone(), expired_candidate, healthy_candidate];
+        let chosen = select_best_switch(
+            Some("active-acc"),
+            &accounts,
+            0.0,
+            "reset-first",
+            false,
+            false,
+        );
+        // Even though expired_cand has 100% and 5 credits, healthy-cand (40%) MUST be chosen
+        assert_eq!(chosen, Some("healthy-cand".to_string()));
     }
 }

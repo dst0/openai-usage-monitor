@@ -152,6 +152,15 @@ public final class LocalizationManager: @unchecked Sendable {
       "restart_app": "🚀 Перезапустить Codex App",
       "launch_at_login": "Запускать при входе",
       "quit": "Выход",
+      "uninstall_action": "⛔ UNINSTALL CODEX MONITOR…",
+      "uninstall_title": "UNINSTALL CODEX MONITOR?",
+      "uninstall_message":
+        "Это удалит приложение Monitor, его helper-ы, launchd/Login Item, кэш, логи и runtime-файлы. Официальный Codex Desktop, credentials, разговоры и сессии останутся нетронутыми. Реестр аккаунтов сохраняется; для его удаления используйте --purge-data в Terminal.\n\nВведите UNINSTALL заглавными буквами для подтверждения.",
+      "uninstall_confirm": "UNINSTALL",
+      "uninstall_invalid": "Введите UNINSTALL точно, заглавными буквами.",
+      "uninstall_purge_data": "Также удалить сохранённые аккаунты Monitor (accounts.json)",
+      "uninstall_failed_title": "UNINSTALL FAILED",
+      "uninstall_failed_message": "Не удалось запустить uninstaller. Изменения не внесены.",
       "remove_account": "🗑 Удалить аккаунт...",
       "remove_account_title": "Удалить аккаунт",
       "remove_account_confirm": "Вы уверены, что хотите удалить %@ из Codex Monitor?",
@@ -169,6 +178,15 @@ public final class LocalizationManager: @unchecked Sendable {
       "add_account_failed_title": "Ошибка добавления аккаунта",
       "add_account_failed_desc": "Не удалось добавить аккаунт. Попробуйте еще раз.",
       "switch_to_account": "Переключиться на этот аккаунт",
+      "relogin_to_account": "Перелогиниться в этот аккаунт",
+      "relogin_account": "Перелогиниться...",
+      "relogin_account_title": "Повторный вход в аккаунт Codex",
+      "relogin_account_msg":
+        "Откроется окно браузера для входа в '%@'. После завершения авторизации новая сессия обновит этот аккаунт.",
+      "relogin_success_title": "Вход выполнен успешно",
+      "relogin_success_msg": "Сессия для '%@' успешно обновлена!",
+      "relogin_failed_title": "Ошибка повторного входа",
+      "relogin_failed_desc": "Не удалось обновить авторизацию аккаунта. Попробуйте еще раз.",
       "cli_up_to_date": "✓ Codex CLI v%@ (актуальная версия)",
       "cli_update_available": "🚀 Обновить Codex CLI (до v%@)",
       "cli_not_found": "⚠️ Codex CLI не найден",
@@ -222,6 +240,15 @@ public final class LocalizationManager: @unchecked Sendable {
       "restart_app": "🚀 Restart Codex Desktop App",
       "launch_at_login": "Launch at Login",
       "quit": "Quit",
+      "uninstall_action": "⛔ UNINSTALL CODEX MONITOR…",
+      "uninstall_title": "UNINSTALL CODEX MONITOR?",
+      "uninstall_message":
+        "This removes the Monitor app, its helpers, launchd/Login Item, app-specific caches, logs, and runtime files. Official Codex Desktop, credentials, conversations, and sessions stay untouched. The account registry is preserved; use --purge-data in Terminal if you explicitly want to remove it.\n\nType UNINSTALL in uppercase to confirm.",
+      "uninstall_confirm": "UNINSTALL",
+      "uninstall_invalid": "Type UNINSTALL exactly in uppercase to confirm.",
+      "uninstall_purge_data": "Also delete stored Monitor accounts (accounts.json)",
+      "uninstall_failed_title": "UNINSTALL FAILED",
+      "uninstall_failed_message": "Could not start the uninstaller. No changes were made.",
       "remove_account": "🗑 Remove Account...",
       "remove_account_title": "Remove Account",
       "remove_account_confirm": "Are you sure you want to remove %@ from Codex Monitor?",
@@ -240,6 +267,15 @@ public final class LocalizationManager: @unchecked Sendable {
       "add_account_failed_desc":
         "Could not complete account setup. Please check credentials and try again.",
       "switch_to_account": "Switch to this account",
+      "relogin_to_account": "Re-login to this account",
+      "relogin_account": "Re-login...",
+      "relogin_account_title": "Re-login to Codex Account",
+      "relogin_account_msg":
+        "Opening browser to log in to '%@'. After authentication completes, the new session will update this account.",
+      "relogin_success_title": "Re-login Succeeded",
+      "relogin_success_msg": "Account '%@' re-authenticated successfully!",
+      "relogin_failed_title": "Failed to Re-login",
+      "relogin_failed_desc": "Could not complete re-login. Please try again.",
       "cli_up_to_date": "✓ Codex CLI v%@ (up to date)",
       "cli_update_available": "🚀 Update Codex CLI (to v%@)",
       "cli_not_found": "⚠️ Codex CLI not found",
@@ -309,6 +345,15 @@ public final class LocalizationManager: @unchecked Sendable {
       "add_account_failed_title": "Помилка додавання акаунта",
       "add_account_failed_desc": "Не вдалося додати акаунт. Спробуйте ще раз.",
       "switch_to_account": "Переключитися на цей акаунт",
+      "relogin_to_account": "Перелогінитися в цей акаунт",
+      "relogin_account": "Перелогінитися...",
+      "relogin_account_title": "Повторний вхід в акаунт Codex",
+      "relogin_account_msg":
+        "Відкриється вікно браузера для входу в '%@'. Після завершення авторизації нова сесія оновить цей акаунт.",
+      "relogin_success_title": "Вхід виконано успішно",
+      "relogin_success_msg": "Сесію для '%@' успішно оновлено!",
+      "relogin_failed_title": "Помилка повторного входу",
+      "relogin_failed_desc": "Не вдалося оновити авторизацію акаунта. Спробуйте ще раз.",
       "cli_up_to_date": "✓ Codex CLI v%@ (актуальна версія)",
       "cli_update_available": "🚀 Оновити Codex CLI (до v%@)",
       "cli_not_found": "⚠️ Codex CLI не знайдено",
@@ -347,6 +392,15 @@ public final class LocalizationManager: @unchecked Sendable {
       "cancel_btn": "Abbrechen",
       "add_account": "➕ Konto hinzufügen...",
       "switch_to_account": "Zu diesem Konto wechseln",
+      "relogin_to_account": "Erneut bei diesem Konto anmelden",
+      "relogin_account": "Erneut anmelden...",
+      "relogin_account_title": "Erneut bei Codex-Konto anmelden",
+      "relogin_account_msg":
+        "Öffnet den Browser für die Anmeldung bei '%@'. Nach Abschluss wird dieses Konto aktualisiert.",
+      "relogin_success_title": "Erfolgreich erneut angemeldet",
+      "relogin_success_msg": "Konto '%@' wurde erfolgreich erneut authentifiziert!",
+      "relogin_failed_title": "Anmeldung fehlgeschlagen",
+      "relogin_failed_desc": "Konto-Neuanmeldung fehlgeschlagen. Bitte versuchen Sie es erneut.",
       "cli_up_to_date": "✓ Codex CLI v%@ (aktuell)",
       "cli_update_available": "🚀 Codex CLI aktualisieren (auf v%@)",
       "cli_not_found": "⚠️ Codex CLI nicht gefunden",
@@ -385,6 +439,15 @@ public final class LocalizationManager: @unchecked Sendable {
       "cancel_btn": "Annuler",
       "add_account": "➕ Ajouter un compte...",
       "switch_to_account": "Basculer vers ce compte",
+      "relogin_to_account": "Se reconnecter à ce compte",
+      "relogin_account": "Se reconnecter...",
+      "relogin_account_title": "Reconnexion au compte Codex",
+      "relogin_account_msg":
+        "Ouverture du navigateur pour se connecter à '%@'. Après authentification, ce compte sera mis à jour.",
+      "relogin_success_title": "Reconnexion réussie",
+      "relogin_success_msg": "Le compte '%@' a été réauthentifié avec succès !",
+      "relogin_failed_title": "Échec de reconnexion",
+      "relogin_failed_desc": "Impossible de se reconnecter. Veuillez réessayer.",
       "cli_up_to_date": "✓ Codex CLI v%@ (à jour)",
       "cli_update_available": "🚀 Mettre à jour Codex CLI (vers v%@)",
       "cli_not_found": "⚠️ Codex CLI introuvable",
@@ -435,6 +498,15 @@ public final class LocalizationManager: @unchecked Sendable {
       "add_account_failed_desc":
         "No se pudo completar la configuración de la cuenta. Comprueba las credenciales e inténtalo de nuevo.",
       "switch_to_account": "Cambiar a esta cuenta",
+      "relogin_to_account": "Volver a iniciar sesión en esta cuenta",
+      "relogin_account": "Volver a iniciar sesión...",
+      "relogin_account_title": "Volver a iniciar sesión en Codex",
+      "relogin_account_msg":
+        "Se abrirá el navegador para iniciar sesión en '%@'. Tras autenticarte, se actualizará esta cuenta.",
+      "relogin_success_title": "Reinicio de sesión exitoso",
+      "relogin_success_msg": "¡La cuenta '%@' se ha reautenticado con éxito!",
+      "relogin_failed_title": "Error al reiniciar sesión",
+      "relogin_failed_desc": "No se pudo volver a iniciar sesión. Inténtalo de nuevo.",
       "cli_up_to_date": "✓ Codex CLI v%@ (al día)",
       "cli_update_available": "🚀 Actualizar Codex CLI (a v%@)",
       "cli_not_found": "⚠️ Codex CLI no encontrado",
@@ -473,6 +545,15 @@ public final class LocalizationManager: @unchecked Sendable {
       "cancel_btn": "Annulla",
       "add_account": "➕ Aggiungi account...",
       "switch_to_account": "Passa a questo account",
+      "relogin_to_account": "Accedi di nuovo a questo account",
+      "relogin_account": "Accedi di nuovo...",
+      "relogin_account_title": "Riaccedi all'account Codex",
+      "relogin_account_msg":
+        "Apertura del browser per accedere a '%@'. Al termine dell'autenticazione, questo account verrà aggiornato.",
+      "relogin_success_title": "Accesso completato",
+      "relogin_success_msg": "Account '%@' autenticato nuovamente con successo!",
+      "relogin_failed_title": "Accesso non riuscito",
+      "relogin_failed_desc": "Impossibile completare l'accesso. Riprova.",
       "cli_up_to_date": "✓ Codex CLI v%@ (aggiornato)",
       "cli_update_available": "🚀 Aggiorna Codex CLI (a v%@)",
       "cli_not_found": "⚠️ Codex CLI non trovato",
@@ -511,6 +592,15 @@ public final class LocalizationManager: @unchecked Sendable {
       "cancel_btn": "Cancelar",
       "add_account": "➕ Adicionar conta...",
       "switch_to_account": "Alternar para esta conta",
+      "relogin_to_account": "Entrar novamente nesta conta",
+      "relogin_account": "Entrar novamente...",
+      "relogin_account_title": "Entrar novamente na conta Codex",
+      "relogin_account_msg":
+        "Abrindo o navegador para autenticar '%@'. Após a autenticação, esta conta será atualizada.",
+      "relogin_success_title": "Sessão renovada com sucesso",
+      "relogin_success_msg": "Conta '%@' autenticada com sucesso!",
+      "relogin_failed_title": "Falha ao entrar novamente",
+      "relogin_failed_desc": "Não foi possível renovar a sessão. Tente novamente.",
       "cli_up_to_date": "✓ Codex CLI v%@ (atualizado)",
       "cli_update_available": "🚀 Atualizar Codex CLI (para v%@)",
       "cli_not_found": "⚠️ Codex CLI não encontrado",
@@ -561,6 +651,15 @@ public final class LocalizationManager: @unchecked Sendable {
       "add_account_failed_desc":
         "Nie udało się ukończyć konfiguracji konta. Sprawdź poświadczenia i spróbuj ponownie.",
       "switch_to_account": "Przełącz na to konto",
+      "relogin_to_account": "Zaloguj ponownie na to konto",
+      "relogin_account": "Zaloguj ponownie...",
+      "relogin_account_title": "Zaloguj ponownie do konta Codex",
+      "relogin_account_msg":
+        "Otwieranie przeglądarki w celu zalogowania do '%@'. Po uwierzytelnieniu sesja zostanie zaktualizowana.",
+      "relogin_success_title": "Ponowne logowanie udane",
+      "relogin_success_msg": "Pomyślnie odnowiono uwierzytelnienie dla '%@'!",
+      "relogin_failed_title": "Błąd ponownego logowania",
+      "relogin_failed_desc": "Nie udało się ponownie zalogować. Spróbuj ponownie.",
       "cli_up_to_date": "✓ Codex CLI v%@ (aktualny)",
       "cli_update_available": "🚀 Zaktualizuj Codex CLI (do v%@)",
       "cli_not_found": "⚠️ Nie znaleziono Codex CLI",
@@ -599,6 +698,15 @@ public final class LocalizationManager: @unchecked Sendable {
       "cancel_btn": "Annuleren",
       "add_account": "➕ Account toevoegen...",
       "switch_to_account": "Overschakelen naar dit account",
+      "relogin_to_account": "Opnieuw inloggen op dit account",
+      "relogin_account": "Opnieuw inloggen...",
+      "relogin_account_title": "Opnieuw inloggen op Codex-account",
+      "relogin_account_msg":
+        "Browser wordt geopend om in te loggen op '%@'. Na verificatie wordt dit account bijgewerkt.",
+      "relogin_success_title": "Succesvol opnieuw ingelogd",
+      "relogin_success_msg": "Account '%@' is succesvol opnieuw geverifieerd!",
+      "relogin_failed_title": "Opnieuw inloggen mislukt",
+      "relogin_failed_desc": "Kon niet opnieuw inloggen. Probeer het opnieuw.",
       "cli_up_to_date": "✓ Codex CLI v%@ (up-to-date)",
       "cli_update_available": "🚀 Codex CLI bijwerken (naar v%@)",
       "cli_not_found": "⚠️ Codex CLI niet gevonden",
@@ -652,6 +760,15 @@ public final class LocalizationManager: @unchecked Sendable {
       "add_account_failed_title": "アカウント追加に失敗しました",
       "add_account_failed_desc": "アカウントのセットアップを完了できませんでした。認証情報を確認して再試行してください。",
       "switch_to_account": "このアカウントに切り替え",
+      "relogin_to_account": "このアカウントに再ログイン",
+      "relogin_account": "再ログイン...",
+      "relogin_account_title": "Codex アカウントに再ログイン",
+      "relogin_account_msg":
+        "ブラウザを開いて '%@' にログインします。認証完了後、このアカウント情報が更新されます。",
+      "relogin_success_title": "再ログイン完了",
+      "relogin_success_msg": "アカウント '%@' の再認証に成功しました！",
+      "relogin_failed_title": "再ログイン失敗",
+      "relogin_failed_desc": "再ログインを完了できませんでした。もう一度お試しください。",
       "cli_up_to_date": "✓ Codex CLI v%@ (最新)",
       "cli_update_available": "🚀 Codex CLI を更新 (v%@ へ)",
       "cli_not_found": "⚠️ Codex CLI が見つかりません",
@@ -710,6 +827,14 @@ public final class LocalizationManager: @unchecked Sendable {
       "add_account_failed_title": "添加账号失败",
       "add_account_failed_desc": "无法完成账号配置，请检查凭据后重试。",
       "switch_to_account": "切换到此账号",
+      "relogin_to_account": "重新登录此账号",
+      "relogin_account": "重新登录...",
+      "relogin_account_title": "重新登录 Codex 账号",
+      "relogin_account_msg": "将打开浏览器以登录 '%@'。完成认证后，新会话将更新此账号。",
+      "relogin_success_title": "重新登录成功",
+      "relogin_success_msg": "账号 '%@' 已成功重新认证！",
+      "relogin_failed_title": "重新登录失败",
+      "relogin_failed_desc": "未能完成重新登录，请重试。",
       "cli_up_to_date": "✓ Codex CLI v%@ (已是最新)",
       "cli_update_available": "🚀 更新 Codex CLI (至 v%@)",
       "cli_not_found": "⚠️ 未找到 Codex CLI",
@@ -770,6 +895,15 @@ public final class LocalizationManager: @unchecked Sendable {
       "add_account_failed_desc":
         "Không thể hoàn tất thiết lập tài khoản. Vui lòng kiểm tra thông tin và thử lại.",
       "switch_to_account": "Chuyển sang tài khoản này",
+      "relogin_to_account": "Đăng nhập lại vào tài khoản này",
+      "relogin_account": "Đăng nhập lại...",
+      "relogin_account_title": "Đăng nhập lại tài khoản Codex",
+      "relogin_account_msg":
+        "Đang mở trình duyệt để đăng nhập vào '%@'. Sau khi xác thực, tài khoản này sẽ được cập nhật.",
+      "relogin_success_title": "Đăng nhập lại thành công",
+      "relogin_success_msg": "Tài khoản '%@' đã được xác thực lại thành công!",
+      "relogin_failed_title": "Đăng nhập lại thất bại",
+      "relogin_failed_desc": "Không thể hoàn thành đăng nhập lại. Vui lòng thử lại.",
       "cli_up_to_date": "✓ Codex CLI v%@ (mới nhất)",
       "cli_update_available": "🚀 Cập nhật Codex CLI (lên v%@)",
       "cli_not_found": "⚠️ Không tìm thấy Codex CLI",
@@ -854,6 +988,14 @@ public enum L10n {
   public static var restartApp: String { tr("restart_app") }
   public static var launchAtLogin: String { tr("launch_at_login") }
   public static var quit: String { tr("quit") }
+  public static var uninstallAction: String { tr("uninstall_action") }
+  public static var uninstallTitle: String { tr("uninstall_title") }
+  public static var uninstallMessage: String { tr("uninstall_message") }
+  public static var uninstallConfirm: String { tr("uninstall_confirm") }
+  public static var uninstallInvalid: String { tr("uninstall_invalid") }
+  public static var uninstallPurgeData: String { tr("uninstall_purge_data") }
+  public static var uninstallFailedTitle: String { tr("uninstall_failed_title") }
+  public static var uninstallFailedMessage: String { tr("uninstall_failed_message") }
   public static var removeAccount: String { tr("remove_account") }
   public static var removeAccountTitle: String { tr("remove_account_title") }
   public static func removeAccountConfirm(email: String) -> String {
@@ -878,6 +1020,18 @@ public enum L10n {
   public static var addAccountFailedTitle: String { tr("add_account_failed_title") }
   public static var addAccountFailedDesc: String { tr("add_account_failed_desc") }
   public static var switchToAccount: String { tr("switch_to_account") }
+  public static var reloginToAccount: String { tr("relogin_to_account") }
+  public static var reloginAccount: String { tr("relogin_account") }
+  public static var reloginAccountTitle: String { tr("relogin_account_title") }
+  public static func reloginAccountMsg(email: String) -> String {
+    String(format: tr("relogin_account_msg"), email)
+  }
+  public static var reloginSuccessTitle: String { tr("relogin_success_title") }
+  public static func reloginSuccessMsg(email: String) -> String {
+    String(format: tr("relogin_success_msg"), email)
+  }
+  public static var reloginFailedTitle: String { tr("relogin_failed_title") }
+  public static var reloginFailedDesc: String { tr("relogin_failed_desc") }
   public static func cliUpToDate(version: String) -> String {
     String(format: tr("cli_up_to_date"), version)
   }

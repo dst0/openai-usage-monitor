@@ -32,13 +32,14 @@ const MAX_IPC_FRAME: usize = 2 * 1024 * 1024;
 const MAX_QUEUE_STATE: usize = 512 * 1024;
 const SQLITE_READ_ATTEMPTS: usize = 6;
 const SQLITE_BUSY_TIMEOUT_MS: u64 = 3000;
-const MIN_BANNER_VISIBLE: Duration = Duration::from_secs(30);
+const MIN_BANNER_VISIBLE: Duration = Duration::from_secs(5);
 const RECOVERY_DISPATCH_TIMEOUT: Duration = Duration::from_secs(180);
 const RECOVERY_EXECUTION_TIMEOUT: Duration = Duration::from_secs(600);
 const PRE_DISPATCH_ACTIVITY_GRACE: Duration = Duration::from_secs(3);
 const INTERRUPTED_QUEUE_PAUSE: &str = "Interrupted before the steer was accepted.";
 pub(crate) const AUTOMATION_COOLDOWN: Duration = Duration::from_secs(180);
-const DESKTOP_STABILITY_WINDOW: Duration = Duration::from_secs(90);
+pub(crate) const RECOVERY_SOAK_WINDOW: Duration = Duration::from_secs(10);
+pub(crate) const DESKTOP_STABILITY_WINDOW: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RecoveryMode {
@@ -1328,7 +1329,7 @@ fn record_target_state_at(target: &mut RecoveryTarget, now: Instant) -> Result<(
                     .work_time
                     .as_deref()
                     .unwrap_or("observed"),
-                DESKTOP_STABILITY_WINDOW.as_secs()
+                RECOVERY_SOAK_WINDOW.as_secs()
             );
             now
         });
@@ -1341,7 +1342,7 @@ fn record_target_state_at(target: &mut RecoveryTarget, now: Instant) -> Result<(
                         .expected_turn_id
                         .as_deref()
                         .unwrap_or("desktop-native"),
-                    DESKTOP_STABILITY_WINDOW.as_secs()
+                    RECOVERY_SOAK_WINDOW.as_secs()
                 );
             }
             target.completed = true;
@@ -1357,7 +1358,7 @@ fn record_target_state(target: &mut RecoveryTarget) -> Result<(), String> {
 }
 
 fn proof_survived_stability_window(observed_at: Instant, now: Instant) -> bool {
-    now.duration_since(observed_at) >= DESKTOP_STABILITY_WINDOW
+    now.duration_since(observed_at) >= RECOVERY_SOAK_WINDOW
 }
 
 fn dispatch_if_needed(
@@ -1811,11 +1812,11 @@ mod tests {
         let observed = Instant::now();
         assert!(!proof_survived_stability_window(
             observed,
-            observed + DESKTOP_STABILITY_WINDOW - Duration::from_millis(1)
+            observed + RECOVERY_SOAK_WINDOW - Duration::from_millis(1)
         ));
         assert!(proof_survived_stability_window(
             observed,
-            observed + DESKTOP_STABILITY_WINDOW
+            observed + RECOVERY_SOAK_WINDOW
         ));
     }
 

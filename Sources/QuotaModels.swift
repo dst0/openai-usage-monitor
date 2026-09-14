@@ -155,6 +155,19 @@ public struct AccountQuota: Identifiable, Sendable {
     return tankPct > 15.0
   }
 
+  public var needsRelogin: Bool {
+    guard let err = error?.lowercased(), !err.isEmpty else { return false }
+    return err.contains("re-login")
+      || err.contains("relogin")
+      || err.contains("401")
+      || err.contains("session ended")
+      || err.contains("logged out")
+      || err.contains("unauthorized")
+      || err.contains("token_revoked")
+      || err.contains("invalid_grant")
+      || err.contains("refresh_token_invalidated")
+  }
+
   public var bulletChar: String {
     return isReady ? "●" : "○"
   }

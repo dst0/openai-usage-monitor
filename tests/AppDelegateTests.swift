@@ -1050,7 +1050,210 @@ struct AppDelegateTestRunner {
     print("  ✅ Native organization cards, hierarchy, enclosure & actions verified")
 
     // ====================================================================
-    // Test 15: Tiny Icon Button to Reset Account Where Resets Available
+    // Test 13: Account Re-login Detection, Card Button & Routing Invariant
+    // ====================================================================
+    let expiredAcc = AccountQuota(
+      id: "expired-business",
+      name: "Expired Org",
+      email: "dst.works@gmail.com",
+      planType: "business",
+      isCurrentActive: false,
+      fiveHourPercentage: 0.0,
+      weeklyPercentage: 100.0,
+      resetTime: nil,
+      resetAfterSeconds: 0,
+      credits: 0,
+      error: "401 Unauthorized (Session ended (logged out in app). Re-login required.)"
+    )
+    let normalQuotaExhaustedAcc = AccountQuota(
+      id: "quota-exhausted",
+      name: "Busy User",
+      email: "busy@example.com",
+      planType: "plus",
+      isCurrentActive: false,
+      fiveHourPercentage: 0.0,
+      weeklyPercentage: 20.0,
+      resetTime: nil,
+      resetAfterSeconds: 3600,
+      credits: 0,
+      error: "429 Too Many Requests (Rate limit reached)"
+    )
+
+    assertTrue(expiredAcc.needsRelogin, "401 Session ended error must require relogin")
+    assertTrue(!normalQuotaExhaustedAcc.needsRelogin, "429 Rate limit must NOT require relogin")
+
+    let heightWithoutRelogin = AccountSectionCardView.preferredHeight(for: [
+      ReserveAccountSectionEntry(account: normalQuotaExhaustedAcc, reserveIndex: 1)
+    ])
+    let heightWithRelogin = AccountSectionCardView.preferredHeight(for: [
+      ReserveAccountSectionEntry(account: expiredAcc, reserveIndex: 1)
+    ])
+    assertEqual(
+      heightWithRelogin, heightWithoutRelogin,
+      "AccountSectionCardView must maintain symmetrical card height replacing switch button with relogin button"
+    )
+
+    var reloginTargetId: String?
+    var reloginTargetEmail: String?
+    var switchTargetId: String?
+    let reloginCard = AccountSectionCardView(
+      frame: NSRect(
+        x: 0, y: 0, width: AppDelegate.defaultMenuWidth,
+        height: heightWithRelogin
+      ),
+      title: "Expired Organization",
+      kind: .business,
+      entries: [ReserveAccountSectionEntry(account: expiredAcc, reserveIndex: 1)],
+      onSwitch: { id in switchTargetId = id },
+      onDelete: { _, _ in },
+      onRename: { _, _, _ in },
+      onRelogin: { id, email in
+        reloginTargetId = id
+        reloginTargetEmail = email
+      }
+    )
+
+    assertEqual(reloginCard.switchButtons.count, 0, "Card must NOT render switch button for account needing relogin")
+    assertEqual(reloginCard.reloginButtons.count, 1, "Card must render exactly one relogin button for expired account")
+    let reloginBtn = reloginCard.reloginButtons.first
+    assertEqual(reloginBtn?.identifier?.rawValue, expiredAcc.id, "Relogin button identifier must match account id")
+    assertEqual(reloginBtn?.contentTintColor, NSColor.systemOrange, "Relogin button must use systemOrange tint")
+    reloginBtn?.performClick(nil)
+
+    assertEqual(reloginTargetId, expiredAcc.id, "Relogin click must route target account ID")
+    assertEqual(reloginTargetEmail, expiredAcc.email, "Relogin click must route target account email")
+    assertEqual(switchTargetId, nil, "Switch callback must not have been invoked")
+
+    // Test AccountRowView with needsRelogin suppresses inline switch and context menu switch
+    var rowRelogined = false
+    var rowSelected = false
+    let reloginRow = AccountRowView(
+      frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 24),
+      accountId: expiredAcc.id,
+      accountName: expiredAcc.name,
+      email: expiredAcc.email,
+      tier: expiredAcc.planType,
+      isCurrentActive: false,
+      isAppSession: false,
+      needsRelogin: true,
+      dotColor: NSColor.systemRed,
+      statusTag: "[reserve #1]",
+      showsInlineSwitchButton: true,
+      onSelect: { _ in rowSelected = true },
+      onRelogin: { _, _ in rowRelogined = true }
+    )
+    assertTrue(reloginRow.switchButton == nil, "AccountRowView must hide inline switch button when needsRelogin is true")
+    let fakeEvent = NSEvent.mouseEvent(
+      with: .leftMouseUp,
+      location: NSPoint(x: 10, y: 10),
+      modifierFlags: [],
+      timestamp: 0,
+      windowNumber: 0,
+      context: nil,
+      eventNumber: 0,
+      clickCount: 1,
+      pressure: 1.0
+    )!
+    reloginRow.mouseUp(with: fakeEvent)
+    assertTrue(rowRelogined, "Clicking AccountRowView needing relogin must route to onRelogin")
+    assertTrue(!rowSelected, "Clicking AccountRowView needing relogin must NOT route to onSelect")
+
+    let rowCtxMenu = reloginRow.menu(for: fakeEvent)
+    let hasSwitchInMenu = rowCtxMenu?.items.contains(where: { $0.title == L10n.switchToAccount }) ?? false
+    assertTrue(!hasSwitchInMenu, "Context menu must NOT include 'Switch to this account' when needsRelogin is true")
+
+    // Test CLI active account menu item when needing relogin
+    let activeExpiredSnapshot = MultiAccountSnapshot(
+      timestamp: Date(),
+      activeAccountId: expiredAcc.id,
+      activeEmail: expiredAcc.email,
+      activePlan: expiredAcc.planType,
+      fiveHourPercentage: expiredAcc.fiveHourPercentage,
+      weeklyPercentage: expiredAcc.weeklyPercentage,
+      resetTime: nil,
+      resetAfterSeconds: 0,
+      credits: 0,
+      accounts: [expiredAcc, normalQuotaExhaustedAcc],
+      cliAccount: expiredAcc
+    )
+    let reloginMenu = appDelegate.buildMenu()
+    appDelegate.statusItem?.menu = reloginMenu
+    appDelegate.updateUI(with: activeExpiredSnapshot)
+    let activeReloginItem = reloginMenu.items.first(where: {
+      $0.title.contains(L10n.reloginToAccount) && $0.action == #selector(AppDelegate.handleActiveAccountRelogin(_:))
+    })
+    assertTrue(activeReloginItem != nil, "Menu must display active account relogin item when active account needs relogin")
+
+    // Regression Test 14: Active AccountRowView clicking & context menu routing when needsRelogin is true
+    var activeRowRelogined = false
+    let activeReloginRow = AccountRowView(
+      frame: NSRect(x: 0, y: 0, width: AppDelegate.defaultMenuWidth, height: 24),
+      accountId: expiredAcc.id,
+      accountName: expiredAcc.name,
+      email: expiredAcc.email,
+      tier: expiredAcc.planType,
+      isCurrentActive: true,
+      isAppSession: false,
+      needsRelogin: true,
+      dotColor: NSColor.systemRed,
+      statusTag: "[active]",
+      onRelogin: { _, _ in activeRowRelogined = true }
+    )
+    activeReloginRow.mouseUp(with: fakeEvent)
+    assertTrue(activeRowRelogined, "Clicking active account row with needsRelogin must trigger onRelogin")
+
+    // Regression Test 15: determineAutoSwitchTarget with expired active account and expired candidate
+    let healthyCandidate = AccountQuota(
+      id: "healthy-user",
+      name: "Healthy",
+      email: "healthy@example.com",
+      planType: "team",
+      isCurrentActive: false,
+      fiveHourPercentage: 80.0,
+      weeklyPercentage: 80.0,
+      resetTime: nil,
+      resetAfterSeconds: 3600,
+      credits: 0,
+      error: nil
+    )
+    let expiredActiveWithQuota = expiredAcc
+    // Active has 100% quota but needsRelogin = true
+    let targetCandidate = AppDelegate.determineAutoSwitchTarget(
+      activeAcc: expiredActiveWithQuota,
+      accounts: [expiredActiveWithQuota, healthyCandidate],
+      autoSwitchEnabled: true,
+      businessOnly: false,
+      businessPriority: false
+    )
+    assertEqual(targetCandidate?.id, healthyCandidate.id, "Auto-switch must rotate away from active account that needs relogin even if percentage is high")
+
+    // Candidate needing relogin must NEVER be selected even if it has 100% quota and credits
+    let expiredCandidate100 = AccountQuota(
+      id: "expired-cand",
+      name: "Expired Candidate",
+      email: "exp-cand@example.com",
+      planType: "team",
+      isCurrentActive: false,
+      fiveHourPercentage: 100.0,
+      weeklyPercentage: 100.0,
+      resetTime: nil,
+      resetAfterSeconds: 3600,
+      credits: 5,
+      error: "401 Unauthorized"
+    )
+    let candidateChoice = AppDelegate.determineAutoSwitchTarget(
+      activeAcc: normalQuotaExhaustedAcc,
+      accounts: [normalQuotaExhaustedAcc, expiredCandidate100, healthyCandidate],
+      autoSwitchEnabled: true,
+      businessOnly: false,
+      businessPriority: false
+    )
+    assertEqual(candidateChoice?.id, healthyCandidate.id, "Candidate needing relogin must NEVER be selected by auto-switch")
+
+    print("  ✅ Account re-login detection, UI button, height & routing verified")
+
+    // ====================================================================
+    // Test 16: Tiny Icon Button to Reset Account Where Resets Available
     // ====================================================================
     var resetCardAccountId: String?
     var resetCardAccountEmail: String?

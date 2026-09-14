@@ -36,13 +36,13 @@ Binary path: `~/.local/bin/cxi` (or `~/.local/bin/codex-mon`).
    Atomically swaps `~/.codex/auth.json` with POSIX `0600` permissions and cross-process file locks (`fs2` flock).
 
 4. **Desktop App Sync & Automated Thread Recovery**:
-   Both Codex CLI and `/Applications/ChatGPT.app` share `~/.codex/auth.json`. When switching accounts via `cxi switch`, active worker threads and turns paused by rate limits within the last 4 hours (`RECENT_QUOTA_WINDOW_SECS = 14400s`) across the top 30 unarchived threads are automatically resumed and cycled in the UI.
+   Both Codex CLI and `/Applications/ChatGPT.app` share `~/.codex/auth.json`. When switching accounts via `cxi switch`, eligible restart-captured turns and turns paused by rate limits within the last 4 hours (`RECENT_QUOTA_WINDOW_SECS = 14400s`) across the top 30 unarchived user threads are resumed through the standard Desktop owner's same-user IPC connection. Ambiguous active turns are not guessed at in discovery-only mode. Desktop's bundled app-server remains the only thread writer; no second/headless app-server is started.
 
 5. **Resume Interrupted or Rate-Limited Threads**:
    ```bash
    cxi resume [thread-id]
    ```
-   Unpauses and queues a continuation message to the specified thread (or latest active/paused thread) and triggers native macOS Accessibility unpause.
+   Sends one owner-routed `thread-follower-start-turn` request with the protocol-valid text `continue` (or restores an existing queue) through Desktop IPC. Accessibility is used only for the recovery banner and final visibility check, not to click Play/Resume/Retry/Steer controls.
 
 6. **Manage Auto-Switching Policies & Multipliers**:
    ```bash
@@ -85,7 +85,7 @@ cxi install-shim
 # 8. Start background monitoring daemon
 cxi daemon
 
-# 9. Resume most recent active or rate-limited thread
+# 9. Resume the most recent eligible quota-blocked or restart-captured thread
 cxi resume
 
 # 10. Resume specific thread by ID or URL
@@ -101,4 +101,3 @@ cxi config --restart-app-on-switch true
 cxi set-multiplier main 20
 cxi reset-multiplier main
 ```
-

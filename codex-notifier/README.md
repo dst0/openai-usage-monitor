@@ -90,3 +90,12 @@ In `codex-switcher` (`src/switcher.rs`), the notification dispatcher `send_macos
 1. Checks for the presence of `~/Applications/Codex Notifier.app/Contents/MacOS/notify`.
 2. If present, executes it with the account switch details.
 3. If not found, gracefully falls back to `osascript`.
+
+## 🧹 Removal
+
+The root installer manages this helper. From the repository, preview and then
+run `./scripts/uninstall.sh`; it removes `~/Applications/Codex Notifier.app`,
+its LaunchServices registration and app-owned files without touching the
+official Codex Desktop app or shared Codex credentials. Use
+`./scripts/uninstall.sh --purge-data --yes` only when the Monitor's stored
+account registry should also be removed.

@@ -38,9 +38,9 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
    - When an account is switched, the tool gracefully restarts the desktop app (`restart_app_on_switch: true`), immediately updating the interface and active sessions to the new account.
 
 6. **Automated Session & Thread Resumption Across Switches**:
-   - Automatically detects active mid-turn worker tasks and threads halted by rate limits or credit exhaustion within the last 4 hours (`RECENT_QUOTA_WINDOW_SECS = 14400s`).
+   - Detects eligible mid-turn tasks captured for a restart and threads halted by rate limits or credit exhaustion within the last 4 hours (`RECENT_QUOTA_WINDOW_SECS = 14400s`); discovery-only recovery does not guess about an ambiguous active turn.
    - Scans up to 30 recent threads via `state_5.sqlite` with instantaneous 128 KB tail reads (`read_rollout_tail_lines`), eliminating I/O stalls even on 500 MB+ session files.
-   - Resumes through the running Desktop owner's IPC connection; it never launches a second Codex runtime or clicks UI controls. For an interrupted turn it sends one protocol-valid text input, `continue`, through `thread-follower-start-turn`.
+   - Resumes through the official Codex Desktop owner's IPC connection to the Desktop-bundled app-server; it never launches a second/headless app-server, uses `codex exec resume`, or clicks UI controls. For an interrupted turn it sends one protocol-valid text input, `continue`, through `thread-follower-start-turn`.
    - Shows a verified semi-transparent banner while recovery is active and requires a new exact-ID `task_started`, real agent work, and a 90-second error-free observation window before reporting success.
    - Filters out internal subagent threads and never resumes cleanly completed or user-aborted tasks.
 
@@ -57,7 +57,7 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
    - Configurable polling interval (1m, 5m, 15m, 30m) persisted in `UserDefaults`.
    - Desktop app restart button.
    - Built-in offline documentation with interactive menu bar simulator (`helps.html`).
-   - Full native multilingual localization across Menu Bar status items, menus, system dialogs, and interactive documentation (13 languages: EN, UK, RU, DE, FR, ES, IT, PT, PL, NL, JA, ZH-Hans, VI).
+   - Full native multilingual localization across Menu Bar status items, menus, and system dialogs (13 languages: EN, UK, RU, DE, FR, ES, IT, PT, PL, NL, JA, ZH-Hans, VI); the interactive guide provides 12 languages and intentionally omits Russian.
    - Launch at Login support (`Launch at Login`).
 
 ---
@@ -95,15 +95,102 @@ The installation script checks and guides you through the prerequisites automati
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
+### 🔌 Integration with the Official Codex Desktop App
+
+The normal OpenAI Codex Desktop installation is the supported Desktop
+integration. Install `/Applications/ChatGPT.app` using the official OpenAI
+instructions and complete its normal first-run sign-in; no patching of
+`ChatGPT.app`, separate App Server installation, custom App Server flags, or
+manual IPC setup is required.
+
+When Desktop is running, it starts the `codex app-server` bundled inside the
+application. The monitor connects to Desktop's same-user socket at
+`~/.codex/ipc/ipc.sock` and asks the Desktop window that owns a thread to start
+or restore it. Desktop remains the only thread writer. The monitor never starts
+another App Server and never runs a headless `codex exec resume` process.
+
+The CLI quota monitor and account store can still be used without Desktop, but
+Desktop restart and thread recovery require the standard Desktop application to
+be installed and running. An optional read-only transport check is:
+
+```bash
+cxi recovery-preflight
+```
+
 ### 🤖 What the Installer Does Automatically
 1. **Compiles the Rust CLI (`codex-mon` / `cxi`)** with maximum release optimizations.
-2. **Installs to `~/.local/bin`** and automatically configures your shell `$PATH` in `~/.zshrc`.
+2. **Installs to `~/.local/bin`** and adds an exact shell `$PATH` block to `~/.zshrc` (and an existing `~/.bash_profile`).
 3. **Configures the transparent CLI shim** at `~/.local/bin/codex`.
-4. **Builds the native macOS Menu Bar application** (`Codex Monitor.app`) and installs it into `/Applications/Codex Monitor.app`.
+4. **Builds the native macOS Menu Bar application** (`Codex Monitor.app`) and installs it into `/Applications` when writable, otherwise `~/Applications` (a system install also creates a `~/Applications` symlink).
 5. **Registers macOS Login Item** for seamless launch on Mac startup.
 6. **Configures 24/7 background `launchd` daemon** (`~/Library/LaunchAgents/com.codex.switcher.plist`).
-7. **Integrates AI Agent Skills** into `~/.codex/skills`, `~/.claude/skills`, and `~/.agents/skills`.
-8. **Launches the Menu Bar app immediately.**
+7. **Integrates AI Agent Skills** into `~/.codex/skills`, `~/.claude/skills`, and `~/.agents/skills`; a one-line remote install retains their source under `~/.local/share/codex-monitor/skills` because its temporary clone is removed.
+8. **Builds the optional `Codex Notifier.app`** in `~/Applications`, the `codex-ui-resume` helper in `~/.local/bin`, and bundles the confirmation-gated uninstaller inside the Monitor app.
+9. **Launches the Menu Bar app immediately.**
+
+The installer does not install or modify the official Codex Desktop app and
+does not create a second App Server. It only installs the Monitor/Switcher
+components listed above and uses Desktop's existing local IPC when recovery is
+requested.
+
+---
+
+## 🧹 Uninstall and Data Removal (macOS)
+
+Deleting the `.app` bundle alone is not a complete uninstall: the Monitor also
+has a Login Item, a `launchd` agent, CLI shims, a recovery helper, optional
+notification helper, and app-owned files under `~/.codex/`. Use the repository
+uninstaller so those integration points are stopped and removed together:
+
+```bash
+./scripts/uninstall.sh
+```
+
+You can also start it from the running Menu Bar app: open the dropdown,
+choose `⛔ UNINSTALL CODEX MONITOR…`, and type `UNINSTALL` in uppercase. The
+app feeds the bundled uninstaller the explicit `--yes` confirmation and then
+terminates itself. The confirmation dialog includes an unchecked option to
+also remove the Monitor account registry; leave it unchecked to preserve
+`accounts.json`, or use the separate `--purge-data` command from Terminal.
+
+Review the exact scope without changing anything with
+`./scripts/uninstall.sh --dry-run`. The normal command asks you to type
+`REMOVE`; use `--yes` only for an explicitly approved non-interactive run.
+
+For a downloaded script, the equivalent is:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dst0/openai-usage-monitor/main/scripts/uninstall.sh | bash -s --
+```
+
+The uninstaller is confirmation-gated. `--yes` is the explicit non-interactive
+form, and `--purge-data --yes` additionally removes the Monitor-owned account
+registry (including stored account copies in `~/.codex/accounts.json`) after
+showing the exact scope. Runtime status/recovery files and logs are removed by
+the normal uninstall; the account registry is kept unless the purge is explicit.
+
+It removes only this project's installed components: `Codex Monitor.app`,
+`Codex Notifier.app`, `cxi`/`codex-mon`/`codex`/`codex-ui-resume`, the
+`com.codex.switcher` LaunchAgent and restart worker, the Monitor Login Item,
+Monitor preferences, app-specific support/cache/saved-state directories, the
+copied help file, Monitor logs/journals, the remote-install skill cache, and
+skill links that point to this project. The script is idempotent and does not remove
+anything merely because it happens to be named `codex` unless it is the exact
+shim installed by this project.
+
+By design, uninstall does **not** delete the official OpenAI Codex Desktop app,
+its bundled app-server, shared `~/.codex/auth.json`, `state_5.sqlite`,
+`queue_1.sqlite`, sessions, thread-writer locks, or a source checkout. Those
+belong to Codex Desktop or the user and may contain credentials or conversation
+history. Removing the Monitor also cannot restore an earlier `auth.json` value
+after an account switch; sign in or select the desired account in official
+Codex Desktop if needed.
+
+This removes the persistent Monitor installation footprint. A normal macOS
+user-space uninstall cannot promise forensic erasure of shell history,
+unified/system logs, notification history, LaunchServices caches, or TCC
+permission records; those are outside the app's owned data and are intentionally
+not purged by default.
 
 ---
 
@@ -205,9 +292,9 @@ cxi remove backup
 cxi wrap exec "fix bug in auth"
 ```
 
-### 11. Resume Active or Paused Threads
+### 11. Resume Eligible Threads
 ```bash
-# Verify/resume all detected active, rate-limited, or pending-restart tasks:
+# Verify/resume eligible quota-blocked or restart-captured tasks:
 cxi resume
 
 # Or resume a specific thread by ID or URL:
@@ -281,7 +368,7 @@ Detection runs through a two-phase analysis pipeline before terminating or resta
 | App shutdown cooldown | `600 ms` | Grace period after `pgrep` exit for macOS `LaunchServices` cleanup. |
 | App launch verification | `3` attempts, up to `15 s` each + `2 s` settle | Uses `open -n`, requires exactly one new exact-main PID, and rejects a PID that changes during settling. |
 | Desktop IPC startup | up to `120 s` | Waits for the relaunched Desktop's same-user IPC socket, validating owner, mode, peer UID, and socket identity. |
-| Owner discovery | up to `15 s` | Resolves the Desktop window that owns a task. A deep link is used only when no owner exists. |
+| Owner discovery | up to `30 s` | Resolves the Desktop window that owns a task. A deep link is used only when no owner exists. |
 | Pre-dispatch activity grace | `3 s` | Detects a task that the user or Desktop has already resumed before any command is sent. |
 | Recovery verification | `180 s` to start, `600 s` to produce work, then `90 s` soak | Requires the IPC-confirmed turn ID, substantive agent work, and no later abort/error; IPC acknowledgement is not success. |
 | Desktop stabilization | `90 s` | Requires the same singleton main PID throughout, then verifies an on-screen, non-minimized layer-0 window for that exact PID. |
@@ -329,18 +416,33 @@ The Monitor owns the launchd daemon lifecycle. Explicit Quit writes a private du
 
 ## 📁 Configuration Structure
 
-All configuration files and runtime caches reside in `~/.codex/`:
-- `~/.codex/auth.json` — Active tokens used by Codex CLI and ChatGPT.app (strict `0600` permissions).
-- `~/.codex/accounts.json` — Stored multi-account credentials and cached quotas (strict `0600` permissions).
-- `~/.codex/usage-status.json` — Real-time quota snapshot consumed by the macOS Menu Bar app.
-- `~/.codex/monitor.lock` — File lock preventing concurrent daemon instances.
-- `~/.codex/helps.html` — Offline interactive documentation guide.
+The Monitor stores its account registry, status cache, and recovery journals in
+`~/.codex/`, alongside files owned by official Codex Desktop:
+
+### Monitor-owned (runtime removed by uninstall; account registry needs `--purge-data`)
+
+- `~/.codex/accounts.json` — Stored multi-account credentials and cached quotas (strict `0600` permissions); removed only with `--purge-data`.
+- `~/.codex/usage-status.json` — Real-time quota snapshot consumed by the macOS Menu Bar app; removed by the normal uninstall.
+- `~/.codex/monitor.lock`, `daemon.lock`, `codex.lock` — Monitor coordination locks; removed when not held.
+- `~/.codex/auto-reset-state.json`, `desktop-recovery.json`, `desktop-recovery.lock`, `desktop-automation-cooldown` — Private recovery/reset state removed by uninstall.
+- `~/.codex/recovery-runs/`, `account-switcher-daemon.log`, and `account-switcher-daemon.err` — Monitor recovery records and daemon logs removed by uninstall.
+- `~/.codex/helps.html` — Copied offline interactive documentation guide removed by uninstall.
+- `~/.local/share/codex-monitor/` — Retained skill source used by one-line remote installs; removed by uninstall.
+
+### Shared with official Codex Desktop (never removed by the uninstaller)
+
+- `~/.codex/auth.json` — Active credentials used by Codex CLI and `ChatGPT.app` (strict `0600` permissions).
+- `~/.codex/ipc/`, `app-server-daemon/`, `state_5.sqlite`, `queue_1.sqlite`, `sessions/`, and `thread-writer-locks/` — Desktop IPC, app-server, thread, queue, session, and writer-lock state.
+- `~/.codex/config.toml` — User configuration; the uninstaller removes only the exact three-line skill entries that point to this installation's `~/.codex/skills/{cxi,codex-mon}/SKILL.md` paths.
 
 ---
 
-## 🌐 Multilingual Support (13 Languages)
+## 🌐 Multilingual Support (13 App Languages; 12 Guide Languages)
 
-Both the native macOS Menu Bar application (`Codex Monitor.app`) and the offline interactive documentation guide (`helps.html`) feature full localization across **13 languages**, with automatic system locale detection and resilient fallbacks:
+The native macOS Menu Bar application (`Codex Monitor.app`) supports **13
+languages**. The offline interactive guide (`helps.html`) supports **12** of
+them; Russian is intentionally app-UI-only. Both use automatic locale
+detection and resilient fallbacks:
 
 | Code | Language | Native Name | Menu Bar UI & Strings | Interactive Guide (`helps.html`) |
 | :--- | :--- | :--- | :---: | :---: |
