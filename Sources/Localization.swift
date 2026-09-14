@@ -196,6 +196,7 @@ public final class LocalizationManager: @unchecked Sendable {
       "reset_account_title": "Сбросить лимит аккаунта",
       "reset_account_confirm": "Вы уверены, что хотите использовать 1 кредит сброса для %@? Лимиты будут восстановлены немедленно.",
       "reset_confirm_btn": "Сбросить лимит",
+      "reset_success_msg": "Кредит сброса успешно применён для %@. Квоты обновлены.",
     ],
     .en: [
       "menu_title": "OpenAI Codex Quota Monitor",
@@ -266,6 +267,7 @@ public final class LocalizationManager: @unchecked Sendable {
       "reset_account_title": "Reset Account Quota",
       "reset_account_confirm": "Are you sure you want to use 1 reset credit for %@? This will restore quota limits immediately.",
       "reset_confirm_btn": "Reset Quota",
+      "reset_success_msg": "Reset credit applied successfully for %@. Quotas have been refreshed.",
     ],
     .uk: [
       "menu_title": "OpenAI Codex Quota Monitor",
@@ -807,6 +809,9 @@ public enum L10n {
     String(format: tr("reset_account_confirm"), email)
   }
   public static var resetConfirmBtn: String { tr("reset_confirm_btn") }
+  public static func resetSuccessMsg(email: String) -> String {
+    String(format: tr("reset_success_msg"), email)
+  }
   public static func resetIn(hours: Int, minutes: Int) -> String {
     String(format: tr("reset_in_hours_minutes"), hours, minutes)
   }

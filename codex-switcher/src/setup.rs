@@ -1041,16 +1041,28 @@ pub fn reset_account_multiplier(account_id: &str) -> Result<(), String> {
 /// Consumes an available rate-limit reset credit for the specified account, restoring its quota.
 pub fn reset_account(account_id: &str) -> Result<(), String> {
     let mut file = load_accounts()?;
-    let name = reset_account_in_file(
+    // Sync any live credentials from auth.json
+    let _ = crate::daemon::sync_active_tokens(&mut file);
+
+    let (name, is_active) = reset_account_in_file(
         &mut file,
         account_id,
         crate::quota::consume_rate_limit_reset_credit,
     )?;
-    let active_id = file.active_account_id.clone();
     save_accounts(&file)?;
 
-    if active_id.as_deref() == Some(account_id) {
-        let _ = crate::daemon::refresh_quotas_and_status();
+    // Always refresh quotas and status cache so all accounts reflect the update
+    let _ = crate::daemon::refresh_quotas_and_status();
+
+    // If the reset was applied to the active account, recover any blocked tasks
+    if is_active {
+        let blocked = crate::switcher::detect_recent_quota_blocked_user_threads();
+        if !blocked.is_empty() {
+            let _ = crate::recovery::recover_threads(
+                &blocked,
+                crate::recovery::RecoveryMode::DiscoveredOnly,
+            );
+        }
     }
 
     println!(
@@ -1062,24 +1074,31 @@ pub fn reset_account(account_id: &str) -> Result<(), String> {
 
 pub(crate) fn reset_account_in_file<F>(
     file: &mut crate::models::AccountsFile,
-    account_id: &str,
+    query: &str,
     consume_fn: F,
-) -> Result<String, String>
+) -> Result<(String, bool), String>
 where
     F: FnOnce(&AccountConfig, &str) -> crate::quota::ResetCreditConsumeOutcome,
 {
-    let acc_idx = file
-        .accounts
-        .iter()
-        .position(|a| {
-            a.id == account_id
-                || a.name
-                    .as_deref()
-                    .map(|n| n.eq_ignore_ascii_case(account_id))
-                    .unwrap_or(false)
-                || a.email.eq_ignore_ascii_case(account_id)
-        })
-        .ok_or_else(|| format!("Account '{}' not found", account_id))?;
+    let q = query.trim();
+    if q.is_empty() {
+        return Err("Account identifier cannot be empty".to_string());
+    }
+
+    let acc_idx = if q.eq_ignore_ascii_case("desktop-app")
+        || q.eq_ignore_ascii_case("active")
+        || q.eq_ignore_ascii_case("current")
+    {
+        if let Some(active_id) = &file.active_account_id {
+            crate::switcher::resolve_target_account_idx(&file.accounts, active_id)?
+        } else if !file.accounts.is_empty() {
+            0
+        } else {
+            return Err("No accounts configured".to_string());
+        }
+    } else {
+        crate::switcher::resolve_target_account_idx(&file.accounts, q)?
+    };
 
     let acc = &file.accounts[acc_idx];
     let available_credits = acc.last_credits.unwrap_or(0);
@@ -1101,7 +1120,8 @@ where
                 crate::quota::update_account_quota_cache(&mut file.accounts[acc_idx]);
             }));
             let name = file.accounts[acc_idx].display_name().to_string();
-            Ok(name)
+            let is_active = file.active_account_id.as_deref() == Some(&file.accounts[acc_idx].id);
+            Ok((name, is_active))
         }
         crate::quota::ResetCreditConsumeOutcome::NotConsumed(reason) => {
             Err(format!("Reset credit was not consumed: {reason}"))
@@ -1599,6 +1619,9 @@ mod tests {
         );
 
         assert!(result.is_ok());
+        let (name, is_active) = result.unwrap();
+        assert_eq!(name, "user1");
+        assert!(is_active);
         assert_eq!(file.accounts[0].last_credits, Some(1));
     }
 
@@ -1666,5 +1689,60 @@ mod tests {
         assert!(res2.is_err());
         assert!(res2.unwrap_err().contains("service is unavailable"));
         assert_eq!(file.accounts[0].last_credits, Some(1));
+    }
+
+    #[test]
+    fn test_reset_account_in_file_desktop_app_alias() {
+        let mut file = crate::models::AccountsFile {
+            active_account_id: Some("user2@example.com:uuid-2".to_string()),
+            settings: Default::default(),
+            accounts: vec![
+                make_test_account(
+                    "user1@example.com:uuid-1",
+                    "user1@example.com",
+                    "uuid-1",
+                    Some("rt_1"),
+                    "at_1",
+                ),
+                make_test_account(
+                    "user2@example.com:uuid-2",
+                    "user2@example.com",
+                    "uuid-2",
+                    Some("rt_2"),
+                    "at_2",
+                ),
+            ],
+        };
+        file.accounts[0].last_credits = Some(1);
+        file.accounts[1].last_credits = Some(2);
+
+        // "desktop-app" should resolve to active account (user2)
+        let res = reset_account_in_file(
+            &mut file,
+            "desktop-app",
+            |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Applied,
+        );
+        assert!(res.is_ok());
+        let (name, is_active) = res.unwrap();
+        assert_eq!(name, "user2");
+        assert!(is_active);
+        assert_eq!(file.accounts[1].last_credits, Some(1));
+
+        // "active" should also resolve to active account
+        let res_active = reset_account_in_file(
+            &mut file,
+            "active",
+            |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Applied,
+        );
+        assert!(res_active.is_ok());
+        assert_eq!(file.accounts[1].last_credits, Some(0));
+
+        // empty query should return error
+        let res_empty = reset_account_in_file(
+            &mut file,
+            "   ",
+            |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Applied,
+        );
+        assert!(res_empty.is_err());
     }
 }
