@@ -245,39 +245,43 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
   }
 
   internal func saveDesktopWindowBoundsPassive(for targetPID: pid_t) {
-    let windowInfo =
-      CGWindowListCopyWindowInfo(
-        [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-      as? [[String: Any]] ?? []
+    if let data = try? Data(contentsOf: CodexClient.codexHome.appendingPathComponent("accounts.json")),
+      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let settings = json["settings"] as? [String: Any],
+      (settings["preserve_window_bounds_on_restart"] as? Bool) == false { return }
 
-    for info in windowInfo {
+    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+    var best: (frame: CGRect, area: CGFloat, isTitle: Bool)?
+
+    for info in list {
       let ownerPID = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
       let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1
       let alpha = (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0
       guard ownerPID == targetPID, layer == 0, alpha > 0 else { continue }
-      guard let boundsValue = info[kCGWindowBounds as String],
-        let frame = CGRect(dictionaryRepresentation: boundsValue as! CFDictionary),
-        frame.width >= 300 && frame.height >= 300
-      else { continue }
+      guard let boundsVal = info[kCGWindowBounds as String],
+        let frame = CGRect(dictionaryRepresentation: boundsVal as! CFDictionary),
+        frame.width >= 400 && frame.height >= 300 else { continue }
 
-      let codexDir = CodexClient.codexHome
-      let targetURL = codexDir.appendingPathComponent("desktop-window.json")
-      let payload: [String: Any] = [
-        "version": 1,
-        "x": Double(frame.origin.x),
-        "y": Double(frame.origin.y),
-        "width": Double(frame.size.width),
-        "height": Double(frame.size.height),
-        "updated_at": Int(Date().timeIntervalSince1970),
-      ]
-      guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted]) else { return }
-      let tmpPath = targetURL.path + ".\(getpid()).tmp"
-      FileManager.default.createFile(atPath: tmpPath, contents: data, attributes: [.posixPermissions: 0o600])
-      let tmpURL = URL(fileURLWithPath: tmpPath)
-      _ = try? FileManager.default.replaceItemAt(targetURL, withItemAt: tmpURL)
-      chmod(targetURL.path, 0o600)
-      break
+      let isTitle = (info[kCGWindowName as String] as? String) == "ChatGPT"
+      let area = frame.width * frame.height
+      if best == nil || (isTitle && !best!.isTitle) || (isTitle == best!.isTitle && area > best!.area) {
+        best = (frame, area, isTitle)
+      }
     }
+    guard let frame = best?.frame else { return }
+
+    let targetURL = CodexClient.codexHome.appendingPathComponent("desktop-window.json")
+    let payload: [String: Any] = [
+      "version": 1, "x": Double(frame.origin.x), "y": Double(frame.origin.y),
+      "width": Double(frame.size.width), "height": Double(frame.size.height),
+      "updated_at": Int(Date().timeIntervalSince1970),
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted]) else { return }
+    let tmpPath = targetURL.path + ".\(getpid()).tmp"
+    FileManager.default.createFile(atPath: tmpPath, contents: data, attributes: [.posixPermissions: 0o600])
+    let tmpURL = URL(fileURLWithPath: tmpPath)
+    _ = try? FileManager.default.replaceItemAt(targetURL, withItemAt: tmpURL)
+    chmod(targetURL.path, 0o600)
   }
 
 }

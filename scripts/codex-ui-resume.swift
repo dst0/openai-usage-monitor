@@ -86,10 +86,51 @@ func findCodexTargetPID() -> pid_t? {
 
 func findCodexWindowFrame(targetPID: pid_t? = nil) -> (pid: pid_t, frame: CGRect)? {
   let pid = targetPID ?? findCodexTargetPID()
+  if let pid = pid {
+    let axApp = AXUIElementCreateApplication(pid)
+    var windowsVal: AnyObject?
+    if AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsVal) == .success,
+      let winList = windowsVal as? [AXUIElement], !winList.isEmpty
+    {
+      var bestWin: (frame: CGRect, area: CGFloat)? = nil
+      for win in winList {
+        var minVal: AnyObject?
+        if AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minVal) == .success,
+          (minVal as? Bool) == true
+        {
+          continue
+        }
+        var subroleVal: AnyObject?
+        AXUIElementCopyAttributeValue(win, kAXSubroleAttribute as CFString, &subroleVal)
+        let subrole = subroleVal as? String ?? ""
+        guard subrole == (kAXStandardWindowSubrole as String) || subrole.isEmpty else { continue }
+
+        var posVal: AnyObject?
+        var szVal: AnyObject?
+        AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posVal)
+        AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &szVal)
+        var pt = CGPoint.zero
+        var sz = CGSize.zero
+        if let pv = posVal { AXValueGetValue(pv as! AXValue, .cgPoint, &pt) }
+        if let sv = szVal { AXValueGetValue(sv as! AXValue, .cgSize, &sz) }
+        guard sz.width >= 400 && sz.height >= 300 else { continue }
+        let area = sz.width * sz.height
+        if bestWin == nil || area > bestWin!.area {
+          bestWin = (CGRect(origin: pt, size: sz), area)
+        }
+      }
+      if let best = bestWin {
+        return (pid, best.frame)
+      }
+    }
+  }
+
   let windowInfo =
     CGWindowListCopyWindowInfo(
       [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
     as? [[String: Any]] ?? []
+
+  var bestCandidate: (pid: pid_t, frame: CGRect, area: CGFloat, isTitleMatch: Bool)? = nil
 
   for info in windowInfo {
     let ownerPID = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
@@ -99,9 +140,26 @@ func findCodexWindowFrame(targetPID: pid_t? = nil) -> (pid: pid_t, frame: CGRect
     if let pid = pid, ownerPID != pid { continue }
     guard let boundsValue = info[kCGWindowBounds as String],
       let frame = CGRect(dictionaryRepresentation: boundsValue as! CFDictionary),
-      frame.width >= 300 && frame.height >= 300
+      frame.width >= 400 && frame.height >= 300
     else { continue }
-    return (pid_t(ownerPID), frame)
+
+    let name = info[kCGWindowName as String] as? String ?? ""
+    let isTitleMatch = (name == "ChatGPT")
+    let area = frame.width * frame.height
+
+    if let current = bestCandidate {
+      if isTitleMatch && !current.isTitleMatch {
+        bestCandidate = (pid_t(ownerPID), frame, area, isTitleMatch)
+      } else if isTitleMatch == current.isTitleMatch && area > current.area {
+        bestCandidate = (pid_t(ownerPID), frame, area, isTitleMatch)
+      }
+    } else {
+      bestCandidate = (pid_t(ownerPID), frame, area, isTitleMatch)
+    }
+  }
+
+  if let best = bestCandidate {
+    return (best.pid, best.frame)
   }
   return nil
 }
@@ -271,15 +329,29 @@ func restoreWindowBounds() -> Never {
   }
 
   let axApp = AXUIElementCreateApplication(pid)
-  var windowsVal: AnyObject?
-  guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsVal) == .success,
-    let winList = windowsVal as? [AXUIElement], !winList.isEmpty
-  else {
+  var winList: [AXUIElement] = []
+  let axDeadline = Date().addingTimeInterval(5)
+  while Date() < axDeadline {
+    var windowsVal: AnyObject?
+    if AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsVal) == .success,
+      let list = windowsVal as? [AXUIElement], !list.isEmpty
+    {
+      winList = list
+      break
+    }
+    _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
+  }
+
+  guard !winList.isEmpty else {
     print("FAILED_TO_COPY_AX_WINDOWS")
     exit(1)
   }
 
   var targetWin: AXUIElement?
+  var maxArea: CGFloat = 0
+  var bestStandardWin: AXUIElement?
+  var maxStandardArea: CGFloat = 0
+
   for win in winList {
     var minVal: AnyObject?
     if AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minVal) == .success,
@@ -291,13 +363,26 @@ func restoreWindowBounds() -> Never {
     AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &szVal)
     var sz = CGSize.zero
     if let sv = szVal { AXValueGetValue(sv as! AXValue, .cgSize, &sz) }
-    if sz.width >= 200 && sz.height >= 200 {
+    guard sz.width >= 200 && sz.height >= 200 else { continue }
+
+    let area = sz.width * sz.height
+    var subroleVal: AnyObject?
+    AXUIElementCopyAttributeValue(win, kAXSubroleAttribute as CFString, &subroleVal)
+    let subrole = subroleVal as? String ?? ""
+
+    if subrole == (kAXStandardWindowSubrole as String) {
+      if area > maxStandardArea {
+        maxStandardArea = area
+        bestStandardWin = win
+      }
+    }
+    if area > maxArea {
+      maxArea = area
       targetWin = win
-      break
     }
   }
 
-  guard let win = targetWin ?? winList.first else {
+  guard let win = bestStandardWin ?? targetWin ?? winList.first else {
     print("NO_VALID_AX_WINDOW")
     exit(1)
   }
@@ -312,8 +397,23 @@ func restoreWindowBounds() -> Never {
 
   _ = AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pVal)
 
+  var resPt = targetFrame.origin
+  var resSz = targetFrame.size
+  var posVal: AnyObject?
+  var szVal: AnyObject?
+  if AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posVal) == .success,
+    let pv = posVal
+  {
+    AXValueGetValue(pv as! AXValue, .cgPoint, &resPt)
+  }
+  if AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &szVal) == .success,
+    let sv = szVal
+  {
+    AXValueGetValue(sv as! AXValue, .cgSize, &resSz)
+  }
+
   print(
-    "WINDOW_BOUNDS_RESTORED x=\(targetFrame.origin.x) y=\(targetFrame.origin.y) width=\(targetFrame.size.width) height=\(targetFrame.size.height) pid=\(pid)"
+    "WINDOW_BOUNDS_RESTORED x=\(resPt.x) y=\(resPt.y) width=\(resSz.width) height=\(resSz.height) pid=\(pid)"
   )
   exit(0)
 }

@@ -319,7 +319,8 @@ pub fn switch_to_account(
     // the persistence boundary for active thread history and SQLite WAL state.
     // Never force-kill it: if it cannot flush and exit, leave auth untouched.
     if app_was_running {
-        let _ = crate::recovery::save_desktop_window_bounds();
+        let old_pids = current_codex_app_pids();
+        let _ = crate::recovery::save_desktop_window_bounds(old_pids.first().copied());
         crate::recovery::save_pending(&running_threads)?;
         stop_codex_app_gracefully()?;
         // The first journal makes the target list durable before shutdown. The
@@ -1230,7 +1231,8 @@ pub fn restart_and_recover(
     if !targets.is_empty() {
         crate::recovery::preflight_desktop_dispatch()?;
     }
-    let _ = crate::recovery::save_desktop_window_bounds();
+    let running = current_codex_app_pids();
+    let _ = crate::recovery::save_desktop_window_bounds(running.first().copied());
     crate::recovery::save_pending(&targets)?;
     stop_codex_app_gracefully()?;
     // Re-checkpoint only after the old process has fully exited, so recovery

@@ -1510,6 +1510,14 @@ struct AppDelegateTestRunner {
       isCapsule: true
     )
     assertEqual(capsuleBtn.isCapsule, true, "MenuIconButton must support capsule styling")
+    capsuleBtn.layout()
+    assert(capsuleBtn.iconImageView != nil, "Capsule button with title must instantiate iconImageView")
+    assert(capsuleBtn.titleLabel != nil, "Capsule button with title must instantiate titleLabel")
+    let iconFrame = capsuleBtn.iconImageView?.frame ?? .zero
+    let labelFrame = capsuleBtn.titleLabel?.frame ?? .zero
+    let leftPad = iconFrame.minX
+    let rightPad = capsuleBtn.bounds.width - labelFrame.maxX
+    assert(abs(leftPad - rightPad) <= 2.0, "Capsule button icon + label must be optically centered (leftPad: \(leftPad), rightPad: \(rightPad))")
     capsuleBtn.mouseEntered(with: enterEvent)
     assertEqual(capsuleBtn.isHovered, true, "Capsule button must be hovered on mouseEntered")
     capsuleBtn.mouseExited(with: exitEvent)

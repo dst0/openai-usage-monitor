@@ -327,7 +327,9 @@ pub fn get_active_desktop_window_bounds() -> Result<DesktopWindowBounds, String>
     Err("Could not retrieve active desktop window bounds".into())
 }
 
-pub(crate) fn save_desktop_window_bounds() -> Result<Option<DesktopWindowBounds>, String> {
+pub(crate) fn save_desktop_window_bounds(
+    target_pid: Option<u32>,
+) -> Result<Option<DesktopWindowBounds>, String> {
     if !should_preserve_window_bounds() {
         return Ok(None);
     }
@@ -335,24 +337,46 @@ pub(crate) fn save_desktop_window_bounds() -> Result<Option<DesktopWindowBounds>
         if !helper.exists() {
             continue;
         }
-        let output = Command::new(helper)
-            .arg("--save-window-bounds")
-            .output()
-            .map_err(|e| e.to_string())?;
+        let mut cmd = Command::new(&helper);
+        cmd.arg("--save-window-bounds");
+        if let Some(pid) = target_pid {
+            cmd.args(["--expected-pid", &pid.to_string()]);
+        }
+        let output = cmd.output().map_err(|e| e.to_string())?;
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if stdout.contains("WINDOW_BOUNDS_SAVED") {
                 let saved = get_saved_desktop_window_bounds().ok().flatten();
                 if let Some(ref b) = saved {
-                    println!(
-                        "WINDOW_BOUNDS_SAVED x={:.1} y={:.1} w={:.1} h={:.1}",
+                    let pid_str = target_pid.map(|p| format!(" pid={p}")).unwrap_or_default();
+                    let msg = format!(
+                        "WINDOW_BOUNDS_SAVED x={:.1} y={:.1} w={:.1} h={:.1}{pid_str}",
                         b.x, b.y, b.width, b.height
                     );
+                    println!("{msg}");
+                    crate::logger::log("INFO", "RECOVERY", &msg);
                 }
                 return Ok(saved);
             }
         }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        crate::logger::log(
+            "WARN",
+            "RECOVERY",
+            &format!(
+                "Failed to save window bounds via {}: stdout='{}' stderr='{}'",
+                helper.display(),
+                stdout.trim(),
+                stderr.trim()
+            ),
+        );
     }
+    crate::logger::log(
+        "WARN",
+        "RECOVERY",
+        "No valid helper could save desktop window bounds",
+    );
     Ok(None)
 }
 
@@ -364,7 +388,7 @@ pub(crate) fn restore_desktop_window_bounds(expected_pid: u32) -> Result<(), Str
         if !helper.exists() {
             continue;
         }
-        let output = Command::new(helper)
+        let output = Command::new(&helper)
             .args([
                 "--restore-window-bounds",
                 "--expected-pid",
@@ -375,11 +399,48 @@ pub(crate) fn restore_desktop_window_bounds(expected_pid: u32) -> Result<(), Str
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if stdout.contains("WINDOW_BOUNDS_RESTORED") {
-                println!("WINDOW_BOUNDS_RESTORED pid={expected_pid}");
+                let line = stdout
+                    .lines()
+                    .find(|l| l.contains("WINDOW_BOUNDS_RESTORED"))
+                    .unwrap_or("WINDOW_BOUNDS_RESTORED");
+                println!("{line}");
+                crate::logger::log("INFO", "RECOVERY", line);
+            } else if stdout.contains("NO_BOUNDS_SAVED") {
+                crate::logger::log(
+                    "INFO",
+                    "RECOVERY",
+                    &format!("WINDOW_BOUNDS_RESTORE skipped: no saved bounds for pid={expected_pid}"),
+                );
+            } else {
+                crate::logger::log(
+                    "WARN",
+                    "RECOVERY",
+                    &format!(
+                        "WINDOW_BOUNDS_RESTORE unexpected helper output: '{}'",
+                        stdout.trim()
+                    ),
+                );
             }
             return Ok(());
         }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        crate::logger::log(
+            "WARN",
+            "RECOVERY",
+            &format!(
+                "Failed to restore window bounds via {}: stdout='{}' stderr='{}'",
+                helper.display(),
+                stdout.trim(),
+                stderr.trim()
+            ),
+        );
     }
+    crate::logger::log(
+        "WARN",
+        "RECOVERY",
+        &format!("No valid helper could restore desktop window bounds for pid={expected_pid}"),
+    );
     Ok(())
 }
 

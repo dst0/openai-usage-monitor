@@ -182,7 +182,7 @@ public final class AccountSectionCardView: NSView {
     account: AccountQuota, action: Selector
   ) -> MenuIconButton {
     let textWidth = (title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .semibold)]).width
-    let btnWidth = min(width - 56, ceil(textWidth) + 42)
+    let btnWidth = min(width - 56, ceil(textWidth) + 38)
     let btn = MenuIconButton(
       frame: NSRect(x: 28, y: y, width: btnWidth, height: 22),
       title: title, symbolName: symbol, pointSize: 11, weight: .semibold,

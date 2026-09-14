@@ -576,7 +576,7 @@ fn main() {
                     Ok(())
                 }
                 WindowAction::Save => {
-                    let saved = recovery::save_desktop_window_bounds()?;
+                    let saved = recovery::save_desktop_window_bounds(None)?;
                     if let Some(b) = saved {
                         println!(
                             "✅ Window bounds saved: x={:.1}, y={:.1}, w={:.1}, h={:.1}",

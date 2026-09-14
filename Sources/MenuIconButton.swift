@@ -15,6 +15,23 @@ public final class MenuIconButton: NSButton {
   public private(set) var isHovered: Bool = false
   public private(set) var isMouseDown: Bool = false
 
+  private var customTitle: String?
+  public private(set) var iconImageView: NSImageView?
+  public private(set) var titleLabel: NSTextField?
+
+  public override var title: String {
+    get { customTitle ?? super.title }
+    set {
+      if customTitle != nil {
+        customTitle = newValue
+        titleLabel?.stringValue = newValue
+        needsLayout = true
+      } else {
+        super.title = newValue
+      }
+    }
+  }
+
   public init(
     frame: NSRect,
     title: String? = nil,
@@ -41,16 +58,34 @@ public final class MenuIconButton: NSButton {
     self.toolTip = tooltip
 
     let symbolConfig = NSImage.SymbolConfiguration(pointSize: pointSize, weight: weight)
-    if let symbolImage = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibilityLabel) {
-      self.image = symbolImage.withSymbolConfiguration(symbolConfig)
-    }
+    let symbolImage = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibilityLabel)?
+      .withSymbolConfiguration(symbolConfig)
 
     if let text = title, !text.isEmpty {
-      self.title = text
+      self.customTitle = text
       self.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-      self.imagePosition = .imageLeading
-      self.alignment = .left
+      self.imagePosition = .noImage
+
+      let iv = NSImageView()
+      iv.image = symbolImage
+      iv.imageScaling = .scaleProportionallyDown
+      iv.contentTintColor = tintColor
+      addSubview(iv)
+      self.iconImageView = iv
+
+      let tf = NSTextField(labelWithString: text)
+      tf.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+      tf.textColor = tintColor
+      tf.alignment = .left
+      tf.isBezeled = false
+      tf.drawsBackground = false
+      tf.isEditable = false
+      tf.isSelectable = false
+      addSubview(tf)
+      self.titleLabel = tf
     } else {
+      self.customTitle = nil
+      self.image = symbolImage
       self.imagePosition = .imageOnly
     }
 
@@ -66,6 +101,7 @@ public final class MenuIconButton: NSButton {
     }
 
     self.wantsLayer = true
+    layout()
   }
 
   public required init?(coder: NSCoder) {
@@ -85,13 +121,46 @@ public final class MenuIconButton: NSButton {
     if window == nil { popPointingCursor() }
   }
 
+  public override func layout() {
+    super.layout()
+    guard let text = customTitle, !text.isEmpty,
+          let iv = iconImageView, let tf = titleLabel else { return }
+    let font = tf.font ?? NSFont.systemFont(ofSize: 11, weight: .semibold)
+    let textSize = (text as NSString).size(withAttributes: [.font: font])
+    let iconW: CGFloat = 13
+    let iconH: CGFloat = 13
+    let gap: CGFloat = 5
+    let textW = ceil(textSize.width)
+    let textH = ceil(textSize.height)
+    let totalW = iconW + gap + textW
+    let startX = max(4, floor((bounds.width - totalW) / 2))
+
+    iv.frame = NSRect(
+      x: startX,
+      y: floor((bounds.height - iconH) / 2),
+      width: iconW,
+      height: iconH
+    )
+    tf.frame = NSRect(
+      x: startX + iconW + gap,
+      y: floor((bounds.height - textH) / 2),
+      width: textW + 2,
+      height: textH
+    )
+  }
+
+  public override func hitTest(_ point: NSPoint) -> NSView? {
+    return bounds.contains(point) ? self : nil
+  }
+
   public func setHoveredExplicitly(_ hovered: Bool) {
     guard isHovered != hovered else { return }
     isHovered = hovered
-    if hovered {
-      if let hoverTint = hoverTintColor { contentTintColor = hoverTint }
-    } else {
-      if let normalTint = normalTintColor { contentTintColor = normalTint }
+    let activeTint: NSColor? = hovered ? (hoverTintColor ?? normalTintColor) : normalTintColor
+    if let tint = activeTint {
+      contentTintColor = tint
+      iconImageView?.contentTintColor = tint
+      titleLabel?.textColor = tint
     }
     needsDisplay = true
   }
@@ -156,6 +225,8 @@ public final class MenuIconButton: NSButton {
         hoverBackgroundColor.setFill(); pill.fill()
       }
     }
-    super.draw(dirtyRect)
+    if customTitle == nil {
+      super.draw(dirtyRect)
+    }
   }
 }
