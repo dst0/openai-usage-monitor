@@ -1,0 +1,22 @@
+# 2026-09-20 — historical log redaction needs a quiesced bounded migration
+
+- **Status:** Resolved
+- **Task/context:** Extend the persistent-output redaction boundary to Monitor-owned logs created before an upgrade, while removing the repository's existing Rust file-structure debt.
+- **Unexpected observation or failure:** Redacting only new writes left older active, archived, and restart-worker logs unchanged. The first migration also stopped writers before later fallible build steps, read an entire line before applying its size limit, skipped restart-worker logs, and could leave rewrite temporary files after some errors.
+- **Evidence:** Focused regressions reproduced spaced JSON values that crossed whitespace-token boundaries, an unsafe suffix after an existing marker, a line larger than the migration bound, invalid UTF-8, malformed Brotli, a symlinked restart log, and all exact Monitor archive prefixes. An uninstall regression also revealed that two directory enumerations through duplicated descriptors shared the directory offset, so the second pass missed temporary files.
+- **Approaches tried:**
+  - **Attempt:** Apply redaction only at every new persistent-output sink.
+    - **Outcome:** Partial.
+    - **Why:** It protected future output but could not change data already present before installation.
+  - **Attempt:** Rewrite historical files after a best-effort process stop and reject oversized lines after `read_until` returned.
+    - **Outcome:** Did not work.
+    - **Why:** A stale writer could retain the retired inode, later build failure left the installed Monitor unavailable, and a newline-free input could allocate beyond the intended bound before rejection.
+  - **Attempt:** Build and sign first, verify exact writer shutdown, stream through a pre-allocation bound, and atomically replace only changed exact-owned files.
+    - **Outcome:** Worked.
+    - **Why:** The migration now has a fail-closed ownership boundary, bounded memory per line, source preservation on invalid input, exact `0600` replacement modes, true inode idempotence, and cleanup for every temporary-file error path.
+- **Root cause:** Runtime redaction and upgrade migration are different lifecycle boundaries. Safe migration additionally requires writer quiescence, exact file ownership grammar, bounded decoding, atomic replacement, and crash/error cleanup.
+- **Resolution:** The installer now quiesces the verified Monitor app plus daemon and restart-worker launchd jobs only after build/signing. The Rust migration covers the three active logs, exact numeric timestamp Brotli Q6 archives, and exact numeric restart-worker logs; it preserves foreign and official Codex Desktop files. Structured redaction now handles whitespace-separated JSON values and rejects marker-prefix suffix bypasses. The Rust file-limit and one-struct-per-file gate is also green after the legacy module splits.
+- **Verification:** `cargo test --all-targets` passed 133 unit tests plus all Rust integration suites; the file-limit and one-struct-per-file gate passed; production `cargo clippy --bin codex-mon -- -D warnings` passed; install/uninstall and installer-order shell tests passed; the complete Swift suite passed. Focused migration tests cover all owned scopes, foreign preservation, `0600`, inode idempotence, oversized and invalid UTF-8 input, malformed Brotli, symlinks, source preservation, and temporary cleanup.
+- **Prevention/follow-up:** Keep archive and recovery filename ownership grammar centralized. Enumerate each open directory descriptor once per operation, and add any new persistent Monitor sink to both runtime redaction and the quiesced upgrade migration contract.
+- **Reusable learning:** A redaction fix is incomplete until upgrades handle old exact-owned data under verified writer quiescence with bounded, atomic, fail-closed rewriting.
+- **References:** `docs/leanings/2026-09-20-persistent-output-redaction-boundary.md`; `codex-switcher/src/distribution/historical_log_redaction_service.rs`; `codex-switcher/src/distribution/historical_log_stream_redactor.rs`; `scripts/install.sh`; `tests/install_log_redaction_quiescence.sh`.
