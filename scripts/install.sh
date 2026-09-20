@@ -18,6 +18,21 @@ REPO_URL="${REPO_URL:-https://github.com/dst0/openai-usage-monitor.git}"
 LOCAL_BIN="${HOME}/.local/bin"
 mkdir -p "${LOCAL_BIN}"
 
+ensure_private_monitor_logs() {
+    # All Monitor log creation and mode changes happen in the fd-anchored Rust
+    # service. The shell only selects the already-built Monitor executable;
+    # launchd is configured later, after this command succeeds.
+    local codex_home="${CODEX_HOME:-${HOME}/.codex}"
+    case "${codex_home}" in
+        /*) ;;
+        *) echo "❌ Refusing installation: Monitor home must be an absolute path."; return 1 ;;
+    esac
+    CODEX_HOME="${codex_home}" "${LOCAL_BIN}/codex-mon" monitor-logs --install >/dev/null || {
+        echo "❌ Refusing installation: could not prepare private Monitor logs."
+        return 1
+    }
+}
+
 # Detect if running from local repository or piped via curl
 SCRIPT_SOURCE="${BASH_SOURCE[0]:-$0}"
 PROJECT_DIR=""
@@ -168,20 +183,23 @@ cargo build --release
 echo "📦 Installing CLI to ${LOCAL_BIN}..."
 # The daemon may be executing the current CLI binary. Rewriting that inode in
 # place invalidates its mapped code signature and can make subsequent settings
-# commands die with SIGKILL. Prepare and verify a fresh inode, then atomically
-# replace the pathname so the old daemon can finish safely.
+# commands die with SIGKILL. Prepare, freshly sign, and verify a fresh inode,
+# then atomically replace the pathname so the old daemon can finish safely.
 CLI_STAGING="$(mktemp "${LOCAL_BIN}/.codex-mon.install.XXXXXX")"
 cp "target/release/codex-mon" "${CLI_STAGING}"
 chmod 755 "${CLI_STAGING}"
 xattr -c "${CLI_STAGING}" 2>/dev/null || true
-if ! codesign --verify --strict "${CLI_STAGING}" 2>/dev/null; then
-    codesign --sign - --force "${CLI_STAGING}"
-fi
+codesign --sign - --force "${CLI_STAGING}"
 codesign --verify --strict "${CLI_STAGING}"
 "${CLI_STAGING}" --version >/dev/null
 mv -f "${CLI_STAGING}" "${LOCAL_BIN}/codex-mon"
 CLI_STAGING=""
 ln -sfn "${LOCAL_BIN}/codex-mon" "${LOCAL_BIN}/cxi"
+
+# Prepare all inherited daemon streams before launchd is allowed to load the
+# plist. The Rust helper holds directory descriptors and rejects symlinked
+# components during every mutation.
+ensure_private_monitor_logs
 
 # Ensure transparent codex CLI shim exists
 echo "🔗 Configuring codex CLI shim..."
@@ -192,6 +210,32 @@ if [ -f "${PROJECT_DIR}/scripts/codex-ui-resume.swift" ]; then
     echo "⚡ Compiling codex-ui-resume helper..."
     swiftc -O -target "${ARCH}-apple-macosx13.0" -o "${LOCAL_BIN}/codex-ui-resume" "${PROJECT_DIR}/scripts/codex-ui-resume.swift"
     chmod +x "${LOCAL_BIN}/codex-ui-resume"
+fi
+
+# Recovery presentation and window restoration are separate PID-bound helpers.
+# They receive only the private payload path or exact process identity; no raw
+# session metadata is passed through argv.
+if [ -f "${PROJECT_DIR}/Sources/CodexRecoveryBanner.swift" ] && [ -f "${PROJECT_DIR}/scripts/codex-recovery-banner-main.swift" ]; then
+    echo "⚡ Compiling Codex recovery banner helper..."
+    RECOVERY_BANNER_SOURCES=()
+    while IFS= read -r recovery_source || [ -n "${recovery_source}" ]; do
+        [ -n "${recovery_source}" ] || continue
+        RECOVERY_BANNER_SOURCES+=("${PROJECT_DIR}/${recovery_source}")
+    done < "${PROJECT_DIR}/scripts/codex-recovery-banner-sources.txt"
+    swiftc -O -target "${ARCH}-apple-macosx13.0" \
+        -framework AppKit -framework Foundation -framework ApplicationServices \
+        -o "${LOCAL_BIN}/codex-recovery-banner" \
+        "${RECOVERY_BANNER_SOURCES[@]}" \
+        "${PROJECT_DIR}/scripts/codex-recovery-banner-main.swift"
+    chmod +x "${LOCAL_BIN}/codex-recovery-banner"
+fi
+if [ -f "${PROJECT_DIR}/scripts/codex-window-restore.swift" ]; then
+    echo "⚡ Compiling Codex window restore helper..."
+    swiftc -O -target "${ARCH}-apple-macosx13.0" \
+        -framework AppKit -framework Foundation -framework ApplicationServices \
+        -o "${LOCAL_BIN}/codex-window-restore" \
+        "${PROJECT_DIR}/scripts/codex-window-restore.swift"
+    chmod +x "${LOCAL_BIN}/codex-window-restore"
 fi
 
 # Compile and install native Codex Notifier helper
@@ -258,9 +302,12 @@ SWIFT_SOURCES=(
     "${PROJECT_DIR}/Sources/ReserveAccountSectionEntry.swift"
     "${PROJECT_DIR}/Sources/ResetCreditsRowView.swift"
     "${PROJECT_DIR}/Sources/AccountRowView.swift"
+    "${PROJECT_DIR}/Sources/AccountSwitchButtonsView.swift"
     "${PROJECT_DIR}/Sources/AccountSectionCardView.swift"
+    "${PROJECT_DIR}/Sources/AccountSectionCardView+Tracking.swift"
     "${PROJECT_DIR}/Sources/AppDelegate.swift"
     "${PROJECT_DIR}/Sources/AppDelegate+FileWatchers.swift"
+    "${PROJECT_DIR}/Sources/StatusBarBracketRenderer.swift"
     "${PROJECT_DIR}/Sources/AppDelegate+StatusBar.swift"
     "${PROJECT_DIR}/Sources/AppDelegate+StatusBarOverloads.swift"
     "${PROJECT_DIR}/Sources/AppDelegate+Menu.swift"

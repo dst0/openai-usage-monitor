@@ -12,7 +12,9 @@ extension AppDelegate {
     accounts: [AccountQuota],
     isScreenActive: Bool = true,
     useModelIcons: Bool,
-    stackPercentages: Bool = true
+    stackPercentages: Bool = true,
+    appAccountId: String? = nil,
+    cliAccountId: String? = nil
   ) -> NSAttributedString {
     return buildStatusBarAttributedString(
       icon: icon,
@@ -21,7 +23,9 @@ extension AppDelegate {
       accounts: accounts,
       isScreenActive: isScreenActive,
       useQuotaIcons: useModelIcons,
-      stackPercentages: stackPercentages
+      stackPercentages: stackPercentages,
+      appAccountId: appAccountId,
+      cliAccountId: cliAccountId
     )
   }
 

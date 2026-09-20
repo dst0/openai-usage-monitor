@@ -79,10 +79,6 @@ func findCodexTargetPID() -> pid_t? {
   {
     return app.processIdentifier
   }
-  let apps = NSWorkspace.shared.runningApplications
-  if let app = apps.first(where: { $0.executableURL?.lastPathComponent == "ChatGPT" }) {
-    return app.processIdentifier
-  }
   return nil
 }
 
@@ -92,11 +88,6 @@ func getWindowViaOsascript(pid: pid_t?) -> (pid: pid_t, frame: CGRect)? {
   tell application "System Events"
     set targetProc to missing value
     \(pidClause)
-    if targetProc is missing value then
-      try
-        set targetProc to process "ChatGPT"
-      end try
-    end if
     if targetProc is not missing value then
       tell targetProc
         set matched to missing value
@@ -104,8 +95,7 @@ func getWindowViaOsascript(pid: pid_t?) -> (pid: pid_t, frame: CGRect)? {
           try
             set subr to subrole of w
             set sz to size of w
-            set nm to name of w
-            if (subr is "AXStandardWindow" or nm is "ChatGPT") and (item 1 of sz >= 300 and item 2 of sz >= 250) then
+            if subr is "AXStandardWindow" and (item 1 of sz >= 300 and item 2 of sz >= 250) then
               set matched to w
               exit repeat
             end if
@@ -153,11 +143,6 @@ func restoreViaOsascript(pid: pid_t?, targetFrame: CGRect, deadline: Date) -> (C
   tell application "System Events"
     set targetProc to missing value
     \(pidClause)
-    if targetProc is missing value then
-      try
-        set targetProc to process "ChatGPT"
-      end try
-    end if
     if targetProc is not missing value then
       tell targetProc
         set matched to missing value
@@ -165,8 +150,7 @@ func restoreViaOsascript(pid: pid_t?, targetFrame: CGRect, deadline: Date) -> (C
           try
             set subr to subrole of w
             set sz to size of w
-            set nm to name of w
-            if (subr is "AXStandardWindow" or nm is "ChatGPT") and (item 1 of sz >= 300 and item 2 of sz >= 250) then
+            if subr is "AXStandardWindow" and (item 1 of sz >= 300 and item 2 of sz >= 250) then
               set matched to w
               exit repeat
             end if
@@ -219,7 +203,6 @@ func findCodexWindowFrame(targetPID: pid_t? = nil) -> (pid: pid_t, frame: CGRect
   if let pid = pid {
     let axApp = AXUIElementCreateApplication(pid)
     _ = AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, true as CFTypeRef)
-    _ = AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, true as CFTypeRef)
     var windowsVal: AnyObject?
     if AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsVal) == .success,
       let winList = windowsVal as? [AXUIElement], !winList.isEmpty
@@ -447,7 +430,6 @@ func restoreWindowBounds() -> Never {
       matchedPID = pid
       let axApp = AXUIElementCreateApplication(pid)
       _ = AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, true as CFTypeRef)
-      _ = AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, false as CFTypeRef)
 
       var candidateWindows: [AXUIElement] = []
       var windowsVal: AnyObject?
@@ -604,137 +586,6 @@ func restoreWindowBounds() -> Never {
   exit(1)
 }
 
-func runAutomationBanner() -> Never {
-  let taskCount = max(0, Int(argumentValue(after: "--tasks") ?? "0") ?? 0)
-  let parentPID = pid_t(Int32(argumentValue(after: "--parent-pid") ?? "0") ?? 0)
-  let readyFile = argumentValue(after: "--ready-file")
-  guard parentPID > 1, Darwin.kill(parentPID, 0) == 0, let readyFile,
-    readyFile.hasPrefix("/")
-  else {
-    exit(2)
-  }
-  let app = NSApplication.shared
-  app.setActivationPolicy(.accessory)
-
-  let width: CGFloat = 530
-  let height: CGFloat = 82
-  func makePanel(on screen: NSScreen) -> NSPanel {
-    let panel = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: width, height: height),
-      styleMask: [.borderless, .nonactivatingPanel],
-      backing: .buffered,
-      defer: false
-    )
-    panel.level = .statusBar
-    panel.isOpaque = false
-    panel.backgroundColor = .clear
-    panel.hasShadow = true
-    panel.ignoresMouseEvents = true
-    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-    panel.hidesOnDeactivate = false
-
-    let effect = NSVisualEffectView(frame: panel.contentView?.bounds ?? .zero)
-    effect.autoresizingMask = [.width, .height]
-    effect.material = .hudWindow
-    effect.blendingMode = .behindWindow
-    effect.state = .active
-    effect.wantsLayer = true
-    effect.layer?.cornerRadius = 14
-    effect.layer?.masksToBounds = true
-    effect.layer?.borderWidth = 0.6
-    effect.layer?.borderColor = NSColor.white.withAlphaComponent(0.24).cgColor
-
-    let isRussian = Locale.preferredLanguages.first?.hasPrefix("ru") == true
-    let titleStr: String
-    if taskCount > 1 {
-      titleStr = isRussian ? "Codex Monitor восстанавливает \(taskCount) задач" : "Codex Monitor is restoring \(taskCount) tasks"
-    } else if taskCount == 1 {
-      titleStr = isRussian ? "Codex Monitor восстанавливает 1 задачу" : "Codex Monitor is restoring 1 task"
-    } else {
-      titleStr = isRussian ? "Codex Monitor перезапускает Codex" : "Codex Monitor is restarting Codex"
-    }
-
-    let detailStr = isRussian
-      ? "Положение и размеры окна, а также задачи будут восстановлены автоматически."
-      : "Tasks and desktop window geometry will be restored automatically."
-
-    let title = NSTextField(labelWithString: titleStr)
-    title.font = .systemFont(ofSize: 15, weight: .semibold)
-    title.textColor = .labelColor
-    title.frame = NSRect(x: 22, y: 43, width: width - 44, height: 21)
-
-    let detail = NSTextField(labelWithString: detailStr)
-    detail.font = .systemFont(ofSize: 12, weight: .regular)
-    detail.textColor = .secondaryLabelColor
-    detail.frame = NSRect(x: 22, y: 19, width: width - 44, height: 18)
-
-    effect.addSubview(title)
-    effect.addSubview(detail)
-    panel.contentView = effect
-    let frame = screen.visibleFrame
-    panel.setFrameOrigin(
-      NSPoint(x: frame.midX - width / 2, y: frame.maxY - height - 22)
-    )
-    panel.alphaValue = 0.94
-    return panel
-  }
-  let panels = NSScreen.screens.map(makePanel)
-  guard !panels.isEmpty else { exit(2) }
-  panels.forEach { $0.orderFrontRegardless() }
-  // AppKit visibility alone is not compositor proof. Poll WindowServer until
-  // every per-display panel belonging to this helper process is on-screen.
-  let readinessDeadline = Date().addingTimeInterval(4)
-  var compositorConfirmed = false
-  repeat {
-    panels.forEach { $0.orderFrontRegardless() }
-    _ = RunLoop.current.run(
-      mode: .default,
-      before: Date().addingTimeInterval(0.1)
-    )
-    let expectedWindowNumbers = Set(panels.map { $0.windowNumber }.filter { $0 > 0 })
-    let visibleWindowNumbers = Set(
-      (CGWindowListCopyWindowInfo(
-        [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-        as? [[String: Any]] ?? [])
-        .compactMap { info -> Int? in
-          let ownerPID = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
-          let number = (info[kCGWindowNumber as String] as? NSNumber)?.intValue
-          return ownerPID == getpid() ? number : nil
-        })
-    compositorConfirmed =
-      expectedWindowNumbers.count == panels.count
-      && expectedWindowNumbers.isSubset(of: visibleWindowNumbers)
-      && panels.allSatisfy { $0.isVisible }
-  } while !compositorConfirmed && Date() < readinessDeadline
-
-  guard compositorConfirmed,
-    FileManager.default.createFile(
-      atPath: readyFile,
-      contents: Data("visible\n".utf8),
-      attributes: [.posixPermissions: 0o600]
-    )
-  else {
-    panels.forEach { $0.orderOut(nil) }
-    exit(2)
-  }
-
-  let deadline = Date().addingTimeInterval(900)
-  var nextRaise = Date()
-  while Date() < deadline {
-    if parentPID > 1 && Darwin.kill(parentPID, 0) != 0 { break }
-    if Date() >= nextRaise {
-      panels.forEach { $0.orderFrontRegardless() }
-      nextRaise = Date().addingTimeInterval(1)
-    }
-    _ = RunLoop.current.run(
-      mode: .default,
-      before: Date().addingTimeInterval(0.25)
-    )
-  }
-  panels.forEach { $0.orderOut(nil) }
-  exit(0)
-}
-
 struct CandidateButton {
   let element: AXUIElement
   let isPlay: Bool
@@ -845,7 +696,6 @@ func resumeChatGPT() -> (success: Bool, outcome: String) {
 
   let axApp = AXUIElementCreateApplication(app.processIdentifier)
   AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, true as CFTypeRef)
-  AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, true as CFTypeRef)
 
   var windows: AnyObject?
   guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windows) == .success,
@@ -1032,9 +882,6 @@ func resumeChatGPT() -> (success: Bool, outcome: String) {
   return (false, "NOT_FOUND")
 }
 
-if CommandLine.arguments.contains("--automation-banner") {
-  runAutomationBanner()
-}
 if CommandLine.arguments.contains("--verify-visible") {
   verifyVisibleCodex()
 }

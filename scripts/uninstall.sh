@@ -103,6 +103,12 @@ esac
 case "$CODEX_HOME" in
     *..*) die "CODEX_HOME must not contain '..' path components" ;;
 esac
+if [ -L "$CODEX_HOME" ]; then
+    die 'refusing to operate through a symlinked CODEX_HOME'
+fi
+if [ -e "$CODEX_HOME" ] && [ ! -d "$CODEX_HOME" ]; then
+    die 'refusing to operate when CODEX_HOME is not a directory'
+fi
 if [ -d "$CODEX_HOME" ]; then
     CODEX_HOME="$(cd "$CODEX_HOME" 2>/dev/null && /bin/pwd -P)" ||
         die "cannot resolve CODEX_HOME"
@@ -113,6 +119,7 @@ if [ "$CODEX_HOME" = "/" ] || [ "$CODEX_HOME" = "$USER_HOME" ] ||
 fi
 
 LOCAL_BIN="${USER_HOME}/.local/bin"
+MONITOR_LOG_HELPER="${LOCAL_BIN}/codex-mon"
 LAUNCH_AGENTS="${USER_HOME}/Library/LaunchAgents"
 TMP_ROOT="${TMPDIR:-/tmp}"
 case "$TMP_ROOT" in
@@ -123,8 +130,6 @@ esac
 INSTALL_LOCK_FILE="${TMP_ROOT}/codex_monitor_install_${CURRENT_UID}.lock"
 DAEMON_PLIST="${LAUNCH_AGENTS}/${DAEMON_LABEL}.plist"
 APP_SERVICE_PLIST="${LAUNCH_AGENTS}/${APP_SERVICE_LABEL}.plist"
-RECOVERY_DIR="${CODEX_HOME}/recovery-runs"
-
 APP_PATHS=(
     "/Applications/${APP_NAME}.app"
     "${USER_HOME}/Applications/${APP_NAME}.app"
@@ -142,13 +147,6 @@ ALWAYS_STATE_PATHS=(
     "${CODEX_HOME}/desktop-recovery.json"
     "${CODEX_HOME}/desktop-window.json"
     "${CODEX_HOME}/auto-reset-state.json"
-    "${CODEX_HOME}/account-switcher-daemon.log"
-    "${CODEX_HOME}/account-switcher-daemon.err"
-    "${RECOVERY_DIR}/cancel-restart"
-)
-
-PURGE_STATE_PATHS=(
-    "${CODEX_HOME}/accounts.json"
 )
 
 # Exact bundle-specific Library paths only; never remove a broad Library tree.
@@ -173,6 +171,38 @@ is_present() {
     [ -e "$1" ] || [ -L "$1" ]
 }
 
+monitor_log_helper_available() {
+    [ -f "$MONITOR_LOG_HELPER" ] && [ ! -L "$MONITOR_LOG_HELPER" ] && [ -x "$MONITOR_LOG_HELPER" ]
+}
+
+print_monitor_log_plan() {
+    if monitor_log_helper_available; then
+        local args=(monitor-logs --dry-run)
+        [ "$PURGE_DATA" -eq 1 ] && args+=(--purge-data)
+        if ! CODEX_HOME="$CODEX_HOME" "$MONITOR_LOG_HELPER" "${args[@]}"; then
+            note '  preserve Monitor log/recovery cleanup (unsafe path or helper failure)'
+        fi
+    else
+        note '  preserve Monitor log/recovery cleanup (fd-anchored helper unavailable)'
+    fi
+}
+
+run_monitor_log_helper() {
+    local action="$1"
+    if ! monitor_log_helper_available; then
+        warn 'fd-anchored Monitor log helper is unavailable; preserving Monitor log state'
+        FAILED=1
+        return 1
+    fi
+    local args=(monitor-logs "$action")
+    [ "$PURGE_DATA" -eq 1 ] && args+=(--purge-data)
+    if ! CODEX_HOME="$CODEX_HOME" "$MONITOR_LOG_HELPER" "${args[@]}" >/dev/null; then
+        warn 'fd-anchored Monitor log cleanup refused an unsafe path'
+        FAILED=1
+        return 1
+    fi
+}
+
 print_plan_path() {
     is_present "$1" && printf '  remove %s\n' "$1"
 }
@@ -185,10 +215,9 @@ print_plan() {
     print_plan_path "$APP_SERVICE_PLIST"
     print_plan_path "$INSTALL_LOCK_FILE"
     for path in "${ALWAYS_STATE_PATHS[@]}"; do print_plan_path "$path"; done
+    print_monitor_log_plan
     for path in "${ALWAYS_ARTIFACT_PATHS[@]}"; do print_plan_path "$path"; done
-    if [ "$PURGE_DATA" -eq 1 ]; then
-        for path in "${PURGE_STATE_PATHS[@]}"; do print_plan_path "$path"; done
-    else
+    if [ "$PURGE_DATA" -eq 0 ]; then
         note "  preserve Monitor account registry (use --purge-data to remove stored account copies)"
     fi
     note "  remove app-owned ~/.local/bin binaries/shims and skill symlinks when their targets identify this project"
@@ -237,23 +266,6 @@ remove_path() {
     fi
 }
 
-remove_matching_files() {
-    local directory="$1"
-    shift
-    [ -d "$directory" ] || return 0
-    if [ -L "$directory" ]; then
-        warn "preserving symlinked runtime directory: $directory"
-        FAILED=1
-        return
-    fi
-    local pattern path
-    for pattern in "$@"; do
-        while IFS= read -r -d '' path; do
-            remove_path "$path"
-        done < <(/usr/bin/find "$directory" -maxdepth 1 -type f -name "$pattern" -print0 2>/dev/null)
-    done
-}
-
 remove_unlocked_file() {
     local path="$1"
     is_present "$path" || return 0
@@ -275,28 +287,15 @@ remove_unlocked_file() {
 }
 
 arm_cancellation_marker() {
-    [ -d "$CODEX_HOME" ] || return 0
-    if [ -L "$RECOVERY_DIR" ]; then
-        warn "preserving symlinked recovery directory: $RECOVERY_DIR"
+    if ! monitor_log_helper_available; then
+        warn 'fd-anchored Monitor log helper is unavailable; could not arm restart cancellation'
         FAILED=1
         return
     fi
-    /bin/mkdir -p "$RECOVERY_DIR" 2>/dev/null || {
-        warn "could not create recovery cancellation directory: $RECOVERY_DIR"
+    if ! CODEX_HOME="$CODEX_HOME" "$MONITOR_LOG_HELPER" monitor-logs --cancel >/dev/null; then
+        warn 'fd-anchored Monitor recovery state refused cancellation marker'
         FAILED=1
-        return
-    }
-    local temporary="${RECOVERY_DIR}/.cancel-restart.uninstall.$$"
-    (umask 077 && /usr/bin/printf 'cancel\n' > "$temporary") 2>/dev/null || {
-        warn "could not arm restart cancellation marker"
-        FAILED=1
-        return
-    }
-    /bin/mv -f -- "$temporary" "${RECOVERY_DIR}/cancel-restart" 2>/dev/null || {
-        warn "could not install restart cancellation marker"
-        /bin/rm -f -- "$temporary" 2>/dev/null || true
-        FAILED=1
-    }
+    fi
 }
 
 unload_label() {
@@ -590,6 +589,9 @@ for path in \
     stop_processes_with_path "$path"
 done
 
+# Remove logs only after the daemon, app, and helpers have stopped writing.
+run_monitor_log_helper --remove
+
 for path in "${APP_PATHS[@]}"; do unregister_bundle "$path"; done
 unregister_bundle "$NOTIFIER_PATH"
 for path in "${APP_PATHS[@]}"; do remove_path "$path"; done
@@ -625,21 +627,6 @@ for path in "${ALWAYS_STATE_PATHS[@]}"; do
         *) remove_path "$path" ;;
     esac
 done
-if [ "$PURGE_DATA" -eq 1 ]; then
-    for path in "${PURGE_STATE_PATHS[@]}"; do remove_path "$path"; done
-fi
-remove_matching_files "$CODEX_HOME" \
-    'auth.*.tmp.json' 'accounts.*.tmp.json' 'usage-status.*.tmp.json' \
-    'desktop-recovery.*.tmp' 'desktop-automation-cooldown.*.tmp' \
-    'desktop-window.*.tmp' '.auto-reset-state.*.tmp'
-remove_matching_files "$RECOVERY_DIR" \
-    'restart-*.log' 'restart-*.claimed' 'banner-*.ready'
-
-if [ -d "$RECOVERY_DIR" ]; then
-    /bin/rmdir "$RECOVERY_DIR" 2>/dev/null ||
-        warn "preserving non-empty recovery directory: $RECOVERY_DIR"
-fi
-
 # Clear the preference domains as well as their plist files. This is scoped to
 # the two bundle identifiers owned by this project and does not touch ChatGPT.
 if command -v defaults >/dev/null 2>&1; then
@@ -648,9 +635,6 @@ if command -v defaults >/dev/null 2>&1; then
     /usr/bin/defaults delete "${NOTIFIER_BUNDLE_ID}" >/dev/null 2>&1 || true
 fi
 for path in "${ALWAYS_ARTIFACT_PATHS[@]}"; do remove_path "$path"; done
-
-# Remove the marker last. It is app-owned, not a shared credential/transcript.
-remove_path "${RECOVERY_DIR}/cancel-restart"
 
 # The installer leaves this coordination file in TMPDIR. Remove it only after
 # the app and workers have stopped and only when no other installer holds it.

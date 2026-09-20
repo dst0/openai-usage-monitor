@@ -1,6 +1,8 @@
 import Foundation
 
 public final class CodexClient: @unchecked Sendable {
+  internal typealias DistributionRunner = ([String]) -> Bool
+
   public static let shared = CodexClient()
   private static let daemonLabel = "com.codex.switcher"
   private static let restartWorkerLabel = "com.codex.switcher.restart-worker"
@@ -26,7 +28,21 @@ public final class CodexClient: @unchecked Sendable {
     return Self.parseDate(str)
   }
 
-  public init() {}
+  private let distributionRunner: DistributionRunner
+  private let desktopAppAccountIdProvider: () -> String?
+
+  public init() {
+    self.distributionRunner = Self.runDistributionProcess
+    self.desktopAppAccountIdProvider = Self.readDesktopAppSessionAccountId
+  }
+
+  internal init(
+    distributionRunner: @escaping DistributionRunner,
+    desktopAppAccountIdProvider: @escaping () -> String? = { nil }
+  ) {
+    self.distributionRunner = distributionRunner
+    self.desktopAppAccountIdProvider = desktopAppAccountIdProvider
+  }
 
   public static var codexHome: URL {
     if let env = ProcessInfo.processInfo.environment["CODEX_HOME"], !env.isEmpty {
@@ -37,6 +53,79 @@ public final class CodexClient: @unchecked Sendable {
 
   public static var statusFileURL: URL {
     return codexHome.appendingPathComponent("usage-status.json")
+  }
+
+  public static var desktopAppSessionURL: URL {
+    return codexHome.appendingPathComponent("desktop-app-session.json")
+  }
+
+  /// A marker older than one monitor day may describe a previous Desktop
+  /// process. It is deliberately rejected until the running app writes a new
+  /// verified marker rather than being guessed from the CLI account.
+  internal static let desktopAppSessionMaxAge: TimeInterval = 24 * 60 * 60
+
+  internal static func validatedDesktopAppSessionAccountId(
+    from data: Data, now: Date = Date()
+  ) -> String? {
+    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let rawID = json["account_id"] as? String,
+      let updatedAtString = json["updated_at"] as? String,
+      let updatedAt = Self.parseDate(updatedAtString)
+    else { return nil }
+
+    let accountID = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+    let age = now.timeIntervalSince(updatedAt)
+    // ISO-8601 serialization rounds to milliseconds, so permit a tiny clock
+    // skew between the write and this read while rejecting genuinely future
+    // markers.
+    guard !accountID.isEmpty,
+      age >= -1,
+      age <= Self.desktopAppSessionMaxAge else { return nil }
+    return accountID
+  }
+
+  private static func readDesktopAppSessionAccountId() -> String? {
+    let url = Self.desktopAppSessionURL
+    guard let data = try? Data(contentsOf: url) else { return nil }
+    return Self.validatedDesktopAppSessionAccountId(from: data)
+  }
+
+  public func getDesktopAppAccountId() -> String? {
+    desktopAppAccountIdProvider()
+  }
+
+  internal static func resolveAppAccount(
+    isAppRunning: Bool,
+    markerID: String?,
+    accounts: [AccountQuota]
+  ) -> AccountQuota? {
+    guard isAppRunning,
+      let markerID = markerID?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !markerID.isEmpty
+    else { return nil }
+
+    return accounts.first(where: {
+      $0.id.caseInsensitiveCompare(markerID) == .orderedSame
+        || $0.email.caseInsensitiveCompare(markerID) == .orderedSame
+    })
+  }
+
+  public func setDesktopAppAccountId(_ id: String?) {
+    if let id = id {
+      UserDefaults.standard.set(id, forKey: "desktop_app_account_id")
+      let payload: [String: Any] = [
+        "account_id": id,
+        "updated_at": ISO8601DateFormatter().string(from: Date()),
+      ]
+      if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted]) {
+        try? data.write(to: Self.desktopAppSessionURL, options: [.atomic])
+        try? FileManager.default.setAttributes(
+          [.posixPermissions: 0o600], ofItemAtPath: Self.desktopAppSessionURL.path)
+      }
+    } else {
+      UserDefaults.standard.removeObject(forKey: "desktop_app_account_id")
+      try? FileManager.default.removeItem(at: Self.desktopAppSessionURL)
+    }
   }
 
   private static var daemonLaunchAgentURL: URL {
@@ -291,6 +380,16 @@ public final class CodexClient: @unchecked Sendable {
     let appRunning = isCodexAppRunning()
     let activeModel = getActiveModelName()
 
+    let cliAcc = accountsList.first(where: {
+      $0.id.caseInsensitiveCompare(activeId ?? "") == .orderedSame
+        || $0.email.caseInsensitiveCompare(activeId ?? "") == .orderedSame
+    }) ?? accountsList.first(where: { $0.isCurrentActive }) ?? accountsList.first
+
+    let appAcc = Self.resolveAppAccount(
+      isAppRunning: appRunning,
+      markerID: getDesktopAppAccountId(),
+      accounts: accountsList)
+
     return MultiAccountSnapshot(
       timestamp: timestamp,
       activeAccountId: activeId,
@@ -314,7 +413,9 @@ public final class CodexClient: @unchecked Sendable {
       isAppRunning: appRunning,
       activeModelName: activeModel,
       planMultiplier: activeMultiplier,
-      accounts: accountsList
+      accounts: accountsList,
+      appAccount: appAcc,
+      cliAccount: cliAcc
     )
   }
 
@@ -341,30 +442,140 @@ public final class CodexClient: @unchecked Sendable {
     }
   }
 
-  public func switchToAccount(id: String, completion: @escaping (Bool) -> Void) {
-    DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
-      let proc = Process()
-      proc.executableURL = URL(fileURLWithPath: bin)
-      proc.arguments = ["switch", id]
-      let pipe = Pipe()
-      proc.standardOutput = pipe
-      proc.standardError = pipe
+  public enum SwitchTarget: Sendable {
+    case cli
+    case app
+    case both
+  }
 
-      do {
-        try proc.run()
-        _ = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
-        let success = proc.terminationStatus == 0
-        DispatchQueue.main.async {
-          completion(success)
-        }
-      } catch {
-        DispatchQueue.main.async {
-          completion(false)
-        }
+  public static func menuAutoDistributionArguments() -> [String] {
+    ["distribute", "--trigger", "user", "--reason", "menu_auto_distribute"]
+  }
+
+  public static func resolvedAccountId(
+    for identifier: String?, accounts: [AccountQuota]
+  ) -> String? {
+    guard let identifier, !identifier.isEmpty else { return nil }
+    return accounts.first(where: {
+      $0.id.caseInsensitiveCompare(identifier) == .orderedSame
+        || $0.email.caseInsensitiveCompare(identifier) == .orderedSame
+    })?.id
+  }
+
+  public static func manualDistributionArguments(
+    targetId: String,
+    target: SwitchTarget,
+    currentAppId: String?,
+    currentCliId: String?
+  ) -> [String]? {
+    guard !targetId.isEmpty else { return nil }
+
+    var arguments = ["distribute", "--trigger", "user"]
+    switch target {
+    case .app:
+      guard let currentCliId, !currentCliId.isEmpty else { return nil }
+      arguments += [
+        "--reason", "menu_app_target",
+        "--app-target", targetId,
+        "--cli-target", currentCliId,
+      ]
+    case .cli:
+      guard let currentAppId, !currentAppId.isEmpty else { return nil }
+      arguments += [
+        "--reason", "menu_cli_target",
+        "--app-target", currentAppId,
+        "--cli-target", targetId,
+        "--no-restart",
+      ]
+    case .both:
+      arguments += [
+        "--reason", "menu_both_target",
+        "--app-target", targetId,
+        "--cli-target", targetId,
+      ]
+    }
+    return arguments
+  }
+
+  internal static func executeDistribution(
+    arguments: [String], using runner: DistributionRunner
+  ) -> Bool {
+    runner(arguments)
+  }
+
+  internal static func makeDistributionProcess(arguments: [String]) -> Process {
+    let process = Process()
+    process.executableURL = cliExecutableURL
+    process.arguments = arguments
+    let output = Pipe()
+    process.standardOutput = output
+    process.standardError = output
+    return process
+  }
+
+  internal static func runCapturedProcess(_ process: Process) -> (status: Int32, output: Data)? {
+    guard let output = process.standardOutput as? Pipe,
+      let error = process.standardError as? Pipe,
+      output === error
+    else { return nil }
+
+    do {
+      try process.run()
+      let data = output.fileHandleForReading.readDataToEndOfFile()
+      process.waitUntilExit()
+      return (process.terminationStatus, data)
+    } catch {
+      return nil
+    }
+  }
+
+  private static func runDistributionProcess(arguments: [String]) -> Bool {
+    let process = makeDistributionProcess(arguments: arguments)
+    guard let result = runCapturedProcess(process) else {
+      NSLog("Rust distribution coordinator could not be launched")
+      return false
+    }
+    let success = result.status == 0
+    if !success {
+      NSLog("Rust distribution coordinator exited with status %d", result.status)
+    }
+    return success
+  }
+
+  private func runDistribution(
+    arguments: [String], completion: @escaping (Bool) -> Void
+  ) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      let success = Self.executeDistribution(
+        arguments: arguments, using: self.distributionRunner)
+      DispatchQueue.main.async {
+        completion(success)
       }
     }
+  }
+
+  public func autoDistributeAccounts(completion: @escaping (Bool) -> Void) {
+    runDistribution(arguments: Self.menuAutoDistributionArguments(), completion: completion)
+  }
+
+  public func switchToAccount(
+    id: String,
+    target: SwitchTarget = .both,
+    currentAppId: String?,
+    currentCliId: String?,
+    completion: @escaping (Bool) -> Void
+  ) {
+    guard
+      let arguments = Self.manualDistributionArguments(
+        targetId: id,
+        target: target,
+        currentAppId: currentAppId,
+        currentCliId: currentCliId)
+    else {
+      completion(false)
+      return
+    }
+    runDistribution(arguments: arguments, completion: completion)
   }
 
   public func removeAccount(id: String, completion: @escaping (Bool) -> Void) {

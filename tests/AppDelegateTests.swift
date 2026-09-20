@@ -19,6 +19,16 @@ func assertTrue(
   }
 }
 
+func waitUntil(
+  _ message: String, timeout: TimeInterval = 2.0, condition: @escaping () -> Bool
+) {
+  let deadline = Date().addingTimeInterval(timeout)
+  while !condition() && Date() < deadline {
+    RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+  }
+  assertTrue(condition(), message)
+}
+
 @main
 struct AppDelegateTestRunner {
   static func main() {
@@ -336,7 +346,7 @@ struct AppDelegateTestRunner {
     print("  ✅ Inactive screen dimming & compatibility matrix verified")
 
     // ====================================================================
-    // Test 7: Business Account Auto-Switch Selection & Resets Ranking
+    // Test 7: Rust-Owned Distribution Command Plans
     // ====================================================================
     let bizAccount = AccountQuota(
       id: "work-1",
@@ -362,35 +372,8 @@ struct AppDelegateTestRunner {
       resetAfterSeconds: 1800,
       credits: 5
     )
-    let proAccount = AccountQuota(
-      id: "pro-1",
-      name: "Pro Account",
-      email: "pro@gmail.com",
-      planType: "pro",
-      isCurrentActive: false,
-      fiveHourPercentage: 90.0,
-      weeklyPercentage: nil,
-      resetTime: nil,
-      resetAfterSeconds: 1200,
-      credits: 0
-    )
-    let bizAccountWithMoreCredits = AccountQuota(
-      id: "work-2",
-      name: "Main Corporate",
-      email: "team@work.com",
-      planType: "business",
-      isCurrentActive: false,
-      fiveHourPercentage: 80.0,
-      weeklyPercentage: nil,
-      resetTime: nil,
-      resetAfterSeconds: 7200,
-      credits: 4
-    )
-
     assertTrue(bizAccount.isBusiness, "Team plan must be detected as business")
-    assertTrue(bizAccountWithMoreCredits.isBusiness, "Business plan must be detected as business")
     assertTrue(!personalAccount.isBusiness, "Plus plan must not be detected as business")
-    assertTrue(!proAccount.isBusiness, "Pro plan must not be detected as business")
 
     assertTrue(
       !L10n.autoSwitchBusinessOnly.isEmpty, "autoSwitchBusinessOnly localization must not be empty")
@@ -398,119 +381,240 @@ struct AppDelegateTestRunner {
       !L10n.autoSwitchBusinessPriority.isEmpty,
       "autoSwitchBusinessPriority localization must not be empty")
 
-    // Simulation of ranking function:
-    func rankCandidates(_ accounts: [AccountQuota], businessPriority: Bool, businessOnly: Bool)
-      -> [AccountQuota]
-    {
-      var candidates = accounts.filter { $0.fiveHourPercentage > 0.0 && $0.error == nil }
-      if businessOnly {
-        candidates = candidates.filter { $0.isBusiness }
+    let autoArguments = CodexClient.menuAutoDistributionArguments()
+    assertEqual(
+      autoArguments,
+      ["distribute", "--trigger", "user", "--reason", "menu_auto_distribute"],
+      "Manual auto-distribution must delegate target selection to Rust")
+
+    let expectedPlans: [(CodexClient.SwitchTarget, [String])] = [
+      (
+        .app,
+        [
+          "distribute", "--trigger", "user", "--reason", "menu_app_target",
+          "--app-target", "target-id", "--cli-target", "current-cli",
+        ]
+      ),
+      (
+        .cli,
+        [
+          "distribute", "--trigger", "user", "--reason", "menu_cli_target",
+          "--app-target", "current-app", "--cli-target", "target-id", "--no-restart",
+        ]
+      ),
+      (
+        .both,
+        [
+          "distribute", "--trigger", "user", "--reason", "menu_both_target",
+          "--app-target", "target-id", "--cli-target", "target-id",
+        ]
+      ),
+    ]
+
+    for (target, expected) in expectedPlans {
+      let arguments = CodexClient.manualDistributionArguments(
+        targetId: "target-id", target: target,
+        currentAppId: "current-app", currentCliId: "current-cli")
+      assertEqual(arguments, expected, "Manual target must produce one exact distribute plan")
+
+      let invocationLock = NSLock()
+      var invocations: [[String]] = []
+      var completionResult: Bool?
+      let client = CodexClient(distributionRunner: { recorded in
+        invocationLock.lock()
+        invocations.append(recorded)
+        invocationLock.unlock()
+        return true
+      })
+      client.switchToAccount(
+        id: "target-id", target: target,
+        currentAppId: "current-app", currentCliId: "current-cli"
+      ) { success in
+        invocationLock.lock()
+        completionResult = success
+        invocationLock.unlock()
       }
-      candidates.sort { a, b in
-        if businessPriority && a.isBusiness != b.isBusiness {
-          return a.isBusiness
-        }
-        if a.credits != b.credits {
-          return a.credits > b.credits
-        }
-        let aReset = a.resetAfterSeconds ?? Int.max
-        let bReset = b.resetAfterSeconds ?? Int.max
-        if aReset != bReset {
-          return aReset < bReset
-        }
-        return a.fiveHourPercentage > b.fiveHourPercentage
+      waitUntil("Manual coordinator completion must be delivered") {
+        invocationLock.lock()
+        defer { invocationLock.unlock() }
+        return completionResult != nil
       }
-      return candidates
+      invocationLock.lock()
+      let surfacedSuccess = completionResult
+      let recordedInvocations = invocations
+      invocationLock.unlock()
+      assertEqual(surfacedSuccess, true, "Successful coordinator termination must be surfaced")
+      assertEqual(recordedInvocations, [expected], "Manual target must invoke distribute exactly once")
     }
 
-    // Case 1: Business Priority mode
-    // Both bizAccount (2 credits) and bizAccountWithMoreCredits (4 credits) must rank ahead of personalAccount (5 credits)
-    // Between the two business accounts, work-2 (4 credits) must rank first!
-    let prioritized = rankCandidates(
-      [personalAccount, bizAccount, bizAccountWithMoreCredits], businessPriority: true,
-      businessOnly: false)
-    assertEqual(
-      prioritized.first?.id, "work-2",
-      "Business priority: account with more resets among business accounts must be first")
-    assertEqual(prioritized[1].id, "work-1", "Second must be work-1 (business)")
-    assertEqual(
-      prioritized[2].id, "personal-1",
-      "Non-business account must be last when business accounts have quota")
-
-    // Case 2: Business Priority fallback when all business accounts are exhausted
-    let exhaustedBiz = AccountQuota(
-      id: "work-dead",
-      email: "team@work.com",
-      planType: "business",
-      isCurrentActive: false,
-      fiveHourPercentage: 0.0,
-      weeklyPercentage: nil,
-      resetTime: nil,
-      resetAfterSeconds: 3600,
-      credits: 10
-    )
-    let fallback = rankCandidates(
-      [exhaustedBiz, personalAccount], businessPriority: true, businessOnly: false)
-    assertEqual(
-      fallback.first?.id, "personal-1",
-      "Fallback to personal when all business accounts have 0% quota")
-
-    // Case 3: Business Only mode
-    let bizOnlyList = rankCandidates(
-      [personalAccount, bizAccountWithMoreCredits], businessPriority: false, businessOnly: true)
-    assertEqual(
-      bizOnlyList.count, 1, "Only business accounts must be included in business-only mode")
-    assertEqual(bizOnlyList.first?.id, "work-2", "work-2 should be the only candidate")
-
-    let bizOnlyExhausted = rankCandidates(
-      [personalAccount, exhaustedBiz], businessPriority: false, businessOnly: true)
     assertTrue(
-      bizOnlyExhausted.isEmpty,
-      "When business accounts have no quota, business-only must return no candidates")
-
-    // Case 4: Preference for more resets (credits) among non-business accounts or standard mode
-    let standardMode = rankCandidates(
-      [proAccount, personalAccount], businessPriority: false, businessOnly: false)
-    assertEqual(
-      standardMode.first?.id, "personal-1",
-      "Account with 5 credits must rank ahead of account with 0 credits")
-
-    // Case 5: AppDelegate.determineAutoSwitchTarget Preemption verification
-    // Active Pro has 90% quota, business account has 70% quota
-    let preemptTarget = AppDelegate.determineAutoSwitchTarget(
-      activeAcc: proAccount,
-      accounts: [proAccount, bizAccount],
-      autoSwitchEnabled: true,
-      businessOnly: false,
-      businessPriority: true
-    )
-    assertEqual(
-      preemptTarget?.id, "work-1",
-      "Active Pro account with quota must be preempted when business quota is available")
-
-    // Active Pro has 90% quota, but all business accounts have 0% quota -> No preemption
-    let noPreemptTarget = AppDelegate.determineAutoSwitchTarget(
-      activeAcc: proAccount,
-      accounts: [proAccount, exhaustedBiz],
-      autoSwitchEnabled: true,
-      businessOnly: false,
-      businessPriority: true
-    )
+      CodexClient.manualDistributionArguments(
+        targetId: "target-id", target: .app,
+        currentAppId: "current-app", currentCliId: nil) == nil,
+      "APP-only switching must fail closed when the CLI identity to preserve is unknown")
     assertTrue(
-      noPreemptTarget == nil,
-      "Active Pro must not be preempted when all business accounts are exhausted")
+      CodexClient.manualDistributionArguments(
+        targetId: "target-id", target: .cli,
+        currentAppId: nil, currentCliId: "current-cli") == nil,
+      "CLI-only switching must fail closed when the App identity to preserve is unknown")
 
-    // Active Business has 70% quota -> Must NOT be preempted by another business account with higher quota
-    let activeBizPreempt = AppDelegate.determineAutoSwitchTarget(
-      activeAcc: bizAccount,
-      accounts: [bizAccount, bizAccountWithMoreCredits],
-      autoSwitchEnabled: true,
-      businessOnly: false,
-      businessPriority: true
+    let missingIdentityLock = NSLock()
+    var missingIdentityInvocations = 0
+    var missingIdentityResult: Bool?
+    let missingIdentityClient = CodexClient(distributionRunner: { _ in
+      missingIdentityLock.lock()
+      missingIdentityInvocations += 1
+      missingIdentityLock.unlock()
+      return true
+    })
+    missingIdentityClient.switchToAccount(
+      id: "target-id", target: .app,
+      currentAppId: "current-app", currentCliId: nil
+    ) { missingIdentityResult = $0 }
+    assertEqual(missingIdentityResult, false, "Missing preservation identity must surface failure")
+    assertEqual(missingIdentityInvocations, 0, "Fail-closed plans must not start a process")
+
+    let failClosedSnapshot = MultiAccountSnapshot(
+      timestamp: Date(), activeAccountId: personalAccount.id,
+      activeEmail: personalAccount.email, activePlan: personalAccount.planType,
+      fiveHourPercentage: 0.0, weeklyPercentage: 0.0,
+      resetTime: nil, resetAfterSeconds: nil, credits: 0,
+      autoSwitchEnabled: true, accounts: [personalAccount, bizAccount],
+      appAccount: personalAccount, cliAccount: personalAccount
     )
-    assertTrue(activeBizPreempt == nil, "Active business account with quota must NOT be preempted")
+    let delegateIdentityLock = NSLock()
+    var delegateIdentityInvocations: [[String]] = []
+    let missingAppIdentityClient = CodexClient(
+      distributionRunner: { arguments in
+        delegateIdentityLock.lock()
+        delegateIdentityInvocations.append(arguments)
+        delegateIdentityLock.unlock()
+        return true
+      },
+      desktopAppAccountIdProvider: { nil }
+    )
+    let missingAppIdentityDelegate = AppDelegate(client: missingAppIdentityClient)
+    missingAppIdentityDelegate.lastSnapshot = failClosedSnapshot
+    missingAppIdentityDelegate.quotaRefreshOverride = { completion in completion(nil) }
+    missingAppIdentityDelegate.executeSwitchAccount(id: bizAccount.id, target: .cli)
+    waitUntil("Fail-closed CLI action must finish its refresh") {
+      !missingAppIdentityDelegate.isRefreshing
+    }
+    delegateIdentityLock.lock()
+    let missingAppInvocationCount = delegateIdentityInvocations.count
+    delegateIdentityLock.unlock()
+    assertEqual(
+      missingAppInvocationCount, 0,
+      "Delegate must not invoke Rust when authoritative App preservation identity is unavailable")
 
-    print("  ✅ Business account auto-switch selection & resets ranking verified")
+    let missingCliSnapshot = MultiAccountSnapshot(
+      timestamp: Date(), activeAccountId: nil,
+      activeEmail: nil, activePlan: nil,
+      fiveHourPercentage: 0.0, weeklyPercentage: 0.0,
+      resetTime: nil, resetAfterSeconds: nil, credits: 0,
+      accounts: [personalAccount, bizAccount], appAccount: personalAccount
+    )
+    let missingCliIdentityClient = CodexClient(
+      distributionRunner: { arguments in
+        delegateIdentityLock.lock()
+        delegateIdentityInvocations.append(arguments)
+        delegateIdentityLock.unlock()
+        return true
+      },
+      desktopAppAccountIdProvider: { personalAccount.id }
+    )
+    let missingCliIdentityDelegate = AppDelegate(client: missingCliIdentityClient)
+    missingCliIdentityDelegate.lastSnapshot = missingCliSnapshot
+    missingCliIdentityDelegate.quotaRefreshOverride = { completion in completion(nil) }
+    missingCliIdentityDelegate.executeSwitchAccount(id: bizAccount.id, target: .app)
+    waitUntil("Fail-closed App action must finish its refresh") {
+      !missingCliIdentityDelegate.isRefreshing
+    }
+    delegateIdentityLock.lock()
+    let missingCliInvocationCount = delegateIdentityInvocations.count
+    delegateIdentityLock.unlock()
+    assertEqual(
+      missingCliInvocationCount, 0,
+      "Delegate must not invoke Rust when authoritative CLI preservation identity is unavailable")
+
+    let failedInvocationLock = NSLock()
+    var failedInvocations: [[String]] = []
+    var failedCompletion: Bool?
+    let failingClient = CodexClient(distributionRunner: { arguments in
+      failedInvocationLock.lock()
+      failedInvocations.append(arguments)
+      failedInvocationLock.unlock()
+      return false
+    })
+    failingClient.autoDistributeAccounts { success in
+      failedInvocationLock.lock()
+      failedCompletion = success
+      failedInvocationLock.unlock()
+    }
+    waitUntil("Failed coordinator completion must be delivered") {
+      failedInvocationLock.lock()
+      defer { failedInvocationLock.unlock() }
+      return failedCompletion != nil
+    }
+    failedInvocationLock.lock()
+    let surfacedFailure = failedCompletion
+    let recordedAutoInvocations = failedInvocations
+    failedInvocationLock.unlock()
+    assertEqual(surfacedFailure, false, "Failed coordinator termination must be surfaced")
+    assertEqual(
+      recordedAutoInvocations, [autoArguments],
+      "Auto-distribution must invoke the coordinator exactly once")
+
+    let configuredProcess = CodexClient.makeDistributionProcess(arguments: autoArguments)
+    assertEqual(configuredProcess.arguments, autoArguments, "Process must receive the exact plan")
+    let capturedOutput = configuredProcess.standardOutput as? Pipe
+    let capturedError = configuredProcess.standardError as? Pipe
+    assertTrue(capturedOutput != nil, "Coordinator stdout must be captured")
+    assertTrue(capturedError != nil, "Coordinator stderr must be captured")
+    assertTrue(capturedOutput === capturedError, "Coordinator stdout and stderr must share one capture pipe")
+
+    let captureProbe = CodexClient.makeDistributionProcess(arguments: [])
+    captureProbe.executableURL = URL(fileURLWithPath: "/bin/sh")
+    captureProbe.arguments = ["-c", "printf coordinator-out; printf coordinator-err >&2; exit 7"]
+    let capturedProbeResult = CodexClient.runCapturedProcess(captureProbe)
+    assertEqual(capturedProbeResult?.status, 7, "Captured process status must be retained")
+    let capturedProbeText = capturedProbeResult.flatMap {
+      String(data: $0.output, encoding: .utf8)
+    } ?? ""
+    assertTrue(capturedProbeText.contains("coordinator-out"), "Coordinator stdout must be consumed")
+    assertTrue(capturedProbeText.contains("coordinator-err"), "Coordinator stderr must be consumed")
+
+    assertEqual(
+      CodexClient.resolvedAccountId(
+        for: "PERSONAL-1", accounts: [personalAccount, bizAccount]),
+      personalAccount.id,
+      "Current-session identifiers must resolve to canonical account IDs")
+    assertTrue(
+      CodexClient.resolvedAccountId(
+        for: "unknown-account", accounts: [personalAccount, bizAccount]) == nil,
+      "Unknown current-session identifiers must not be guessed")
+
+    let refreshSnapshot = failClosedSnapshot
+    let invocationLock = NSLock()
+    var refreshInvocations: [[String]] = []
+    let refreshClient = CodexClient(distributionRunner: { arguments in
+      invocationLock.lock()
+      refreshInvocations.append(arguments)
+      invocationLock.unlock()
+      return true
+    })
+    let refreshDelegate = AppDelegate(client: refreshClient)
+    refreshDelegate.quotaRefreshOverride = { completion in completion(refreshSnapshot) }
+    refreshDelegate.refreshNow()
+    waitUntil("Quota refresh must complete") { !refreshDelegate.isRefreshing }
+    invocationLock.lock()
+    let automaticInvocationCount = refreshInvocations.count
+    invocationLock.unlock()
+    assertEqual(
+      automaticInvocationCount, 0,
+      "Quota refresh must not initiate switching; the Rust daemon owns automatic policy")
+
+    print("  ✅ Rust-owned distribution plans, fail-closed identities, and refresh isolation verified")
 
     // ====================================================================
     // Test 8: Composite NSImage Rendering (Anti-Vibrancy Invariant)
@@ -1202,54 +1306,6 @@ struct AppDelegateTestRunner {
     activeReloginRow.mouseUp(with: fakeEvent)
     assertTrue(activeRowRelogined, "Clicking active account row with needsRelogin must trigger onRelogin")
 
-    // Regression Test 15: determineAutoSwitchTarget with expired active account and expired candidate
-    let healthyCandidate = AccountQuota(
-      id: "healthy-user",
-      name: "Healthy",
-      email: "healthy@example.com",
-      planType: "team",
-      isCurrentActive: false,
-      fiveHourPercentage: 80.0,
-      weeklyPercentage: 80.0,
-      resetTime: nil,
-      resetAfterSeconds: 3600,
-      credits: 0,
-      error: nil
-    )
-    let expiredActiveWithQuota = expiredAcc
-    // Active has 100% quota but needsRelogin = true
-    let targetCandidate = AppDelegate.determineAutoSwitchTarget(
-      activeAcc: expiredActiveWithQuota,
-      accounts: [expiredActiveWithQuota, healthyCandidate],
-      autoSwitchEnabled: true,
-      businessOnly: false,
-      businessPriority: false
-    )
-    assertEqual(targetCandidate?.id, healthyCandidate.id, "Auto-switch must rotate away from active account that needs relogin even if percentage is high")
-
-    // Candidate needing relogin must NEVER be selected even if it has 100% quota and credits
-    let expiredCandidate100 = AccountQuota(
-      id: "expired-cand",
-      name: "Expired Candidate",
-      email: "exp-cand@example.com",
-      planType: "team",
-      isCurrentActive: false,
-      fiveHourPercentage: 100.0,
-      weeklyPercentage: 100.0,
-      resetTime: nil,
-      resetAfterSeconds: 3600,
-      credits: 5,
-      error: "401 Unauthorized"
-    )
-    let candidateChoice = AppDelegate.determineAutoSwitchTarget(
-      activeAcc: normalQuotaExhaustedAcc,
-      accounts: [normalQuotaExhaustedAcc, expiredCandidate100, healthyCandidate],
-      autoSwitchEnabled: true,
-      businessOnly: false,
-      businessPriority: false
-    )
-    assertEqual(candidateChoice?.id, healthyCandidate.id, "Candidate needing relogin must NEVER be selected by auto-switch")
-
     print("  ✅ Account re-login detection, UI button, height & routing verified")
 
     // ====================================================================
@@ -1616,6 +1672,538 @@ struct AppDelegateTestRunner {
 
     print("  ✅ Drop-down menu hover, mouse tracking, accessibility & a11y actions verified")
 
+    // ====================================================================
+    // Test 17: Colored Brackets for APP and CLI Account Selection
+    // ====================================================================
+    do {
+      let accApp = AccountQuota(
+        id: "acc-app", email: "app@openai.com", planType: "plus", isCurrentActive: false,
+        fiveHourPercentage: 80.0, weeklyPercentage: 90.0, resetTime: nil, resetAfterSeconds: 1000,
+        credits: 0)
+      let accCli = AccountQuota(
+        id: "acc-cli", email: "cli@openai.com", planType: "team", isCurrentActive: false,
+        fiveHourPercentage: 60.0, weeklyPercentage: 70.0, resetTime: nil, resetAfterSeconds: 2000,
+        credits: 1)
+      let accReserve = AccountQuota(
+        id: "acc-res", email: "res@openai.com", planType: "pro", isCurrentActive: false,
+        fiveHourPercentage: 100.0, weeklyPercentage: 100.0, resetTime: nil, resetAfterSeconds: 3000,
+        credits: 0)
+
+      let appColor = MenuBarAppearanceHelper.appTagColor(isScreenActive: true)
+      let cliColor = MenuBarAppearanceHelper.cliTagColor(isScreenActive: true)
+
+      // Subtest 1: Only CLI selected -> brackets must match cliTagColor
+      let cliOnlyAttr = AppDelegate.buildStatusBarAttributedString(
+        icon: mockIcon,
+        cliSession: (
+          fiveHPct: "60%", fiveHColor: .systemGreen, weeklyPct: "70%", weeklyColor: .systemGreen
+        ),
+        accounts: [accCli],
+        isScreenActive: true,
+        useQuotaIcons: true,
+        stackPercentages: true,
+        appAccountId: nil,
+        cliAccountId: "acc-cli"
+      )
+      let cliOnlyStr = cliOnlyAttr.string as NSString
+      let cliBracketIdx = cliOnlyStr.range(of: "[").location
+      assertTrue(cliBracketIdx != NSNotFound, "CLI bracket '[' must exist as text character")
+      let cliBracketAttrs = cliOnlyAttr.attributes(at: cliBracketIdx, effectiveRange: nil)
+      if let col = cliBracketAttrs[.foregroundColor] as? NSColor {
+        assertEqual(col, cliColor, "CLI bracket foregroundColor must match cliTagColor")
+      } else {
+        assertTrue(false, "CLI bracket must have foregroundColor")
+      }
+
+      // Subtest 2: Only APP selected -> brackets must match appTagColor
+      let appOnlyAttr = AppDelegate.buildStatusBarAttributedString(
+        icon: mockIcon,
+        appSession: (
+          fiveHPct: "80%", fiveHColor: .systemGreen, weeklyPct: "90%", weeklyColor: .systemGreen
+        ),
+        cliSession: (
+          fiveHPct: "60%", fiveHColor: .systemGreen, weeklyPct: "70%", weeklyColor: .systemGreen
+        ),
+        accounts: [accApp],
+        isScreenActive: true,
+        useQuotaIcons: true,
+        stackPercentages: true,
+        appAccountId: "acc-app",
+        cliAccountId: nil
+      )
+      let appOnlyStr = appOnlyAttr.string as NSString
+      let appBracketIdx = appOnlyStr.range(of: "[").location
+      assertTrue(appBracketIdx != NSNotFound, "APP bracket '[' must exist as text character")
+      let appBracketAttrs = appOnlyAttr.attributes(at: appBracketIdx, effectiveRange: nil)
+      if let col = appBracketAttrs[.foregroundColor] as? NSColor {
+        assertEqual(col, appColor, "APP bracket foregroundColor must match appTagColor")
+      } else {
+        assertTrue(false, "APP bracket must have foregroundColor")
+      }
+
+      // Subtest 3: Both APP and CLI selected on the same account -> dual-color split bracket
+      let bothAttr = AppDelegate.buildStatusBarAttributedString(
+        icon: mockIcon,
+        appSession: (
+          fiveHPct: "80%", fiveHColor: .systemGreen, weeklyPct: "90%", weeklyColor: .systemGreen
+        ),
+        cliSession: (
+          fiveHPct: "80%", fiveHColor: .systemGreen, weeklyPct: "90%", weeklyColor: .systemGreen
+        ),
+        accounts: [accApp],
+        isScreenActive: true,
+        useQuotaIcons: true,
+        stackPercentages: true,
+        appAccountId: "acc-app",
+        cliAccountId: "acc-app"
+      )
+      var bothAttachments: [NSTextAttachment] = []
+      bothAttr.enumerateAttribute(
+        .attachment, in: NSRange(location: 0, length: bothAttr.length), options: []
+      ) { val, _, _ in
+        if let att = val as? NSTextAttachment { bothAttachments.append(att) }
+      }
+      assertEqual(
+        bothAttachments.count, 4, "Expected 4 attachments (icon + sessions + badge) for dual-session with text brackets")
+
+      let bothStr = bothAttr.string as NSString
+      let bothOpenRange = bothStr.range(of: "[")
+      assertTrue(bothOpenRange.location != NSNotFound, "Dual-session status bar must contain text bracket '['")
+      let bothAttrs = bothAttr.attributes(at: bothOpenRange.location, effectiveRange: nil)
+      assertTrue(bothAttrs[.foregroundColor] is NSColor, "Bracket foregroundColor must be pattern NSColor")
+
+      let splitImg = AppDelegate.renderCompositeImage(from: bothAttr)
+      let splitRep = NSBitmapImageRep(data: splitImg.tiffRepresentation!)!
+      var hasAppTop = false
+      var hasCliBottom = false
+      for y in 1...9 {
+        for x in 0..<splitRep.pixelsWide {
+          let c = splitRep.colorAt(x: x, y: y)!
+          if c.alphaComponent > 0.5 && c.blueComponent > 0.8 && c.redComponent < 0.5 {
+            hasAppTop = true
+            break
+          }
+        }
+      }
+      for y in 12...20 {
+        for x in 0..<splitRep.pixelsWide {
+          let c = splitRep.colorAt(x: x, y: y)!
+          if c.alphaComponent > 0.5 && c.greenComponent > 0.8 && c.blueComponent < 0.8 {
+            hasCliBottom = true
+            break
+          }
+        }
+      }
+      assertTrue(hasAppTop, "Split bracket top half must contain APP cyan color pixels")
+      assertTrue(hasCliBottom, "Split bracket bottom half must contain CLI green color pixels")
+
+      // Subtest 4: Distinct accounts for APP and CLI
+      let distinctAttr = AppDelegate.buildStatusBarAttributedString(
+        icon: mockIcon,
+        appSession: (
+          fiveHPct: "80%", fiveHColor: .systemGreen, weeklyPct: "90%", weeklyColor: .systemGreen
+        ),
+        cliSession: (
+          fiveHPct: "60%", fiveHColor: .systemGreen, weeklyPct: "70%", weeklyColor: .systemGreen
+        ),
+        accounts: [accApp, accCli, accReserve],
+        isScreenActive: true,
+        useQuotaIcons: true,
+        stackPercentages: true,
+        appAccountId: "acc-app",
+        cliAccountId: "acc-cli"
+      )
+      let distStr = distinctAttr.string as NSString
+      var foundBracketColors: [NSColor] = []
+      var searchRange = NSRange(location: 0, length: distStr.length)
+      while true {
+        let found = distStr.range(of: "[", options: [], range: searchRange)
+        if found.location == NSNotFound { break }
+        let attrs = distinctAttr.attributes(at: found.location, effectiveRange: nil)
+        if let col = attrs[.foregroundColor] as? NSColor {
+          foundBracketColors.append(col)
+        }
+        let nextStart = found.location + 1
+        searchRange = NSRange(location: nextStart, length: distStr.length - nextStart)
+      }
+      assertEqual(
+        foundBracketColors.count, 2,
+        "Expected exactly 2 opening brackets for distinct APP and CLI accounts")
+      assertEqual(foundBracketColors[0], appColor, "First column (APP) bracket must match appTagColor")
+      assertEqual(foundBracketColors[1], cliColor, "Second column (CLI) bracket must match cliTagColor")
+    }
+    print("  ✅ Colored brackets for APP, CLI and dual-selection (split top/bottom) verified")
+
+    // ====================================================================
+    // Test 18: Dual Switch Controls for CLI and APP Sessions
+    // ====================================================================
+    do {
+      var switchedCliId: String? = nil
+      var switchedAppId: String? = nil
+
+      let buttonsView = AccountSwitchButtonsView(
+        frame: NSRect(x: 0, y: 0, width: 220, height: 24),
+        accountId: "acc-test",
+        accountEmail: "test@example.com",
+        isCliActive: false,
+        isAppActive: false,
+        onSwitchCli: { switchedCliId = $0 },
+        onSwitchApp: { switchedAppId = $0 }
+      )
+      assertEqual(buttonsView.cliButton.title, "> CLI", "Inactive CLI button title must be '> CLI'")
+      assertEqual(buttonsView.appButton.title, "🖥 APP", "Inactive APP button title must be '🖥 APP'")
+
+      buttonsView.handleCliClicked()
+      assertEqual(switchedCliId, "acc-test", "handleCliClicked must invoke onSwitchCli with account ID")
+
+      buttonsView.handleAppClicked()
+      assertEqual(switchedAppId, "acc-test", "handleAppClicked must invoke onSwitchApp with account ID")
+
+      // Active state verification
+      let activeButtonsView = AccountSwitchButtonsView(
+        frame: NSRect(x: 0, y: 0, width: 220, height: 24),
+        accountId: "acc-active",
+        accountEmail: "active@example.com",
+        isCliActive: true,
+        isAppActive: true
+      )
+      assertEqual(activeButtonsView.cliButton.title, "✓ CLI", "Active CLI button title must be '✓ CLI'")
+      assertEqual(activeButtonsView.appButton.title, "✓ APP", "Active APP button title must be '✓ APP'")
+
+      // Card view integration verification
+      let testAccount = AccountQuota(
+        id: "acc-res-1",
+        email: "res1@example.com",
+        planType: "team",
+        isCurrentActive: false,
+        fiveHourPercentage: 50.0,
+        weeklyPercentage: 80.0,
+        resetTime: nil,
+        resetAfterSeconds: 3600,
+        credits: 0
+      )
+      let entry = ReserveAccountSectionEntry(
+        account: testAccount, reserveIndex: 1, isCliActive: false, isAppActive: false)
+      var cardCliSwitched = false
+      var cardAppSwitched = false
+      let card = AccountSectionCardView(
+        frame: NSRect(
+          x: 0, y: 0, width: 440,
+          height: AccountSectionCardView.preferredHeight(for: [entry])),
+        title: "Test Section",
+        kind: .business,
+        entries: [entry],
+        onSwitchCli: { _ in cardCliSwitched = true },
+        onSwitchApp: { _ in cardAppSwitched = true },
+        onDelete: { _, _ in },
+        onRename: { _, _, _ in }
+      )
+      assertEqual(card.switchButtonsViews.count, 1, "Card must have 1 switchButtonsView for the entry")
+      assertEqual(card.switchButtons.count, 2, "Card must expose 2 switchButtons (CLI and APP)")
+      card.switchButtonsViews[0].handleCliClicked()
+      assertTrue(cardCliSwitched, "Card switch CLI callback must trigger")
+      card.switchButtonsViews[0].handleAppClicked()
+      assertTrue(cardAppSwitched, "Card switch APP callback must trigger")
+
+      // Robust ID canonicalization test for brackets
+      let canonicalAccount = AccountQuota(
+        id: "User@Domain.Com:uuid-123",
+        email: "user@domain.com",
+        planType: "team",
+        isCurrentActive: false,
+        fiveHourPercentage: 70.0,
+        weeklyPercentage: 70.0,
+        resetTime: nil,
+        resetAfterSeconds: 1000,
+        credits: 0
+      )
+      let canonicalAttr = AppDelegate.buildStatusBarAttributedString(
+        icon: mockIcon,
+        cliSession: (
+          fiveHPct: "70%", fiveHColor: .systemGreen, weeklyPct: "70%", weeklyColor: .systemGreen
+        ),
+        accounts: [canonicalAccount],
+        isScreenActive: true,
+        useQuotaIcons: true,
+        stackPercentages: true,
+        appAccountId: nil,
+        cliAccountId: "USER@DOMAIN.COM"  // case-different email lookup
+      )
+      let canonicalStr = canonicalAttr.string as NSString
+      let bracketIdx = canonicalStr.range(of: "[").location
+      assertTrue(
+        bracketIdx != NSNotFound,
+        "Case-insensitive email lookup must resolve and draw bracket '['")
+
+      // Single-column fallback .both mode verification
+      let fallbackBothAttr = AppDelegate.buildStatusBarAttributedString(
+        icon: mockIcon,
+        appSession: (
+          fiveHPct: "80%", fiveHColor: .systemCyan, weeklyPct: "80%", weeklyColor: .systemCyan
+        ),
+        cliSession: (
+          fiveHPct: "60%", fiveHColor: .systemGreen, weeklyPct: "60%", weeklyColor: .systemGreen
+        ),
+        accounts: [],
+        isScreenActive: true,
+        useQuotaIcons: true,
+        stackPercentages: true,
+        appAccountId: "acc-1",
+        cliAccountId: "acc-2"
+      )
+      let fbHasTextBracket = (fallbackBothAttr.string as NSString).range(of: "[").location != NSNotFound
+      assertTrue(
+        fbHasTextBracket,
+        "Empty accounts fallback with both sessions must draw split text bracket '['"
+      )
+      let fbOpenRange = (fallbackBothAttr.string as NSString).range(of: "[")
+      let fbAttrs = fallbackBothAttr.attributes(at: fbOpenRange.location, effectiveRange: nil)
+      assertTrue(fbAttrs[.foregroundColor] is NSColor, "Fallback bracket must use pattern NSColor")
+    }
+    print("  ✅ Dual switch controls, active badges, callbacks and robust ID resolution verified")
+
+    // ====================================================================
+    // Test 19: Status Bar CLI Account Resolution & Quota Decoupling Regression Test
+    // ====================================================================
+    do {
+      let accActive = AccountQuota(
+        id: "active-acc",
+        name: "Active Account",
+        email: "active@openai.com",
+        planType: "team",
+        isCurrentActive: true,
+        fiveHourPercentage: 45.0,
+        weeklyPercentage: 55.0,
+        resetTime: nil,
+        resetAfterSeconds: 3600,
+        credits: 1,
+        planMultiplier: 2.0
+      )
+      let accCli = AccountQuota(
+        id: "cli-acc",
+        name: "CLI Account",
+        email: "cli@openai.com",
+        planType: "pro",
+        isCurrentActive: false,
+        fiveHourPercentage: 90.0,
+        weeklyPercentage: 85.0,
+        resetTime: nil,
+        resetAfterSeconds: 7200,
+        credits: 0,
+        planMultiplier: 5.0
+      )
+      let accApp = AccountQuota(
+        id: "app-acc",
+        name: "App Account",
+        email: "app@openai.com",
+        planType: "business",
+        isCurrentActive: false,
+        fiveHourPercentage: 30.0,
+        weeklyPercentage: 70.0,
+        resetTime: nil,
+        resetAfterSeconds: 1800,
+        credits: 2,
+        planMultiplier: 20.0
+      )
+
+      // Subtest 1: Deliberately different top-level, cliAccount, and appAccount values
+      // Top-level: 10% / 20%, mult: 1.0
+      // CLI account: 90% / 85%, mult: 5.0
+      // APP account: 30% / 70%, mult: 20.0
+      // Active account: 45% / 55%, mult: 2.0
+      let fullSnapshot = MultiAccountSnapshot(
+        timestamp: Date(),
+        activeAccountId: accActive.id,
+        activeEmail: accActive.email,
+        activePlan: accActive.planType,
+        fiveHourPercentage: 10.0,
+        weeklyPercentage: 20.0,
+        resetTime: nil,
+        resetAfterSeconds: 5000,
+        credits: 0,
+        isAppRunning: true,
+        planMultiplier: 1.0,
+        accounts: [accActive, accCli, accApp],
+        appAccount: accApp,
+        cliAccount: accCli
+      )
+
+      // Verify resolved CLI account is accCli
+      let resolvedCli = AppDelegate.resolveCliAccount(from: fullSnapshot)
+      assertEqual(resolvedCli?.id, "cli-acc", "Resolved CLI account must be cliAccount")
+
+      // Verify resolved sessions
+      let sessions = AppDelegate.resolveStatusBarSessions(from: fullSnapshot, isScreenActive: true)
+      assertEqual(sessions.cliSession.fiveHPct, "90%", "CLI 5h percentage must come from cliAccount (90%), NOT top-level (10%) or active (45%)")
+      assertEqual(sessions.cliSession.weeklyPct, "85%", "CLI weekly percentage must come from cliAccount (85%), NOT top-level (20%) or active (55%)")
+
+      // Verify multiplier impact on colors:
+      // For accCli: 90.0 / 5.0 = 18.0% <= 20% -> Red! (If mult 1.0 were used, 90.0% would be green)
+      let expectedCli5hColor = MenuBarAppearanceHelper.menuBarColor(forPercentage: 90.0, weeklyPercentage: 85.0, isScreenActive: true, planMultiplier: 5.0)
+      let expectedCliWColor = MenuBarAppearanceHelper.menuBarColor(forPercentage: 85.0, weeklyPercentage: nil, isScreenActive: true, planMultiplier: 5.0)
+      assertEqual(sessions.cliSession.fiveHColor, expectedCli5hColor, "CLI 5h color must use cliAccount multiplier (5.0)")
+      assertEqual(sessions.cliSession.weeklyColor, expectedCliWColor, "CLI weekly color must use cliAccount multiplier (5.0)")
+
+      // Verify APP session
+      assertTrue(sessions.appSession != nil, "APP session must be non-nil when isAppRunning is true")
+      assertEqual(sessions.appSession?.fiveHPct, "30%", "APP 5h percentage must come from appAccount")
+      assertEqual(sessions.appSession?.weeklyPct, "70%", "APP weekly percentage must come from appAccount")
+      let expectedApp5hColor = MenuBarAppearanceHelper.menuBarColor(forPercentage: 30.0, weeklyPercentage: 70.0, isScreenActive: true, planMultiplier: 20.0)
+      assertEqual(sessions.appSession?.fiveHColor, expectedApp5hColor, "APP 5h color must use appAccount multiplier (20.0)")
+
+      // Verify horizontal attributed string contains resolved percentages
+      let horizAttr = AppDelegate.buildStatusBarAttributedString(
+        snapshot: fullSnapshot,
+        icon: mockIcon,
+        isScreenActive: true,
+        useQuotaIcons: true,
+        stackPercentages: false
+      )
+      let horizStr = horizAttr.string
+      assertTrue(horizStr.contains("90%"), "CLI displayed 5h percentage (90%) must be in horizontal attributed string")
+      assertTrue(horizStr.contains("85%"), "CLI displayed weekly percentage (85%) must be in horizontal attributed string")
+      assertTrue(horizStr.contains("30%"), "APP displayed 5h percentage (30%) must be in horizontal attributed string")
+      assertTrue(horizStr.contains("70%"), "APP displayed weekly percentage (70%) must be in horizontal attributed string")
+      assertTrue(!horizStr.contains("10%"), "Top-level 5h percentage (10%) must NOT appear in horizontal attributed string")
+      assertTrue(!horizStr.contains("20%"), "Top-level weekly percentage (20%) must NOT appear in horizontal attributed string")
+
+      // Verify bracket mapping: APP cyan and CLI green
+      let appColor = MenuBarAppearanceHelper.appTagColor(isScreenActive: true)
+      let cliColor = MenuBarAppearanceHelper.cliTagColor(isScreenActive: true)
+      let fullAttr = AppDelegate.buildStatusBarAttributedString(
+        snapshot: fullSnapshot,
+        icon: mockIcon,
+        isScreenActive: true,
+        useQuotaIcons: true,
+        stackPercentages: true
+      )
+      let fullStrNS = fullAttr.string as NSString
+      var bracketColors: [NSColor] = []
+      var searchRange = NSRange(location: 0, length: fullStrNS.length)
+      while true {
+        let found = fullStrNS.range(of: "[", options: [], range: searchRange)
+        if found.location == NSNotFound { break }
+        let attrs = fullAttr.attributes(at: found.location, effectiveRange: nil)
+        if let col = attrs[.foregroundColor] as? NSColor {
+          bracketColors.append(col)
+        }
+        let nextStart = found.location + 1
+        searchRange = NSRange(location: nextStart, length: fullStrNS.length - nextStart)
+      }
+      assertEqual(bracketColors.count, 2, "Expected 2 opening brackets for CLI and APP accounts")
+      assertEqual(bracketColors[0], cliColor, "First bracketed account (accCli) must have CLI green bracket")
+      assertEqual(bracketColors[1], appColor, "Second bracketed account (accApp) must have APP cyan bracket")
+
+      // Subtest 2: Weekly exhaustion on CLI account forces displayed 5h to 0% and slate gray
+      let accCliExhausted = AccountQuota(
+        id: "cli-exhausted",
+        name: "CLI Exhausted",
+        email: "exhausted@openai.com",
+        planType: "team",
+        isCurrentActive: false,
+        fiveHourPercentage: 80.0,
+        weeklyPercentage: 0.0,
+        resetTime: nil,
+        resetAfterSeconds: 3600,
+        credits: 0,
+        planMultiplier: 1.0
+      )
+      let exhaustedSnapshot = MultiAccountSnapshot(
+        timestamp: Date(),
+        activeAccountId: accActive.id,
+        activeEmail: accActive.email,
+        activePlan: accActive.planType,
+        fiveHourPercentage: 10.0,
+        weeklyPercentage: 100.0,
+        resetTime: nil,
+        resetAfterSeconds: 3600,
+        credits: 0,
+        accounts: [accActive, accCliExhausted],
+        cliAccount: accCliExhausted
+      )
+      let exhaustedSessions = AppDelegate.resolveStatusBarSessions(from: exhaustedSnapshot, isScreenActive: true)
+      assertEqual(exhaustedSessions.cliSession.fiveHPct, "0%", "Exhausted CLI weekly percentage must force CLI 5h to 0%")
+      let expectedExhaustedColor = MenuBarAppearanceHelper.menuBarColor(forPercentage: 80.0, weeklyPercentage: 0.0, isScreenActive: true, planMultiplier: 1.0)
+      assertEqual(exhaustedSessions.cliSession.fiveHColor, expectedExhaustedColor, "Exhausted CLI 5h color must be slate gray")
+
+      // Subtest 3: Fall back to current active account when snapshot.cliAccount is nil
+      let fallbackActiveSnapshot = MultiAccountSnapshot(
+        timestamp: Date(),
+        activeAccountId: accActive.id,
+        activeEmail: accActive.email,
+        activePlan: accActive.planType,
+        fiveHourPercentage: 10.0,
+        weeklyPercentage: 20.0,
+        resetTime: nil,
+        resetAfterSeconds: 3600,
+        credits: 0,
+        accounts: [accActive],
+        cliAccount: nil
+      )
+      let fallbackActiveSessions = AppDelegate.resolveStatusBarSessions(from: fallbackActiveSnapshot, isScreenActive: true)
+      assertEqual(fallbackActiveSessions.cliSession.fiveHPct, "45%", "CLI session must fall back to active account 5h percentage")
+      assertEqual(fallbackActiveSessions.cliSession.weeklyPct, "55%", "CLI session must fall back to active account weekly percentage")
+
+      // Subtest 4: Use top-level snapshot values only when no CLI account exists
+      let topLevelOnlySnapshot = MultiAccountSnapshot(
+        timestamp: Date(),
+        activeAccountId: nil,
+        activeEmail: nil,
+        activePlan: nil,
+        fiveHourPercentage: 12.0,
+        weeklyPercentage: 24.0,
+        resetTime: nil,
+        resetAfterSeconds: 3600,
+        credits: 0,
+        planMultiplier: 1.0,
+        accounts: [],
+        cliAccount: nil
+      )
+      let topLevelSessions = AppDelegate.resolveStatusBarSessions(from: topLevelOnlySnapshot, isScreenActive: true)
+      assertEqual(topLevelSessions.cliSession.fiveHPct, "12%", "CLI session must use top-level 5h when no CLI account exists")
+      assertEqual(topLevelSessions.cliSession.weeklyPct, "24%", "CLI session must use top-level weekly when no CLI account exists")
+      assertTrue(topLevelSessions.appSession == nil, "APP session must be nil when no app account exists")
+
+      // Subtest 5: APP must still use snapshot.appAccount only while the app is running
+      let closedAppSnapshot = MultiAccountSnapshot(
+        timestamp: Date(),
+        activeAccountId: accActive.id,
+        activeEmail: accActive.email,
+        activePlan: accActive.planType,
+        fiveHourPercentage: 10.0,
+        weeklyPercentage: 20.0,
+        resetTime: nil,
+        resetAfterSeconds: 3600,
+        credits: 0,
+        isAppRunning: false,
+        accounts: [accActive, accCli, accApp],
+        appAccount: accApp,
+        cliAccount: accCli
+      )
+      let closedAppSessions = AppDelegate.resolveStatusBarSessions(from: closedAppSnapshot, isScreenActive: true)
+      assertTrue(closedAppSessions.appSession == nil, "appSession must be nil when isAppRunning is false even if appAccount is set")
+      let closedAppAttr = AppDelegate.buildStatusBarAttributedString(
+        snapshot: closedAppSnapshot,
+        icon: mockIcon,
+        isScreenActive: true,
+        useQuotaIcons: true,
+        stackPercentages: false
+      )
+      assertTrue(!closedAppAttr.string.contains("APP "), "Attributed string must not display APP session when app is closed")
+      assertTrue(closedAppAttr.string.contains("CLI "), "Attributed string must display CLI session when app is closed")
+
+      // Subtest 6: updateStatusBar execution with image and tooltip routing
+      let appDelegateTest = AppDelegate()
+      appDelegateTest.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+      appDelegateTest.updateStatusBar(with: fullSnapshot)
+      assertTrue(appDelegateTest.statusItem?.button?.image != nil, "updateStatusBar must assign composite image to statusItem button")
+      let toolTip = appDelegateTest.statusItem?.button?.toolTip ?? ""
+      assertTrue(toolTip.contains("cli@openai.com"), "Tooltip must contain resolved CLI email: \(toolTip)")
+      assertTrue(toolTip.contains("app@openai.com"), "Tooltip must contain APP email when running: \(toolTip)")
+
+      print("  ✅ Status Bar CLI Account Resolution & Quota Decoupling verified")
+    }
+
     // 5. 300-Line Limit & Single Entity Invariant Verification
     let sourceFilesToCheck = [
       "Sources/MenuIconButton.swift",
@@ -1625,9 +2213,12 @@ struct AppDelegateTestRunner {
       "Sources/ReserveAccountSectionEntry.swift",
       "Sources/ResetCreditsRowView.swift",
       "Sources/AccountRowView.swift",
+      "Sources/AccountSwitchButtonsView.swift",
       "Sources/AccountSectionCardView.swift",
+      "Sources/AccountSectionCardView+Tracking.swift",
       "Sources/AppDelegate.swift",
       "Sources/AppDelegate+FileWatchers.swift",
+      "Sources/StatusBarBracketRenderer.swift",
       "Sources/AppDelegate+StatusBar.swift",
       "Sources/AppDelegate+StatusBarOverloads.swift",
       "Sources/AppDelegate+Menu.swift",

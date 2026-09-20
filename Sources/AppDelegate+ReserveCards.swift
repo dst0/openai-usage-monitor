@@ -49,9 +49,20 @@ extension AppDelegate {
     var globalReserveIdx = 0
 
     func sectionEntries(for accounts: [AccountQuota]) -> [ReserveAccountSectionEntry] {
-      accounts.map { account in
+      let appAccId = snapshot.isAppRunning ? snapshot.appAccount?.id : nil
+      let cliAccId =
+        snapshot.cliAccount?.id
+        ?? snapshot.accounts.first(where: { $0.isCurrentActive })?.id
+      return accounts.map { account in
         globalReserveIdx += 1
-        return ReserveAccountSectionEntry(account: account, reserveIndex: globalReserveIdx)
+        let isCli = cliAccId != nil && (account.id.caseInsensitiveCompare(cliAccId!) == .orderedSame || account.email.caseInsensitiveCompare(cliAccId!) == .orderedSame)
+        let isApp = appAccId != nil && (account.id.caseInsensitiveCompare(appAccId!) == .orderedSame || account.email.caseInsensitiveCompare(appAccId!) == .orderedSame)
+        return ReserveAccountSectionEntry(
+          account: account,
+          reserveIndex: globalReserveIdx,
+          isCliActive: isCli,
+          isAppActive: isApp
+        )
       }
     }
 
@@ -65,8 +76,11 @@ extension AppDelegate {
         title: title,
         kind: kind,
         entries: entries,
-        onSwitch: { [weak self] accountId in
-          self?.executeSwitchAccount(id: accountId)
+        onSwitchCli: { [weak self] accountId in
+          self?.executeSwitchAccount(id: accountId, target: .cli)
+        },
+        onSwitchApp: { [weak self] accountId in
+          self?.executeSwitchAccount(id: accountId, target: .app)
         },
         onDelete: { [weak self] accountId, email in
           self?.confirmAndRemoveAccount(id: accountId, email: email)

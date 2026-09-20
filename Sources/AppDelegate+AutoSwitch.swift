@@ -39,41 +39,9 @@ extension AppDelegate {
     client.setAutoSwitchBusinessPriority(newState)
   }
 
-  public static func determineAutoSwitchTarget(
-    activeAcc: AccountQuota?,
-    accounts: [AccountQuota],
-    autoSwitchEnabled: Bool,
-    businessOnly: Bool,
-    businessPriority: Bool
-  ) -> AccountQuota? {
-    guard autoSwitchEnabled, let activeAcc = activeAcc else { return nil }
-    let isDepleted = activeAcc.fiveHourPercentage <= 0.0 || activeAcc.needsRelogin
-      || (activeAcc.error?.localizedCaseInsensitiveContains("429") == true)
-      || (activeAcc.error?.localizedCaseInsensitiveContains("limit") == true)
-    let shouldPreemptForBusiness = businessPriority && !activeAcc.isBusiness
-      && accounts.contains { acc in
-        acc.id != activeAcc.id && acc.isBusiness && acc.fiveHourPercentage > 0.0 && !acc.needsRelogin
-          && (acc.error == nil || acc.error?.isEmpty == true)
-      }
-    guard isDepleted || shouldPreemptForBusiness else { return nil }
-
-    var candidates = accounts.filter { acc in
-      acc.id != activeAcc.id && acc.fiveHourPercentage > 0.0 && !acc.needsRelogin
-        && (acc.error == nil || acc.error?.isEmpty == true)
+  @objc internal func autoDistributeAccountsAction() {
+    client.autoDistributeAccounts { [weak self] _ in
+      self?.refreshNow()
     }
-    if businessOnly || shouldPreemptForBusiness {
-      candidates = candidates.filter { $0.isBusiness }
-    }
-    guard !candidates.isEmpty else { return nil }
-
-    candidates.sort { a, b in
-      if businessPriority && a.isBusiness != b.isBusiness { return a.isBusiness }
-      if a.credits != b.credits { return a.credits > b.credits }
-      let aReset = a.resetAfterSeconds ?? Int.max
-      let bReset = b.resetAfterSeconds ?? Int.max
-      if aReset != bReset { return aReset < bReset }
-      return a.fiveHourPercentage > b.fiveHourPercentage
-    }
-    return candidates.first
   }
 }

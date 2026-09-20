@@ -1,0 +1,22 @@
+# 2026-09-20 — Automatic distribution requires one Rust owner
+
+- **Status:** Resolved
+- **Task/context:** Route daemon and CLI-wrapper account automation through the Rust distribution coordinator without changing manual legacy switching.
+- **Unexpected observation or failure:** Both automatic callers selected a target and invoked the legacy switch path themselves. That bypassed the coordinator's cooldown, in-flight journal, operation ID, and recovery transaction. The first broader mock test also revealed that window capture and restore bypassed the injected lifecycle and invoked a native helper.
+- **Evidence:** The pre-fix regression test could not compile because no automatic coordinator seam existed. Source inspection found direct `select_best_switch`, `switch_to_account`, and detached restart dispatch calls in the automatic entrypoints. A sampled mock test was blocked in native window restoration despite using `MockAppLifecycle`.
+- **Approaches tried:**
+  - **Attempt:** Call the coordinator directly from both callers.
+    - **Outcome:** Partial
+    - **Why:** It removes the direct switch but duplicates trigger classification and provides no focused dependency-injection seam for exactly-once tests.
+  - **Attempt:** Spawn the existing distribution CLI command.
+    - **Outcome:** Did not use
+    - **Why:** A second process weakens in-process operation continuity and adds avoidable serialization and dispatch failure modes.
+  - **Attempt:** Add an injected automatic distribution service whose callers provide only source and suppression evidence, and extend the lifecycle boundary to cover window capture and restore.
+    - **Outcome:** Worked
+    - **Why:** Target selection remains in the decision service, every approved decision creates one coordinator request, and tests remain non-operational.
+- **Root cause:** Coordinator ownership was an architectural convention rather than an enforced dependency boundary; automatic callers still retained target-selection and execution capabilities, and the transaction retained side effects outside its lifecycle abstraction.
+- **Resolution:** Daemon and wrapper automatic paths now create target-free `trigger=auto` requests through `AutomaticDistributionService`. The coordinator owns target selection, cooldown, journal, transaction, recovery, and outcome under one operation ID. Structured audit messages use opaque stable account references and stable reason codes. Window capture and restore are lifecycle operations, so mocks do not invoke native helpers.
+- **Verification:** Focused distribution tests cover exactly-once daemon and wrapper requests, stable cause codes, disabled and weekly-reset suppression, cooldown propagation, coordinator-owned strategy and business-only filtering, audit redaction, operation-ID continuity, and absence of legacy switch symbols in automatic entrypoints.
+- **Prevention/follow-up:** Keep source-boundary tests that reject `select_best_switch`, `switch_to_account`, and detached restart dispatch in automatic entrypoints. New automatic triggers must carry evidence only and depend on `DistributionExecutor`.
+- **Reusable learning:** A coordinator is not the owner while callers can still select targets or execute the operation; enforce ownership with a trigger-only injected seam and include every external side effect in the mockable transaction boundary.
+- **References:** `codex-switcher/src/distribution/automatic_distribution_service.rs`, `codex-switcher/src/distribution/distribution_coordinator.rs`, `codex-switcher/tests/automatic_distribution_entrypoints.rs`.

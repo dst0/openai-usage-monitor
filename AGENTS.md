@@ -1,18 +1,30 @@
-# Codex Switcher & Monitor — Agent Guidance
+# Codex Switcher & Monitor — Agent Guidance & Code Culture
 
-## Core Architecture
-- `codex-switcher/`: Rust CLI (`cxi`, `codex-mon`) for quota monitoring, account switching, and automated thread resumption.
-- `Sources/`: Swift AppKit Menu Bar application (`Codex Monitor.app`).
-- `/Applications/ChatGPT.app`: the standard OpenAI Codex Desktop application. Its bundled `codex app-server` is the only Desktop thread writer; the Monitor does not install or launch a second one.
-- `~/.codex/ipc/ipc.sock`: same-user Desktop IPC router used by recovery to address the window that owns a task.
-- `~/.codex/app-server-daemon/`: Desktop-owned app-server coordination state; it is shared with the official app and is preserved by the Monitor uninstaller.
-- Installation may place the Monitor bundle in `/Applications` or `~/Applications` depending on write access; a system install also leaves a `~/Applications/Codex Monitor.app` symlink.
-- `~/.codex/auth.json`: Active credentials used by Codex CLI and ChatGPT.app.
-- `~/.codex/accounts.json`: Multi-account credentials and quota cache (POSIX 0600 permissions).
-- `~/.codex/usage-status.json`: Real-time cache consumed by the Swift status bar app.
-- `~/.codex/thread-writer-locks/`: Active flock files held by running Codex app-server worker threads.
-- `~/.codex/state_5.sqlite`: SQLite database tracking thread metadata (`updated_at`, `rollout_path`, `archived`, `thread_source`).
-- `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`: Event logs for all thread turns and tool executions.
+## Core Architecture & Language Boundaries
+
+1. **Rust-First Portable Core (`codex-switcher/`)**:
+   - Quota monitoring, account switching, worker orchestration, daemon management, thread resumption, and CLI commands (`cxi`, `codex-mon`) are 100% native Rust.
+   - Rust is the primary language for high-performance, minimal-memory background execution, resilient IPC transport, and offline-first data structures.
+   - `~/.codex/ipc/ipc.sock`: Same-user Desktop IPC router used by recovery to address the window that owns a task.
+   - `~/.codex/app-server-daemon/`: Desktop-owned app-server coordination state; it is shared with the official app and is preserved by the Monitor uninstaller.
+   - `~/.codex/auth.json`: Active credentials used by Codex CLI and ChatGPT.app.
+   - `~/.codex/accounts.json`: Multi-account credentials and quota cache (POSIX 0600 permissions).
+   - `~/.codex/usage-status.json`: Real-time cache consumed by the Swift status bar app.
+   - `~/.codex/thread-writer-locks/`: Active flock files held by running Codex app-server worker threads.
+   - `~/.codex/state_5.sqlite`: SQLite database tracking thread metadata (`updated_at`, `rollout_path`, `archived`, `thread_source`).
+   - `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`: Event logs for all thread turns and tool executions.
+
+2. **Swift Native macOS Integration (`Sources/`)**:
+   - Swift and AppKit are strictly dedicated to native macOS presentation, system status bar items, menus, user interactions, accessibility, and vibrancy-free composite image rendering (`Codex Monitor.app`).
+   - Swift must not contain separate switching or account orchestration logic; it delegates account switching, monitoring, and recovery directly to the Rust core (`codex-mon` / `cxi`).
+   - `/Applications/ChatGPT.app`: The standard OpenAI Codex Desktop application. Its bundled `codex app-server` is the only Desktop thread writer; the Monitor does not install or launch a second one.
+   - Installation may place the Monitor bundle in `/Applications` or `~/Applications` depending on write access; a system install also leaves a `~/Applications/Codex Monitor.app` symlink.
+
+3. **Continuous Documentation & Codebase Alignment**:
+   - Keep all documentation (`README.md`, `CODEX.md`, `AGENTS.md`, specs) continuously synchronized with any changes in code, architecture, or design decisions.
+   - Discrepancies between documentation and implementation must never be ignored.
+   - If documentation is outdated, update it immediately in the same change.
+   - If a documented feature is missing or incomplete, implement it to bring implementation into compliance with documentation.
 
 ### Installation & Removal Contract
 
@@ -35,6 +47,119 @@
 - Never print or log tokens/secrets to stdout/stderr.
 - Always use atomic file operations (`fs2` flock) when writing `auth.json` or `accounts.json`.
 - Keep binary memory overhead strictly under 5 MB RAM.
+
+---
+
+## Code Culture & Rust Coding Standards
+
+- **Symbol Locality**: Every Rust struct (and its implementation) and every trait must reside in its own dedicated file. Multi-struct grab-bag files are strictly prohibited.
+- **Maximum File Length**: No `.rs` source file may exceed **300 lines** (excluding `mod.rs`, `lib.rs`, test-only files, and generated files). This is enforced by automated test suites (`tests/enforce_file_limits.rs`, `codex-switcher/tests/enforce_file_limits.rs`, and `benchmarks/floem-codex-simulator/tests/enforce_file_limits.rs`). When a file grows beyond the limit, split it by extracting logical groups (e.g., helper functions, structs, enums, serde types, sub-impl blocks) into sibling files in the same module.
+- **Naming & Extraction Policy**: Split modules must be logically grouped and meaningfully named. Prohibit generic suffixes like `part1.rs`, `part2.rs`, `_read.rs`, `_write.rs`, or `_impl.rs`. Decompose complex logic into specialized Named Services (e.g., `QuotaService`, `RecoveryService`, `SwitchStrategyService`, `AutoResetService`) or move significant structs to their own dedicated files rather than arbitrary file chunks.
+- **Thin Coordinator Pattern**: Coordinators, CLI handlers, daemon dispatchers, and entry points must be thin orchestrators. They should handle transport/CLI/dispatch concerns (CLI argument parsing, IPC framing, signal trapping, response formatting) but delegate all complex domain logic to named services.
+- **Named Service Extraction**: Move complex logic from handlers into dedicated service structs named after the operation they perform. These services should maintain their own state (e.g., storage handles, configuration) via dependency injection rather than massive procedural helper functions.
+- **Splitting Workflow**: When splitting a file to comply with the 300-line limit:
+  1. Extract code into new sibling files.
+  2. Register new modules in parent `mod.rs` / module root.
+  3. Run `cargo check` to verify compilation.
+  4. Run relevant tests to verify behavior.
+  5. Commit the working state before moving to the next file. Never batch-split multiple files without verifying compilation between each.
+- **Test Locality & Extraction**: Inline `#[cfg(test)] mod tests` blocks that push a file over the limit should be extracted to a sibling `<filename>.test.rs` file (e.g. `recovery.rs` → `recovery.test.rs`), referenced via `#[cfg(test)] #[path = "<filename>.test.rs"] mod tests;` in the source file. The enforcement test excludes `.test.rs` files from the line count.
+- **Grouping**: Use modules and packages to group related symbols hierarchically.
+- **Avoid Index Pattern**: Avoid the "index pattern" (re-exporting everything from submodules via wildcard `pub use *` in `mod.rs` or `lib.rs`). Require explicit hierarchical navigation.
+- **Logical Constant Placement**: Constants must be located in the files where they logically belong (e.g., limits for a struct in the same file as the struct). Avoid generic `constants.rs` or `types.rs` dump files.
+- **Test Locality**: Tests must be split into separate files in the same or similar meaningful way as the code they verify. Avoid large monolith `tests.rs` or inline `#[cfg(test)]` blocks for complex logic.
+
+---
+
+<!-- destinationworks-universal-agent-baseline:v1 -->
+## Universal Delivery Baseline (v1)
+
+These rules are the portable minimum for Destination Works repositories. Repository-specific instructions may strengthen them or name concrete commands, but must not silently weaken them.
+
+### Evidence, scope, and decisions
+
+- Read the repository instructions and relevant canonical docs before changing files. Check available cross-session memory when prior decisions or recurring failures may affect the work.
+- While actively working, reread a repository-root `user_updates.md` at least once per minute when it exists. Treat new entries as user instructions, handle them before continuing, remove only entries that were fully handled, and never delete the file itself.
+- Establish the live baseline before diagnosing or claiming completion. Prefer direct evidence from current code, tests, CI, deployed artifacts, or authenticated system state over comments, stale reports, or agent summaries.
+- Preserve unrelated and user-owned changes. Use an isolated branch/worktree for broad work, stage intentionally, and never reset, clean, delete, or rewrite unrelated state to simplify a task.
+- For non-trivial changes, compare 2-3 viable approaches and record the decisive tradeoffs. Proof-test material assumptions with a focused reproduction or authoritative source before committing to the design.
+- Test scripted replacements and bulk mechanical edits on a disposable copy of one representative file before applying them broadly; inspect the result for collateral changes.
+- Keep implementation, user/setup documentation, architecture/runtime contracts, and operator guidance synchronized in the same change.
+- Store closed, well-compressible logs and temporary evidence with Brotli quality 6 when practical. Never compress an actively appended log as one stream: rotate or close it into chunks first, then compress each completed chunk. Use a format better suited to append, random access, or unsupported tooling when required, and record the reason for that exception.
+
+### Durable learning capture
+
+- Maintain `docs/leanings/` as the repository-wide learning collection. Add exactly one Markdown file per learning in the same work that reveals a material resolved bug/regression, failed or misleading experiment, unexpected behavior, setup/environment trap, non-obvious constraint, important workaround, or rejected approach with reusable rationale; routine successful work needs no entry.
+- Record the task/context, observable symptom, sanitized decisive evidence, approaches tried and why each worked or failed, root cause or honest uncertainty, resolution, verification, prevention/follow-up, reusable rule, and safe references. Use `Resolved`, `Partial`, or `Open` status truthfully.
+- Follow `docs/leanings/README.md` for filenames and structure. Keep learning files append-only by default. Correct prior understanding with a new linked file rather than rewriting history.
+- Exception: when authoritative evidence proves an existing statement was fabricated, hallucinated, or factually false, correct or remove the false content so it cannot mislead future work. Mark the entry `Corrected` and add a dated note stating what was wrong, the authoritative evidence, and what changed; never use this exception for disputed interpretation, ordinary staleness, or changed external conditions.
+- Promote the shortest prevention rule into the appropriate canonical instructions, setup guide, architecture contract, or operator runbook in the same change. Do not leave durable knowledge only in chat, commit history, a PR, or the learning collection.
+- Never record secrets, credentials, private keys, customer data, sensitive payloads, device codes, or unsanitized production evidence.
+
+### Validation and test quality
+
+- Discover and use the repository's canonical commands (`cargo test` in `codex-switcher`, `./scripts/test_swift.sh` for AppKit test suites); do not invent shared command names where the project does not define them.
+- Use a validation ladder: fast targeted feedback while iterating, the repository pre-commit gate before commit, and the full pre-push/release-relevant gate before push. If a named gate does not exist, run the closest repository-native equivalent and document the exact evidence.
+- A hook is developer feedback, not the authoritative merge gate. CI must rerun required checks from a clean checkout.
+- Never weaken, skip, or replace a failing check merely to make it green. Read the failure, fix the cause, rerun the narrowest relevant test, then rerun the containing gate.
+- Validate generated artifacts against their source and canonical generator. Do not hand-edit generated output or accept drift.
+- Tests must cover meaningful behavior, negative/error paths, and important boundaries. Coverage is a regression signal, not a reason to add vacuous line-fillers or bypass comments.
+- For non-trivial or high-risk changes, obtain an independent adversarial review of assumptions, tests, failure handling, and rollback before publication.
+- Process-timeout tests must prove that descendants and inherited pipes are gone, not merely that the direct child received a signal. When an external Unix `kill` command receives a negative process-group operand, terminate option parsing with `--` and cover the Linux path.
+- For user-visible UI changes, exercise the changed path in the real installed application after automated tests pass; record the nearest honest evidence if UI automation is unavailable.
+
+### Git, pull requests, and CI enforcement
+
+- Start from current remote truth, keep commits scoped and reviewable, and verify the exact staged diff before committing. Do not mix unrelated work into one PR.
+- Always include a `## Bug Fixes` section in the PR description detailing any bugs uncovered and resolved during the task, with references to their regression tests.
+- A local pass, push, or successful agent report is not proof that remote CI passed. Confirm the remote PR head SHA and every required check on that exact revision.
+- Self-merge only when branch/ruleset protection actually enforces the required checks and they all pass. If protection is unavailable, checks cannot start, or the head changed after validation, leave the PR open for owner approval.
+- CI workflows must use least-privilege permissions, pinned third-party actions, explicit timeouts/concurrency, and repository-owned validation commands.
+- PR descriptions must explain why the change was needed, what changed, approaches rejected, exact validation, bugs found/fixed with regression evidence, learning-log entries, risk, and rollback.
+
+### Security and supply chain
+
+- Never store or expose credentials, tokens, private keys, customer data, sensitive payloads, device codes, or unsanitized production evidence in source, logs, fixtures, PRs, or learning records.
+- Enforce POSIX `0600` permissions on all credential and token files (`auth.json`, `accounts.json`).
+- Ensure atomic file operations (`fs2` flock) when accessing credentials.
+- Zero credential leakage: automated security scans reject any potential API key patterns or secrets.
+- Treat dependency lifecycle scripts, lockfile changes, generated code, binary downloads, workflow actions, and base images as reviewed supply-chain inputs. Pin immutable versions/digests where supported and fail on unreviewed drift.
+- Security-sensitive configuration and deployment paths must fail closed when required identity, authorization, signing, backup, or runtime prerequisites are missing.
+- Treat configuration loading, validation, and TLS/HTTP client construction as separate fallible boundaries. Propagate and sanitize errors from each boundary instead of assuming validation makes construction infallible.
+- Privileged installers must pin `PATH` and executable paths, reject symlinks, copy into root-owned same-filesystem staging, verify the staged identifier and exact signer, atomically rename, and roll back after any later failure.
+
+### Release and deployment integrity
+
+- When the repository publishes a deployable artifact, build it once, identify it by immutable digest, and test the exact bytes that will be promoted on every published platform.
+- Rebuild, code-sign, and reinstall the macOS app bundle (`Codex Monitor.app`) cleanly; verify code signatures strictly (`codesign --verify --strict`).
+- Separate immutable provenance tags from mutable environment pointers. Publish and verify evidence first, move the smallest mutable production pointer last, verify the live promoted state, and define an exact rollback to the previously recorded digest.
+- Rehearse backup/restore and rollback through safe isolated commands that produce inspectable evidence; documentation-string checks alone are not operational proof.
+
+<!-- /destinationworks-universal-agent-baseline:v1 -->
+
+---
+
+## Test Quality & Adversarial Review
+
+- Tests must never be added solely as mechanical line-fillers to pass coverage gates. Tests must meaningfully verify domain logic, invariant preservation, realistic crash recovery, positive cases, negative cases, and edge cases.
+- Bug fixes must start with a reproducible failing regression test before writing the fix.
+- Panic-path cleanup guards must never panic while another panic is unwinding. Release internal locks before invoking callbacks, recover poisoned coordination locks during cleanup, and cover the poisoned-lock path deterministically.
+- For non-trivial features, bug fixes, or test additions, automatically spawn an adversarial test-critic subagent to review the tests. The critic must evaluate whether the suite verifies real behavior vs artificial line coverage, identifies missing edge cases, and flags fragile/vacuous tests before work is completed.
+- Never use coverage bypass comments to bypass coverage gates. All ordinary code in the repository must be reachable and exercised by tests; dead or unreachable code must be deleted rather than kept or suppressed.
+- If you create or modify a test file, run it and iterate on test or implementation until it passes.
+
+---
+
+## Mandatory Learning Log
+
+- Maintain the repository-wide append-only learning collection in `docs/leanings/`.
+- Create exactly one Markdown file per learning in the same change whenever work reveals a resolved bug or regression, failed or misleading experiment, unexpected behavior, setup or environment trap, non-obvious constraint, important workaround, or rejected approach with reusable rationale.
+- Routine successful work does not need an entry unless it produces a reusable insight.
+- Follow the filename convention and exact entry structure documented in `docs/leanings/README.md`. Include the task/context, observation or failure, evidence, approaches tried and their outcomes, root cause, resolution, verification, prevention or follow-up, and the reusable learning.
+- Mark uncertainty honestly. If root cause or resolution is incomplete, record the entry as `Partial` or `Open` and state what evidence is still missing.
+- Keep learning files append-only by default: do not delete or rewrite older files merely to make the history cleaner. Put later discoveries in a new file that links the earlier learning.
+- Link relevant issues, commits, logs, or regression tests when safe and useful.
+- Never place credentials, tokens, private keys, customer data, sensitive payloads, or unsanitized production evidence in learning files.
 
 ---
 

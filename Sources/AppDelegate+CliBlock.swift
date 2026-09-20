@@ -219,5 +219,25 @@ extension AppDelegate {
         insertIdx += 1
       }
     }
+
+    if snapshot.isAppRunning,
+      let appAcc = snapshot.appAccount,
+      appAcc.id.caseInsensitiveCompare(activeAcc.id) != .orderedSame
+    {
+      let isRu = LocalizationManager.shared.currentLanguage == .ru
+      let alignTitle = isRu ? "  🖥️ Переключить Desktop App на этот аккаунт" : "  🖥️ Switch Desktop App to this account"
+      let alignItem = NSMenuItem(title: alignTitle, action: #selector(handleAlignAppWithCliAction(_:)), keyEquivalent: "")
+      alignItem.target = self
+      alignItem.representedObject = activeAcc.id
+      alignItem.attributedTitle = NSAttributedString(
+        string: alignTitle,
+        attributes: [
+          .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+          .foregroundColor: NSColor.systemTeal,
+        ])
+      menu.insertItem(alignItem, at: insertIdx)
+      dynamicAccountItems.append(alignItem)
+      insertIdx += 1
+    }
   }
 }

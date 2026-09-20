@@ -164,12 +164,21 @@ public struct MenuBarAppearanceHelper {
   }
 
   public static func bracketFont(isScreenActive: Bool = true) -> NSFont {
-    let desc = NSFont.systemFont(ofSize: 21.0, weight: isScreenActive ? .regular : .medium)
-      .fontDescriptor.addingAttributes([
-        .traits: [NSFontDescriptor.TraitKey.width: -0.3]
-      ])
-    return NSFont(descriptor: desc, size: 21.0)
-      ?? NSFont.systemFont(ofSize: 21.0, weight: isScreenActive ? .regular : .medium)
+    let desc = NSFont.systemFont(ofSize: 21.0, weight: .regular).fontDescriptor.addingAttributes([
+      .traits: [NSFontDescriptor.TraitKey.width: -0.05]
+    ])
+    return NSFont(descriptor: desc, size: 21.0) ?? NSFont.systemFont(ofSize: 21.0, weight: .regular)
+  }
+
+  public static func rightBracketFont(isScreenActive: Bool = true) -> NSFont {
+    let desc = NSFont.systemFont(ofSize: 21.0, weight: .medium).fontDescriptor.addingAttributes([
+      .traits: [NSFontDescriptor.TraitKey.width: -0.05]
+    ])
+    return NSFont(descriptor: desc, size: 21.0) ?? NSFont.systemFont(ofSize: 21.0, weight: .medium)
+  }
+
+  public static func bracketFont(isRight: Bool, isScreenActive: Bool = true) -> NSFont {
+    return isRight ? rightBracketFont(isScreenActive: isScreenActive) : bracketFont(isScreenActive: isScreenActive)
   }
 
   public static func bracketBaselineOffset(isScreenActive: Bool = true) -> CGFloat {

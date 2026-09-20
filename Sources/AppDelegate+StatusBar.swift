@@ -4,81 +4,85 @@ import Foundation
 extension AppDelegate {
   // MARK: - Status Bar Display Construction
 
-  internal func updateStatusBar(with snapshot: MultiAccountSnapshot) {
-    let isScreenActive = true
-    let cliMult = snapshot.cliAccount?.planMultiplier ?? snapshot.planMultiplier
-    let cli5h = snapshot.fiveHourPercentage
-    let cliW = snapshot.weeklyPercentage ?? cli5h
-    let cliWeeklyExhausted = MenuBarAppearanceHelper.isWeeklyExhausted(snapshot.weeklyPercentage)
-    let cli5hStr = cliWeeklyExhausted ? "0%" : String(format: "%.0f%%", cli5h)
-    let cliWStr = String(format: "%.0f%%", cliW)
-    let cli5hColor = MenuBarAppearanceHelper.menuBarColor(
-      forPercentage: cli5h, weeklyPercentage: snapshot.weeklyPercentage, isScreenActive: isScreenActive, planMultiplier: cliMult
-    )
-    let cliWColor = MenuBarAppearanceHelper.menuBarColor(
-      forPercentage: cliW, weeklyPercentage: nil, isScreenActive: isScreenActive, planMultiplier: cliMult
-    )
-    let cliSession = (fiveHPct: cli5hStr, fiveHColor: cli5hColor, weeklyPct: cliWStr, weeklyColor: cliWColor)
+  public typealias StatusBarSessionValues = (fiveHPct: String, fiveHColor: NSColor, weeklyPct: String, weeklyColor: NSColor)
 
-    var appSession: (fiveHPct: String, fiveHColor: NSColor, weeklyPct: String, weeklyColor: NSColor)? = nil
-    if snapshot.isAppRunning, let app = snapshot.appAccount {
-      let appMult = app.planMultiplier
-      let app5h = app.fiveHourPercentage
-      let appW = app.weeklyPercentage ?? app5h
-      let appWeeklyExhausted = MenuBarAppearanceHelper.isWeeklyExhausted(app.weeklyPercentage)
-      let app5hStr = appWeeklyExhausted ? "0%" : String(format: "%.0f%%", app5h)
-      let appWStr = String(format: "%.0f%%", appW)
-      let app5hColor = MenuBarAppearanceHelper.menuBarColor(
-        forPercentage: app5h, weeklyPercentage: app.weeklyPercentage, isScreenActive: isScreenActive, planMultiplier: appMult
-      )
-      let appWColor = MenuBarAppearanceHelper.menuBarColor(
-        forPercentage: appW, weeklyPercentage: nil, isScreenActive: isScreenActive, planMultiplier: appMult
-      )
-      appSession = (fiveHPct: app5hStr, fiveHColor: app5hColor, weeklyPct: appWStr, weeklyColor: appWColor)
+  public static func resolveCliAccount(from snapshot: MultiAccountSnapshot) -> AccountQuota? {
+    snapshot.cliAccount ?? snapshot.accounts.first(where: { $0.isCurrentActive })
+  }
+
+  public static func makeSessionValues(
+    fiveHourPercentage: Double, weeklyPercentage: Double?, planMultiplier: Double, isScreenActive: Bool = true
+  ) -> StatusBarSessionValues {
+    let w = weeklyPercentage ?? fiveHourPercentage
+    let exhausted = MenuBarAppearanceHelper.isWeeklyExhausted(weeklyPercentage)
+    let fiveHColor = MenuBarAppearanceHelper.menuBarColor(
+      forPercentage: fiveHourPercentage, weeklyPercentage: weeklyPercentage, isScreenActive: isScreenActive, planMultiplier: planMultiplier
+    )
+    let wColor = MenuBarAppearanceHelper.menuBarColor(
+      forPercentage: w, weeklyPercentage: nil, isScreenActive: isScreenActive, planMultiplier: planMultiplier
+    )
+    return (
+      fiveHPct: exhausted ? "0%" : String(format: "%.0f%%", fiveHourPercentage),
+      fiveHColor: fiveHColor, weeklyPct: String(format: "%.0f%%", w), weeklyColor: wColor
+    )
+  }
+
+  public static func resolveStatusBarSessions(
+    from snapshot: MultiAccountSnapshot, isScreenActive: Bool = true
+  ) -> (appSession: StatusBarSessionValues?, cliSession: StatusBarSessionValues) {
+    let appSession = (snapshot.isAppRunning ? snapshot.appAccount : nil).map {
+      makeSessionValues(fiveHourPercentage: $0.fiveHourPercentage, weeklyPercentage: $0.weeklyPercentage, planMultiplier: $0.planMultiplier, isScreenActive: isScreenActive)
     }
+    let cli = resolveCliAccount(from: snapshot)
+    let cliSession = cli.map {
+      makeSessionValues(fiveHourPercentage: $0.fiveHourPercentage, weeklyPercentage: $0.weeklyPercentage, planMultiplier: $0.planMultiplier, isScreenActive: isScreenActive)
+    } ?? makeSessionValues(fiveHourPercentage: snapshot.fiveHourPercentage, weeklyPercentage: snapshot.weeklyPercentage, planMultiplier: snapshot.planMultiplier, isScreenActive: isScreenActive)
+    return (appSession, cliSession)
+  }
 
+  public static func buildStatusBarAttributedString(
+    snapshot: MultiAccountSnapshot, icon: NSImage? = nil, isScreenActive: Bool = true, useQuotaIcons: Bool = true, stackPercentages: Bool = true
+  ) -> NSAttributedString {
+    let sessions = resolveStatusBarSessions(from: snapshot, isScreenActive: isScreenActive)
+    return buildStatusBarAttributedString(
+      icon: icon, appSession: sessions.appSession, cliSession: sessions.cliSession, accounts: snapshot.accounts,
+      isScreenActive: isScreenActive, useQuotaIcons: useQuotaIcons, stackPercentages: stackPercentages,
+      appAccountId: snapshot.isAppRunning ? snapshot.appAccount?.id : nil, cliAccountId: resolveCliAccount(from: snapshot)?.id
+    )
+  }
+
+  internal func updateStatusBar(with snapshot: MultiAccountSnapshot) {
     guard let button = statusItem?.button else { return }
+    let isScreenActive = true
     let currentIcon = isScreenActive ? (menuBarIconActive ?? menuBarIcon) : (menuBarIconInactive ?? menuBarIcon)
     let stackPercentages = UserDefaults.standard.object(forKey: "stackPercentages") as? Bool ?? true
-
     let attributedTitle = AppDelegate.buildStatusBarAttributedString(
-      icon: currentIcon, appSession: appSession, cliSession: cliSession, accounts: snapshot.accounts,
-      isScreenActive: isScreenActive, useQuotaIcons: true, stackPercentages: stackPercentages
+      snapshot: snapshot, icon: currentIcon, isScreenActive: isScreenActive, useQuotaIcons: true, stackPercentages: stackPercentages
     )
-    let compositeImage = AppDelegate.renderCompositeImage(from: attributedTitle)
-    button.image = compositeImage
+    button.image = AppDelegate.renderCompositeImage(from: attributedTitle)
     button.imagePosition = .imageOnly
     button.attributedTitle = NSAttributedString()
 
+    func tooltipLines(title: String, acc: AccountQuota) -> String {
+      let sReset = acc.sprintTimeUntilResetString
+      let sStr = (!sReset.isEmpty && sReset != L10n.resetNow) ? " (resets: \(sReset))" : ""
+      var lines = [title, "  • 5h Sprint: \(String(format: "%.0f%%", acc.fiveHourPercentage))\(sStr)"]
+      if let w = acc.weeklyPercentage {
+        let wReset = acc.weeklyTimeUntilResetString
+        let wStr = (!wReset.isEmpty && wReset != L10n.resetNow) ? " (resets: \(wReset))" : ""
+        lines.append("  • Weekly Limit: \(String(format: "%.0f%%", w))\(wStr)")
+      }
+      if acc.credits > 0 { lines.append("  • Reset Credits: \(acc.credits)") }
+      return lines.joined(separator: "\n")
+    }
+
     var tipParts: [String] = []
     if snapshot.isAppRunning, let app = snapshot.appAccount {
-      var lines = ["🖥️ Codex Desktop App (\(app.email)):"]
-      let sprintReset = app.sprintTimeUntilResetString
-      let sprintResetStr = (!sprintReset.isEmpty && sprintReset != L10n.resetNow) ? " (resets: \(sprintReset))" : ""
-      lines.append("  • 5h Sprint: \(String(format: "%.0f%%", app.fiveHourPercentage))\(sprintResetStr)")
-      if let w = app.weeklyPercentage {
-        let wReset = app.weeklyTimeUntilResetString
-        let wResetStr = (!wReset.isEmpty && wReset != L10n.resetNow) ? " (resets: \(wReset))" : ""
-        lines.append("  • Weekly Limit: \(String(format: "%.0f%%", w))\(wResetStr)")
-      }
-      if app.credits > 0 { lines.append("  • Reset Credits: \(app.credits)") }
-      tipParts.append(lines.joined(separator: "\n"))
+      tipParts.append(tooltipLines(title: "🖥️ Codex Desktop App (\(app.email)):", acc: app))
     }
-
-    if let cli = snapshot.cliAccount ?? snapshot.accounts.first(where: { $0.isCurrentActive }) {
-      var lines = ["💻 Codex CLI (\(cli.email)):"]
-      let sprintReset = cli.sprintTimeUntilResetString
-      let sprintResetStr = (!sprintReset.isEmpty && sprintReset != L10n.resetNow) ? " (resets: \(sprintReset))" : ""
-      lines.append("  • 5h Sprint: \(String(format: "%.0f%%", cli.fiveHourPercentage))\(sprintResetStr)")
-      if let w = cli.weeklyPercentage {
-        let wReset = cli.weeklyTimeUntilResetString
-        let wResetStr = (!wReset.isEmpty && wReset != L10n.resetNow) ? " (resets: \(wReset))" : ""
-        lines.append("  • Weekly Limit: \(String(format: "%.0f%%", w))\(wResetStr)")
-      }
-      if cli.credits > 0 { lines.append("  • Reset Credits: \(cli.credits)") }
-      tipParts.append(lines.joined(separator: "\n"))
+    if let cli = AppDelegate.resolveCliAccount(from: snapshot) {
+      tipParts.append(tooltipLines(title: "💻 Codex CLI (\(cli.email)):", acc: cli))
     }
-
     button.toolTip = tipParts.isEmpty ? "OpenAI Codex Quota Monitor" : tipParts.joined(separator: "\n\n")
   }
 
@@ -89,7 +93,9 @@ extension AppDelegate {
     accounts: [AccountQuota],
     isScreenActive: Bool = true,
     useQuotaIcons: Bool = true,
-    stackPercentages: Bool = true
+    stackPercentages: Bool = true,
+    appAccountId: String? = nil,
+    cliAccountId: String? = nil
   ) -> NSAttributedString {
     let attributed = NSMutableAttributedString()
     if let icon = icon {
@@ -105,11 +111,8 @@ extension AppDelegate {
     let numberFont = MenuBarAppearanceHelper.numberFont(isScreenActive: isScreenActive)
     let labelFont = MenuBarAppearanceHelper.labelFont(isScreenActive: isScreenActive)
     let sepFont = MenuBarAppearanceHelper.separatorFont(isScreenActive: isScreenActive)
-    let bracketFont = MenuBarAppearanceHelper.bracketFont(isScreenActive: isScreenActive)
-    let bracketShadow = MenuBarAppearanceHelper.bracketShadow(isScreenActive: isScreenActive)
     let textShadow = MenuBarAppearanceHelper.textShadow(isScreenActive: isScreenActive)
     let sepColor = MenuBarAppearanceHelper.separatorColor(isScreenActive: isScreenActive)
-    let bracketColor = NSColor.white
     let kernValue: CGFloat = 0.3
 
     let appendSession = {
@@ -160,8 +163,8 @@ extension AppDelegate {
       }
     }
 
-    let appTagColor = isScreenActive ? NSColor(red: 0.35, green: 0.85, blue: 1.0, alpha: 1.0) : NSColor(red: 0.30, green: 0.75, blue: 0.90, alpha: 1.0)
-    let cliTagColor = isScreenActive ? NSColor(red: 0.65, green: 0.95, blue: 0.65, alpha: 1.0) : NSColor(red: 0.55, green: 0.82, blue: 0.55, alpha: 1.0)
+    let appTagColor = MenuBarAppearanceHelper.appTagColor(isScreenActive: isScreenActive)
+    let cliTagColor = MenuBarAppearanceHelper.cliTagColor(isScreenActive: isScreenActive)
 
     if let app = appSession {
       appendSession("APP ", appTagColor, app.fiveHPct, app.fiveHColor, app.weeklyPct, app.weeklyColor)
@@ -173,38 +176,83 @@ extension AppDelegate {
       appendSession("CLI ", cliTagColor, cliSession.fiveHPct, cliSession.fiveHColor, cliSession.weeklyPct, cliSession.weeklyColor)
     }
 
-    let bracketOffset = MenuBarAppearanceHelper.bracketBaselineOffset(isScreenActive: isScreenActive)
+    let defaultCli = accounts.first(where: { $0.isCurrentActive })?.id ?? accounts.first?.id
+    let rawCliId = (appAccountId != nil || cliAccountId != nil) ? cliAccountId : defaultCli
+    let rawAppId = (appAccountId != nil || cliAccountId != nil) ? appAccountId : ((appSession != nil) ? defaultCli : nil)
+
+    func resolveId(_ id: String?) -> String? {
+      guard let id = id else { return nil }
+      return accounts.first(where: {
+        $0.id.caseInsensitiveCompare(id) == .orderedSame
+          || $0.email.caseInsensitiveCompare(id) == .orderedSame
+          || ($0.name?.caseInsensitiveCompare(id) == .orderedSame)
+      })?.id ?? id
+    }
+    let effectiveCliId = resolveId(rawCliId)
+    let effectiveAppId = resolveId(rawAppId)
+
     if accounts.isEmpty {
-      attributed.append(NSAttributedString(string: "  [", attributes: [.font: bracketFont, .foregroundColor: bracketColor, .shadow: bracketShadow, .baselineOffset: bracketOffset]))
-      attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 2.5)]))
-      let badge = MenuBarAppearanceHelper.makeHybridQuotaIndicator(fiveHour: 100.0, weekly: 100.0, credits: 0, width: 6.5, height: 16.5, isScreenActive: isScreenActive)
+      let mode: BracketSelectionMode = (appAccountId != nil || cliAccountId != nil)
+        ? ((appAccountId != nil && cliAccountId != nil) ? .both : (appAccountId != nil ? .app : .cli))
+        : .cli
+
+      if mode != .none {
+        MenuBarAppearanceHelper.appendBracket(to: attributed, bracket: "[", mode: mode, isScreenActive: isScreenActive)
+      }
+      let badge = MenuBarAppearanceHelper.makeHybridQuotaIndicator(
+        fiveHour: 100.0, weekly: 100.0, credits: 0, width: 6.5, height: 16.5, isScreenActive: isScreenActive
+      )
       let attach = NSTextAttachment(); attach.image = badge; attach.bounds = CGRect(x: 0, y: -5.0, width: 6.5, height: 16.5)
       attributed.append(NSAttributedString(attachment: attach))
-      attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 2.5)]))
-      attributed.append(NSAttributedString(string: "]", attributes: [.font: bracketFont, .foregroundColor: bracketColor, .shadow: bracketShadow, .baselineOffset: bracketOffset]))
+      if mode != .none {
+        MenuBarAppearanceHelper.appendBracket(to: attributed, bracket: "]", mode: mode, isScreenActive: isScreenActive)
+      }
     } else {
-      let activeAcc = accounts.first(where: { $0.isCurrentActive }) ?? accounts[0]
-      let reserveAccs = accounts.filter { $0.id != activeAcc.id }
-      attributed.append(NSAttributedString(string: "  [", attributes: [.font: bracketFont, .foregroundColor: bracketColor, .shadow: bracketShadow, .baselineOffset: bracketOffset]))
-      attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 2.5)]))
-      let activeBadge = MenuBarAppearanceHelper.makeHybridQuotaIndicator(
-        fiveHour: activeAcc.fiveHourPercentage, weekly: activeAcc.weeklyPercentage ?? activeAcc.fiveHourPercentage,
-        credits: activeAcc.credits, width: 6.5, height: 16.5, isScreenActive: isScreenActive
-      )
-      let activeAttach = NSTextAttachment(); activeAttach.image = activeBadge; activeAttach.bounds = CGRect(x: 0, y: -5.0, width: 6.5, height: 16.5)
-      attributed.append(NSAttributedString(attachment: activeAttach))
-      attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 2.5)]))
-      attributed.append(NSAttributedString(string: "]", attributes: [.font: bracketFont, .foregroundColor: bracketColor, .shadow: bracketShadow, .baselineOffset: bracketOffset]))
+      for (idx, acc) in accounts.enumerated() {
+        let isApp = (effectiveAppId != nil && acc.id.caseInsensitiveCompare(effectiveAppId!) == .orderedSame)
+        let isCli = (effectiveCliId != nil && acc.id.caseInsensitiveCompare(effectiveCliId!) == .orderedSame)
+        let mode: BracketSelectionMode = (isApp && isCli) ? .both : (isApp ? .app : (isCli ? .cli : .none))
 
-      if !reserveAccs.isEmpty { attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 7.0)])) }
-      for (idx, acc) in reserveAccs.enumerated() {
-        if idx > 0 { attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 6.5)])) }
-        let reserveBadge = MenuBarAppearanceHelper.makeHybridQuotaIndicator(
-          fiveHour: acc.fiveHourPercentage, weekly: acc.weeklyPercentage ?? acc.fiveHourPercentage,
-          credits: acc.credits, width: 6.5, height: 16.5, isScreenActive: isScreenActive
+        if idx == 0 {
+          attributed.append(NSAttributedString(string: "  "))
+        } else {
+          let prevAcc = accounts[idx - 1]
+          let prevIsApp = (effectiveAppId != nil && prevAcc.id == effectiveAppId)
+          let prevIsCli = (effectiveCliId != nil && prevAcc.id == effectiveCliId)
+          let prevHadBrackets = prevIsApp || prevIsCli
+          let currentHasBrackets = (mode != .none)
+
+          let spaceSize: CGFloat
+          if prevHadBrackets && currentHasBrackets {
+            spaceSize = 4.0
+          } else if prevHadBrackets || currentHasBrackets {
+            spaceSize = 7.0
+          } else {
+            spaceSize = 6.5
+          }
+          attributed.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: spaceSize)]))
+        }
+
+        if mode != .none {
+          MenuBarAppearanceHelper.appendBracket(to: attributed, bracket: "[", mode: mode, isScreenActive: isScreenActive)
+        }
+
+        let badge = MenuBarAppearanceHelper.makeHybridQuotaIndicator(
+          fiveHour: acc.fiveHourPercentage,
+          weekly: acc.weeklyPercentage ?? acc.fiveHourPercentage,
+          credits: acc.credits,
+          width: 6.5,
+          height: 16.5,
+          isScreenActive: isScreenActive
         )
-        let attach = NSTextAttachment(); attach.image = reserveBadge; attach.bounds = CGRect(x: 0, y: -5.0, width: 6.5, height: 16.5)
+        let attach = NSTextAttachment()
+        attach.image = badge
+        attach.bounds = CGRect(x: 0, y: -5.0, width: 6.5, height: 16.5)
         attributed.append(NSAttributedString(attachment: attach))
+
+        if mode != .none {
+          MenuBarAppearanceHelper.appendBracket(to: attributed, bracket: "]", mode: mode, isScreenActive: isScreenActive)
+        }
       }
     }
     return attributed

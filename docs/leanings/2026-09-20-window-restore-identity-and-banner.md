@@ -1,0 +1,22 @@
+# 2026-09-20 — PID-bound window restore needs one opaque birth token
+
+- **Status:** Resolved
+- **Task/context:** Codex Monitor restart and account-distribution recovery in `codex-switcher`.
+- **Unexpected observation or failure:** The macOS restore helper emitted a `seconds:microseconds` process birth token, while Rust attempted to parse it as a numeric `u128`. The old restart callers also ignored restore errors and used a separate legacy window helper.
+- **Evidence:** The helper and Rust regression tests now exchange `1726789012:000007` unchanged. The focused restore suite passes with exact PID/birth mismatch, negative-origin display, tolerance, failure propagation, and position-size-position call-order coverage.
+- **Approaches tried:**
+  - **Attempt:** Convert the helper token to a number in Rust.
+    - **Outcome:** Did not work.
+    - **Why:** The helper's colon-delimited representation cannot be parsed as a number and loses its source representation.
+  - **Attempt:** Keep the legacy process-name window fallback after relaunch.
+    - **Outcome:** Did not work.
+    - **Why:** A process name is not an identity proof and can target the wrong process after PID reuse or app aliases.
+  - **Attempt:** Capture once before shutdown, inspect the new PID, restore position-size-position, verify actual bounds, and propagate `Partial`/`Failed` outcomes.
+    - **Outcome:** Worked.
+    - **Why:** Every write is bound to the inspected PID and opaque birth token, and callers treat verification as part of recovery success.
+- **Root cause:** The restart path had two unconnected window implementations with different identity contracts; the production callers used neither the structured restore report nor its failure outcome.
+- **Resolution:** Added a named relaunch restore service, preserved the opaque token end-to-end, wired capture/restore through account switch and distribution entrypoints, rebound the single banner immediately after relaunch, and removed the old per-screen automation banner path.
+- **Verification:** `cargo check` passed; full Rust tests passed except the pre-existing file-limit and one-struct enforcement violations; Swift test suites and helper compilation passed; `bash -n` passed; focused `git diff --check` passed.
+- **Prevention/follow-up:** Keep a regression test for the exact helper token format and require production restart callers to handle typed restore outcomes. The remaining repository file-limit violations are tracked separately and are unrelated to this restore fix.
+- **Reusable learning:** Treat a process birth token as an opaque string owned by the platform helper, and never declare recovery successful until the exact replacement process and post-restore bounds are verified.
+- **References:** `codex-switcher/src/distribution/window_relaunch_restore_service.rs`; `codex-switcher/src/distribution/system_window_restore_backend.test.rs`; `codex-switcher/src/distribution/distribution.test.rs`; `scripts/codex-window-restore.swift`.

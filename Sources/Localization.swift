@@ -178,6 +178,10 @@ public final class LocalizationManager: @unchecked Sendable {
       "add_account_failed_title": "Ошибка добавления аккаунта",
       "add_account_failed_desc": "Не удалось добавить аккаунт. Попробуйте еще раз.",
       "switch_to_account": "Переключиться на этот аккаунт",
+      "switch_cli": "CLI",
+      "switch_app": "APP",
+      "switch_cli_tooltip": "Переключить активный аккаунт для Codex CLI (без перезапуска ChatGPT)",
+      "switch_app_tooltip": "Переключить аккаунт и перезапустить ChatGPT.app",
       "relogin_to_account": "Перелогиниться в этот аккаунт",
       "relogin_account": "Перелогиниться...",
       "relogin_account_title": "Повторный вход в аккаунт Codex",
@@ -200,6 +204,7 @@ public final class LocalizationManager: @unchecked Sendable {
       "auto_switch_on_limit": "🔄 Автопереключение при исчерпании лимита",
       "auto_switch_business_only": "🏢 Автопереход только по бизнес-аккаунтам",
       "auto_switch_business_priority": "⚡ Автопереход с приоритетом бизнес-аккаунтов",
+      "auto_distribute_app_cli": "⚡ Автораспределение аккаунтов (APP 🖥 / CLI 💻)",
       "auto_reset_weekly": "♻️ Автосброс недельного лимита кредитом",
       "auto_reset_weekly_threshold": "Сбрасывать, если до недельного сброса осталось",
       "auto_reset_weekly_always": "Всегда при 0%",
@@ -267,6 +272,10 @@ public final class LocalizationManager: @unchecked Sendable {
       "add_account_failed_desc":
         "Could not complete account setup. Please check credentials and try again.",
       "switch_to_account": "Switch to this account",
+      "switch_cli": "CLI",
+      "switch_app": "APP",
+      "switch_cli_tooltip": "Switch active account for Codex CLI (without restarting ChatGPT)",
+      "switch_app_tooltip": "Switch active account and restart ChatGPT.app",
       "relogin_to_account": "Re-login to this account",
       "relogin_account": "Re-login...",
       "relogin_account_title": "Re-login to Codex Account",
@@ -289,6 +298,7 @@ public final class LocalizationManager: @unchecked Sendable {
       "auto_switch_on_limit": "🔄 Auto-Switch on Limit Depletion",
       "auto_switch_business_only": "🏢 Auto-Switch Business Accounts Only",
       "auto_switch_business_priority": "⚡ Auto-Switch with Business Account Priority",
+      "auto_distribute_app_cli": "⚡ Auto-Distribute Accounts (APP 🖥 / CLI 💻)",
       "auto_reset_weekly": "♻️ Auto-Reset Weekly Limit with Credit",
       "auto_reset_weekly_threshold": "Use a credit only when weekly reset is",
       "auto_reset_weekly_always": "Always at 0%",
@@ -1020,6 +1030,10 @@ public enum L10n {
   public static var addAccountFailedTitle: String { tr("add_account_failed_title") }
   public static var addAccountFailedDesc: String { tr("add_account_failed_desc") }
   public static var switchToAccount: String { tr("switch_to_account") }
+  public static var switchCli: String { tr("switch_cli") }
+  public static var switchApp: String { tr("switch_app") }
+  public static var switchCliTooltip: String { tr("switch_cli_tooltip") }
+  public static var switchAppTooltip: String { tr("switch_app_tooltip") }
   public static var reloginToAccount: String { tr("relogin_to_account") }
   public static var reloginAccount: String { tr("relogin_account") }
   public static var reloginAccountTitle: String { tr("relogin_account_title") }
@@ -1050,6 +1064,7 @@ public enum L10n {
   public static var autoSwitchOnLimit: String { tr("auto_switch_on_limit") }
   public static var autoSwitchBusinessOnly: String { tr("auto_switch_business_only") }
   public static var autoSwitchBusinessPriority: String { tr("auto_switch_business_priority") }
+  public static var autoDistributeAppCli: String { tr("auto_distribute_app_cli") }
   public static var autoResetWeekly: String { tr("auto_reset_weekly") }
   public static var autoResetWeeklyThreshold: String { tr("auto_reset_weekly_threshold") }
   public static var autoResetWeeklyAlways: String { tr("auto_reset_weekly_always") }

@@ -377,8 +377,12 @@ struct ScreenContrastTestRunner {
       ?? bracketTraits?[.width] as? CGFloat
       ?? 0.0
     assertTrue(
-      bracketWidth <= -0.2,
-      "Bracket font width trait must be <= -0.2 (condensed), got \(bracketWidth)")
+      bracketWidth <= -0.05,
+      "Bracket font width trait must be <= -0.05 (condensed), got \(bracketWidth)")
+
+    let rightFont = MenuBarAppearanceHelper.rightBracketFont(isScreenActive: true)
+    assertEqual(rightFont.pointSize, 21.0, "Right bracket font pointSize must be 21.0")
+    assertTrue(rightFont.fontDescriptor.fontAttributes[.traits] != nil, "rightBracketFont must define font traits")
 
     let bracketShadowActive = MenuBarAppearanceHelper.bracketShadow(isScreenActive: true)
     let bracketShadowInactive = MenuBarAppearanceHelper.bracketShadow(isScreenActive: false)

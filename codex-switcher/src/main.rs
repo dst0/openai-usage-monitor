@@ -1,10 +1,14 @@
 mod auto_reset;
 mod daemon;
+pub mod distribution;
+pub mod logger;
+mod logger_archive_info;
+mod logger_archive_result;
 mod models;
 mod oauth;
-pub mod logger;
 mod quota;
 mod recovery;
+pub mod recovery_banner;
 mod setup;
 mod shim;
 mod storage;
@@ -50,6 +54,31 @@ enum Commands {
         /// Switch trigger reason (user, auto, shim)
         #[arg(long, hide = true, default_value = "user")]
         trigger: String,
+    },
+    /// Atomically distribute accounts between ChatGPT Desktop App and Codex CLI
+    #[command(alias = "auto-distribute")]
+    Distribute {
+        /// Trigger type (auto or user)
+        #[arg(long, default_value = "user")]
+        trigger: String,
+        /// Reason for triggering distribution
+        #[arg(long, default_value = "manual_invocation")]
+        reason: String,
+        /// Dry-run mode: evaluate decision without applying changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Preferred account ID for Desktop App
+        #[arg(long)]
+        app_target: Option<String>,
+        /// Preferred account ID for CLI
+        #[arg(long)]
+        cli_target: Option<String>,
+        /// Do not restart Desktop App even if App account changes
+        #[arg(long)]
+        no_restart: bool,
+        /// Output result as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Resume an active, interrupted, or credit-exhausted thread in ChatGPT
     Resume {
@@ -181,6 +210,25 @@ enum Commands {
     /// Diagnose the Desktop-owned recovery transport without changing a task
     #[command(hide = true)]
     RecoveryPreflight,
+    /// Internal fd-anchored Monitor log setup and cleanup
+    #[command(name = "monitor-logs", hide = true)]
+    MonitorLogs {
+        /// Prepare private active streams before launchd can create them
+        #[arg(long)]
+        install: bool,
+        /// Remove Monitor-owned logs and optional account data
+        #[arg(long)]
+        remove: bool,
+        /// Print the exact Monitor-owned log cleanup inventory
+        #[arg(long)]
+        dry_run: bool,
+        /// Include the regular Monitor account registry in cleanup
+        #[arg(long)]
+        purge_data: bool,
+        /// Arm the restart cancellation marker safely
+        #[arg(long)]
+        cancel: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,7 +331,10 @@ fn print_status_table(refresh: bool) -> Result<(), String> {
             println!("      ↳ ⚠️ Error: {}", err);
             if acc.needs_relogin() {
                 let hint = acc.name.as_deref().unwrap_or(&acc.id);
-                println!("        🔑 Re-login required: run `cxi relogin \"{}\"`", hint);
+                println!(
+                    "        🔑 Re-login required: run `cxi relogin \"{}\"`",
+                    hint
+                );
             }
         }
     }
@@ -398,11 +449,11 @@ fn main() {
         match recovery::claim_restart_operation() {
             Ok(true) => {}
             Ok(false) => {
-                println!("WORKER_DUPLICATE_SKIPPED");
+                crate::runtime_print!("WORKER_DUPLICATE_SKIPPED");
                 return;
             }
             Err(error) => {
-                eprintln!("WORKER_REJECTED reason={error}");
+                crate::runtime_error!("WORKER_REJECTED reason={error}");
                 return;
             }
         }
@@ -447,10 +498,11 @@ fn main() {
             }) {
                 Ok((scheduled, recovery_error)) => {
                     if let Some(error) = recovery_error {
-                        Err(format!(
-                            "Account '{}' was switched, but desktop recovery is incomplete: {}",
+                        eprintln!(
+                            "⚠️ Account '{}' was switched, but desktop recovery is incomplete: {}",
                             account, error
-                        ))
+                        );
+                        Ok(())
                     } else {
                         if !scheduled {
                             println!("✅ Successfully switched to account '{}'!", account);
@@ -459,6 +511,76 @@ fn main() {
                     }
                 }
                 Err(e) => Err(e),
+            }
+        }
+        Some(Commands::Distribute {
+            trigger,
+            reason,
+            dry_run,
+            app_target,
+            cli_target,
+            no_restart,
+            json,
+        }) => {
+            let parsed_trigger: distribution::DistributionTrigger = trigger
+                .parse()
+                .unwrap_or(distribution::DistributionTrigger::User);
+            let mut req = match parsed_trigger {
+                distribution::DistributionTrigger::Auto => {
+                    distribution::DistributionRequest::auto(reason)
+                }
+                distribution::DistributionTrigger::User => {
+                    distribution::DistributionRequest::user(reason)
+                }
+            };
+            req = req
+                .with_preferred_app(app_target)
+                .with_preferred_cli(cli_target)
+                .with_allow_restart(!no_restart)
+                .with_dry_run(dry_run);
+
+            let coordinator = distribution::DistributionCoordinator::new();
+            match coordinator.execute(req) {
+                Ok(outcome) => {
+                    if json {
+                        if let Ok(serialized) = serde_json::to_string_pretty(&outcome) {
+                            println!("{}", serialized);
+                        }
+                    } else {
+                        match outcome.status {
+                            distribution::DistributionStatus::NoActionNeeded => {
+                                println!("ℹ️ {}", outcome.message);
+                            }
+                            distribution::DistributionStatus::Success => {
+                                println!("✅ {}", outcome.message);
+                                if let Some(app) = &outcome.target_app_id {
+                                    println!("   🖥️ Desktop App: {}", app);
+                                }
+                                if let Some(cli) = &outcome.target_cli_id {
+                                    println!("   > CLI: {}", cli);
+                                }
+                            }
+                            distribution::DistributionStatus::PartialSuccess => {
+                                eprintln!("⚠️ {}", outcome.message);
+                                if let Some(err) = &outcome.recovery_error {
+                                    eprintln!("   ↳ Recovery error: {}", err);
+                                }
+                            }
+                            distribution::DistributionStatus::DeferredCooldown => {
+                                println!("ℹ️ {}", outcome.message);
+                            }
+                            distribution::DistributionStatus::DeferredInFlight => {
+                                println!("ℹ️ {}", outcome.message);
+                            }
+                            distribution::DistributionStatus::Failed => {
+                                eprintln!("❌ {}", outcome.message);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+                Err(err) => Err(err),
             }
         }
         Some(Commands::Resume { thread_id }) => {
@@ -548,8 +670,8 @@ fn main() {
             }
             Ok(())
         })(),
-        Some(Commands::Window { action }) => (|| {
-            match action.unwrap_or(WindowAction::Status) {
+        Some(Commands::Window { action }) => {
+            (|| match action.unwrap_or(WindowAction::Status) {
                 WindowAction::Status => {
                     let saved = recovery::get_saved_desktop_window_bounds()?;
                     if let Some(b) = saved {
@@ -596,8 +718,8 @@ fn main() {
                     println!("✅ Window bounds restore dispatched for PID {}", pids[0]);
                     Ok(())
                 }
-            }
-        })(),
+            })()
+        }
         Some(Commands::SetMultiplier {
             account,
             multiplier,
@@ -662,7 +784,10 @@ fn main() {
                         };
                         println!(
                             "📦 Archived: {} ({} -> {} bytes, {:.1}% saved)",
-                            r.archive_path.file_name().unwrap_or_default().to_string_lossy(),
+                            r.archive_path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy(),
                             r.original_bytes,
                             r.compressed_bytes,
                             savings
@@ -676,15 +801,29 @@ fn main() {
                 match logger::list_archives() {
                     Ok(list) => {
                         if list.is_empty() {
-                            println!("ℹ️ No compressed log archives found in ~/.codex/log/archive/.");
+                            println!(
+                                "ℹ️ No compressed log archives found in ~/.codex/log/archive/."
+                            );
                         } else {
                             println!("\n📦 Brotli-Compressed Log Archives (Q6):");
-                            println!("{:<44} {:>12} {:>14} {:>10}", "ARCHIVE", "COMPRESSED", "UNCOMPRESSED", "SAVINGS");
+                            println!(
+                                "{:<44} {:>12} {:>14} {:>10}",
+                                "ARCHIVE", "COMPRESSED", "UNCOMPRESSED", "SAVINGS"
+                            );
                             println!("{}", "-".repeat(84));
                             for a in list {
-                                let uncomp_str = a.uncompressed_size.map(|s| format!("{s} B")).unwrap_or_else(|| "--".into());
-                                let savings_str = a.savings_percent.map(|p| format!("{p:.1}%")).unwrap_or_else(|| "--".into());
-                                println!("{:<44} {:>10} B {:>14} {:>10}", a.filename, a.compressed_size, uncomp_str, savings_str);
+                                let uncomp_str = a
+                                    .uncompressed_size
+                                    .map(|s| format!("{s} B"))
+                                    .unwrap_or_else(|| "--".into());
+                                let savings_str = a
+                                    .savings_percent
+                                    .map(|p| format!("{p:.1}%"))
+                                    .unwrap_or_else(|| "--".into());
+                                println!(
+                                    "{:<44} {:>10} B {:>14} {:>10}",
+                                    a.filename, a.compressed_size, uncomp_str, savings_str
+                                );
                             }
                             println!();
                         }
@@ -715,19 +854,43 @@ fn main() {
             }
         }
         Some(Commands::RecoveryPreflight) => recovery::preflight_desktop_dispatch(),
+        Some(Commands::MonitorLogs {
+            install,
+            remove,
+            dry_run,
+            purge_data,
+            cancel,
+        }) => {
+            let modes = [install, remove, dry_run, cancel]
+                .iter()
+                .filter(|enabled| **enabled)
+                .count();
+            if modes != 1 {
+                Err("monitor log command requires exactly one action".into())
+            } else if install {
+                distribution::MonitorLogCleanupService::install()
+            } else if remove {
+                distribution::MonitorLogCleanupService::remove(purge_data)
+            } else if cancel {
+                distribution::MonitorLogCleanupService::cancel_recovery()
+            } else {
+                distribution::MonitorLogCleanupService::print_plan(purge_data)
+            }
+        }
     };
 
     if let Err(err) = result {
-        eprintln!("❌ Error: {}", err);
         if is_restart_worker {
+            crate::runtime_error!("❌ Error: {}", err);
             // `launchctl submit` retries a job that exits nonzero. The detailed
             // failure remains in the 0600 run log; exit zero prevents a second
             // destructive restart of the app.
-            eprintln!("WORKER_RESULT failed");
+            crate::runtime_error!("WORKER_RESULT failed");
             return;
         }
+        eprintln!("❌ Error: {}", err);
         std::process::exit(1);
     } else if is_restart_worker {
-        println!("WORKER_RESULT passed");
+        crate::runtime_print!("WORKER_RESULT passed");
     }
 }

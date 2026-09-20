@@ -140,6 +140,26 @@ extension AppDelegate {
         dynamicAccountItems.append(errItem)
         insertIdx += 1
       }
+
+      if let cliAcc = snapshot.cliAccount,
+        cliAcc.id.caseInsensitiveCompare(appAcc.id) != .orderedSame
+      {
+        let alignTitle =
+          isRu ? "  💻 Переключить CLI на этот аккаунт" : "  💻 Switch CLI to this account"
+        let alignItem = NSMenuItem(
+          title: alignTitle, action: #selector(handleAlignCliWithAppAction(_:)), keyEquivalent: "")
+        alignItem.target = self
+        alignItem.representedObject = appAcc.id
+        alignItem.attributedTitle = NSAttributedString(
+          string: alignTitle,
+          attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: NSColor(red: 0.35, green: 0.75, blue: 0.35, alpha: 1.0),
+          ])
+        menu.insertItem(alignItem, at: insertIdx)
+        dynamicAccountItems.append(alignItem)
+        insertIdx += 1
+      }
     } else {
       let notDetectedTitle =
         isRu ? "⚪ Сессия ChatGPT.app не обнаружена" : "⚪ ChatGPT.app session not detected"

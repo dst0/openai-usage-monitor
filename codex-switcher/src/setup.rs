@@ -869,7 +869,8 @@ pub fn apply_relogin_to_accounts_file(
     target_query: &str,
     tokens: AuthTokens,
 ) -> Result<String, String> {
-    let target_idx = crate::switcher::resolve_target_account_idx(&accounts_file.accounts, target_query)?;
+    let target_idx =
+        crate::switcher::resolve_target_account_idx(&accounts_file.accounts, target_query)?;
     let target = &mut accounts_file.accounts[target_idx];
 
     let (extracted_email, extracted_plan) = extract_jwt_metadata_from_tokens(&tokens);
@@ -1043,10 +1044,7 @@ pub fn relogin_account(query: &str, restart: bool, no_restart: bool) -> Result<(
         let _ = crate::switcher::restart_and_recover(0, None);
     }
 
-    let final_acc = accounts_file
-        .accounts
-        .iter()
-        .find(|a| a.id == updated_id);
+    let final_acc = accounts_file.accounts.iter().find(|a| a.id == updated_id);
     let final_display = final_acc
         .map(|a| a.display_name())
         .unwrap_or_else(|| updated_id.as_str());
@@ -1872,8 +1870,10 @@ mod tests {
     #[test]
     fn test_apply_relogin_rejects_email_mismatch() {
         let _lock = TEST_CODEX_HOME_MUTEX.lock().unwrap();
-        let temp_dir =
-            std::env::temp_dir().join(format!("codex_relogin_mismatch_test_{}", std::process::id()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "codex_relogin_mismatch_test_{}",
+            std::process::id()
+        ));
         let _ = std::fs::create_dir_all(&temp_dir);
         std::env::set_var("CODEX_HOME", &temp_dir);
 
@@ -1914,7 +1914,10 @@ mod tests {
             file.accounts[0].tokens.refresh_token.as_deref(),
             Some("old_rt")
         );
-        assert_eq!(file.accounts[0].last_error, Some("401 Unauthorized".to_string()));
+        assert_eq!(
+            file.accounts[0].last_error,
+            Some("401 Unauthorized".to_string())
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::env::remove_var("CODEX_HOME");
@@ -1961,7 +1964,8 @@ mod tests {
             account_id: Some("uuid-1".to_string()),
         };
 
-        let res = apply_relogin_to_accounts_file(&mut file, "active@example.com:uuid-1", new_tokens);
+        let res =
+            apply_relogin_to_accounts_file(&mut file, "active@example.com:uuid-1", new_tokens);
         assert!(res.is_ok());
 
         let active_auth = crate::storage::read_active_auth_json().unwrap();
@@ -1979,23 +1983,19 @@ mod tests {
         let mut file = crate::models::AccountsFile {
             active_account_id: Some("user1@example.com:uuid-1".to_string()),
             settings: Default::default(),
-            accounts: vec![
-                make_test_account(
-                    "user1@example.com:uuid-1",
-                    "user1@example.com",
-                    "uuid-1",
-                    Some("rt_1"),
-                    "at_1",
-                ),
-            ],
+            accounts: vec![make_test_account(
+                "user1@example.com:uuid-1",
+                "user1@example.com",
+                "uuid-1",
+                Some("rt_1"),
+                "at_1",
+            )],
         };
         file.accounts[0].last_credits = Some(2);
 
-        let result = reset_account_in_file(
-            &mut file,
-            "user1@example.com",
-            |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Applied,
-        );
+        let result = reset_account_in_file(&mut file, "user1@example.com", |_acc, _idemp| {
+            crate::quota::ResetCreditConsumeOutcome::Applied
+        });
 
         assert!(result.is_ok());
         let (name, is_active) = result.unwrap();
@@ -2009,23 +2009,19 @@ mod tests {
         let mut file = crate::models::AccountsFile {
             active_account_id: Some("user1@example.com:uuid-1".to_string()),
             settings: Default::default(),
-            accounts: vec![
-                make_test_account(
-                    "user1@example.com:uuid-1",
-                    "user1@example.com",
-                    "uuid-1",
-                    Some("rt_1"),
-                    "at_1",
-                ),
-            ],
+            accounts: vec![make_test_account(
+                "user1@example.com:uuid-1",
+                "user1@example.com",
+                "uuid-1",
+                Some("rt_1"),
+                "at_1",
+            )],
         };
         file.accounts[0].last_credits = Some(0);
 
-        let result = reset_account_in_file(
-            &mut file,
-            "user1@example.com",
-            |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Applied,
-        );
+        let result = reset_account_in_file(&mut file, "user1@example.com", |_acc, _idemp| {
+            crate::quota::ResetCreditConsumeOutcome::Applied
+        });
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("no reset credits available"));
@@ -2037,34 +2033,28 @@ mod tests {
         let mut file = crate::models::AccountsFile {
             active_account_id: Some("user1@example.com:uuid-1".to_string()),
             settings: Default::default(),
-            accounts: vec![
-                make_test_account(
-                    "user1@example.com:uuid-1",
-                    "user1@example.com",
-                    "uuid-1",
-                    Some("rt_1"),
-                    "at_1",
-                ),
-            ],
+            accounts: vec![make_test_account(
+                "user1@example.com:uuid-1",
+                "user1@example.com",
+                "uuid-1",
+                Some("rt_1"),
+                "at_1",
+            )],
         };
         file.accounts[0].last_credits = Some(1);
 
         // NotConsumed
-        let res1 = reset_account_in_file(
-            &mut file,
-            "user1@example.com",
-            |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::NotConsumed("nothing_to_reset".into()),
-        );
+        let res1 = reset_account_in_file(&mut file, "user1@example.com", |_acc, _idemp| {
+            crate::quota::ResetCreditConsumeOutcome::NotConsumed("nothing_to_reset".into())
+        });
         assert!(res1.is_err());
         assert!(res1.unwrap_err().contains("Reset credit was not consumed"));
         assert_eq!(file.accounts[0].last_credits, Some(1));
 
         // Unavailable
-        let res2 = reset_account_in_file(
-            &mut file,
-            "user1@example.com",
-            |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Unavailable("service_busy".into()),
-        );
+        let res2 = reset_account_in_file(&mut file, "user1@example.com", |_acc, _idemp| {
+            crate::quota::ResetCreditConsumeOutcome::Unavailable("service_busy".into())
+        });
         assert!(res2.is_err());
         assert!(res2.unwrap_err().contains("service is unavailable"));
         assert_eq!(file.accounts[0].last_credits, Some(1));
@@ -2096,11 +2086,9 @@ mod tests {
         file.accounts[1].last_credits = Some(2);
 
         // "desktop-app" should resolve to active account (user2)
-        let res = reset_account_in_file(
-            &mut file,
-            "desktop-app",
-            |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Applied,
-        );
+        let res = reset_account_in_file(&mut file, "desktop-app", |_acc, _idemp| {
+            crate::quota::ResetCreditConsumeOutcome::Applied
+        });
         assert!(res.is_ok());
         let (name, is_active) = res.unwrap();
         assert_eq!(name, "user2");
@@ -2108,20 +2096,16 @@ mod tests {
         assert_eq!(file.accounts[1].last_credits, Some(1));
 
         // "active" should also resolve to active account
-        let res_active = reset_account_in_file(
-            &mut file,
-            "active",
-            |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Applied,
-        );
+        let res_active = reset_account_in_file(&mut file, "active", |_acc, _idemp| {
+            crate::quota::ResetCreditConsumeOutcome::Applied
+        });
         assert!(res_active.is_ok());
         assert_eq!(file.accounts[1].last_credits, Some(0));
 
         // empty query should return error
-        let res_empty = reset_account_in_file(
-            &mut file,
-            "   ",
-            |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Applied,
-        );
+        let res_empty = reset_account_in_file(&mut file, "   ", |_acc, _idemp| {
+            crate::quota::ResetCreditConsumeOutcome::Applied
+        });
         assert!(res_empty.is_err());
     }
 }

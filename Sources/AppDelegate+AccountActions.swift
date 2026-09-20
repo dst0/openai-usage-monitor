@@ -200,57 +200,33 @@ extension AppDelegate {
     }
   }
 
-  internal func executeSwitchAccount(id: String) {
-    let target = lastSnapshot?.accounts.first(where: {
+  internal func executeSwitchAccount(
+    id: String, target: CodexClient.SwitchTarget = .both
+  ) {
+    guard let snapshot = lastSnapshot,
+      let resolved = snapshot.accounts.first(where: {
       $0.id.caseInsensitiveCompare(id) == .orderedSame
         || $0.email.caseInsensitiveCompare(id) == .orderedSame
         || ($0.name?.caseInsensitiveCompare(id) == .orderedSame)
-    })
-    if let target = target, target.needsRelogin {
-      promptReloginAccount(id: target.id, email: target.email)
+      })
+    else { return }
+
+    if resolved.needsRelogin {
+      promptReloginAccount(id: resolved.id, email: resolved.email)
       return
     }
-    if let currentSnapshot = self.lastSnapshot {
-      let updatedAccounts = currentSnapshot.accounts.map { acc in
-        AccountQuota(
-          id: acc.id,
-          name: acc.name,
-          email: acc.email,
-          planType: acc.planType,
-          isCurrentActive: acc.id.caseInsensitiveCompare(id) == .orderedSame,
-          fiveHourPercentage: acc.fiveHourPercentage,
-          weeklyPercentage: acc.weeklyPercentage,
-          models: acc.models,
-          resetTime: acc.resetTime,
-          resetAfterSeconds: acc.resetAfterSeconds,
-          credits: acc.credits,
-          error: acc.error
-        )
-      }
-      let targetAcc = updatedAccounts.first(where: { $0.isCurrentActive }) ?? updatedAccounts.first
-      let updatedSnapshot = MultiAccountSnapshot(
-        timestamp: Date(),
-        activeAccountId: targetAcc?.id ?? id,
-        activeEmail: targetAcc?.email ?? currentSnapshot.activeEmail,
-        activePlan: targetAcc?.planType ?? currentSnapshot.activePlan,
-        fiveHourPercentage: targetAcc?.fiveHourPercentage ?? currentSnapshot.fiveHourPercentage,
-        weeklyPercentage: targetAcc?.weeklyPercentage ?? currentSnapshot.weeklyPercentage,
-        resetTime: targetAcc?.resetTime ?? currentSnapshot.resetTime,
-        resetAfterSeconds: targetAcc?.resetAfterSeconds ?? currentSnapshot.resetAfterSeconds,
-        credits: targetAcc?.credits ?? currentSnapshot.credits,
-        autoSwitchEnabled: currentSnapshot.autoSwitchEnabled,
-        autoSwitchBusinessOnly: currentSnapshot.autoSwitchBusinessOnly,
-        autoSwitchBusinessPriority: currentSnapshot.autoSwitchBusinessPriority,
-        isAppRunning: currentSnapshot.isAppRunning,
-        activeModelName: currentSnapshot.activeModelName,
-        accounts: updatedAccounts,
-        appAccount: currentSnapshot.appAccount,
-        cliAccount: targetAcc
-      )
-      self.lastSnapshot = updatedSnapshot
-      self.updateUI(with: updatedSnapshot)
-    }
-    client.switchToAccount(id: id) { [weak self] _ in
+
+    let currentAppId = CodexClient.resolvedAccountId(
+      for: client.getDesktopAppAccountId(), accounts: snapshot.accounts)
+    let currentCliId = CodexClient.resolvedAccountId(
+      for: snapshot.activeAccountId, accounts: snapshot.accounts)
+
+    client.switchToAccount(
+      id: resolved.id,
+      target: target,
+      currentAppId: currentAppId,
+      currentCliId: currentCliId
+    ) { [weak self] _ in
       self?.refreshNow()
     }
   }
@@ -259,5 +235,15 @@ extension AppDelegate {
     guard let model = sender.representedObject as? String else { return }
     client.setActiveModelName(model)
     refreshNow()
+  }
+
+  @objc internal func handleAlignAppWithCliAction(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? String else { return }
+    executeSwitchAccount(id: id, target: .app)
+  }
+
+  @objc internal func handleAlignCliWithAppAction(_ sender: NSMenuItem) {
+    guard let id = sender.representedObject as? String else { return }
+    executeSwitchAccount(id: id, target: .cli)
   }
 }

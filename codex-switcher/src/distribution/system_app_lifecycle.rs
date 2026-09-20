@@ -1,0 +1,117 @@
+use super::app_lifecycle::AppLifecycle;
+use crate::distribution::{RestoreOutcome, SystemWindowRestoreBackend, WindowRestoreService};
+use crate::recovery::{self, RecoveryBanner, RecoveryMode};
+use crate::switcher;
+use std::sync::Mutex;
+
+pub struct SystemAppLifecycle {
+    recovery_banner: Mutex<Option<RecoveryBanner>>,
+}
+
+impl Default for SystemAppLifecycle {
+    fn default() -> Self {
+        Self {
+            recovery_banner: Mutex::new(None),
+        }
+    }
+}
+
+impl AppLifecycle for SystemAppLifecycle {
+    fn is_app_running(&self) -> bool {
+        switcher::is_codex_app_running()
+    }
+
+    fn stop_app(&self) -> Result<(), String> {
+        switcher::stop_codex_app_gracefully()
+    }
+
+    fn launch_app(&self) -> Result<Vec<u32>, String> {
+        switcher::launch_codex_app()
+    }
+
+    fn capture_window_bounds(
+        &self,
+        operation_id: &str,
+        targets: &[String],
+        reason: &str,
+    ) -> Result<(), String> {
+        let pids = switcher::current_codex_app_pids();
+        if pids.len() != 1 {
+            return Err(format!(
+                "Window capture requires exactly one Codex process, got {pids:?}"
+            ));
+        }
+        let mut backend = SystemWindowRestoreBackend::new()?;
+        let result = WindowRestoreService::new(Default::default())?.capture(
+            &mut backend,
+            operation_id,
+            reason,
+            pids[0],
+        );
+        if result.report.outcome != RestoreOutcome::Restored {
+            return Err("Codex window capture did not complete successfully".into());
+        }
+        let capture = result
+            .capture
+            .ok_or_else(|| "Codex window capture returned no frame".to_string())?;
+        let banner = RecoveryBanner::start_with_capture(operation_id, targets, reason, capture)?;
+        let mut current = self
+            .recovery_banner
+            .lock()
+            .map_err(|_| "Recovery banner state lock is poisoned".to_string())?;
+        if current.is_some() {
+            return Err("A previous recovery banner is still active".into());
+        }
+        *current = Some(banner);
+        Ok(())
+    }
+
+    fn restore_window_bounds(
+        &self,
+        pid: u32,
+        operation_id: &str,
+        reason: &str,
+    ) -> Result<(), String> {
+        let current = self
+            .recovery_banner
+            .lock()
+            .map_err(|_| "Recovery banner state lock is poisoned".to_string())?;
+        let banner = current
+            .as_ref()
+            .ok_or_else(|| "Window restore has no pre-shutdown capture".to_string())?;
+        banner.restore_after_relaunch(pid, operation_id, reason)
+    }
+
+    fn abort_recovery(&self) {
+        let banner = self
+            .recovery_banner
+            .lock()
+            .ok()
+            .and_then(|mut current| current.take());
+        drop(banner);
+    }
+
+    fn recover_threads(&self, targets: &[String]) -> Result<(), String> {
+        let banner = self
+            .recovery_banner
+            .lock()
+            .map_err(|_| "Recovery banner state lock is poisoned".to_string())?
+            .take()
+            .ok_or_else(|| "Recovery has no active banner".to_string())?;
+        let rec_res =
+            recovery::recover_threads_with_banner(targets, RecoveryMode::CapturedRestart, &banner);
+        drop(banner);
+        rec_res
+    }
+
+    fn verify_desktop_stable(&self, pids: &[u32]) -> Result<(), String> {
+        recovery::verify_desktop_stable(pids)
+    }
+
+    fn notify_distribution_complete(&self) {
+        switcher::send_macos_notification(
+            "Codex Account Distribution",
+            "Automatic account distribution completed",
+        );
+    }
+}

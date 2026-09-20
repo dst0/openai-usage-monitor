@@ -33,9 +33,12 @@ swiftc -parse-as-library \
     Sources/ReserveAccountSectionEntry.swift \
     Sources/ResetCreditsRowView.swift \
     Sources/AccountRowView.swift \
+    Sources/AccountSwitchButtonsView.swift \
     Sources/AccountSectionCardView.swift \
+    Sources/AccountSectionCardView+Tracking.swift \
     Sources/AppDelegate.swift \
     Sources/AppDelegate+FileWatchers.swift \
+    Sources/StatusBarBracketRenderer.swift \
     Sources/AppDelegate+StatusBar.swift \
     Sources/AppDelegate+StatusBarOverloads.swift \
     Sources/AppDelegate+Menu.swift \
@@ -51,6 +54,42 @@ swiftc -parse-as-library \
     tests/AppDelegateTests.swift \
     -o "${TMP_BIN_DIR}/app_delegate_test"
 "${TMP_BIN_DIR}/app_delegate_test"
+
+echo "👉 Running recovery payload security tests..."
+swiftc -parse-as-library \
+    -target "$(uname -m)-apple-macosx13.0" \
+    -framework AppKit -framework Foundation -framework ApplicationServices \
+    Sources/CodexRecoveryPayloadReader.swift \
+    tests/CodexRecoveryPayloadReaderTests.swift \
+    -o "${TMP_BIN_DIR}/codex-recovery-payload-reader_test"
+"${TMP_BIN_DIR}/codex-recovery-payload-reader_test"
+
+echo "👉 Running App/CLI identity separation tests..."
+swiftc -parse-as-library \
+    Sources/Localization.swift \
+    Sources/QuotaModels.swift \
+    Sources/CodexClient.swift \
+    tests/CodexClientIdentityTests.swift \
+    -o "${TMP_BIN_DIR}/codex-client-identity_test"
+"${TMP_BIN_DIR}/codex-client-identity_test"
+
+echo "👉 Compiling recovery banner and exact window helpers..."
+RECOVERY_BANNER_SOURCES=()
+while IFS= read -r recovery_source || [ -n "${recovery_source}" ]; do
+    [ -n "${recovery_source}" ] || continue
+    RECOVERY_BANNER_SOURCES+=("${recovery_source}")
+done < "scripts/codex-recovery-banner-sources.txt"
+swiftc -parse-as-library \
+    -target "$(uname -m)-apple-macosx13.0" \
+    -framework AppKit -framework Foundation -framework ApplicationServices \
+    "${RECOVERY_BANNER_SOURCES[@]}" \
+    scripts/codex-recovery-banner-main.swift \
+    -o "${TMP_BIN_DIR}/codex-recovery-banner"
+swiftc \
+    -target "$(uname -m)-apple-macosx13.0" \
+    -framework AppKit -framework Foundation -framework ApplicationServices \
+    scripts/codex-window-restore.swift \
+    -o "${TMP_BIN_DIR}/codex-window-restore"
 
 echo ""
 echo "🎉 ALL SWIFT TEST SUITES PASSED CLEANLY!"

@@ -296,7 +296,9 @@ public struct MultiAccountSnapshot: Sendable {
 
     let primary = cliAccount ?? accounts.first(where: { $0.isCurrentActive }) ?? accounts.first
     self.cliAccount = primary
-    self.appAccount = appAccount ?? (isAppRunning ? primary : nil)
+    // Desktop and CLI can legitimately use different accounts. An absent
+    // App marker therefore stays unknown until CodexClient verifies it.
+    self.appAccount = appAccount
   }
 
   public var statusEmoji: String {

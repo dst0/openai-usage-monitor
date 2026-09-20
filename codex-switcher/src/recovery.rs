@@ -1,5 +1,13 @@
 //! Recovery is successful only when the target rollout records new agent work.
 //! A deep link, AXPress, task_started, or a queue acknowledgement is not proof.
+use crate::distribution::{
+    RestoreOutcome, SystemWindowRestoreBackend, WindowCapture, WindowRelaunchRestoreService,
+    WindowRestoreBackend, WindowRestoreService,
+};
+use crate::recovery_banner::{
+    BannerSessionStatus, ProcessIdentity as BannerProcessIdentity, RecoveryBannerService,
+    RecoverySession, RecoverySessionCatalog, SavedWindow, WindowRect,
+};
 use crate::{models::DesktopWindowBounds, storage, switcher};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -61,63 +69,174 @@ impl RecoveryMode {
 pub(crate) struct RecoveryBanner {
     child: Option<Child>,
     visible_since: Option<Instant>,
+    service: Option<RecoveryBannerService>,
+    capture: Option<WindowCapture>,
 }
 
 impl RecoveryBanner {
-    pub(crate) fn start(task_count: usize) -> Result<Self, String> {
-        if task_count == 0 {
+    pub(crate) fn start(operation_id: &str, ids: &[String], reason: &str) -> Result<Self, String> {
+        let pids = switcher::current_codex_app_pids();
+        if pids.len() != 1 {
+            return Err("Recovery banner requires exactly one Codex main process".into());
+        }
+        let mut backend = SystemWindowRestoreBackend::new()?;
+        let capture_result = WindowRestoreService::new(Default::default())?.capture(
+            &mut backend,
+            operation_id,
+            reason,
+            pids[0],
+        );
+        if capture_result.report.outcome != RestoreOutcome::Restored {
+            return Err("Codex window capture did not complete successfully".into());
+        }
+        let capture = capture_result
+            .capture
+            .ok_or_else(|| "Could not capture the exact Codex window for recovery".to_string())?;
+        Self::start_with_capture(operation_id, ids, reason, capture)
+    }
+
+    pub(crate) fn start_with_capture(
+        operation_id: &str,
+        ids: &[String],
+        _reason: &str,
+        capture: WindowCapture,
+    ) -> Result<Self, String> {
+        if ids.is_empty() {
             return Ok(Self {
                 child: None,
                 visible_since: None,
+                service: None,
+                capture: Some(capture),
             });
         }
-        let directory = storage::codex_home().join("recovery-runs");
-        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-        let ready_path = directory.join(format!("banner-{}.ready", std::process::id()));
-        let _ = std::fs::remove_file(&ready_path);
-        for path in helper_candidates() {
-            match Command::new(path)
-                .args([
-                    "--automation-banner",
-                    "--tasks",
-                    &task_count.to_string(),
-                    "--parent-pid",
-                    &std::process::id().to_string(),
-                    "--ready-file",
-                    &ready_path.to_string_lossy(),
-                ])
+        let expected =
+            BannerProcessIdentity::new(capture.process.pid, capture.process.birth_id.clone())?;
+        let saved_window = SavedWindow::new(
+            WindowRect::new(
+                capture.frame.x,
+                capture.frame.y,
+                capture.frame.width,
+                capture.frame.height,
+            )?,
+            WindowRect::new(
+                capture.screen.frame.x,
+                capture.screen.frame.y,
+                capture.screen.frame.width,
+                capture.screen.frame.height,
+            )?,
+        )?;
+        let home = storage::codex_home();
+        let service = RecoveryBannerService::begin(
+            &home,
+            operation_id,
+            expected,
+            saved_window,
+            RecoverySessionCatalog::load(&home, ids),
+        )?;
+        let payload = service.payload_path().to_path_buf();
+        let ready = payload
+            .parent()
+            .ok_or("Recovery banner payload has no parent")?
+            .join("restore-banner.ready");
+        let mut child = None;
+        if let Some(path) = banner_helper_candidates().into_iter().next() {
+            let _ = std::fs::remove_file(&ready);
+            if let Ok(process) = Command::new(path)
+                .args(["--payload", &payload.to_string_lossy()])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()
             {
-                Ok(mut child) => {
-                    let deadline = Instant::now() + Duration::from_secs(5);
-                    while Instant::now() < deadline {
-                        if matches!(
-                            std::fs::read(&ready_path),
-                            Ok(ref bytes) if bytes == b"visible\n"
-                        ) {
-                            let _ = std::fs::remove_file(&ready_path);
-                            println!("RECOVERY_BANNER_CONFIRMED tasks={task_count}");
-                            return Ok(Self {
-                                child: Some(child),
-                                visible_since: Some(Instant::now()),
-                            });
-                        }
-                        if child.try_wait().ok().flatten().is_some() {
-                            break;
-                        }
-                        sleep(Duration::from_millis(50));
-                    }
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    let _ = std::fs::remove_file(&ready_path);
-                }
-                Err(_) => continue,
+                child = Some(process);
             }
         }
-        Err("Automation banner could not create visible panels; refusing to restart Codex".into())
+        let mut child =
+            child.ok_or_else(|| "Recovery banner helper is not installed".to_string())?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if matches!(std::fs::read(&ready), Ok(ref bytes) if bytes == b"visible\n") {
+                let _ = std::fs::remove_file(&ready);
+                crate::runtime_print!(
+                    "RECOVERY_BANNER_CONFIRMED operation_id={operation_id} targets={}",
+                    ids.len()
+                );
+                return Ok(Self {
+                    child: Some(child),
+                    visible_since: Some(Instant::now()),
+                    service: Some(service),
+                    capture: Some(capture),
+                });
+            }
+            if child.try_wait().ok().flatten().is_some() {
+                break;
+            }
+            sleep(Duration::from_millis(50));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        Err("Recovery banner helper did not confirm a visible panel".into())
+    }
+
+    pub(crate) fn update_process(&self, pid: u32) -> Result<(), String> {
+        let Some(service) = &self.service else {
+            return Ok(());
+        };
+        let mut backend = SystemWindowRestoreBackend::new()?;
+        let process = backend.inspect_process(pid)?;
+        let current = service.read_payload()?;
+        service.update_target(
+            BannerProcessIdentity::new(process.pid, process.birth_id.clone())?,
+            current.saved_window,
+        )
+    }
+
+    /// Restore the saved geometry against the exact process created by the
+    /// relaunch, then rebind the single banner to that process identity.
+    pub(crate) fn restore_after_relaunch(
+        &self,
+        pid: u32,
+        operation_id: &str,
+        reason: &str,
+    ) -> Result<(), String> {
+        let Some(capture) = self.capture.clone() else {
+            return Ok(());
+        };
+        // Rebind the visible payload before any geometry writes so the banner
+        // describes the process that now owns the window even on a partial
+        // restore.
+        self.update_process(pid)?;
+        let mut backend = SystemWindowRestoreBackend::new()?;
+        let service = WindowRestoreService::new(Default::default())?;
+        let report = WindowRelaunchRestoreService::restore(
+            &service,
+            &mut backend,
+            operation_id,
+            reason,
+            capture,
+            pid,
+        );
+        if report.outcome != RestoreOutcome::Restored {
+            let detail = report
+                .events
+                .last()
+                .map(|event| event.detail.as_str())
+                .unwrap_or("Window restore did not complete");
+            return Err(format!("Window restore {:?}: {detail}", report.outcome));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn update_status(
+        &self,
+        id: &str,
+        status: BannerSessionStatus,
+    ) -> Result<(), String> {
+        let Some(service) = &self.service else {
+            return Ok(());
+        };
+        let short_id = RecoverySession::from_raw("", "", id, status).short_id;
+        service.update_status(&short_id, status)
     }
 }
 
@@ -133,7 +252,56 @@ impl Drop for RecoveryBanner {
             let _ = child.kill();
             let _ = child.wait();
         }
+        if let Some(service) = self.service.take() {
+            let _ = service.finish();
+        }
     }
+}
+
+fn banner_helper_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(path) = std::env::current_exe() {
+        if let Some(parent) = path.parent() {
+            candidates.push(parent.join("codex-recovery-banner"));
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        candidates.push(home.join(".local/bin/codex-recovery-banner"));
+    }
+    candidates
+        .into_iter()
+        .filter(|path| path.is_file())
+        .collect()
+}
+
+pub(crate) fn operation_id_for_banner(reason: &str) -> String {
+    if let Ok(operation_id) = std::env::var("CODEX_RESTART_OPERATION") {
+        let operation_id = operation_id.trim();
+        if !operation_id.is_empty()
+            && operation_id.len() <= 128
+            && operation_id.chars().all(|ch| !ch.is_control())
+        {
+            return operation_id.to_string();
+        }
+    }
+    let safe_reason: String = reason
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+        .take(32)
+        .collect();
+    let safe_reason = if safe_reason.is_empty() {
+        "recovery"
+    } else {
+        &safe_reason
+    };
+    format!(
+        "op_{safe_reason}_{}_{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+        std::process::id()
+    )
 }
 
 pub fn operation_lock() -> Result<File, String> {
@@ -282,7 +450,7 @@ pub(crate) fn verify_desktop_window_passive(expected_pid: u32) -> Result<(), Str
         if output.status.success()
             && String::from_utf8_lossy(&output.stdout).contains("APP_VISIBLE")
         {
-            println!("RESTART_VISIBLE pid={expected_pid}");
+            crate::runtime_print!("RESTART_VISIBLE pid={expected_pid}");
             return Ok(());
         }
     }
@@ -306,7 +474,8 @@ pub fn get_saved_desktop_window_bounds() -> Result<Option<DesktopWindowBounds>, 
     if !path.exists() {
         return Ok(None);
     }
-    let data = std::fs::read(&path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    let data =
+        std::fs::read(&path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
     let bounds: DesktopWindowBounds = serde_json::from_slice(&data)
         .map_err(|e| format!("Failed to parse {}: {e}", path.display()))?;
     Ok(Some(bounds))
@@ -351,7 +520,7 @@ pub(crate) fn save_desktop_window_bounds(
                         "WINDOW_BOUNDS_SAVED x={:.1} y={:.1} w={:.1} h={:.1}{pid_str}",
                         b.x, b.y, b.width, b.height
                     );
-                    println!("{msg}");
+                    crate::runtime_print!("{msg}");
                     crate::logger::log("INFO", "RECOVERY", &msg);
                 }
                 return Ok(saved);
@@ -378,18 +547,16 @@ pub(crate) fn save_desktop_window_bounds(
     Ok(None)
 }
 
-fn restore_desktop_window_bounds_osascript(expected_pid: u32, bounds: &DesktopWindowBounds) -> bool {
+fn restore_desktop_window_bounds_osascript(
+    expected_pid: u32,
+    bounds: &DesktopWindowBounds,
+) -> bool {
     let script = format!(
         r#"tell application "System Events"
 set targetProc to missing value
 try
 set targetProc to (first process whose unix id is {expected_pid})
 end try
-if targetProc is missing value then
-try
-set targetProc to process "ChatGPT"
-end try
-end if
 if targetProc is not missing value then
 tell targetProc
 set matched to missing value
@@ -397,8 +564,7 @@ repeat with w in windows
 try
 set subr to subrole of w
 set sz to size of w
-set nm to name of w
-if (subr is "AXStandardWindow" or nm is "ChatGPT") and (item 1 of sz >= 300 and item 2 of sz >= 250) then
+if subr is "AXStandardWindow" and (item 1 of sz >= 300 and item 2 of sz >= 250) then
 set matched to w
 exit repeat
 end if
@@ -426,7 +592,11 @@ end tell"#,
         h = bounds.height.round() as i64,
     );
 
-    match Command::new("/usr/bin/osascript").arg("-e").arg(&script).output() {
+    match Command::new("/usr/bin/osascript")
+        .arg("-e")
+        .arg(&script)
+        .output()
+    {
         Ok(out) if out.status.success() => {
             let stdout = String::from_utf8_lossy(&out.stdout);
             let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
@@ -435,7 +605,7 @@ end tell"#,
                     "WINDOW_BOUNDS_RESTORED x={} y={} width={} height={} pid={}",
                     parts[0], parts[1], parts[2], parts[3], parts[4]
                 );
-                println!("{line}");
+                crate::runtime_print!("{line}");
                 crate::logger::log("INFO", "RECOVERY", &line);
                 return true;
             }
@@ -465,14 +635,16 @@ pub(crate) fn restore_desktop_window_bounds(expected_pid: u32) -> Result<(), Str
                     .lines()
                     .find(|l| l.contains("WINDOW_BOUNDS_RESTORED"))
                     .unwrap_or("WINDOW_BOUNDS_RESTORED");
-                println!("{line}");
+                crate::runtime_print!("{line}");
                 crate::logger::log("INFO", "RECOVERY", line);
                 return Ok(());
             } else if stdout.contains("NO_BOUNDS_SAVED") {
                 crate::logger::log(
                     "INFO",
                     "RECOVERY",
-                    &format!("WINDOW_BOUNDS_RESTORE skipped: no saved bounds for pid={expected_pid}"),
+                    &format!(
+                        "WINDOW_BOUNDS_RESTORE skipped: no saved bounds for pid={expected_pid}"
+                    ),
                 );
                 return Ok(());
             } else {
@@ -534,8 +706,7 @@ pub(crate) fn verify_desktop_stable(expected_pids: &[u32]) -> Result<(), String>
         sleep(Duration::from_millis(250));
     }
     verify_desktop_window_passive(expected_pids[0])?;
-    let _ = restore_desktop_window_bounds(expected_pids[0]);
-    println!(
+    crate::runtime_print!(
         "RESTART_STABLE pids={expected_pids:?} observation_secs={}",
         DESKTOP_STABILITY_WINDOW.as_secs()
     );
@@ -940,7 +1111,7 @@ fn read_ipc_frame(stream: &mut UnixStream) -> Result<Value, IpcReadError> {
 pub(crate) fn preflight_desktop_dispatch() -> Result<(), String> {
     let client = DesktopIpc::connect_with_retry(IPC_PREFLIGHT_TIMEOUT)?;
     drop(client);
-    println!("RECOVERY_CHANNEL_CONFIRMED transport=desktop_ipc");
+    crate::runtime_print!("RECOVERY_CHANNEL_CONFIRMED transport=desktop_ipc");
     Ok(())
 }
 
@@ -1038,11 +1209,36 @@ fn load_manifest() -> Result<Vec<PendingTarget>, String> {
     }
 }
 
+fn prune_ineligible_targets(home: &Path, targets: &mut Vec<PendingTarget>) {
+    let now = chrono::Utc::now().timestamp();
+    targets.retain(|target| {
+        if !valid_id(&target.id) || !switcher::is_user_thread(home, &target.id) {
+            return false;
+        }
+        let is_recent = switcher::get_thread_updated_at(home, &target.id)
+            .map(|updated| (now - updated).abs() <= switcher::RECENT_QUOTA_WINDOW_SECS)
+            .unwrap_or(false);
+        if !is_recent {
+            return false;
+        }
+        match switcher::inspect_thread_rollout_state(home, &target.id) {
+            switcher::ThreadRolloutState::ActiveInProgress
+            | switcher::ThreadRolloutState::InterruptedByQuota
+            | switcher::ThreadRolloutState::TurnAborted => true,
+            _ => false,
+        }
+    });
+}
+
 pub fn load_pending() -> Result<Vec<String>, String> {
-    Ok(load_manifest()?
-        .into_iter()
-        .map(|target| target.id)
-        .collect())
+    let home = storage::codex_home();
+    let mut targets = load_manifest()?;
+    let before_len = targets.len();
+    prune_ineligible_targets(&home, &mut targets);
+    if targets.len() != before_len {
+        let _ = write_manifest(&targets);
+    }
+    Ok(targets.into_iter().map(|target| target.id).collect())
 }
 
 fn write_manifest(targets: &[PendingTarget]) -> Result<(), String> {
@@ -1050,6 +1246,11 @@ fn write_manifest(targets: &[PendingTarget]) -> Result<(), String> {
         return Err("Invalid thread ID".into());
     }
     let home = storage::codex_home();
+    let manifest_path = home.join("desktop-recovery.json");
+    if targets.is_empty() {
+        let _ = std::fs::remove_file(&manifest_path);
+        return Ok(());
+    }
     let tmp = home.join(format!("desktop-recovery.{}.tmp", std::process::id()));
     let mut file = OpenOptions::new()
         .create_new(true)
@@ -1065,7 +1266,7 @@ fn write_manifest(targets: &[PendingTarget]) -> Result<(), String> {
         file.write_all(&serde_json::to_vec(&manifest).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
         file.sync_all().map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, home.join("desktop-recovery.json")).map_err(|e| e.to_string())
+        std::fs::rename(&tmp, &manifest_path).map_err(|e| e.to_string())
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
@@ -1115,9 +1316,16 @@ fn query(database: &Path, sql: &str) -> Result<String, String> {
     }
     Err(format!(
         "Could not read Codex recovery state from {} after {} retries: {}",
-        database.file_name().and_then(|n| n.to_str()).unwrap_or("db"),
+        database
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("db"),
         SQLITE_READ_ATTEMPTS,
-        if last_error.is_empty() { "timeout or database busy" } else { &last_error }
+        if last_error.is_empty() {
+            "timeout or database busy"
+        } else {
+            &last_error
+        }
     ))
 }
 
@@ -1229,7 +1437,11 @@ fn queued_messages(home: &Path, id: &str) -> Result<Vec<Value>, String> {
     Err(format!(
         "Could not read Codex queued messages after {} retries: {}",
         SQLITE_READ_ATTEMPTS,
-        if last_error.is_empty() { "timeout or database busy" } else { &last_error }
+        if last_error.is_empty() {
+            "timeout or database busy"
+        } else {
+            &last_error
+        }
     ))
 }
 
@@ -1465,7 +1677,7 @@ fn prepare_target(
     let state = switcher::inspect_thread_rollout_state(home, id);
     let pending = pending_count(home, id)?;
     if state == ThreadRolloutState::CleanCompleted && baseline.is_none() && pending == 0 {
-        println!("RECOVERY_SKIPPED thread={id} reason=completed");
+        crate::runtime_print!("RECOVERY_SKIPPED thread={id} reason=completed");
         return Ok(None);
     }
     if state == ThreadRolloutState::Unknown && baseline.is_none() {
@@ -1497,7 +1709,7 @@ fn prepare_target(
     // this operation, completion is terminal and must not be revived or waited
     // on for three minutes.
     if target.state == ThreadRolloutState::CleanCompleted && !target.completed && !queued_once {
-        println!("RECOVERY_SKIPPED thread={id} reason=completed");
+        crate::runtime_print!("RECOVERY_SKIPPED thread={id} reason=completed");
         return Ok(None);
     }
     Ok(Some(target))
@@ -1516,9 +1728,10 @@ fn record_target_state_at(target: &mut RecoveryTarget, now: Instant) -> Result<(
     {
         target.expected_turn_id = target.observer.evidence.start_turn_id.clone();
         if let Some(turn_id) = target.expected_turn_id.as_deref() {
-            println!(
+            crate::runtime_print!(
                 "RECOVERY_QUEUE_TURN_BOUND thread={} turn={} source=post_ack_rollout",
-                target.id, turn_id
+                target.id,
+                turn_id
             );
         }
     }
@@ -1549,7 +1762,7 @@ fn record_target_state_at(target: &mut RecoveryTarget, now: Instant) -> Result<(
         // intermediate active state as successful recovery.
         target.deadline = Instant::now() + RECOVERY_EXECUTION_TIMEOUT;
         target.execution_deadline_set = true;
-        println!(
+        crate::runtime_print!(
             "RECOVERY_STARTED thread={} verification_timeout_secs={}",
             target.id,
             RECOVERY_EXECUTION_TIMEOUT.as_secs()
@@ -1569,7 +1782,7 @@ fn record_target_state_at(target: &mut RecoveryTarget, now: Instant) -> Result<(
         .verified(target.expected_turn_id.as_deref())
     {
         let observed_at = *target.proof_observed_at.get_or_insert_with(|| {
-            println!(
+            crate::runtime_print!(
                 "RECOVERY_WORK_OBSERVED thread={} start={} work={} soak_secs={}",
                 target.id,
                 target
@@ -1599,7 +1812,7 @@ fn record_target_state_at(target: &mut RecoveryTarget, now: Instant) -> Result<(
                         .unwrap_or("desktop-native"),
                     RECOVERY_SOAK_WINDOW.as_secs()
                 );
-                println!("{msg}");
+                crate::runtime_print!("{msg}");
                 crate::logger::log("INFO", "RECOVERY", &msg);
             }
             target.completed = true;
@@ -1641,17 +1854,19 @@ fn dispatch_if_needed(
         target.deadline = Instant::now() + RECOVERY_DISPATCH_TIMEOUT;
         if unpaused {
             target.mounted_by_recovery = desktop.resume_existing_queue(&target.id, messages)?;
-            println!(
+            crate::runtime_print!(
                 "RECOVERY_QUEUE_UNPAUSED thread={} messages={} transport=desktop_ipc",
-                target.id, pending
+                target.id,
+                pending
             );
         } else {
             // Mounting an already-unpaused queue wakes the owner's coordinator.
             let (_, mounted_by_recovery) = desktop.ensure_thread_owner(&target.id)?;
             target.mounted_by_recovery = mounted_by_recovery;
-            println!(
+            crate::runtime_print!(
                 "RECOVERY_QUEUE_MOUNTED thread={} messages={} transport=desktop_ipc",
-                target.id, pending
+                target.id,
+                pending
             );
         }
         return Ok(());
@@ -1670,22 +1885,45 @@ fn dispatch_if_needed(
     let (mounted_by_recovery, turn_id) = desktop.resume_interrupted_turn(&target.id)?;
     target.mounted_by_recovery = mounted_by_recovery;
     target.expected_turn_id = Some(turn_id.clone());
-    println!(
+    crate::runtime_print!(
         "RECOVERY_DISPATCHED thread={} turn={} transport=desktop_ipc trigger=app_update_resume",
-        target.id, turn_id
+        target.id,
+        turn_id
     );
     Ok(())
 }
 
 pub fn recover_threads(ids: &[String], mode: RecoveryMode) -> Result<(), String> {
-    let banner = RecoveryBanner::start(ids.len())?;
+    let operation_id = operation_id_for_banner("thread_recovery");
+    let banner = RecoveryBanner::start(&operation_id, ids, "thread_recovery")?;
     recover_threads_with_banner(ids, mode, &banner)
+}
+
+fn update_banner_status(banner: &RecoveryBanner, id: &str, status: BannerSessionStatus) {
+    if let Err(error) = banner.update_status(id, status) {
+        crate::logger::log(
+            "WARN",
+            "RECOVERY",
+            &format!(
+                "RECOVERY_BANNER_STATUS_FAILED status={status:?} reason={}",
+                sanitize_recovery_error(&error)
+            ),
+        );
+    }
+}
+
+fn sanitize_recovery_error(error: &str) -> String {
+    error
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(160)
+        .collect()
 }
 
 pub(crate) fn recover_threads_with_banner(
     ids: &[String],
     mode: RecoveryMode,
-    _banner: &RecoveryBanner,
+    banner: &RecoveryBanner,
 ) -> Result<(), String> {
     let home = storage::codex_home();
     let mut pending_manifest = load_manifest()?;
@@ -1722,12 +1960,17 @@ pub(crate) fn recover_threads_with_banner(
     let mut completed_without_action = Vec::new();
     let mut preparation_failures = Vec::new();
     for id in ids {
+        update_banner_status(banner, id, BannerSessionStatus::InProgress);
         let previous = previous_pending.iter().find(|target| target.id == *id);
         match prepare_target(&home, id, previous.and_then(|target| target.offset)) {
             Ok(Some(target)) => targets.push(target),
-            Ok(None) => completed_without_action.push(id.clone()),
+            Ok(None) => {
+                update_banner_status(banner, id, BannerSessionStatus::Skipped);
+                completed_without_action.push(id.clone());
+            }
             Err(error) => {
-                eprintln!("RECOVERY_FAILED thread={id} reason={error}");
+                crate::runtime_error!("RECOVERY_FAILED thread={id} reason={error}");
+                update_banner_status(banner, id, BannerSessionStatus::Failed);
                 preparation_failures.push(id.clone());
             }
         }
@@ -1760,7 +2003,7 @@ pub(crate) fn recover_threads_with_banner(
     if !targets.is_empty() {
         match DesktopIpc::connect_with_retry(IPC_STARTUP_TIMEOUT) {
             Ok(mut desktop) => {
-                println!("RECOVERY_CHANNEL_READY transport=desktop_ipc");
+                crate::runtime_print!("RECOVERY_CHANNEL_READY transport=desktop_ipc");
                 for target in &mut targets {
                     if let Err(error) = dispatch_if_needed(&home, &mut desktop, target, mode) {
                         target.failure = Some(error);
@@ -1831,26 +2074,34 @@ pub(crate) fn recover_threads_with_banner(
         sleep(Duration::from_millis(500));
     }
 
-    let mut failures = preparation_failures;
+    let mut failures = preparation_failures.clone();
     for target in &mut targets {
         if !target.completed && target.failure.is_none() {
             target.failure = Some("Recovery ended without verified agent work".into());
         }
         if let Some(error) = &target.failure {
-            eprintln!("RECOVERY_FAILED thread={} reason={error}", target.id);
+            crate::runtime_error!("RECOVERY_FAILED thread={} reason={error}", target.id);
+            update_banner_status(banner, &target.id, BannerSessionStatus::Failed);
             failures.push(target.id.clone());
-        } else {
-            pending_manifest.retain(|item| item.id != target.id);
+        } else if target.completed {
+            update_banner_status(banner, &target.id, BannerSessionStatus::Completed);
         }
+        // Whether recovery completed cleanly or failed, this restart run has handled the target.
+        // Never retain handled targets in the manifest to avoid resurrecting stale zombie tasks.
+        pending_manifest.retain(|item| item.id != target.id);
+    }
+    for id in &preparation_failures {
+        pending_manifest.retain(|item| item.id != *id);
     }
     for id in completed_without_action {
         pending_manifest.retain(|item| item.id != id);
     }
+    prune_ineligible_targets(&home, &mut pending_manifest);
     write_manifest(&pending_manifest)?;
 
     failures.sort();
     failures.dedup();
-    println!(
+    crate::runtime_print!(
         "RECOVERY_RESULT verified_or_completed={} failed={}",
         ids.len().saturating_sub(failures.len()),
         failures.len()
@@ -2308,8 +2559,133 @@ mod tests {
         assert!(parsed.preserve_window_bounds_on_restart);
 
         let json_disabled = r#"{"preserve_window_bounds_on_restart":false}"#;
-        let parsed_disabled: crate::models::Settings =
-            serde_json::from_str(json_disabled).unwrap();
+        let parsed_disabled: crate::models::Settings = serde_json::from_str(json_disabled).unwrap();
         assert!(!parsed_disabled.preserve_window_bounds_on_restart);
+    }
+
+    struct TestCodexHomeGuard {
+        path: PathBuf,
+    }
+
+    impl Drop for TestCodexHomeGuard {
+        fn drop(&mut self) {
+            std::env::remove_var("CODEX_HOME");
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn manifest_cleared_when_targets_empty() {
+        let _lock = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
+        let temp_dir =
+            std::env::temp_dir().join(format!("codex-manifest-clear-test-{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        std::env::set_var("CODEX_HOME", &temp_dir);
+        let _guard = TestCodexHomeGuard {
+            path: temp_dir.clone(),
+        };
+
+        let targets = vec![PendingTarget {
+            id: "01a07d3c-3008-75c2-87a6-2c5c75f0e401".to_string(),
+            offset: Some(123),
+        }];
+        assert!(write_manifest(&targets).is_ok());
+        let manifest_path = temp_dir.join("desktop-recovery.json");
+        assert!(manifest_path.exists());
+        let loaded = load_manifest().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "01a07d3c-3008-75c2-87a6-2c5c75f0e401");
+
+        // When write_manifest is called with empty targets, the file should be deleted
+        assert!(write_manifest(&[]).is_ok());
+        assert!(!manifest_path.exists());
+        let reloaded = load_manifest().unwrap();
+        assert!(reloaded.is_empty());
+    }
+
+    #[test]
+    fn test_load_pending_expunges_stale_targets_from_disk() {
+        let _lock = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
+        let temp_dir =
+            std::env::temp_dir().join(format!("codex-manifest-prune-test-{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        std::env::set_var("CODEX_HOME", &temp_dir);
+        let _guard = TestCodexHomeGuard {
+            path: temp_dir.clone(),
+        };
+
+        let stale_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e401";
+        let completed_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e402";
+        let active_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e403";
+
+        let now = chrono::Utc::now().timestamp();
+        let old_time = now - 4 * 86400; // 4 days ago
+        let fresh_time = now - 300; // 5 minutes ago
+
+        let database = temp_dir.join("state_5.sqlite");
+        let sql = format!(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, archived INTEGER, thread_source TEXT, updated_at INTEGER, rollout_path TEXT);\
+             INSERT INTO threads VALUES ('{stale_id}', 0, 'user', {old_time}, '');\
+             INSERT INTO threads VALUES ('{completed_id}', 0, 'user', {fresh_time}, '');\
+             INSERT INTO threads VALUES ('{active_id}', 0, 'user', {fresh_time}, '');"
+        );
+        let result = Command::new("/usr/bin/sqlite3")
+            .arg(&database)
+            .arg(sql)
+            .status()
+            .unwrap();
+        assert!(result.success());
+
+        let sessions = temp_dir.join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+
+        let create_rollout = |tid: &str, line: &str| {
+            let path = sessions.join(format!("rollout-2026-09-19T00-00-00-{tid}.jsonl"));
+            std::fs::write(&path, format!("{line}\n")).unwrap();
+        };
+
+        create_rollout(
+            stale_id,
+            r#"{"type":"event_msg","payload":{"type":"turn_aborted"}}"#,
+        );
+        create_rollout(
+            completed_id,
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","error":null}}"#,
+        );
+        create_rollout(
+            active_id,
+            r#"{"type":"event_msg","payload":{"type":"turn_aborted"}}"#,
+        );
+
+        // Pre-populate manifest with all three targets
+        let initial_targets = vec![
+            PendingTarget {
+                id: stale_id.to_string(),
+                offset: Some(10),
+            },
+            PendingTarget {
+                id: completed_id.to_string(),
+                offset: Some(20),
+            },
+            PendingTarget {
+                id: active_id.to_string(),
+                offset: Some(30),
+            },
+        ];
+        assert!(write_manifest(&initial_targets).is_ok());
+
+        // Calling load_pending must prune stale and completed targets AND persist the cleaned list to disk
+        let pending = load_pending().unwrap();
+        assert_eq!(pending, vec![active_id.to_string()]);
+
+        // Verify disk state: desktop-recovery.json on disk now only contains active_id
+        let reloaded = load_manifest().unwrap();
+        assert_eq!(reloaded.len(), 1);
+        assert_eq!(reloaded[0].id, active_id);
+
+        // If active_id completes and targets becomes empty, write_manifest removes the file completely
+        assert!(write_manifest(&[]).is_ok());
+        assert!(!temp_dir.join("desktop-recovery.json").exists());
+        assert!(load_pending().unwrap().is_empty());
     }
 }

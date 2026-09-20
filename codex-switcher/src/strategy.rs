@@ -82,7 +82,10 @@ pub fn needs_switch(
                 && a.enabled
                 && a.is_business()
                 && !a.needs_relogin()
-                && a.last_error.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true)
+                && a.last_error
+                    .as_deref()
+                    .map(|s| s.trim().is_empty())
+                    .unwrap_or(true)
                 && !is_account_depleted(a, threshold)
         });
         if has_available_business {
@@ -112,7 +115,9 @@ pub fn select_best_switch(
             .find(|a| a.id == id || a.email.eq_ignore_ascii_case(id))
     });
     let active_is_non_business = active.map(|a| !a.is_business()).unwrap_or(false);
-    let active_depleted = active.map(|a| is_account_depleted(a, threshold)).unwrap_or(false);
+    let active_depleted = active
+        .map(|a| is_account_depleted(a, threshold))
+        .unwrap_or(false);
     let active_pct = active.map(|a| a.last_primary_percentage).unwrap_or(0.0);
 
     let candidates: Vec<&AccountConfig> = accounts
@@ -128,7 +133,12 @@ pub fn select_best_switch(
             }
         })
         .filter(|a| !a.needs_relogin())
-        .filter(|a| a.last_error.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true))
+        .filter(|a| {
+            a.last_error
+                .as_deref()
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true)
+        })
         .filter(|a| !is_account_depleted(a, threshold))
         .collect();
 
@@ -493,9 +503,11 @@ mod tests {
 
     #[test]
     fn test_weekly_quota_exhaustion_with_zero_credits_triggers_switch() {
-        let mut active = make_acc_with_credits_and_plan("active-team", 64.0, 18000, Some(0), "team");
+        let mut active =
+            make_acc_with_credits_and_plan("active-team", 64.0, 18000, Some(0), "team");
         active.last_weekly_percentage = Some(0.0);
-        let candidate = make_acc_with_credits_and_plan("reserve-plus", 100.0, 18000, Some(2), "plus");
+        let candidate =
+            make_acc_with_credits_and_plan("reserve-plus", 100.0, 18000, Some(2), "plus");
         let accounts = vec![active.clone(), candidate.clone()];
 
         // Active has 64% 5h sprint, but 0% weekly and 0 credits -> depleted!
@@ -513,16 +525,19 @@ mod tests {
 
     #[test]
     fn test_weekly_quota_zero_with_available_credits_is_not_depleted() {
-        let mut active = make_acc_with_credits_and_plan("active-team", 64.0, 18000, Some(2), "team");
+        let mut active =
+            make_acc_with_credits_and_plan("active-team", 64.0, 18000, Some(2), "team");
         active.last_weekly_percentage = Some(0.0);
         assert!(!is_account_depleted(&active, 0.0));
     }
 
     #[test]
     fn test_quota_error_triggers_switch() {
-        let mut active = make_acc_with_credits_and_plan("active-team", 50.0, 18000, Some(0), "team");
+        let mut active =
+            make_acc_with_credits_and_plan("active-team", 50.0, 18000, Some(0), "team");
         active.last_error = Some("429 Too Many Requests (usage_limit_exceeded)".to_string());
-        let candidate = make_acc_with_credits_and_plan("reserve-plus", 100.0, 18000, Some(2), "plus");
+        let candidate =
+            make_acc_with_credits_and_plan("reserve-plus", 100.0, 18000, Some(2), "plus");
         let accounts = vec![active.clone(), candidate.clone()];
 
         assert!(needs_switch(&active, 0.0, false, &accounts));
@@ -579,7 +594,11 @@ mod tests {
         for err in error_cases {
             acc.last_error = Some(err.to_string());
             assert!(acc.needs_relogin(), "Error '{}' must require relogin", err);
-            assert!(is_account_depleted(&acc, 0.0), "Account with error '{}' must be depleted", err);
+            assert!(
+                is_account_depleted(&acc, 0.0),
+                "Account with error '{}' must be depleted",
+                err
+            );
         }
 
         // Quota error must NOT require relogin
@@ -589,12 +608,16 @@ mod tests {
         // Empty access token requires relogin
         acc.last_error = None;
         acc.tokens.access_token = "   ".to_string();
-        assert!(acc.needs_relogin(), "Empty access token must require relogin");
+        assert!(
+            acc.needs_relogin(),
+            "Empty access token must require relogin"
+        );
     }
 
     #[test]
     fn test_active_account_needing_relogin_triggers_switch() {
-        let mut active = make_acc_with_credits_and_plan("active-acc", 100.0, 18000, Some(2), "team");
+        let mut active =
+            make_acc_with_credits_and_plan("active-acc", 100.0, 18000, Some(2), "team");
         active.last_error = Some("401 Unauthorized (Session ended)".to_string());
         let candidate = make_acc_with_credits_and_plan("reserve-acc", 80.0, 18000, Some(0), "team");
         let accounts = vec![active.clone(), candidate.clone()];

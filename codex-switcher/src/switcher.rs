@@ -1,3 +1,4 @@
+use crate::distribution::LogRedactionService;
 use crate::models::AuthJson;
 use crate::storage::{load_accounts, read_active_auth_json, save_accounts, write_active_auth_json};
 use chrono::Utc;
@@ -267,7 +268,7 @@ pub fn switch_to_account(
             );
         }
         if !threads.is_empty() {
-            println!(
+            crate::runtime_print!(
                 "📋 Detected {} active in-progress thread(s) before restart: {:?}",
                 threads.len(),
                 threads
@@ -278,15 +279,18 @@ pub fn switch_to_account(
         Vec::new()
     };
 
-    let previous_account_id = accounts_file.active_account_id.as_deref().unwrap_or("unknown");
+    let previous_account_id = accounts_file
+        .active_account_id
+        .as_deref()
+        .unwrap_or("unknown");
     crate::logger::log(
         "INFO",
         trigger.as_category(),
         &format!(
-            "Starting account switch from '{}' to '{}' ({}) [running_threads={}]",
-            previous_account_id,
-            target_account.display_name(),
-            target_account.email,
+            "Starting account switch previous_ref={} target_ref={} target_email_ref={} [running_threads={}]",
+            LogRedactionService::sanitize_field("account_id", previous_account_id),
+            LogRedactionService::sanitize_field("account_id", &target_account.id),
+            LogRedactionService::sanitize_field("email", &target_account.email),
             running_threads.len()
         ),
     );
@@ -303,10 +307,17 @@ pub fn switch_to_account(
     current_auth.tokens = Some(target_account.tokens.clone());
     current_auth.last_refresh = Some(Utc::now().to_rfc3339());
 
-    let mut recovery_banner = if app_was_running {
+    let recovery_operation_id = if app_was_running {
+        Some(crate::recovery::operation_id_for_banner("account_switch"))
+    } else {
+        None
+    };
+    let mut recovery_banner = if let Some(operation_id) = recovery_operation_id.as_deref() {
         crate::recovery::arm_automation_cooldown()?;
         Some(crate::recovery::RecoveryBanner::start(
-            running_threads.len(),
+            operation_id,
+            &running_threads,
+            "account_switch",
         )?)
     } else {
         None
@@ -319,8 +330,6 @@ pub fn switch_to_account(
     // the persistence boundary for active thread history and SQLite WAL state.
     // Never force-kill it: if it cannot flush and exit, leave auth untouched.
     if app_was_running {
-        let old_pids = current_codex_app_pids();
-        let _ = crate::recovery::save_desktop_window_bounds(old_pids.first().copied());
         crate::recovery::save_pending(&running_threads)?;
         stop_codex_app_gracefully()?;
         // The first journal makes the target list durable before shutdown. The
@@ -362,12 +371,27 @@ pub fn switch_to_account(
     let recovery_error = if app_was_running {
         match launch_codex_app() {
             Ok(launched_pids) => {
-                let _ = crate::recovery::restore_desktop_window_bounds(launched_pids[0]);
-                let recovery_result = crate::recovery::recover_threads_with_banner(
-                    &running_threads,
-                    crate::recovery::RecoveryMode::CapturedRestart,
-                    recovery_banner.as_ref().unwrap(),
-                );
+                let restore_result = if launched_pids.len() != 1 {
+                    Err(format!(
+                        "Codex relaunch must produce exactly one main process, got {launched_pids:?}"
+                    ))
+                } else {
+                    recovery_banner
+                        .as_ref()
+                        .expect("running app must have a recovery banner")
+                        .restore_after_relaunch(
+                            launched_pids[0],
+                            recovery_operation_id.as_deref().unwrap_or("account_switch"),
+                            "account_switch",
+                        )
+                };
+                let recovery_result = restore_result.and_then(|()| {
+                    crate::recovery::recover_threads_with_banner(
+                        &running_threads,
+                        crate::recovery::RecoveryMode::CapturedRestart,
+                        recovery_banner.as_ref().unwrap(),
+                    )
+                });
                 drop(recovery_banner.take());
                 let stability_result = crate::recovery::verify_desktop_stable(&launched_pids);
                 match (recovery_result, stability_result) {
@@ -404,9 +428,9 @@ pub fn switch_to_account(
             "WARN",
             trigger.as_category(),
             &format!(
-                "Switched to '{}' ({}) but recovery had error: {}",
-                target_account.display_name(),
-                target_account.email,
+                "Switched account_ref={} email_ref={} but recovery had error: {}",
+                LogRedactionService::sanitize_field("account_id", &target_account.id),
+                LogRedactionService::sanitize_field("email", &target_account.email),
                 err
             ),
         );
@@ -416,9 +440,9 @@ pub fn switch_to_account(
         "INFO",
         trigger.as_category(),
         &format!(
-            "Successfully switched to '{}' ({}) [recovery_error={:?}]",
-            target_account.display_name(),
-            target_account.email,
+            "Successfully switched account_ref={} email_ref={} [recovery_error={:?}]",
+            LogRedactionService::sanitize_field("account_id", &target_account.id),
+            LogRedactionService::sanitize_field("email", &target_account.email),
             recovery_error
         ),
     );
@@ -474,7 +498,7 @@ fn signal_codex_app(signal: &str) {
         .status();
 }
 
-fn stop_codex_app_gracefully() -> Result<(), String> {
+pub(crate) fn stop_codex_app_gracefully() -> Result<(), String> {
     // 1. Send SIGTERM to ChatGPT main process.
     // Chromium catches SIGTERM to flush SQLite databases, cookies, and WAL logs cleanly,
     // while completely bypassing the interactive GUI beforeunload ("Leave site?") prompt.
@@ -560,7 +584,7 @@ pub(crate) fn launch_codex_app() -> Result<Vec<u32>, String> {
             sleep(Duration::from_millis(200));
         }
 
-        println!(
+        crate::runtime_print!(
             "⚠️ Codex app did not appear after attempt {}, retrying launch...",
             attempt
         );
@@ -634,7 +658,7 @@ pub fn open_thread_in_codex(thread_id: &str) {
     if clean.is_empty() {
         return;
     }
-    println!("🧭 Opening thread '{}' in ChatGPT (background)...", clean);
+    crate::runtime_print!("🧭 Opening thread '{}' in ChatGPT (background)...", clean);
     let _ = Command::new("/usr/bin/open")
         .args([
             "-g",
@@ -891,7 +915,12 @@ pub fn inspect_thread_rollout_state(
 ) -> ThreadRolloutState {
     if let Some(path) = find_thread_rollout_path(codex_home, thread_id) {
         let lines = read_rollout_tail_lines(&path, 131072);
-        return inspect_thread_rollout_state_from_lines(&lines);
+        let state = inspect_thread_rollout_state_from_lines(&lines);
+        if state != ThreadRolloutState::Unknown {
+            return state;
+        }
+        let extended_lines = read_rollout_tail_lines(&path, 524288);
+        return inspect_thread_rollout_state_from_lines(&extended_lines);
     }
     ThreadRolloutState::Unknown
 }
@@ -1040,9 +1069,24 @@ fn append_eligible_pending(
     in_progress: &mut Vec<String>,
     pending: Vec<String>,
 ) {
+    let now = chrono::Utc::now().timestamp();
     for tid in pending {
-        if is_user_thread(codex_home, &tid) && !in_progress.contains(&tid) {
-            in_progress.push(tid);
+        if !is_user_thread(codex_home, &tid) || in_progress.contains(&tid) {
+            continue;
+        }
+        let is_recent = get_thread_updated_at(codex_home, &tid)
+            .map(|updated| (now - updated).abs() <= RECENT_QUOTA_WINDOW_SECS)
+            .unwrap_or(false);
+        if !is_recent {
+            continue;
+        }
+        match inspect_thread_rollout_state(codex_home, &tid) {
+            ThreadRolloutState::ActiveInProgress
+            | ThreadRolloutState::InterruptedByQuota
+            | ThreadRolloutState::TurnAborted => {
+                in_progress.push(tid);
+            }
+            _ => {}
         }
     }
 }
@@ -1150,7 +1194,7 @@ pub fn dispatch_self_restart(args: &[String]) -> Result<bool, String> {
     if !status.success() {
         return Err("Could not launch independent restart worker".into());
     }
-    println!(
+    crate::runtime_print!(
         "RESTART_DISPATCHED job={label} log={} (scheduled, not yet verified)",
         log.display()
     );
@@ -1206,7 +1250,7 @@ pub fn restart_and_recover(
     if std::env::var_os("CODEX_RESTART_WORKER").is_some()
         && crate::recovery::restart_cancellation_requested()
     {
-        println!("WORKER_CANCELLED phase=pre_shutdown");
+        crate::runtime_print!("WORKER_CANCELLED phase=pre_shutdown");
         return Ok(());
     }
     let _operation = crate::recovery::operation_lock()?;
@@ -1222,17 +1266,17 @@ pub fn restart_and_recover(
     ) {
         return Err("Primary task is absent, archived, or a subagent; refusing restart".into());
     }
-    println!(
+    crate::runtime_print!(
         "RESTART_BEGIN old_pids={:?} targets={:?}",
         codex_app_pids(),
         targets
     );
-    let banner = crate::recovery::RecoveryBanner::start(targets.len())?;
+    let operation_id = crate::recovery::operation_id_for_banner("captured_restart");
+    let banner =
+        crate::recovery::RecoveryBanner::start(&operation_id, &targets, "captured_restart")?;
     if !targets.is_empty() {
         crate::recovery::preflight_desktop_dispatch()?;
     }
-    let running = current_codex_app_pids();
-    let _ = crate::recovery::save_desktop_window_bounds(running.first().copied());
     crate::recovery::save_pending(&targets)?;
     stop_codex_app_gracefully()?;
     // Re-checkpoint only after the old process has fully exited, so recovery
@@ -1245,13 +1289,22 @@ pub fn restart_and_recover(
             return Err(keep_codex_available_after_failure(error));
         }
     };
-    println!("RESTART_LAUNCHED new_pids={launched_pids:?}");
-    let _ = crate::recovery::restore_desktop_window_bounds(launched_pids[0]);
-    let recovery_result = crate::recovery::recover_threads_with_banner(
-        &targets,
-        crate::recovery::RecoveryMode::CapturedRestart,
-        &banner,
-    );
+    crate::runtime_print!("RESTART_LAUNCHED new_pids={launched_pids:?}");
+    let recovery_result = if launched_pids.len() != 1 {
+        Err(format!(
+            "Codex relaunch must produce exactly one main process, got {launched_pids:?}"
+        ))
+    } else {
+        banner
+            .restore_after_relaunch(launched_pids[0], &operation_id, "captured_restart")
+            .and_then(|()| {
+                crate::recovery::recover_threads_with_banner(
+                    &targets,
+                    crate::recovery::RecoveryMode::CapturedRestart,
+                    &banner,
+                )
+            })
+    };
     drop(banner);
     let stability_result = crate::recovery::verify_desktop_stable(&launched_pids);
     match (recovery_result, stability_result) {
@@ -1561,9 +1614,39 @@ mod tests {
     }
 
     #[test]
+    fn test_inspect_thread_rollout_state_large_tail_fallback() {
+        let root =
+            std::env::temp_dir().join(format!("codex-rollout-large-tail-{}", std::process::id()));
+        let sessions = root.join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+
+        let tid = "01a07d3c-3008-75c2-87a6-2c5c75f0e499";
+        let rollout_file = sessions.join(format!("rollout-2026-09-19T00-00-00-{tid}.jsonl"));
+
+        let mut content = String::new();
+        content.push_str(r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","error":{"message":"usage_limit_exceeded"}}}"#);
+        content.push('\n');
+
+        // Pad with >130 KB of single-line tool completion output so 128KB tail seek starts inside it
+        let huge_line = format!(
+            r#"{{"type":"event_msg","payload":{{"type":"item_completed","thread_id":"{tid}","output":"{}"}}}}"#,
+            "x".repeat(140_000)
+        );
+        content.push_str(&huge_line);
+        content.push('\n');
+
+        std::fs::write(&rollout_file, content).unwrap();
+
+        let state = inspect_thread_rollout_state(&root, tid);
+        assert_eq!(state, ThreadRolloutState::InterruptedByQuota);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn test_detect_in_progress_live() {
         let in_progress = detect_in_progress_threads();
-        println!("Live detected in-progress threads: {:?}", in_progress);
+        crate::runtime_print!("Live detected in-progress threads: {:?}", in_progress);
     }
 
     #[test]
@@ -1618,10 +1701,85 @@ mod tests {
         };
         crate::storage::save_accounts(&file).unwrap();
 
-        let err = switch_to_account("user@example.com:uuid-1", false, false, SwitchTrigger::User).unwrap_err();
+        let err = switch_to_account("user@example.com:uuid-1", false, false, SwitchTrigger::User)
+            .unwrap_err();
         assert!(err.contains("requires re-login"));
         assert!(err.contains("cxi relogin"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_append_eligible_pending_rejects_stale_and_completed_tasks() {
+        let root = std::env::temp_dir().join(format!(
+            "codex-pending-filter-test-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("unnamed")
+        ));
+        let sessions = root.join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+
+        let stale_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e401";
+        let completed_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e402";
+        let unknown_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e403";
+        let recent_aborted_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e404";
+
+        let now = chrono::Utc::now().timestamp();
+        let old_time = now - 4 * 86400; // 4 days ago
+        let fresh_time = now - 300; // 5 minutes ago
+
+        let database = root.join("state_5.sqlite");
+        let sql = format!(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, archived INTEGER, thread_source TEXT, updated_at INTEGER, rollout_path TEXT);\
+             INSERT INTO threads VALUES ('{stale_id}', 0, 'user', {old_time}, '');\
+             INSERT INTO threads VALUES ('{completed_id}', 0, 'user', {fresh_time}, '');\
+             INSERT INTO threads VALUES ('{unknown_id}', 0, 'user', {fresh_time}, '');\
+             INSERT INTO threads VALUES ('{recent_aborted_id}', 0, 'user', {fresh_time}, '');"
+        );
+        let result = Command::new("/usr/bin/sqlite3")
+            .arg(&database)
+            .arg(sql)
+            .status()
+            .unwrap();
+        assert!(result.success());
+
+        let create_rollout = |tid: &str, line: &str| {
+            let path = sessions.join(format!("rollout-2026-09-19T00-00-00-{tid}.jsonl"));
+            std::fs::write(&path, format!("{line}\n")).unwrap();
+        };
+
+        create_rollout(
+            stale_id,
+            r#"{"type":"event_msg","payload":{"type":"turn_aborted"}}"#,
+        );
+        create_rollout(
+            completed_id,
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","error":null}}"#,
+        );
+        create_rollout(unknown_id, r#"{"type":"corrupted_event"}"#);
+        create_rollout(
+            recent_aborted_id,
+            r#"{"type":"event_msg","payload":{"type":"turn_aborted"}}"#,
+        );
+
+        let mut in_progress = Vec::new();
+        append_eligible_pending(
+            &root,
+            &mut in_progress,
+            vec![
+                stale_id.to_string(),
+                completed_id.to_string(),
+                unknown_id.to_string(),
+                recent_aborted_id.to_string(),
+            ],
+        );
+
+        assert_eq!(
+            in_progress,
+            vec![recent_aborted_id.to_string()],
+            "stale, cleanly completed, and unknown tasks must never be appended"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

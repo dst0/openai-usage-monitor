@@ -118,6 +118,13 @@ extension AppDelegate {
     self.autoSwitchBusinessPriorityItem = autoSwitchBusinessPriorityItem
     menu.addItem(autoSwitchBusinessPriorityItem)
 
+    // Auto-distribute accounts between APP & CLI
+    let autoDistributeItem = NSMenuItem(
+      title: L10n.autoDistributeAppCli, action: #selector(autoDistributeAccountsAction), keyEquivalent: ""
+    )
+    autoDistributeItem.target = self
+    menu.addItem(autoDistributeItem)
+
     // Weekly reset credits submenu
     let autoResetConfig = client.getAutoResetWeeklyConfiguration()
     let autoResetContainer = NSMenuItem(title: L10n.autoResetWeekly, action: nil, keyEquivalent: "")
@@ -236,15 +243,22 @@ extension AppDelegate {
 
   public static func makeAccountSectionCardItem(
     title: String, kind: AccountSectionHeaderView.Kind, entries: [ReserveAccountSectionEntry],
-    onSwitch: @escaping (String) -> Void = { _ in }, onDelete: @escaping (String, String) -> Void = { _, _ in },
-    onRename: @escaping (String, String?, String) -> Void = { _, _, _ in }, onReset: @escaping (String, String) -> Void = { _, _ in },
-    onRelogin: @escaping (String, String) -> Void = { _, _ in }, width: CGFloat = defaultMenuWidth
+    onSwitchCli: @escaping (String) -> Void = { _ in },
+    onSwitchApp: @escaping (String) -> Void = { _ in },
+    onSwitch: ((String) -> Void)? = nil,
+    onDelete: @escaping (String, String) -> Void = { _, _ in },
+    onRename: @escaping (String, String?, String) -> Void = { _, _, _ in },
+    onReset: @escaping (String, String) -> Void = { _, _ in },
+    onRelogin: @escaping (String, String) -> Void = { _, _ in },
+    width: CGFloat = defaultMenuWidth
   ) -> NSMenuItem {
     let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
     item.isEnabled = true
     item.view = AccountSectionCardView(
       frame: NSRect(x: 0, y: 0, width: width, height: AccountSectionCardView.preferredHeight(for: entries)),
-      title: title, kind: kind, entries: entries, onSwitch: onSwitch, onDelete: onDelete, onRename: onRename,
+      title: title, kind: kind, entries: entries,
+      onSwitchCli: onSwitchCli, onSwitchApp: onSwitchApp, onSwitch: onSwitch,
+      onDelete: onDelete, onRename: onRename,
       onReset: onReset, onRelogin: onRelogin
     )
     return item

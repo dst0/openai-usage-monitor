@@ -33,7 +33,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     return saved > 0 ? saved : 60.0  // 1 minute default
   }()
 
-  internal let client = CodexClient.shared
+  internal let client: CodexClient
+  internal var quotaRefreshOverride: ((@escaping (MultiAccountSnapshot?) -> Void) -> Void)?
   internal let singleGuard = SingleInstanceGuard()
   internal let autoLaunchManager = AutoLaunchManager.shared
   internal var ownsBackgroundAutomation = false
@@ -60,6 +61,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     fmt.dateFormat = "HH:mm:ss"
     return fmt
   }()
+
+  public override init() {
+    self.client = CodexClient.shared
+    super.init()
+  }
+
+  internal init(client: CodexClient) {
+    self.client = client
+    super.init()
+  }
 
   // MARK: - Lifecycle
 
@@ -204,7 +215,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     }
     isRefreshing = true
 
-    client.refreshQuotas { [weak self] snapshot in
+    let completion: (MultiAccountSnapshot?) -> Void = { [weak self] snapshot in
       DispatchQueue.main.async {
         guard let self = self else { return }
         self.isRefreshing = false
@@ -217,6 +228,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
           self.refreshNow()
         }
       }
+    }
+    if let quotaRefreshOverride {
+      quotaRefreshOverride(completion)
+    } else {
+      client.refreshQuotas(completion: completion)
     }
   }
 }
