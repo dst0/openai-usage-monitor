@@ -29,9 +29,16 @@ sign_line="$(exact_line 'codesign --force --deep --sign - "${APP_DIR}" 2>/dev/nu
 stop_line="$(exact_line 'stop_monitor_log_writers')"
 redact_line="$(exact_line 'ensure_private_monitor_logs')"
 replace_line="$(exact_line 'rm -rf "${INSTALL_DIR}/${BUNDLE_NAME}"')"
+writer_flag_line="$(exact_line '    WRITERS_QUIESCED=1')"
+restart_retire_line="$(exact_line '    retire_launchd_job "com.codex.switcher.restart-worker"')"
+kill_line="$(exact_line '        /bin/kill -TERM "${pid}"')"
 
 [ "${sign_line}" -lt "${stop_line}" ] || fail 'writers are stopped before fallible app build/signing'
 [ "${stop_line}" -lt "${redact_line}" ] || fail 'redaction starts before writers are quiesced'
 [ "${redact_line}" -lt "${replace_line}" ] || fail 'installed app is replaced before redaction succeeds'
+[ "${writer_flag_line}" -lt "${restart_retire_line}" ] ||
+    fail 'rollback is not armed before writer state changes'
+[ "${restart_retire_line}" -lt "${kill_line}" ] ||
+    fail 'restart worker is not retired before the verified Monitor process'
 
 printf 'installer log-redaction quiescence order: ok\n'

@@ -1,6 +1,7 @@
 use super::historical_log_redaction_service::HistoricalLogRedactionService;
 use crate::logger::{compress_brotli_q6, decompress_brotli};
-use std::fs;
+use fs2::FileExt;
+use std::fs::{self, OpenOptions};
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -185,4 +186,23 @@ fn malformed_brotli_and_symlinked_recovery_logs_fail_closed() {
     assert!(redaction_temps(&home).is_empty());
     fs::remove_dir_all(home).unwrap();
     fs::remove_file(outside).unwrap();
+}
+
+#[test]
+fn locked_source_fails_closed_without_waiting_or_replacing_it() {
+    let home = temporary_home("locked_source");
+    let switcher = home.join("log/switcher.log");
+    let raw = b"token=synthetic-secret\n";
+    fs::write(&switcher, raw).unwrap();
+    fs::write(home.join("account-switcher-daemon.log"), b"safe\n").unwrap();
+    fs::write(home.join("account-switcher-daemon.err"), b"safe\n").unwrap();
+    let lock = OpenOptions::new().read(true).open(&switcher).unwrap();
+    lock.lock_exclusive().unwrap();
+
+    assert!(HistoricalLogRedactionService::sanitize_home(&home).is_err());
+    assert_eq!(fs::read(&switcher).unwrap(), raw);
+    assert!(redaction_temps(&home).is_empty());
+
+    lock.unlock().unwrap();
+    fs::remove_dir_all(home).unwrap();
 }

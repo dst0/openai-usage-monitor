@@ -53,9 +53,10 @@ retire_launchd_job() {
 
 stop_monitor_log_writers() {
     local pid executable pids attempt=0
-    retire_launchd_job "com.codex.switcher.restart-worker"
-
     pids="$(/usr/bin/pgrep -x "CodexMonitor" 2>/dev/null || true)"
+
+    # Validate every candidate before changing launchd or process state. This
+    # keeps an unexpected same-name process as a completely read-only failure.
     for pid in ${pids}; do
         case "${pid}" in
             *[!0-9]*|'') echo "❌ Refusing log migration: invalid Monitor PID."; return 1 ;;
@@ -67,6 +68,13 @@ stop_monitor_log_writers() {
             "${INSTALL_DIR}/${BUNDLE_NAME}/Contents/MacOS/CodexMonitor") ;;
             *) echo "❌ Refusing log migration: CodexMonitor PID has an unexpected executable."; return 1 ;;
         esac
+    done
+
+    # From the first state-changing operation onward, the EXIT trap must
+    # restore the available installed app if any later quiescence step fails.
+    WRITERS_QUIESCED=1
+    retire_launchd_job "com.codex.switcher.restart-worker"
+    for pid in ${pids}; do
         /bin/kill -TERM "${pid}"
     done
 
@@ -403,7 +411,6 @@ echo "📂 [3/4] Installing to ${INSTALL_DIR}..."
 # Quiesce and verify every known writer only after all build/signing steps have
 # succeeded, then migrate before replacing or relaunching the application.
 stop_monitor_log_writers
-WRITERS_QUIESCED=1
 ensure_private_monitor_logs
 
 rm -rf "${INSTALL_DIR}/${BUNDLE_NAME}"

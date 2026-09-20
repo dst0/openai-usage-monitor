@@ -69,7 +69,7 @@ impl HistoricalLogRedactionService {
     fn rewrite_child(parent: &File, name: &str, compressed: bool) -> io::Result<()> {
         let source =
             MonitorLogIoService::open_child_file(parent, name, libc::O_RDONLY | libc::O_CLOEXEC)?;
-        source.lock_exclusive()?;
+        source.try_lock_exclusive()?;
         source.set_permissions(fs::Permissions::from_mode(0o600))?;
         let source_metadata = source.metadata()?;
         let reader_source = source.try_clone()?;
