@@ -34,15 +34,6 @@ pub(crate) fn status_for_active(
     weekly_reset_status_service::WeeklyResetStatusService::status_for_active(settings, active)
 }
 
-pub(crate) fn clear_completed_episode_if_restored(
-    settings: &Settings,
-    active: Option<&AccountConfig>,
-) -> Result<(), String> {
-    weekly_reset_status_service::WeeklyResetStatusService::clear_completed_episode_if_restored(
-        settings, active,
-    )
-}
-
 pub(crate) fn maybe_consume_weekly_reset(
     settings: &Settings,
     active: &AccountConfig,

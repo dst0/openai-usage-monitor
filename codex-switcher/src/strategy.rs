@@ -96,6 +96,7 @@ pub fn needs_switch(
     false
 }
 
+#[cfg(test)]
 pub fn select_best_switch(
     active_id: Option<&str>,
     accounts: &[AccountConfig],

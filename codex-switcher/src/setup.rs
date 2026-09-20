@@ -19,17 +19,23 @@ pub use account_configuration::{
     set_config_auto_switch_enabled, set_config_preserve_window_bounds,
     set_config_restart_app_on_switch,
 };
-pub use account_deduplication::{deduplicate_accounts, deduplicate_accounts_file};
-pub use account_identity::{
-    build_predictable_account_id, find_existing_account_idx, find_existing_account_idx_from_parts,
-};
+pub use account_deduplication::deduplicate_accounts_file;
+pub use account_identity::{build_predictable_account_id, find_existing_account_idx};
 pub use account_registration::{
     add_account_from_tokens, add_account_to_accounts_file, remove_account, save_current_as,
 };
 pub use account_reset_service::reset_account;
-pub(crate) use account_reset_service::reset_account_in_file;
 pub use interactive_setup::{login_and_add_account, resolve_codex_bin, run_interactive_setup};
-pub use relogin_service::{apply_relogin_to_accounts_file, relogin_account};
+pub use relogin_service::relogin_account;
+
+#[cfg(test)]
+use account_deduplication::deduplicate_accounts;
+#[cfg(test)]
+use account_identity::find_existing_account_idx_from_parts;
+#[cfg(test)]
+use account_reset_service::reset_account_in_file;
+#[cfg(test)]
+use relogin_service::apply_relogin_to_accounts_file;
 
 #[cfg(test)]
 pub(crate) static TEST_CODEX_HOME_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());

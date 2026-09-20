@@ -34,14 +34,13 @@ pub use switch_outcome::SwitchOutcome;
 pub use switch_trigger::SwitchTrigger;
 pub use thread_detection_service::{
     detect_in_progress_threads, detect_quota_blocked_user_threads_since,
-    detect_recent_quota_blocked_user_threads, get_thread_updated_at, is_thread_rollout_in_progress,
+    detect_recent_quota_blocked_user_threads, get_thread_updated_at,
 };
 pub use thread_identity::{
     clean_thread_id, get_most_recent_threads, is_user_thread, open_thread_in_codex,
 };
 pub use thread_rollout_inspector::{
-    find_thread_rollout_path, inspect_thread_rollout_state,
-    inspect_thread_rollout_state_from_lines, read_rollout_tail_lines, RECENT_QUOTA_WINDOW_SECS,
+    find_thread_rollout_path, inspect_thread_rollout_state, RECENT_QUOTA_WINDOW_SECS,
 };
 pub use thread_rollout_state::ThreadRolloutState;
 
@@ -53,6 +52,8 @@ use codex_app_lifecycle::{parse_codex_app_pids, wait_for_app_exit_with, CODEX_AP
 use recovery_command_service::has_codex_ancestor;
 #[cfg(test)]
 use thread_detection_service::append_eligible_pending;
+#[cfg(test)]
+use thread_rollout_inspector::inspect_thread_rollout_state_from_lines;
 
 #[cfg(test)]
 #[path = "switcher.test.rs"]
