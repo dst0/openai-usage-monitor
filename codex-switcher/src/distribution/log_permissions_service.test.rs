@@ -1,4 +1,6 @@
 use super::LogPermissionsService;
+use crate::distribution::MonitorLogCleanupService;
+use crate::logger::{compress_brotli_q6, decompress_brotli};
 use std::fs;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -150,5 +152,55 @@ fn rejects_symlinked_switcher_log_without_following_it() {
     assert_eq!(error, "unsafe switcher log path");
     assert_eq!(mode(&outside), 0o644);
     fs::remove_file(&outside).unwrap();
+    remove_home(&home);
+}
+
+#[test]
+fn install_redacts_preexisting_active_logs_and_brotli_archives_idempotently() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = temporary_home("historical_redaction");
+    let previous_home = std::env::var_os("CODEX_HOME");
+    std::env::set_var("CODEX_HOME", &home);
+
+    let log_dir = home.join("log");
+    let archive_dir = log_dir.join("archive");
+    fs::create_dir_all(&archive_dir).unwrap();
+    let raw = "email=legacy.person@example.test path=/private/legacy token=synthetic-secret\n";
+    fs::write(log_dir.join("switcher.log"), raw).unwrap();
+    fs::write(home.join("account-switcher-daemon.log"), raw).unwrap();
+    fs::write(home.join("account-switcher-daemon.err"), raw).unwrap();
+    let archive_path = archive_dir.join("switcher-20260920-010203.log.br");
+    fs::write(&archive_path, compress_brotli_q6(raw.as_bytes()).unwrap()).unwrap();
+
+    MonitorLogCleanupService::install().unwrap();
+
+    let active = fs::read_to_string(log_dir.join("switcher.log")).unwrap();
+    let archive =
+        String::from_utf8(decompress_brotli(&fs::read(&archive_path).unwrap()).unwrap()).unwrap();
+    for sanitized in [&active, &archive] {
+        assert!(!sanitized.contains("legacy.person@example.test"));
+        assert!(!sanitized.contains("/private/legacy"));
+        assert!(!sanitized.contains("synthetic-secret"));
+        assert!(sanitized.contains("email_"));
+        assert!(sanitized.contains("[PATH]"));
+        assert!(sanitized.contains("[TOKEN]"));
+    }
+
+    MonitorLogCleanupService::install().unwrap();
+    assert_eq!(
+        active,
+        fs::read_to_string(log_dir.join("switcher.log")).unwrap()
+    );
+    assert_eq!(
+        archive,
+        String::from_utf8(decompress_brotli(&fs::read(&archive_path).unwrap()).unwrap()).unwrap()
+    );
+
+    match previous_home {
+        Some(value) => std::env::set_var("CODEX_HOME", value),
+        None => std::env::remove_var("CODEX_HOME"),
+    }
     remove_home(&home);
 }

@@ -196,9 +196,17 @@ mv -f "${CLI_STAGING}" "${LOCAL_BIN}/codex-mon"
 CLI_STAGING=""
 ln -sfn "${LOCAL_BIN}/codex-mon" "${LOCAL_BIN}/cxi"
 
-# Prepare all inherited daemon streams before launchd is allowed to load the
-# plist. The Rust helper holds directory descriptors and rejects symlinked
-# components during every mutation.
+# Historical redaction replaces each exact Monitor-owned log inode atomically.
+# Stop both owners first so no inherited launchd descriptor can continue
+# writing to the retired inode while the migration is in progress.
+/usr/bin/pkill -x "CodexMonitor" 2>/dev/null || true
+/usr/bin/pkill -f "/Applications/${BUNDLE_NAME}" 2>/dev/null || true
+/usr/bin/pkill -f "${HOME}/Applications/${BUNDLE_NAME}" 2>/dev/null || true
+/bin/launchctl unload "${HOME}/Library/LaunchAgents/com.codex.switcher.plist" 2>/dev/null || true
+
+# Prepare private streams and sanitize pre-existing active logs and exact
+# Monitor-owned Brotli archives before launchd is allowed to load the plist.
+# The Rust helper holds directory descriptors and rejects symlinked components.
 ensure_private_monitor_logs
 
 # Ensure transparent codex CLI shim exists
@@ -345,10 +353,7 @@ codesign --force --deep --sign - "${APP_DIR}" 2>/dev/null || true
 # ------------------------------------------------------------------------------
 echo ""
 echo "📂 [3/4] Installing to ${INSTALL_DIR}..."
-# Stop previous running instances
-pkill -x "CodexMonitor" 2>/dev/null || true
-pkill -f "/Applications/${BUNDLE_NAME}" 2>/dev/null || true
-pkill -f "${HOME}/Applications/${BUNDLE_NAME}" 2>/dev/null || true
+# The previous app and daemon were stopped before historical log migration.
 sleep 0.5
 
 rm -rf "${INSTALL_DIR}/${BUNDLE_NAME}"
@@ -381,7 +386,7 @@ if [ -f "${PROJECT_DIR}/com.codex.switcher.plist" ]; then
     LAUNCH_AGENTS="${HOME}/Library/LaunchAgents"
     mkdir -p "${LAUNCH_AGENTS}"
     TARGET_PLIST="${LAUNCH_AGENTS}/com.codex.switcher.plist"
-    launchctl unload "${TARGET_PLIST}" 2>/dev/null || true
+    /bin/launchctl unload "${TARGET_PLIST}" 2>/dev/null || true
     sed "s|__HOME__|${HOME}|g" "${PROJECT_DIR}/com.codex.switcher.plist" > "${TARGET_PLIST}"
     echo "  -> Installed background daemon at ${TARGET_PLIST}; Codex Monitor will load it"
 fi

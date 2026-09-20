@@ -1,3 +1,4 @@
+use super::historical_log_redaction_service::HistoricalLogRedactionService;
 use super::log_permissions_service::LogPermissionsService;
 use super::monitor_log_io_service::MonitorLogIoService;
 use std::fs::File;
@@ -57,7 +58,7 @@ impl MonitorLogCleanupService {
             file.set_permissions(std::fs::Permissions::from_mode(0o600))
                 .map_err(|_| Self::unsafe_error("Monitor log"))?;
         }
-        Ok(())
+        HistoricalLogRedactionService::sanitize_home(&home)
     }
 
     pub fn print_plan(purge_data: bool) -> Result<(), String> {
