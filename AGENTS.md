@@ -33,6 +33,12 @@
   patched nor replaced. It may use `/Applications` or `~/Applications` for the
   Monitor bundle and retains remote-install skill sources in
   `~/.local/share/codex-monitor/`.
+- After build/signing and before relaunch, the installer must verify the exact
+  Monitor app, daemon, and restart worker are stopped, then redact pre-existing
+  exact Monitor active logs, timestamped Brotli Q6 archives, and restart-worker
+  logs with bounded fd-anchored no-follow streaming. Invalid, oversized,
+  symlinked, or concurrently changed sources fail closed and remain in place;
+  foreign files and official Codex Desktop logs are never rewritten.
 - `scripts/uninstall.sh --dry-run` previews cleanup. The confirmed uninstall
   removes the Monitor footprint, launch items, helper, notifier, skills, logs,
   and runtime state while preserving Desktop-owned `auth.json`, databases,

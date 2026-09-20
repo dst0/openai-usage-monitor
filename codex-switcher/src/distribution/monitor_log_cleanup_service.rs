@@ -73,18 +73,23 @@ impl MonitorLogCleanupService {
             Self::print_temp_files(&log_dir, &home_path.join("log"))?;
             let archive = Self::optional_directory(&log_dir, "archive")?;
             if let Some(archive) = archive {
-                for name in MonitorLogIoService::archive_names(&archive)
-                    .map_err(|_| Self::unsafe_error("Monitor archive"))?
-                {
+                let entries = MonitorLogIoService::archive_names(&archive)
+                    .map_err(|_| Self::unsafe_error("Monitor archive"))?;
+                for name in entries {
                     if is_owned_archive(&name) {
                         Self::require_regular_archive(&archive, &name)?;
                         println!(
                             "  remove {}",
                             home_path.join("log/archive").join(&name).display()
                         );
+                    } else if Self::is_temp_file(&name) {
+                        Self::print_regular_child(
+                            &archive,
+                            &name,
+                            &home_path.join("log/archive").join(&name),
+                        )?;
                     }
                 }
-                Self::print_temp_files(&archive, &home_path.join("log/archive"))?;
                 println!("  preserve foreign Brotli archives in the Monitor archive directory");
             }
         }
@@ -117,16 +122,17 @@ impl MonitorLogCleanupService {
             Self::remove_regular_child(&log_dir, "switcher.log")?;
             Self::remove_temp_files(&log_dir)?;
             if let Some(archive) = Self::optional_directory(&log_dir, "archive")? {
-                for name in MonitorLogIoService::archive_names(&archive)
-                    .map_err(|_| Self::unsafe_error("Monitor archive"))?
-                {
+                let entries = MonitorLogIoService::archive_names(&archive)
+                    .map_err(|_| Self::unsafe_error("Monitor archive"))?;
+                for name in entries {
                     if is_owned_archive(&name) {
                         Self::require_regular_archive(&archive, &name)?;
                         MonitorLogIoService::remove_child(&archive, &name, false)
                             .map_err(|_| Self::unsafe_error("Monitor archive"))?;
+                    } else if Self::is_temp_file(&name) {
+                        Self::remove_regular_child(&archive, &name)?;
                     }
                 }
-                Self::remove_temp_files(&archive)?;
                 let _ = MonitorLogIoService::remove_child(&log_dir, "archive", true);
             }
             let _ = MonitorLogIoService::remove_child(&home, "log", true);

@@ -313,6 +313,17 @@ per-task `RECOVERY_VERIFIED` or `RECOVERY_FAILED` outcomes. Active logs remain
 plain text for live tailing. The tiny atomic `desktop-recovery.json` stores only
 pending task UUIDs and survives a killed worker.
 
+The installer applies the same content-redaction boundary to pre-existing
+Monitor-owned logs before it relaunches the app or daemon. It first verifies
+that the exact Monitor app, daemon, and one-shot restart worker are stopped,
+then rewrites only the three active streams, exact timestamped Brotli archives,
+and exact `recovery-runs/restart-<operation>.log` files through fd-anchored,
+no-follow opens. Each input line is capped at 1 MiB; malformed Brotli, invalid
+UTF-8, oversized lines, symlinks, or concurrent mutation fail closed without
+replacing the source. Unchanged sanitized files keep their inode, changed files
+are atomically replaced at mode `0600`, and closed archives remain Brotli Q6.
+Foreign files and official Codex Desktop session logs are never migrated.
+
 ### 12. Open Interactive Documentation
 ```bash
 cxi helps
@@ -425,7 +436,7 @@ The Monitor stores its account registry, status cache, and recovery journals in
 - `~/.codex/usage-status.json` — Real-time quota snapshot consumed by the macOS Menu Bar app; removed by the normal uninstall.
 - `~/.codex/monitor.lock`, `daemon.lock`, `codex.lock` — Monitor coordination locks; removed when not held.
 - `~/.codex/auto-reset-state.json`, `desktop-recovery.json`, `desktop-recovery.lock`, `desktop-automation-cooldown` — Private recovery/reset state removed by uninstall.
-- `~/.codex/recovery-runs/`, `account-switcher-daemon.log`, and `account-switcher-daemon.err` — Monitor recovery records and daemon logs removed by uninstall.
+- `~/.codex/recovery-runs/`, `account-switcher-daemon.log`, and `account-switcher-daemon.err` — private Monitor recovery records and daemon logs; new output is redacted at write time and exact pre-existing Monitor log files are redacted during installation before writers restart; removed by uninstall.
 - `~/.codex/helps.html` — Copied offline interactive documentation guide removed by uninstall.
 - `~/.local/share/codex-monitor/` — Retained skill source used by one-line remote installs; removed by uninstall.
 

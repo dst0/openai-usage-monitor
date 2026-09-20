@@ -57,6 +57,14 @@ non-interactive run. Runtime status/recovery files are removed by the normal
 uninstall; add `--purge-data` only to remove the Monitor-owned account registry
 such as `~/.codex/accounts.json`.
 
+During installation, log migration occurs only after the newly built app is
+signed and after the exact Monitor app, daemon, and restart-worker launchd job
+are verified stopped. The Rust helper redacts pre-existing active Monitor logs,
+exact Monitor Brotli archives, and exact restart-worker logs with bounded
+streaming and no-follow opens. It fails closed and preserves the source for
+malformed, oversized, symlinked, or concurrently changed inputs; official
+Codex Desktop logs and foreign archive entries are outside this scope.
+
 The same operation is available in the running Menu Bar app: choose
 `⛔ UNINSTALL CODEX MONITOR…` and type `UNINSTALL` in uppercase. The app then
 starts its bundled uninstaller and exits. An unchecked option preserves

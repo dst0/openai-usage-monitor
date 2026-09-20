@@ -115,6 +115,9 @@ FAKE_CODEX_HOME="$(cd "${FAKE_HOME}/.codex" && /bin/pwd -P)"
 /usr/bin/printf 'stdout\n' > "${FAKE_HOME}/.codex/account-switcher-daemon.log"
 /usr/bin/printf 'stderr\n' > "${FAKE_HOME}/.codex/account-switcher-daemon.err"
 /usr/bin/printf 'temporary\n' > "${FAKE_HOME}/.codex/auth.temporary.tmp.json"
+/usr/bin/printf 'redaction temporary\n' > "${FAKE_HOME}/.codex/.redact-1-1.tmp"
+/usr/bin/printf 'redaction temporary\n' > "${FAKE_HOME}/.codex/log/.redact-1-2.tmp"
+/usr/bin/printf 'redaction temporary\n' > "${FAKE_HOME}/.codex/log/archive/.redact-1-3.tmp"
 /usr/bin/printf 'unknown recovery\n' > "${FAKE_HOME}/.codex/recovery-runs/nested/unknown-state.bin"
 /usr/bin/printf 'auth sentinel\n' > "${FAKE_HOME}/.codex/auth.json"
 /usr/bin/printf 'accounts sentinel\n' > "${FAKE_HOME}/.codex/accounts.json"
@@ -164,6 +167,9 @@ HOME="${FAKE_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/account-switcher-daemon.err" "${DRY_RUN_OUTPUT}" >/dev/null
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/recovery-runs" "${DRY_RUN_OUTPUT}" >/dev/null
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/auth.temporary.tmp.json" "${DRY_RUN_OUTPUT}" >/dev/null
+/usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/.redact-1-1.tmp" "${DRY_RUN_OUTPUT}" >/dev/null
+/usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/log/.redact-1-2.tmp" "${DRY_RUN_OUTPUT}" >/dev/null
+/usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/log/archive/.redact-1-3.tmp" "${DRY_RUN_OUTPUT}" >/dev/null
 assert_exists "${FAKE_HOME}/.codex/log/switcher.log"
 assert_exists "${FAKE_HOME}/.codex/recovery-runs/nested/unknown-state.bin"
 
@@ -176,6 +182,9 @@ assert_absent "${FAKE_HOME}/.codex/account-switcher-daemon.log"
 assert_absent "${FAKE_HOME}/.codex/account-switcher-daemon.err"
 assert_absent "${FAKE_HOME}/.codex/recovery-runs"
 assert_absent "${FAKE_HOME}/.codex/auth.temporary.tmp.json"
+assert_absent "${FAKE_HOME}/.codex/.redact-1-1.tmp"
+assert_absent "${FAKE_HOME}/.codex/log/.redact-1-2.tmp"
+assert_absent "${FAKE_HOME}/.codex/log/archive/.redact-1-3.tmp"
 assert_absent "${FAKE_ROOT}/Applications/Codex Monitor.app"
 assert_absent "${FAKE_HOME}/.codex/log/archive/switcher-20260920-000000.log.br"
 assert_absent "${FAKE_HOME}/.codex/log/archive/account-switcher-daemon-20260920-000000.log.br"
