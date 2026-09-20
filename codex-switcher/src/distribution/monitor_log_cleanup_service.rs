@@ -1,16 +1,11 @@
 use super::historical_log_redaction_service::HistoricalLogRedactionService;
 use super::log_permissions_service::LogPermissionsService;
 use super::monitor_log_io_service::MonitorLogIoService;
+use super::monitor_log_name_policy::{is_owned_archive, is_redaction_temp};
 use std::fs::File;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-
-const ARCHIVE_PREFIXES: [&str; 3] = [
-    "switcher",
-    "account-switcher-daemon",
-    "account-switcher-daemon-err",
-];
 
 pub struct MonitorLogCleanupService;
 
@@ -75,12 +70,13 @@ impl MonitorLogCleanupService {
                 "switcher.log",
                 &home_path.join("log/switcher.log"),
             )?;
+            Self::print_temp_files(&log_dir, &home_path.join("log"))?;
             let archive = Self::optional_directory(&log_dir, "archive")?;
             if let Some(archive) = archive {
                 for name in MonitorLogIoService::archive_names(&archive)
                     .map_err(|_| Self::unsafe_error("Monitor archive"))?
                 {
-                    if Self::is_owned_archive(&name) {
+                    if is_owned_archive(&name) {
                         Self::require_regular_archive(&archive, &name)?;
                         println!(
                             "  remove {}",
@@ -88,6 +84,7 @@ impl MonitorLogCleanupService {
                         );
                     }
                 }
+                Self::print_temp_files(&archive, &home_path.join("log/archive"))?;
                 println!("  preserve foreign Brotli archives in the Monitor archive directory");
             }
         }
@@ -118,16 +115,18 @@ impl MonitorLogCleanupService {
 
         if let Some(log_dir) = Self::optional_directory(&home, "log")? {
             Self::remove_regular_child(&log_dir, "switcher.log")?;
+            Self::remove_temp_files(&log_dir)?;
             if let Some(archive) = Self::optional_directory(&log_dir, "archive")? {
                 for name in MonitorLogIoService::archive_names(&archive)
                     .map_err(|_| Self::unsafe_error("Monitor archive"))?
                 {
-                    if Self::is_owned_archive(&name) {
+                    if is_owned_archive(&name) {
                         Self::require_regular_archive(&archive, &name)?;
                         MonitorLogIoService::remove_child(&archive, &name, false)
                             .map_err(|_| Self::unsafe_error("Monitor archive"))?;
                     }
                 }
+                Self::remove_temp_files(&archive)?;
                 let _ = MonitorLogIoService::remove_child(&log_dir, "archive", true);
             }
             let _ = MonitorLogIoService::remove_child(&home, "log", true);
@@ -214,43 +213,23 @@ impl MonitorLogCleanupService {
             .map_err(|_| Self::unsafe_error("Monitor recovery state"))
     }
 
-    fn is_owned_archive(name: &str) -> bool {
-        ARCHIVE_PREFIXES
-            .iter()
-            .any(|prefix| Self::timestamped_name(name, prefix))
-    }
-
-    fn timestamped_name(name: &str, prefix: &str) -> bool {
-        let Some(rest) = name.strip_prefix(&format!("{prefix}-")) else {
-            return false;
-        };
-        let Some(timestamp) = rest.strip_suffix(".log.br") else {
-            return false;
-        };
-        timestamp.len() == 15
-            && timestamp.as_bytes()[8] == b'-'
-            && timestamp
-                .bytes()
-                .enumerate()
-                .all(|(index, byte)| index == 8 || byte.is_ascii_digit())
-    }
-
     fn is_temp_file(name: &str) -> bool {
-        [
-            ("auth.", ".tmp.json"),
-            ("accounts.", ".tmp.json"),
-            ("usage-status.", ".tmp.json"),
-            ("desktop-recovery.", ".tmp"),
-            ("desktop-automation-cooldown.", ".tmp"),
-            ("desktop-window.", ".tmp"),
-            (".auto-reset-state.", ".tmp"),
-        ]
-        .iter()
-        .any(|(prefix, suffix)| {
-            name.starts_with(prefix)
-                && name.ends_with(suffix)
-                && name.len() > prefix.len() + suffix.len()
-        })
+        is_redaction_temp(name)
+            || [
+                ("auth.", ".tmp.json"),
+                ("accounts.", ".tmp.json"),
+                ("usage-status.", ".tmp.json"),
+                ("desktop-recovery.", ".tmp"),
+                ("desktop-automation-cooldown.", ".tmp"),
+                ("desktop-window.", ".tmp"),
+                (".auto-reset-state.", ".tmp"),
+            ]
+            .iter()
+            .any(|(prefix, suffix)| {
+                name.starts_with(prefix)
+                    && name.ends_with(suffix)
+                    && name.len() > prefix.len() + suffix.len()
+            })
     }
 
     fn unsafe_error(kind: &str) -> String {

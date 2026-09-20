@@ -42,6 +42,27 @@ fn sanitizes_json_quoted_values_paths_tokens_args_and_controls() {
 }
 
 #[test]
+fn sanitizes_spaced_json_keyed_values_without_leaking_the_following_token() {
+    let input = r#"{"token": "synthetic-secret", "display_name": "Synthetic Person", "email": "person@example.test"}"#;
+    let clean = LogRedactionService::sanitize_text(input);
+
+    assert!(!clean.contains("synthetic-secret"));
+    assert!(!clean.contains("Synthetic Person"));
+    assert!(!clean.contains("person@example.test"));
+    assert!(clean.contains("[TOKEN]"));
+    assert!(clean.contains("name_"));
+    assert!(clean.contains("email_"));
+}
+
+#[test]
+fn marker_prefix_does_not_make_a_secret_suffix_trusted() {
+    let clean = LogRedactionService::sanitize_text("token=[TOKEN]synthetic-secret");
+
+    assert_eq!(clean, "token=[TOKEN]");
+    assert!(!clean.contains("synthetic-secret"));
+}
+
+#[test]
 fn preserves_operational_reason_and_sanitizes_keyed_ids() {
     let clean = LogRedactionService::sanitize_text(
         "reason=quota_exhausted thread=550e8400-e29b-41d4-a716-446655440000 turn=6ba7b810-9dad-41d1-80b4-00c04fd430c8 status=failed",

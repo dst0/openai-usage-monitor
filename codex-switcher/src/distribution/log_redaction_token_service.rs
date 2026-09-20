@@ -127,7 +127,9 @@ impl LogRedactionTokenService {
         let value = &token[prefix_end..];
         for marker in [PATH_MARKER, TOKEN_MARKER, ARG_MARKER] {
             if let Some(suffix) = value.strip_prefix(marker) {
-                return Some((&token[..prefix_end], field, marker, suffix));
+                if suffix.chars().all(|character| ",}]();".contains(character)) {
+                    return Some((&token[..prefix_end], field, marker, suffix));
+                }
             }
         }
         if let Some(quote) = value
@@ -145,7 +147,7 @@ impl LogRedactionTokenService {
         }
         let end = value
             .char_indices()
-            .find(|(_, character)| ",}]();".contains(*character))
+            .find(|(_, character)| ",}();".contains(*character))
             .map(|(index, _)| index)
             .unwrap_or(value.len());
         Some((&token[..prefix_end], field, &value[..end], &value[end..]))

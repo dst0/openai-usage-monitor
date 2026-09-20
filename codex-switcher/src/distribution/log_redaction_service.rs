@@ -1,3 +1,4 @@
+use super::log_redaction_structured_parser::sanitize_structured_values;
 use super::log_redaction_token_service::{
     LogRedactionTokenService, ARG_MARKER, PATH_MARKER, TOKEN_MARKER,
 };
@@ -7,6 +8,7 @@ pub struct LogRedactionService;
 impl LogRedactionService {
     pub fn sanitize_text(value: &str) -> String {
         let value = LogRedactionTokenService::remove_controls(value);
+        let value = sanitize_structured_values(&value);
         let mut output = Vec::new();
         let mut redact_next = false;
         for token in value.split_whitespace() {

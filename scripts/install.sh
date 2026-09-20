@@ -33,6 +33,56 @@ ensure_private_monitor_logs() {
     }
 }
 
+retire_launchd_job() {
+    local label="$1"
+    local plist="${2:-}"
+    local attempt=0
+    if [ -n "${plist}" ] && [ -f "${plist}" ]; then
+        /bin/launchctl unload "${plist}" 2>/dev/null || true
+    fi
+    /bin/launchctl remove "${label}" 2>/dev/null || true
+    while /bin/launchctl list "${label}" >/dev/null 2>&1; do
+        attempt=$((attempt + 1))
+        if [ "${attempt}" -ge 50 ]; then
+            echo "❌ Refusing log migration: launchd job ${label} is still active."
+            return 1
+        fi
+        sleep 0.1
+    done
+}
+
+stop_monitor_log_writers() {
+    local pid executable pids attempt=0
+    retire_launchd_job "com.codex.switcher.restart-worker"
+
+    pids="$(/usr/bin/pgrep -x "CodexMonitor" 2>/dev/null || true)"
+    for pid in ${pids}; do
+        case "${pid}" in
+            *[!0-9]*|'') echo "❌ Refusing log migration: invalid Monitor PID."; return 1 ;;
+        esac
+        executable="$(/bin/ps -p "${pid}" -o comm= 2>/dev/null | /usr/bin/sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+        case "${executable}" in
+            "/Applications/${BUNDLE_NAME}/Contents/MacOS/CodexMonitor"|\
+            "${HOME}/Applications/${BUNDLE_NAME}/Contents/MacOS/CodexMonitor"|\
+            "${INSTALL_DIR}/${BUNDLE_NAME}/Contents/MacOS/CodexMonitor") ;;
+            *) echo "❌ Refusing log migration: CodexMonitor PID has an unexpected executable."; return 1 ;;
+        esac
+        /bin/kill -TERM "${pid}"
+    done
+
+    while /usr/bin/pgrep -x "CodexMonitor" >/dev/null 2>&1; do
+        attempt=$((attempt + 1))
+        if [ "${attempt}" -ge 50 ]; then
+            echo "❌ Refusing log migration: Codex Monitor did not exit cleanly."
+            return 1
+        fi
+        sleep 0.1
+    done
+    retire_launchd_job \
+        "com.codex.switcher" \
+        "${HOME}/Library/LaunchAgents/com.codex.switcher.plist"
+}
+
 # Detect if running from local repository or piped via curl
 SCRIPT_SOURCE="${BASH_SOURCE[0]:-$0}"
 PROJECT_DIR=""
@@ -46,12 +96,20 @@ fi
 CLEANUP_TMP=0
 CLI_STAGING=""
 PERSISTENT_SKILL_ROOT=""
+WRITERS_QUIESCED=0
+INSTALL_SUCCEEDED=0
 cleanup() {
     if [ -n "${CLI_STAGING}" ] && [ -f "${CLI_STAGING}" ]; then
         rm -f "${CLI_STAGING}"
     fi
     if [ "${CLEANUP_TMP}" -eq 1 ] && [ -d "${TMP_DIR:-}" ]; then
         rm -rf "${TMP_DIR}"
+    fi
+    if [ "${WRITERS_QUIESCED}" -eq 1 ] && [ "${INSTALL_SUCCEEDED}" -eq 0 ]; then
+        if [ -x "${INSTALL_DIR}/${BUNDLE_NAME}/Contents/MacOS/CodexMonitor" ]; then
+            echo "⚠️  Installation stopped after quiescing Monitor writers; restoring the available app."
+            /usr/bin/open "${INSTALL_DIR}/${BUNDLE_NAME}" >/dev/null 2>&1 || true
+        fi
     fi
 }
 trap cleanup EXIT INT TERM
@@ -195,19 +253,6 @@ codesign --verify --strict "${CLI_STAGING}"
 mv -f "${CLI_STAGING}" "${LOCAL_BIN}/codex-mon"
 CLI_STAGING=""
 ln -sfn "${LOCAL_BIN}/codex-mon" "${LOCAL_BIN}/cxi"
-
-# Historical redaction replaces each exact Monitor-owned log inode atomically.
-# Stop both owners first so no inherited launchd descriptor can continue
-# writing to the retired inode while the migration is in progress.
-/usr/bin/pkill -x "CodexMonitor" 2>/dev/null || true
-/usr/bin/pkill -f "/Applications/${BUNDLE_NAME}" 2>/dev/null || true
-/usr/bin/pkill -f "${HOME}/Applications/${BUNDLE_NAME}" 2>/dev/null || true
-/bin/launchctl unload "${HOME}/Library/LaunchAgents/com.codex.switcher.plist" 2>/dev/null || true
-
-# Prepare private streams and sanitize pre-existing active logs and exact
-# Monitor-owned Brotli archives before launchd is allowed to load the plist.
-# The Rust helper holds directory descriptors and rejects symlinked components.
-ensure_private_monitor_logs
 
 # Ensure transparent codex CLI shim exists
 echo "🔗 Configuring codex CLI shim..."
@@ -353,8 +398,13 @@ codesign --force --deep --sign - "${APP_DIR}" 2>/dev/null || true
 # ------------------------------------------------------------------------------
 echo ""
 echo "📂 [3/4] Installing to ${INSTALL_DIR}..."
-# The previous app and daemon were stopped before historical log migration.
-sleep 0.5
+
+# Historical redaction atomically replaces changed Monitor-owned log inodes.
+# Quiesce and verify every known writer only after all build/signing steps have
+# succeeded, then migrate before replacing or relaunching the application.
+stop_monitor_log_writers
+WRITERS_QUIESCED=1
+ensure_private_monitor_logs
 
 rm -rf "${INSTALL_DIR}/${BUNDLE_NAME}"
 cp -R "${APP_DIR}" "${INSTALL_DIR}/${BUNDLE_NAME}"
@@ -434,6 +484,8 @@ done
 echo ""
 echo "🚀 Launching ${APP_NAME}..."
 open "${INSTALL_DIR}/${BUNDLE_NAME}"
+INSTALL_SUCCEEDED=1
+WRITERS_QUIESCED=0
 
 # Release concurrency lock explicitly
 exec 9>&- 2>/dev/null || true

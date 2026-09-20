@@ -1,21 +1,16 @@
-use super::log_redaction_service::LogRedactionService;
+use super::historical_log_stream_redactor::{rewrite_brotli, rewrite_plain};
 use super::monitor_log_io_service::MonitorLogIoService;
-use crate::logger::{BROTLI_LGWIN, BROTLI_QUALITY};
+use super::monitor_log_name_policy::{is_owned_archive, is_recovery_log};
+use super::temporary_log_rewrite::TemporaryLogRewrite;
 use fs2::FileExt;
 use std::ffi::CString;
-use std::fs::File;
-use std::io::{self, BufRead, BufReader, Write};
+use std::fs::{self, File};
+use std::io;
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const MAX_LEGACY_LOG_LINE_BYTES: usize = 1024 * 1024;
-const ARCHIVE_PREFIXES: [&str; 3] = [
-    "switcher",
-    "account-switcher-daemon",
-    "account-switcher-daemon-err",
-];
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub struct HistoricalLogRedactionService;
@@ -36,10 +31,25 @@ impl HistoricalLogRedactionService {
         for name in MonitorLogIoService::archive_names(&archive)
             .map_err(|_| Self::failure("archive directory"))?
         {
-            if Self::is_owned_archive(&name) {
+            if is_owned_archive(&name) {
                 Self::rewrite_child(&archive, &name, true)
                     .map_err(|_| Self::failure("Brotli archive"))?;
             }
+        }
+        let recovery_path = home.join("recovery-runs");
+        match MonitorLogIoService::open_directory_path(&recovery_path, false) {
+            Ok(recovery) => {
+                for name in MonitorLogIoService::archive_names(&recovery)
+                    .map_err(|_| Self::failure("recovery directory"))?
+                {
+                    if is_recovery_log(&name) {
+                        Self::rewrite_child(&recovery, &name, false)
+                            .map_err(|_| Self::failure("recovery log"))?;
+                    }
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => return Err(Self::failure("recovery directory")),
         }
         Ok(())
     }
@@ -60,28 +70,31 @@ impl HistoricalLogRedactionService {
         let source =
             MonitorLogIoService::open_child_file(parent, name, libc::O_RDONLY | libc::O_CLOEXEC)?;
         source.lock_exclusive()?;
+        source.set_permissions(fs::Permissions::from_mode(0o600))?;
         let source_metadata = source.metadata()?;
         let reader_source = source.try_clone()?;
         let (temporary_name, mut temporary) = Self::create_temporary(parent, name)?;
-        let rewrite_result = if compressed {
-            Self::rewrite_brotli(reader_source, &mut temporary)
+        let mut cleanup = TemporaryLogRewrite::new(parent, temporary_name.clone())?;
+        temporary.set_permissions(fs::Permissions::from_mode(0o600))?;
+        let changed = if compressed {
+            rewrite_brotli(reader_source, &mut temporary)
         } else {
-            Self::rewrite_plain(reader_source, &mut temporary)
-        };
-
-        if let Err(error) = rewrite_result {
-            let _ = MonitorLogIoService::remove_child(parent, &temporary_name, false);
-            return Err(error);
-        }
+            rewrite_plain(reader_source, &mut temporary)
+        }?;
         temporary.sync_all()?;
         drop(temporary);
+
+        if !changed {
+            cleanup.remove()?;
+            let _ = source.unlock();
+            return Ok(());
+        }
 
         let final_source_metadata = source.metadata()?;
         if final_source_metadata.len() != source_metadata.len()
             || final_source_metadata.mtime() != source_metadata.mtime()
             || final_source_metadata.mtime_nsec() != source_metadata.mtime_nsec()
         {
-            let _ = MonitorLogIoService::remove_child(parent, &temporary_name, false);
             let _ = source.unlock();
             return Err(io::Error::new(
                 io::ErrorKind::Other,
@@ -95,7 +108,6 @@ impl HistoricalLogRedactionService {
         if current_metadata.dev() != source_metadata.dev()
             || current_metadata.ino() != source_metadata.ino()
         {
-            let _ = MonitorLogIoService::remove_child(parent, &temporary_name, false);
             let _ = source.unlock();
             return Err(io::Error::new(
                 io::ErrorKind::Other,
@@ -104,57 +116,10 @@ impl HistoricalLogRedactionService {
         }
         drop(current);
 
-        if let Err(error) = Self::rename_child(parent, &temporary_name, name) {
-            let _ = MonitorLogIoService::remove_child(parent, &temporary_name, false);
-            let _ = source.unlock();
-            return Err(error);
-        }
+        Self::rename_child(parent, &temporary_name, name)?;
+        cleanup.disarm();
         let _ = source.unlock();
         parent.sync_all()
-    }
-
-    fn rewrite_plain(source: File, target: &mut File) -> io::Result<()> {
-        let mut reader = BufReader::new(source);
-        Self::sanitize_stream(&mut reader, target)
-    }
-
-    fn rewrite_brotli(source: File, target: &mut File) -> io::Result<()> {
-        let decompressor = brotli::Decompressor::new(source, 4096);
-        let mut reader = BufReader::new(decompressor);
-        let mut compressor =
-            brotli::CompressorWriter::new(target, 4096, BROTLI_QUALITY, BROTLI_LGWIN);
-        Self::sanitize_stream(&mut reader, &mut compressor)?;
-        compressor.flush()
-    }
-
-    fn sanitize_stream(reader: &mut dyn BufRead, writer: &mut dyn Write) -> io::Result<()> {
-        let mut line = Vec::new();
-        loop {
-            line.clear();
-            let read = reader.read_until(b'\n', &mut line)?;
-            if read == 0 {
-                return Ok(());
-            }
-            if line.len() > MAX_LEGACY_LOG_LINE_BYTES {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "legacy log line exceeds safety bound",
-                ));
-            }
-            let had_newline = line.last() == Some(&b'\n');
-            if had_newline {
-                line.pop();
-            }
-            if line.last() == Some(&b'\r') {
-                line.pop();
-            }
-            let text = std::str::from_utf8(&line)
-                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "log is not UTF-8"))?;
-            writer.write_all(LogRedactionService::sanitize_text(text).as_bytes())?;
-            if had_newline {
-                writer.write_all(b"\n")?;
-            }
-        }
     }
 
     fn create_temporary(parent: &File, name: &str) -> io::Result<(String, File)> {
@@ -194,27 +159,6 @@ impl HistoricalLogRedactionService {
             return Err(io::Error::last_os_error());
         }
         Ok(())
-    }
-
-    fn is_owned_archive(name: &str) -> bool {
-        ARCHIVE_PREFIXES
-            .iter()
-            .any(|prefix| Self::timestamped_name(name, prefix))
-    }
-
-    fn timestamped_name(name: &str, prefix: &str) -> bool {
-        let Some(timestamp) = name
-            .strip_prefix(&format!("{prefix}-"))
-            .and_then(|rest| rest.strip_suffix(".log.br"))
-        else {
-            return false;
-        };
-        timestamp.len() == 15
-            && timestamp.as_bytes()[8] == b'-'
-            && timestamp
-                .bytes()
-                .enumerate()
-                .all(|(index, byte)| index == 8 || byte.is_ascii_digit())
     }
 
     fn failure(kind: &str) -> String {

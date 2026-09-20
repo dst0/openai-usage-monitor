@@ -19,15 +19,19 @@ pub mod distribution_request;
 pub mod distribution_transaction_service;
 pub mod distribution_trigger;
 pub mod historical_log_redaction_service;
+mod historical_log_stream_redactor;
 pub mod log_permissions_service;
 mod log_redaction_output;
 pub mod log_redaction_service;
+mod log_redaction_structured_parser;
 mod log_redaction_token_service;
 pub mod mock_app_lifecycle;
 pub mod monitor_log_cleanup_service;
 pub mod monitor_log_io_service;
+mod monitor_log_name_policy;
 pub mod system_app_lifecycle;
 pub mod system_window_restore_backend;
+mod temporary_log_rewrite;
 pub mod window_relaunch_restore_service;
 pub mod window_restore_backend;
 pub mod window_restore_capture;
@@ -92,3 +96,7 @@ mod automatic_distribution_service_tests;
 #[cfg(test)]
 #[path = "log_redaction_service.test.rs"]
 mod log_redaction_service_tests;
+
+#[cfg(test)]
+#[path = "historical_log_redaction_service.test.rs"]
+mod historical_log_redaction_service_tests;
