@@ -37,7 +37,7 @@ impl ResetOutcomeService {
                     Err(_) => Some("reset_applied_quota_refresh_failed".to_string()),
                 };
                 let recovery_reason = recovery::recover_threads(
-                    &blocked_threads,
+                    blocked_threads,
                     recovery::RecoveryMode::DiscoveredOnly,
                 )
                 .err()

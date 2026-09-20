@@ -44,12 +44,12 @@ pub(super) fn prune_ineligible_targets(home: &Path, targets: &mut Vec<PendingTar
         if !is_recent {
             return false;
         }
-        match switcher::inspect_thread_rollout_state(home, &target.id) {
+        matches!(
+            switcher::inspect_thread_rollout_state(home, &target.id),
             switcher::ThreadRolloutState::ActiveInProgress
-            | switcher::ThreadRolloutState::InterruptedByQuota
-            | switcher::ThreadRolloutState::TurnAborted => true,
-            _ => false,
-        }
+                | switcher::ThreadRolloutState::InterruptedByQuota
+                | switcher::ThreadRolloutState::TurnAborted
+        )
     });
 }
 

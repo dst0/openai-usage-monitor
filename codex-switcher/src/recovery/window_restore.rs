@@ -62,7 +62,7 @@ end tell"#,
     {
         Ok(out) if out.status.success() => {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
+            let parts: Vec<&str> = stdout.split_whitespace().collect();
             if parts.len() == 5 {
                 let line = format!(
                     "WINDOW_BOUNDS_RESTORED x={} y={} width={} height={} pid={}",

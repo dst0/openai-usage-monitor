@@ -86,7 +86,7 @@ impl DaemonLoopService {
                 if current_auth_mtime != last_auth_mtime && current_auth_mtime.is_some() {
                     break;
                 }
-                if watchdog_ticks % 2 == 0 && Self::watchdog_needs_immediate_check() {
+                if watchdog_ticks.is_multiple_of(2) && Self::watchdog_needs_immediate_check() {
                     crate::logger::log(
                         "INFO",
                         "WATCHDOG",

@@ -29,14 +29,15 @@ pub fn apply_relogin_to_accounts_file(
     };
 
     if let Some(ref new_email) = extracted_email {
-        if is_valid_email(new_email) && is_valid_email(&target.email) {
-            if !new_email.trim().eq_ignore_ascii_case(target.email.trim()) {
-                return Err(format!(
-                    "Logged in as '{}', but expected '{}'. Re-login aborted to protect existing account.",
-                    new_email.trim(),
-                    target.email.trim()
-                ));
-            }
+        if is_valid_email(new_email)
+            && is_valid_email(&target.email)
+            && !new_email.trim().eq_ignore_ascii_case(target.email.trim())
+        {
+            return Err(format!(
+                "Logged in as '{}', but expected '{}'. Re-login aborted to protect existing account.",
+                new_email.trim(),
+                target.email.trim()
+            ));
         }
     }
 

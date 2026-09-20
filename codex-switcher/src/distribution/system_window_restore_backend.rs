@@ -92,9 +92,9 @@ impl SystemWindowRestoreBackend {
 
 impl WindowRestoreBackend for SystemWindowRestoreBackend {
     fn inspect_process(&mut self, expected_pid: u32) -> Result<ProcessIdentity, String> {
-        let value = self.invoke(&vec![
-            "inspect-process".into(),
-            "--expected-pid".into(),
+        let value = self.invoke(&[
+            "inspect-process".to_string(),
+            "--expected-pid".to_string(),
             expected_pid.to_string(),
         ])?;
         let identity = Self::parse_process(&value)?;

@@ -191,7 +191,7 @@ impl DesktopIpc {
             loop_count += 1;
             // Every 2 seconds (10 ticks), re-issue background deep link in case ChatGPT was
             // still initializing its URL handler when the initial command was run.
-            if loop_count % 10 == 0 {
+            if loop_count.is_multiple_of(10) {
                 switcher::open_thread_in_codex(thread_id);
             }
         }

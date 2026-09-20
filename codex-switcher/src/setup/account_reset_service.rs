@@ -65,7 +65,7 @@ where
 
     let acc = &file.accounts[acc_idx];
     let available_credits = acc.last_credits.unwrap_or(0);
-    if available_credits <= 0 {
+    if available_credits == 0 {
         return Err(format!(
             "Account '{}' has no reset credits available",
             acc.display_name()

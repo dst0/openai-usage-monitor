@@ -5,6 +5,7 @@ use super::log_redaction_service::LogRedactionService;
 use crate::models::{AccountConfig, AccountsFile};
 use crate::strategy::is_account_depleted;
 
+#[derive(Default)]
 pub struct DistributionDecisionService;
 
 impl DistributionDecisionService {

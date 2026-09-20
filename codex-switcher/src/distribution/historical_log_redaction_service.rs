@@ -96,10 +96,7 @@ impl HistoricalLogRedactionService {
             || final_source_metadata.mtime_nsec() != source_metadata.mtime_nsec()
         {
             let _ = source.unlock();
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "log changed during redaction",
-            ));
+            return Err(io::Error::other("log changed during redaction"));
         }
 
         let current =
@@ -109,10 +106,7 @@ impl HistoricalLogRedactionService {
             || current_metadata.ino() != source_metadata.ino()
         {
             let _ = source.unlock();
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "log changed during redaction",
-            ));
+            return Err(io::Error::other("log changed during redaction"));
         }
         drop(current);
 
