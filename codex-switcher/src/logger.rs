@@ -1,3 +1,4 @@
+use crate::distribution::monitor_log_lifecycle_lock::MonitorLogLifecycleLock;
 use crate::distribution::{LogRedactionService, MonitorLogIoService};
 use crate::logger_archive_info::ArchiveInfo;
 use crate::logger_archive_result::ArchiveResult;
@@ -91,6 +92,7 @@ pub fn rotate_file_if_needed(
     max_size_bytes: u64,
     max_archives: usize,
 ) -> io::Result<Option<ArchiveResult>> {
+    let _lifecycle = MonitorLogLifecycleLock::shared_for_log(path)?;
     let Some((mut file, archive_dir)) = MonitorLogIoService::open_for_rotation(path)? else {
         return Ok(None);
     };

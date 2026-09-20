@@ -30,7 +30,9 @@ line_number_after() {
 cleanup_function_line="$(line_number 'cleanup() {')"
 cleanup_guard_line="$(line_number '    if [ -n "${CLI_STAGING}" ] && [ -f "${CLI_STAGING}" ]; then')"
 cleanup_remove_line="$(line_number '        rm -f "${CLI_STAGING}"')"
-cleanup_trap_line="$(line_number 'trap cleanup EXIT INT TERM')"
+cleanup_trap_line="$(line_number 'trap cleanup EXIT')"
+signal_int_trap_line="$(line_number "trap 'exit 130' INT")"
+signal_term_trap_line="$(line_number "trap 'exit 143' TERM")"
 mktemp_line="$(line_number 'CLI_STAGING="$(mktemp "${LOCAL_BIN}/.codex-mon.install.XXXXXX")"')"
 copy_line="$(line_number 'cp "target/release/codex-mon" "${CLI_STAGING}"')"
 chmod_line="$(line_number 'chmod 755 "${CLI_STAGING}"')"
@@ -45,9 +47,11 @@ if ! {
     [ "${cleanup_function_line}" -lt "${cleanup_guard_line}" ] &&
         [ "${cleanup_guard_line}" -lt "${cleanup_remove_line}" ] &&
         [ "${cleanup_remove_line}" -lt "${cleanup_trap_line}" ] &&
-        [ "${cleanup_trap_line}" -lt "${mktemp_line}" ]
+        [ "${cleanup_trap_line}" -lt "${signal_int_trap_line}" ] &&
+        [ "${signal_int_trap_line}" -lt "${signal_term_trap_line}" ] &&
+        [ "${signal_term_trap_line}" -lt "${mktemp_line}" ]
 }; then
-    echo "CLI staging failure cleanup must remove the staged file through the EXIT/INT/TERM trap" >&2
+    echo "CLI staging failure cleanup must remove the staged file through EXIT cleanup with signal exits" >&2
     exit 1
 fi
 

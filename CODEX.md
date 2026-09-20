@@ -58,12 +58,22 @@ uninstall; add `--purge-data` only to remove the Monitor-owned account registry
 such as `~/.codex/accounts.json`.
 
 During installation, log migration occurs only after the newly built app is
-signed and after the exact Monitor app, daemon, and restart-worker launchd job
-are verified stopped. The Rust helper redacts pre-existing active Monitor logs,
+copied to same-filesystem staging and strictly signature-verified. The exact
+Monitor app and daemon are then stopped; a Monitor PID is rechecked by executable
+and start time immediately before signalling, while an in-flight restart worker
+is allowed to finish and is verified absent rather than force-removed. The Rust helper redacts pre-existing active Monitor logs,
 exact Monitor Brotli archives, and exact restart-worker logs with bounded
 streaming and no-follow opens. It fails closed and preserves the source for
 malformed, oversized, symlinked, or concurrently changed inputs; official
-Codex Desktop logs and foreign archive entries are outside this scope.
+Codex Desktop logs and foreign archive entries are outside this scope. Bundle
+activation uses a backup rename and restores the prior app if a later install
+step fails. Runtime append/rotation takes a shared log-lifecycle lock while
+historical migration takes it exclusively, so a retired inode cannot receive a
+late write during redaction. Installation alone creates the coordination inode;
+a stale writer therefore cannot recreate one after uninstall removes it, and a
+waiter verifies the named inode again after flock acquisition. Daemon startup
+validates the lock but never initializes it. Bundle
+commit disarms rollback before best-effort backup cleanup.
 
 The same operation is available in the running Menu Bar app: choose
 `⛔ UNINSTALL CODEX MONITOR…` and type `UNINSTALL` in uppercase. The app then

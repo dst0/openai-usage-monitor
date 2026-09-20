@@ -33,12 +33,23 @@
   patched nor replaced. It may use `/Applications` or `~/Applications` for the
   Monitor bundle and retains remote-install skill sources in
   `~/.local/share/codex-monitor/`.
-- After build/signing and before relaunch, the installer must verify the exact
-  Monitor app, daemon, and restart worker are stopped, then redact pre-existing
+- After same-filesystem staging and strict signature verification, the installer
+  must stop the exact Monitor app and daemon, revalidate a Monitor PID's exact
+  executable and start time immediately before signalling it, allow any in-flight restart worker
+  to finish without force-removing it, verify all writers absent, then redact pre-existing
   exact Monitor active logs, timestamped Brotli Q6 archives, and restart-worker
   logs with bounded fd-anchored no-follow streaming. Invalid, oversized,
   symlinked, or concurrently changed sources fail closed and remain in place;
-  foreign files and official Codex Desktop logs are never rewritten.
+  foreign files and official Codex Desktop logs are never rewritten. Directory
+  enumeration errors must fail closed rather than being accepted as EOF. App-bundle
+  activation must use rollback-capable rename semantics that preserve the prior
+  bundle on staging, activation, or later installation failure; commit must
+  disarm rollback before best-effort backup cleanup. Runtime log
+  append/rotation must hold a shared lifecycle lock and historical migration
+  must hold it exclusively, preventing late writes to a retired inode. Only
+  installation may create the lock, so a writer cannot recreate it after
+  uninstall removes the locked inode; daemon validation must never create it,
+  and a waiter must recheck the named inode after flock acquisition.
 - `scripts/uninstall.sh --dry-run` previews cleanup. The confirmed uninstall
   removes the Monitor footprint, launch items, helper, notifier, skills, logs,
   and runtime state while preserving Desktop-owned `auth.json`, databases,

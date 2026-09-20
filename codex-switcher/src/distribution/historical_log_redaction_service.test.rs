@@ -1,4 +1,5 @@
 use super::historical_log_redaction_service::HistoricalLogRedactionService;
+use super::monitor_log_lifecycle_lock::MonitorLogLifecycleLock;
 use crate::logger::{compress_brotli_q6, decompress_brotli};
 use fs2::FileExt;
 use std::fs::{self, OpenOptions};
@@ -17,7 +18,9 @@ fn temporary_home(label: &str) -> PathBuf {
     ));
     fs::create_dir_all(path.join("log/archive")).unwrap();
     fs::create_dir_all(path.join("recovery-runs")).unwrap();
-    fs::canonicalize(path).unwrap()
+    let path = fs::canonicalize(path).unwrap();
+    MonitorLogLifecycleLock::ensure(&path).unwrap();
+    path
 }
 
 fn mode(path: &Path) -> u32 {

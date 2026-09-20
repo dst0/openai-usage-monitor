@@ -8,12 +8,12 @@ pub(super) struct TemporaryLogRewrite {
 }
 
 impl TemporaryLogRewrite {
-    pub(super) fn new(parent: &File, name: String) -> std::io::Result<Self> {
-        Ok(Self {
-            parent: parent.try_clone()?,
+    pub(super) fn new(parent: File, name: String) -> Self {
+        Self {
+            parent,
             name,
             armed: true,
-        })
+        }
     }
 
     pub(super) fn remove(&mut self) -> std::io::Result<()> {

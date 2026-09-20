@@ -315,14 +315,29 @@ pending task UUIDs and survives a killed worker.
 
 The installer applies the same content-redaction boundary to pre-existing
 Monitor-owned logs before it relaunches the app or daemon. It first verifies
-that the exact Monitor app, daemon, and one-shot restart worker are stopped,
-then rewrites only the three active streams, exact timestamped Brotli archives,
+that the exact Monitor app and daemon are stopped, including a fresh executable
+and start-time check immediately before a Monitor PID receives `TERM`; an
+in-flight one-shot restart worker is never killed and must finish before
+migration begins. The new app bundle is copied to same-filesystem staging and strictly signature-
+verified before writers stop, then activated through a rollback-capable rename.
+The migration then rewrites only the three active streams, exact timestamped Brotli archives,
 and exact `recovery-runs/restart-<operation>.log` files through fd-anchored,
 no-follow opens. Each input line is capped at 1 MiB; malformed Brotli, invalid
 UTF-8, oversized lines, symlinks, or concurrent mutation fail closed without
 replacing the source. Unchanged sanitized files keep their inode, changed files
 are atomically replaced at mode `0600`, and closed archives remain Brotli Q6.
 Foreign files and official Codex Desktop session logs are never migrated.
+Directory enumeration is capped at 4096 entries and 1 MiB of names; an I/O
+error from directory iteration also fails closed rather than being accepted as
+end-of-directory.
+Normal Monitor append and rotation operations take a shared lifecycle lock;
+historical migration takes the exclusive lock, preventing writes through a
+retired inode during the upgrade window. Only installation creates that lock,
+so an uninstall cannot be followed by a stale writer recreating a separate
+unlocked inode; daemon startup validates an existing lock and never creates one.
+After taking the flock, a waiting writer reopens the pathname and verifies the
+same inode before writing. A committed app swap disarms rollback before best-effort backup
+cleanup, preserving the installed new bundle if cleanup is interrupted.
 
 ### 12. Open Interactive Documentation
 ```bash

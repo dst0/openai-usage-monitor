@@ -27,7 +27,9 @@ mod log_redaction_structured_parser;
 mod log_redaction_token_service;
 pub mod mock_app_lifecycle;
 pub mod monitor_log_cleanup_service;
+mod monitor_log_directory_reader;
 pub mod monitor_log_io_service;
+pub(crate) mod monitor_log_lifecycle_lock;
 mod monitor_log_name_policy;
 pub mod system_app_lifecycle;
 pub mod system_window_restore_backend;
@@ -100,3 +102,15 @@ mod log_redaction_service_tests;
 #[cfg(test)]
 #[path = "historical_log_redaction_service.test.rs"]
 mod historical_log_redaction_service_tests;
+
+#[cfg(test)]
+#[path = "monitor_log_io_service.test.rs"]
+mod monitor_log_io_service_tests;
+
+#[cfg(test)]
+#[path = "monitor_log_name_policy.test.rs"]
+mod monitor_log_name_policy_tests;
+
+#[cfg(test)]
+#[path = "monitor_log_lifecycle_lock.test.rs"]
+mod monitor_log_lifecycle_lock_tests;

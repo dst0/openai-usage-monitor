@@ -1,5 +1,7 @@
+use super::monitor_log_directory_reader::MonitorLogDirectoryReader;
+use super::monitor_log_lifecycle_lock::MonitorLogLifecycleLock;
 use fs2::FileExt;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
@@ -13,6 +15,7 @@ pub struct MonitorLogIoService;
 
 impl MonitorLogIoService {
     pub fn append(path: &Path, bytes: &[u8]) -> io::Result<()> {
+        let _lifecycle = MonitorLogLifecycleLock::shared_for_log(path)?;
         let mut file = Self::open_path(
             path,
             libc::O_WRONLY | libc::O_APPEND | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_CLOEXEC,
@@ -126,34 +129,7 @@ impl MonitorLogIoService {
     }
 
     pub fn archive_names(directory: &File) -> io::Result<Vec<String>> {
-        let duplicate = unsafe { libc::dup(directory.as_raw_fd()) };
-        if duplicate < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let stream = unsafe { libc::fdopendir(duplicate) };
-        if stream.is_null() {
-            let error = io::Error::last_os_error();
-            unsafe { libc::close(duplicate) };
-            return Err(error);
-        }
-
-        let mut names = Vec::new();
-        loop {
-            let entry = unsafe { libc::readdir(stream) };
-            if entry.is_null() {
-                break;
-            }
-            let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
-            let name = name.to_string_lossy();
-            if name != "." && name != ".." {
-                names.push(name.into_owned());
-            }
-        }
-        let close_result = unsafe { libc::closedir(stream) };
-        if close_result != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(names)
+        MonitorLogDirectoryReader::names(directory)
     }
 
     pub fn remove_child(parent: &File, name: &str, directory: bool) -> io::Result<()> {
