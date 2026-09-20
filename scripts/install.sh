@@ -36,24 +36,95 @@ ensure_private_monitor_logs() {
 retire_launchd_job() {
     local label="$1"
     local plist="${2:-}"
+    local expected_executable="${3:-}"
     local attempt=0
+    local output="" pid="" executable="" state
+    if output="$(/bin/launchctl list "${label}" 2>/dev/null)"; then
+        if [[ "${output}" == *'"PID"'* ]]; then
+            pid="$(/usr/bin/printf '%s\n' "${output}" | /usr/bin/sed -n 's/.*"PID" = \([0-9][0-9]*\);.*/\1/p' | /usr/bin/head -n 1)"
+            case "${pid}" in
+                *[!0-9]*|'') echo "❌ Refusing log migration: invalid launchd PID for ${label}."; return 1 ;;
+            esac
+            if /bin/kill -0 "${pid}" 2>/dev/null; then
+                executable="$(/bin/ps -p "${pid}" -o comm= 2>/dev/null | /usr/bin/sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+                case "${executable}" in
+                    "${expected_executable}"|"${LOCAL_BIN}/cxi") ;;
+                    *) echo "❌ Refusing log migration: launchd PID for ${label} has an unexpected executable."; return 1 ;;
+                esac
+            else
+                pid=""
+            fi
+        fi
+    else
+        if launchd_job_present "${label}"; then
+            echo "❌ Refusing log migration: launchd job ${label} cannot be inspected."
+            return 1
+        else
+            state=$?
+        fi
+        if [ "${state}" -ne 1 ]; then
+            echo "❌ Refusing log migration: launchd state cannot be verified."
+            return 1
+        fi
+    fi
     if [ -n "${plist}" ] && [ -f "${plist}" ]; then
         /bin/launchctl unload "${plist}" 2>/dev/null || true
     fi
     /bin/launchctl remove "${label}" 2>/dev/null || true
-    while /bin/launchctl list "${label}" >/dev/null 2>&1; do
+    while true; do
+        if launchd_job_present "${label}"; then
+            attempt=$((attempt + 1))
+            if [ "${attempt}" -ge 50 ]; then
+                echo "❌ Refusing log migration: launchd job ${label} is still active."
+                return 1
+            fi
+            sleep 0.1
+            continue
+        else
+            state=$?
+        fi
+        if [ "${state}" -eq 1 ]; then
+            break
+        fi
+        echo "❌ Refusing log migration: launchd state cannot be verified."
+        return 1
+    done
+    attempt=0
+    while [ -n "${pid}" ] && /bin/kill -0 "${pid}" 2>/dev/null; do
+        executable="$(/bin/ps -p "${pid}" -o comm= 2>/dev/null | /usr/bin/sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+        [ "${executable}" = "${expected_executable}" ] || [ "${executable}" = "${LOCAL_BIN}/cxi" ] || break
         attempt=$((attempt + 1))
         if [ "${attempt}" -ge 50 ]; then
-            echo "❌ Refusing log migration: launchd job ${label} is still active."
+            echo "❌ Refusing log migration: launchd PID for ${label} is still active."
             return 1
         fi
         sleep 0.1
     done
 }
 
+wait_for_restart_worker() {
+    "${PROJECT_DIR}/scripts/wait_for_restart_worker.sh"
+}
+
+monitor_process_ids() {
+    local output status
+    if output="$(/usr/bin/pgrep -x "CodexMonitor" 2>/dev/null)"; then
+        /usr/bin/printf '%s\n' "${output}"
+        return 0
+    else
+        status=$?
+    fi
+    if [ "${status}" -eq 1 ]; then
+        return 0
+    fi
+    echo "❌ Refusing log migration: Monitor processes cannot be enumerated." >&2
+    return 1
+}
+
 stop_monitor_log_writers() {
-    local pid executable pids attempt=0
-    pids="$(/usr/bin/pgrep -x "CodexMonitor" 2>/dev/null || true)"
+    local pid identity pids snapshots remaining attempt=0
+    pids="$(monitor_process_ids)" || return 1
+    snapshots=""
 
     # Validate every candidate before changing launchd or process state. This
     # keeps an unexpected same-name process as a completely read-only failure.
@@ -61,24 +132,31 @@ stop_monitor_log_writers() {
         case "${pid}" in
             *[!0-9]*|'') echo "❌ Refusing log migration: invalid Monitor PID."; return 1 ;;
         esac
-        executable="$(/bin/ps -p "${pid}" -o comm= 2>/dev/null | /usr/bin/sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-        case "${executable}" in
-            "/Applications/${BUNDLE_NAME}/Contents/MacOS/CodexMonitor"|\
-            "${HOME}/Applications/${BUNDLE_NAME}/Contents/MacOS/CodexMonitor"|\
-            "${INSTALL_DIR}/${BUNDLE_NAME}/Contents/MacOS/CodexMonitor") ;;
-            *) echo "❌ Refusing log migration: CodexMonitor PID has an unexpected executable."; return 1 ;;
-        esac
+        identity="$(monitor_process_identity "${pid}")" || {
+            echo "❌ Refusing log migration: CodexMonitor PID has an unexpected executable."
+            return 1
+        }
+        snapshots="${snapshots}${pid}|${identity}"$'\n'
     done
 
     # From the first state-changing operation onward, the EXIT trap must
     # restore the available installed app if any later quiescence step fails.
     WRITERS_QUIESCED=1
-    retire_launchd_job "com.codex.switcher.restart-worker"
-    for pid in ${pids}; do
-        /bin/kill -TERM "${pid}"
-    done
+    # Stop the producer before waiting for an already-submitted one-shot worker.
+    retire_launchd_job \
+        "com.codex.switcher" \
+        "${HOME}/Library/LaunchAgents/com.codex.switcher.plist" \
+        "${LOCAL_BIN}/codex-mon"
+    while IFS='|' read -r pid expected_executable expected_started_at; do
+        [ -n "${pid}" ] || continue
+        terminate_verified_monitor_process \
+            "${pid}" \
+            "${expected_executable}|${expected_started_at}" || return 1
+    done <<< "${snapshots}"
 
-    while /usr/bin/pgrep -x "CodexMonitor" >/dev/null 2>&1; do
+    while true; do
+        remaining="$(monitor_process_ids)" || return 1
+        [ -n "${remaining}" ] || break
         attempt=$((attempt + 1))
         if [ "${attempt}" -ge 50 ]; then
             echo "❌ Refusing log migration: Codex Monitor did not exit cleanly."
@@ -86,9 +164,7 @@ stop_monitor_log_writers() {
         fi
         sleep 0.1
     done
-    retire_launchd_job \
-        "com.codex.switcher" \
-        "${HOME}/Library/LaunchAgents/com.codex.switcher.plist"
+    wait_for_restart_worker
 }
 
 # Detect if running from local repository or piped via curl
@@ -106,6 +182,13 @@ CLI_STAGING=""
 PERSISTENT_SKILL_ROOT=""
 WRITERS_QUIESCED=0
 INSTALL_SUCCEEDED=0
+APP_STAGE_ROOT=""
+APP_STAGING_PATH=""
+APP_BACKUP_ROOT=""
+APP_BACKUP_PATH=""
+APP_TARGET_PATH=""
+APP_SWAP_ACTIVE=0
+APP_HAD_EXISTING_TARGET=0
 cleanup() {
     if [ -n "${CLI_STAGING}" ] && [ -f "${CLI_STAGING}" ]; then
         rm -f "${CLI_STAGING}"
@@ -113,6 +196,13 @@ cleanup() {
     if [ "${CLEANUP_TMP}" -eq 1 ] && [ -d "${TMP_DIR:-}" ]; then
         rm -rf "${TMP_DIR}"
     fi
+    if [ "${APP_SWAP_ACTIVE}" -eq 1 ] && [ "${INSTALL_SUCCEEDED}" -eq 0 ]; then
+        if ! rollback_app_bundle_swap; then
+            echo "⚠️  Could not roll back the prior Monitor app automatically."
+            echo "   Preserved backup: ${APP_BACKUP_PATH}"
+        fi
+    fi
+    cleanup_app_bundle_swap_paths 2>/dev/null || true
     if [ "${WRITERS_QUIESCED}" -eq 1 ] && [ "${INSTALL_SUCCEEDED}" -eq 0 ]; then
         if [ -x "${INSTALL_DIR}/${BUNDLE_NAME}/Contents/MacOS/CodexMonitor" ]; then
             echo "⚠️  Installation stopped after quiescing Monitor writers; restoring the available app."
@@ -120,7 +210,9 @@ cleanup() {
         fi
     fi
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [ -z "${PROJECT_DIR}" ]; then
     echo "🌐 Remote installation detected. Preparing temporary build environment..."
@@ -140,6 +232,10 @@ if [ -z "${PROJECT_DIR}" ]; then
     # small, app-owned copy of the skills before linking them into agent homes.
     PERSISTENT_SKILL_ROOT="${HOME}/.local/share/codex-monitor/skills"
 fi
+
+source "${PROJECT_DIR}/scripts/install_bundle_swap.sh"
+source "${PROJECT_DIR}/scripts/install_launchd_helpers.sh"
+source "${PROJECT_DIR}/scripts/install_monitor_process_guard.sh"
 
 BUILD_DIR="${PROJECT_DIR}/build"
 APP_DIR="${BUILD_DIR}/${BUNDLE_NAME}"
@@ -399,7 +495,8 @@ swiftc \
     2>&1
 
 echo "🔏 Ad-hoc code signing..."
-codesign --force --deep --sign - "${APP_DIR}" 2>/dev/null || true
+codesign --force --deep --sign - "${APP_DIR}"
+codesign --verify --deep --strict "${APP_DIR}"
 
 # ------------------------------------------------------------------------------
 # 3. Install to Applications & Register Login Item
@@ -407,15 +504,17 @@ codesign --force --deep --sign - "${APP_DIR}" 2>/dev/null || true
 echo ""
 echo "📂 [3/4] Installing to ${INSTALL_DIR}..."
 
+# Finish every fallible bundle copy/signature check while the installed app is
+# still untouched and its writers remain available.
+prepare_app_bundle_staging "${APP_DIR}" "${INSTALL_DIR}" "${BUNDLE_NAME}"
+codesign --verify --deep --strict "${APP_STAGING_PATH}"
+
 # Historical redaction atomically replaces changed Monitor-owned log inodes.
 # Quiesce and verify every known writer only after all build/signing steps have
 # succeeded, then migrate before replacing or relaunching the application.
 stop_monitor_log_writers
 ensure_private_monitor_logs
-
-rm -rf "${INSTALL_DIR}/${BUNDLE_NAME}"
-cp -R "${APP_DIR}" "${INSTALL_DIR}/${BUNDLE_NAME}"
-chmod -R 755 "${INSTALL_DIR}/${BUNDLE_NAME}"
+activate_app_bundle_staging "${INSTALL_DIR}/${BUNDLE_NAME}"
 
 # If installing into /Applications, ensure ~/Applications has symlink
 if [ "${INSTALL_DIR}" = "/Applications" ]; then
@@ -489,6 +588,8 @@ done
 # Launch & Wrap Up
 # ------------------------------------------------------------------------------
 echo ""
+commit_app_bundle_swap
+cleanup_app_bundle_swap_paths
 echo "🚀 Launching ${APP_NAME}..."
 open "${INSTALL_DIR}/${BUNDLE_NAME}"
 INSTALL_SUCCEEDED=1

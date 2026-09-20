@@ -1,6 +1,7 @@
 use super::historical_log_redaction_service::HistoricalLogRedactionService;
 use super::log_permissions_service::LogPermissionsService;
 use super::monitor_log_io_service::MonitorLogIoService;
+use super::monitor_log_lifecycle_lock::MonitorLogLifecycleLock;
 use super::monitor_log_name_policy::{is_owned_archive, is_redaction_temp};
 use std::fs::File;
 use std::io;
@@ -30,7 +31,7 @@ impl MonitorLogCleanupService {
         let home = crate::storage::codex_home();
         MonitorLogIoService::open_directory_path(&home, true)
             .map_err(|_| Self::unsafe_error("Codex home"))?;
-        LogPermissionsService::enforce_home(&home)?;
+        LogPermissionsService::prepare_home(&home)?;
         for path in [
             home.join("log/switcher.log"),
             home.join("account-switcher-daemon.log"),
@@ -69,6 +70,11 @@ impl MonitorLogCleanupService {
                 &log_dir,
                 "switcher.log",
                 &home_path.join("log/switcher.log"),
+            )?;
+            Self::print_regular_child(
+                &log_dir,
+                ".monitor-log-lifecycle.lock",
+                &home_path.join("log/.monitor-log-lifecycle.lock"),
             )?;
             Self::print_temp_files(&log_dir, &home_path.join("log"))?;
             let archive = Self::optional_directory(&log_dir, "archive")?;
@@ -113,6 +119,13 @@ impl MonitorLogCleanupService {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(_) => return Err(Self::unsafe_error("Codex home")),
         };
+        // Creation is an installation-only step. Once this guard is held,
+        // removing the lock pathname makes later writers fail on open rather
+        // than create a second, unlocked inode.
+        MonitorLogLifecycleLock::ensure(&home_path)
+            .map_err(|_| Self::unsafe_error("log lifecycle lock"))?;
+        let _lifecycle = MonitorLogLifecycleLock::exclusive(&home_path)
+            .map_err(|_| Self::unsafe_error("log lifecycle lock"))?;
 
         Self::remove_regular_child(&home, "account-switcher-daemon.log")?;
         Self::remove_regular_child(&home, "account-switcher-daemon.err")?;
@@ -120,6 +133,7 @@ impl MonitorLogCleanupService {
 
         if let Some(log_dir) = Self::optional_directory(&home, "log")? {
             Self::remove_regular_child(&log_dir, "switcher.log")?;
+            Self::remove_regular_child(&log_dir, ".monitor-log-lifecycle.lock")?;
             Self::remove_temp_files(&log_dir)?;
             if let Some(archive) = Self::optional_directory(&log_dir, "archive")? {
                 let entries = MonitorLogIoService::archive_names(&archive)

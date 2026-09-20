@@ -39,6 +39,7 @@ fn rewrites_preexisting_permissive_log_paths_to_private_modes() {
     fs::create_dir_all(&archive_dir).unwrap();
     fs::create_dir_all(&recovery_dir).unwrap();
     fs::write(log_dir.join("switcher.log"), "switcher").unwrap();
+    fs::write(log_dir.join(".monitor-log-lifecycle.lock"), "lock").unwrap();
     fs::write(home.join("account-switcher-daemon.log"), "stdout").unwrap();
     fs::write(home.join("account-switcher-daemon.err"), "stderr").unwrap();
     fs::set_permissions(&log_dir, fs::Permissions::from_mode(0o755)).unwrap();
@@ -46,6 +47,11 @@ fn rewrites_preexisting_permissive_log_paths_to_private_modes() {
     fs::set_permissions(&recovery_dir, fs::Permissions::from_mode(0o755)).unwrap();
     fs::set_permissions(
         log_dir.join("switcher.log"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    fs::set_permissions(
+        log_dir.join(".monitor-log-lifecycle.lock"),
         fs::Permissions::from_mode(0o644),
     )
     .unwrap();
@@ -66,6 +72,7 @@ fn rewrites_preexisting_permissive_log_paths_to_private_modes() {
     assert_eq!(mode(&archive_dir), 0o700);
     assert_eq!(mode(&recovery_dir), 0o700);
     assert_eq!(mode(&log_dir.join("switcher.log")), 0o600);
+    assert_eq!(mode(&log_dir.join(".monitor-log-lifecycle.lock")), 0o600);
     assert_eq!(mode(&home.join("account-switcher-daemon.log")), 0o600);
     assert_eq!(mode(&home.join("account-switcher-daemon.err")), 0o600);
     remove_home(&home);
@@ -75,10 +82,11 @@ fn rewrites_preexisting_permissive_log_paths_to_private_modes() {
 fn creates_missing_log_directories_without_creating_optional_files() {
     let home = temporary_home("missing");
 
-    LogPermissionsService::enforce_home(&home).unwrap();
+    LogPermissionsService::prepare_home(&home).unwrap();
 
     assert_eq!(mode(&home.join("log")), 0o700);
     assert_eq!(mode(&home.join("log/archive")), 0o700);
+    assert_eq!(mode(&home.join("log/.monitor-log-lifecycle.lock")), 0o600);
     assert!(!home.join("account-switcher-daemon.log").exists());
     assert!(!home.join("account-switcher-daemon.err").exists());
     assert!(!home.join("recovery-runs").exists());
@@ -120,6 +128,8 @@ fn rejects_symlinked_daemon_log_without_following_it() {
     fs::set_permissions(&outside, fs::Permissions::from_mode(0o644)).unwrap();
     symlink(&outside, home.join("account-switcher-daemon.log")).unwrap();
 
+    fs::create_dir_all(home.join("log/archive")).unwrap();
+    fs::write(home.join("log/.monitor-log-lifecycle.lock"), "lock").unwrap();
     let error = LogPermissionsService::enforce_home(&home).unwrap_err();
 
     assert_eq!(error, "unsafe daemon log path");
@@ -129,10 +139,25 @@ fn rejects_symlinked_daemon_log_without_following_it() {
 }
 
 #[test]
+fn daemon_enforcement_cannot_recreate_a_removed_lifecycle_lock() {
+    let home = temporary_home("removed_lock");
+    LogPermissionsService::prepare_home(&home).unwrap();
+    let lock = home.join("log/.monitor-log-lifecycle.lock");
+    fs::remove_file(&lock).unwrap();
+
+    let error = LogPermissionsService::enforce_home(&home).unwrap_err();
+
+    assert_eq!(error, "unsafe log lifecycle lock path");
+    assert!(!lock.exists());
+    remove_home(&home);
+}
+
+#[test]
 fn rejects_symlinked_switcher_log_without_following_it() {
     let home = temporary_home("switcher_symlink");
     let log_dir = home.join("log");
     fs::create_dir_all(log_dir.join("archive")).unwrap();
+    fs::write(log_dir.join(".monitor-log-lifecycle.lock"), "lock").unwrap();
     let outside = home.parent().unwrap().join(format!(
         "codex_log_permissions_switcher_target_{}_{}",
         std::process::id(),

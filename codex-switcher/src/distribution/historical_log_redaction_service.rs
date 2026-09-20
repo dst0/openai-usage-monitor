@@ -1,5 +1,6 @@
 use super::historical_log_stream_redactor::{rewrite_brotli, rewrite_plain};
 use super::monitor_log_io_service::MonitorLogIoService;
+use super::monitor_log_lifecycle_lock::MonitorLogLifecycleLock;
 use super::monitor_log_name_policy::{is_owned_archive, is_recovery_log};
 use super::temporary_log_rewrite::TemporaryLogRewrite;
 use fs2::FileExt;
@@ -17,6 +18,8 @@ pub struct HistoricalLogRedactionService;
 
 impl HistoricalLogRedactionService {
     pub fn sanitize_home(home: &Path) -> Result<(), String> {
+        let _lifecycle = MonitorLogLifecycleLock::exclusive(home)
+            .map_err(|_| Self::failure("log lifecycle lock"))?;
         for path in [
             home.join("log/switcher.log"),
             home.join("account-switcher-daemon.log"),
@@ -73,8 +76,11 @@ impl HistoricalLogRedactionService {
         source.set_permissions(fs::Permissions::from_mode(0o600))?;
         let source_metadata = source.metadata()?;
         let reader_source = source.try_clone()?;
+        // Clone the cleanup anchor before creating a temporary file. Once the
+        // file exists, construction of its RAII cleanup guard is infallible.
+        let cleanup_parent = parent.try_clone()?;
         let (temporary_name, mut temporary) = Self::create_temporary(parent, name)?;
-        let mut cleanup = TemporaryLogRewrite::new(parent, temporary_name.clone())?;
+        let mut cleanup = TemporaryLogRewrite::new(cleanup_parent, temporary_name.clone());
         temporary.set_permissions(fs::Permissions::from_mode(0o600))?;
         let changed = if compressed {
             rewrite_brotli(reader_source, &mut temporary)

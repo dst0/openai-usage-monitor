@@ -17,16 +17,23 @@ pub(super) fn is_recovery_log(name: &str) -> bool {
     else {
         return false;
     };
-    !operation.is_empty()
-        && operation.len() <= 64
-        && operation.contains('-')
-        && operation
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || byte == b'-')
+    operation.len() <= 64 && is_numeric_pair(operation)
 }
 
 pub(super) fn is_redaction_temp(name: &str) -> bool {
-    name.starts_with(".redact-") && name.ends_with(".tmp")
+    name.strip_prefix(".redact-")
+        .and_then(|rest| rest.strip_suffix(".tmp"))
+        .is_some_and(is_numeric_pair)
+}
+
+fn is_numeric_pair(value: &str) -> bool {
+    let Some((left, right)) = value.split_once('-') else {
+        return false;
+    };
+    !left.is_empty()
+        && !right.is_empty()
+        && left.bytes().all(|byte| byte.is_ascii_digit())
+        && right.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn timestamped_archive(name: &str, prefix: &str) -> bool {

@@ -1,3 +1,4 @@
+use super::monitor_log_lifecycle_lock::MonitorLogLifecycleLock;
 use crate::models::{AccountConfig, AccountsFile, AuthJson, AuthTokens, Settings};
 use crate::storage::{save_accounts, write_active_auth_json};
 use std::path::{Path, PathBuf};
@@ -57,6 +58,7 @@ impl TestEnv {
         let _ = std::fs::create_dir_all(&dir);
         let dir = std::fs::canonicalize(dir).expect("test home must canonicalize");
         std::env::set_var("CODEX_HOME", &dir);
+        MonitorLogLifecycleLock::ensure(&dir).expect("test log lifecycle lock must initialize");
         Self { dir }
     }
 

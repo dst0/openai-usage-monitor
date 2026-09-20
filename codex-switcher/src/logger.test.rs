@@ -1,4 +1,5 @@
 use super::*;
+use crate::distribution::monitor_log_lifecycle_lock::MonitorLogLifecycleLock;
 use crate::distribution::{DistributionAuditLogger, LogRedactionService};
 use std::fs;
 use std::os::unix::fs::symlink;
@@ -7,7 +8,9 @@ fn temporary_dir(label: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("codex_logger_{label}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).unwrap();
-    fs::canonicalize(path).unwrap()
+    let path = fs::canonicalize(path).unwrap();
+    MonitorLogLifecycleLock::ensure(&path).unwrap();
+    path
 }
 
 #[test]
@@ -109,7 +112,13 @@ fn test_logger_rotation_rejects_symlinked_active_or_archive_parent() {
     fs::write(&active, "safe\n".repeat(20)).unwrap();
     symlink(&archive_target, temp_dir.join("archive")).unwrap();
     assert!(rotate_file_if_needed(&active, "switcher", 1, 5).is_err());
-    assert!(fs::read_dir(archive_target).unwrap().next().is_none());
+    assert!(fs::read_dir(archive_target).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("switcher-")
+    }));
 }
 
 #[test]
