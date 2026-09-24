@@ -23,6 +23,15 @@ pub(crate) struct RecoveryBanner {
 }
 
 impl RecoveryBanner {
+    pub(crate) fn without_window() -> Self {
+        Self {
+            child: None,
+            visible_since: None,
+            service: None,
+            capture: None,
+        }
+    }
+
     pub(crate) fn start(operation_id: &str, ids: &[String], reason: &str) -> Result<Self, String> {
         let pids = switcher::current_codex_app_pids();
         if pids.len() != 1 {

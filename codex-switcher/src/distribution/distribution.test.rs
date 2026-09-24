@@ -6,6 +6,7 @@ use super::distribution_outcome::DistributionStatus;
 use super::distribution_request::DistributionRequest;
 use super::mock_app_lifecycle::MockAppLifecycle;
 use super::test_helper::{make_account, TestEnv};
+use super::window_capture_mode::WindowCaptureMode;
 use crate::models::{AccountsFile, Settings};
 use crate::storage::{load_accounts, read_active_auth_json};
 use std::os::unix::fs::PermissionsExt;
@@ -867,4 +868,162 @@ fn test_window_restore_failure_is_a_distribution_recovery_failure() {
         .as_deref()
         .unwrap_or_default()
         .contains("bounds mismatch"));
+}
+
+#[test]
+fn windowless_desktop_still_switches_and_recovers_without_geometry_restore() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("windowless_switch");
+    env.populate(
+        vec![
+            make_account(
+                "old",
+                None,
+                "old@example.com",
+                "plus",
+                0.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+            make_account(
+                "next",
+                None,
+                "next@example.com",
+                "team",
+                100.0,
+                None,
+                1,
+                None,
+                None,
+            ),
+        ],
+        Some("old"),
+        Some("old"),
+    );
+    let mock = Arc::new(MockAppLifecycle::new(true));
+    mock.set_capture_mode(WindowCaptureMode::Absent);
+    let outcome = DistributionCoordinator::with_lifecycle(mock.clone())
+        .execute(DistributionRequest::auto("quota_exhausted"))
+        .unwrap();
+    assert_eq!(outcome.status, DistributionStatus::Success);
+    assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.launch_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.restore_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(mock.recovery_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        *mock.require_window_on_stability.lock().unwrap(),
+        Some(false)
+    );
+    assert_eq!(
+        load_accounts().unwrap().active_account_id.as_deref(),
+        Some("next@example.com:next")
+    );
+    assert!(env.log_content().contains("phase=WINDOW_ABSENT"));
+}
+
+#[test]
+fn window_access_failure_prevents_auth_change_and_restart() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("window_access_failure");
+    env.populate(
+        vec![
+            make_account(
+                "old",
+                None,
+                "old@example.com",
+                "plus",
+                0.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+            make_account(
+                "next",
+                None,
+                "next@example.com",
+                "team",
+                100.0,
+                None,
+                1,
+                None,
+                None,
+            ),
+        ],
+        Some("old"),
+        Some("old"),
+    );
+    let mock = Arc::new(MockAppLifecycle::new(true));
+    mock.set_capture_error("WINDOW_ACCESS_FAILED");
+    let result = DistributionCoordinator::with_lifecycle(mock.clone())
+        .execute(DistributionRequest::auto("quota_exhausted"));
+    assert!(result.is_err());
+    assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(mock.launch_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        load_accounts().unwrap().active_account_id.as_deref(),
+        Some("old@example.com:old")
+    );
+    assert!(env.log_content().contains("phase=WINDOW_CAPTURE_FAILED"));
+}
+
+#[test]
+fn failed_shutdown_clears_recovery_state_before_a_retry() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("shutdown_failure_cleanup");
+    env.populate(
+        vec![
+            make_account(
+                "old",
+                None,
+                "old@example.com",
+                "plus",
+                0.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+            make_account(
+                "next",
+                None,
+                "next@example.com",
+                "team",
+                100.0,
+                None,
+                1,
+                None,
+                None,
+            ),
+        ],
+        Some("old"),
+        Some("old"),
+    );
+    let mock = Arc::new(MockAppLifecycle::new(true));
+    mock.set_capture_mode(WindowCaptureMode::Absent);
+    mock.set_stop_error("stop refused");
+    let coordinator = DistributionCoordinator::with_lifecycle(mock.clone());
+    assert!(coordinator
+        .execute(DistributionRequest::auto("quota_exhausted"))
+        .is_err());
+    assert_eq!(mock.abort_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.launch_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        load_accounts().unwrap().active_account_id.as_deref(),
+        Some("old@example.com:old")
+    );
+    assert!(!env.home().join("desktop-recovery.json").exists());
+    *mock.stop_error.lock().unwrap() = None;
+    let outcome = coordinator
+        .execute(DistributionRequest::user("retry").with_preferred_app(Some("next".into())))
+        .unwrap();
+    assert_eq!(outcome.status, DistributionStatus::Success);
 }

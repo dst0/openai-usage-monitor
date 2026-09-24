@@ -1,4 +1,6 @@
 use super::app_lifecycle::AppLifecycle;
+use super::window_capture_mode::WindowCaptureMode;
+use crate::distribution::window_restore_report::RestoreReport;
 use crate::distribution::{RestoreOutcome, SystemWindowRestoreBackend, WindowRestoreService};
 use crate::recovery::{self, RecoveryBanner, RecoveryMode};
 use crate::switcher;
@@ -14,6 +16,19 @@ impl Default for SystemAppLifecycle {
             recovery_banner: Mutex::new(None),
         }
     }
+}
+
+fn classify_capture_failure(report: &RestoreReport) -> Result<WindowCaptureMode, String> {
+    let event = report.events.last();
+    if event.is_some_and(|event| {
+        event.phase == "CAPTURE_WINDOW_FAILED"
+            && event.detail == "Main window capture failed: WINDOW_NOT_FOUND"
+    }) {
+        return Ok(WindowCaptureMode::Absent);
+    }
+    Err(event
+        .map(|event| event.detail.clone())
+        .unwrap_or_else(|| "Codex window capture did not complete successfully".into()))
 }
 
 impl AppLifecycle for SystemAppLifecycle {
@@ -34,7 +49,7 @@ impl AppLifecycle for SystemAppLifecycle {
         operation_id: &str,
         targets: &[String],
         reason: &str,
-    ) -> Result<(), String> {
+    ) -> Result<WindowCaptureMode, String> {
         let pids = switcher::current_codex_app_pids();
         if pids.len() != 1 {
             return Err(format!(
@@ -48,8 +63,18 @@ impl AppLifecycle for SystemAppLifecycle {
             reason,
             pids[0],
         );
-        if result.report.outcome != RestoreOutcome::Restored {
-            return Err("Codex window capture did not complete successfully".into());
+        if result.report.outcome != RestoreOutcome::Restored
+            && classify_capture_failure(&result.report)? == WindowCaptureMode::Absent
+        {
+            let mut current = self
+                .recovery_banner
+                .lock()
+                .map_err(|_| "Recovery banner state lock is poisoned".to_string())?;
+            if current.is_some() {
+                return Err("A previous recovery banner is still active".into());
+            }
+            *current = Some(RecoveryBanner::without_window());
+            return Ok(WindowCaptureMode::Absent);
         }
         let capture = result
             .capture
@@ -63,7 +88,7 @@ impl AppLifecycle for SystemAppLifecycle {
             return Err("A previous recovery banner is still active".into());
         }
         *current = Some(banner);
-        Ok(())
+        Ok(WindowCaptureMode::Captured)
     }
 
     fn restore_window_bounds(
@@ -104,8 +129,8 @@ impl AppLifecycle for SystemAppLifecycle {
         rec_res
     }
 
-    fn verify_desktop_stable(&self, pids: &[u32]) -> Result<(), String> {
-        recovery::verify_desktop_stable(pids)
+    fn verify_desktop_stable(&self, pids: &[u32], require_window: bool) -> Result<(), String> {
+        recovery::verify_desktop_stable(pids, require_window)
     }
 
     fn notify_distribution_complete(&self) {
@@ -115,3 +140,7 @@ impl AppLifecycle for SystemAppLifecycle {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "system_app_lifecycle.test.rs"]
+mod tests;

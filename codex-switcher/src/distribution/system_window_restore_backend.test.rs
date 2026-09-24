@@ -43,3 +43,19 @@ fn rejects_missing_or_control_character_birth_identity() {
     }))
     .is_err());
 }
+
+#[test]
+fn helper_failure_preserves_only_known_window_states() {
+    assert_eq!(
+        SystemWindowRestoreBackend::helper_failure(b"WINDOW_NOT_FOUND\n"),
+        "WINDOW_NOT_FOUND"
+    );
+    assert_eq!(
+        SystemWindowRestoreBackend::helper_failure(b"WINDOW_ACCESS_FAILED\n"),
+        "WINDOW_ACCESS_FAILED"
+    );
+    assert_eq!(
+        SystemWindowRestoreBackend::helper_failure(b"secret and customer data\n"),
+        "Codex window restore helper rejected the request"
+    );
+}

@@ -71,18 +71,26 @@ func axValue<T>(_ element: AXUIElement, _ attribute: String, _ type: AXValueType
 func mainWindow(_ pid: pid_t) -> (element: AXUIElement, frame: CGRect)? {
   let app = AXUIElementCreateApplication(pid)
   var rawWindows: AnyObject?
-  guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &rawWindows) == .success,
-    let windows = rawWindows as? [AXUIElement] else { return nil }
+  let status = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &rawWindows)
+  guard status == .success else { fail("WINDOW_ACCESS_FAILED") }
+  guard let windows = rawWindows as? [AXUIElement] else { fail("WINDOW_ACCESS_FAILED") }
   var best: (element: AXUIElement, frame: CGRect, area: CGFloat)?
   for window in windows {
+    var rawSubrole: AnyObject?
+    let subroleStatus = AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &rawSubrole)
+    guard subroleStatus == .success else { fail("WINDOW_ACCESS_FAILED") }
+    guard let subrole = rawSubrole as? String else { fail("WINDOW_ACCESS_FAILED") }
+    guard subrole == kAXStandardWindowSubrole as String else { continue }
     var minimizedValue: AnyObject?
     if AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimizedValue) == .success,
       (minimizedValue as? Bool) == true { continue }
     var position = CGPoint.zero
     var size = CGSize.zero
     guard axValue(window, kAXPositionAttribute as String, .cgPoint, &position),
-      axValue(window, kAXSizeAttribute as String, .cgSize, &size),
-      size.width >= 300, size.height >= 250 else { continue }
+      axValue(window, kAXSizeAttribute as String, .cgSize, &size) else {
+      fail("WINDOW_GEOMETRY_FAILED")
+    }
+    guard size.width >= 300, size.height >= 250 else { continue }
     let frame = CGRect(origin: position, size: size)
     let area = size.width * size.height
     if best == nil || area > best!.area { best = (window, frame, area) }
@@ -111,9 +119,8 @@ func distance(_ rect: CGRect, _ point: CGPoint) -> CGFloat {
 }
 
 func capture(_ process: (pid: pid_t, birth: String)) -> CaptureRecord {
-  guard let window = mainWindow(process.pid), let screen = screenRecord(for: window.frame) else {
-    fail("WINDOW_CAPTURE_FAILED")
-  }
+  guard let window = mainWindow(process.pid) else { fail("WINDOW_NOT_FOUND") }
+  guard let screen = screenRecord(for: window.frame) else { fail("WINDOW_GEOMETRY_FAILED") }
   let frame = window.frame
   return CaptureRecord(
     process: ProcessRecord(pid: process.pid, birth_id: process.birth),

@@ -39,10 +39,19 @@ impl SystemWindowRestoreBackend {
             .output()
             .map_err(|_| "Codex window restore helper could not start".to_string())?;
         if !output.status.success() {
-            return Err("Codex window restore helper rejected the request".into());
+            return Err(Self::helper_failure(&output.stderr));
         }
         serde_json::from_slice(&output.stdout)
             .map_err(|_| "Codex window restore helper returned invalid data".into())
+    }
+
+    fn helper_failure(stderr: &[u8]) -> String {
+        match stderr.strip_suffix(b"\n").unwrap_or(stderr) {
+            b"WINDOW_NOT_FOUND" => "WINDOW_NOT_FOUND".into(),
+            b"WINDOW_ACCESS_FAILED" => "WINDOW_ACCESS_FAILED".into(),
+            b"WINDOW_GEOMETRY_FAILED" => "WINDOW_GEOMETRY_FAILED".into(),
+            _ => "Codex window restore helper rejected the request".into(),
+        }
     }
 
     fn args_for_process(command: &str, process: ProcessIdentity) -> Vec<String> {

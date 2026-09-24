@@ -220,7 +220,7 @@ pub fn switch_to_account(
                     )
                 });
                 drop(recovery_banner.take());
-                let stability_result = crate::recovery::verify_desktop_stable(&launched_pids);
+                let stability_result = crate::recovery::verify_desktop_stable(&launched_pids, true);
                 match (recovery_result, stability_result) {
                     (Ok(()), Ok(())) => None,
                     (Err(recovery), Ok(())) => Some(recovery),

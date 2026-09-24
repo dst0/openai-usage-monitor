@@ -1,3 +1,5 @@
+use super::window_capture_mode::WindowCaptureMode;
+
 pub trait AppLifecycle: Send + Sync {
     fn is_app_running(&self) -> bool;
     fn stop_app(&self) -> Result<(), String>;
@@ -7,7 +9,7 @@ pub trait AppLifecycle: Send + Sync {
         operation_id: &str,
         targets: &[String],
         reason: &str,
-    ) -> Result<(), String>;
+    ) -> Result<WindowCaptureMode, String>;
     fn restore_window_bounds(
         &self,
         pid: u32,
@@ -16,6 +18,6 @@ pub trait AppLifecycle: Send + Sync {
     ) -> Result<(), String>;
     fn abort_recovery(&self) {}
     fn recover_threads(&self, targets: &[String]) -> Result<(), String>;
-    fn verify_desktop_stable(&self, pids: &[u32]) -> Result<(), String>;
+    fn verify_desktop_stable(&self, pids: &[u32], require_window: bool) -> Result<(), String>;
     fn notify_distribution_complete(&self);
 }

@@ -24,6 +24,12 @@ Without Desktop, CLI quota inspection and account switching still work, but
 Desktop restart and thread recovery are unavailable. Optional read-only check:
 `cxi recovery-preflight`.
 
+Automatic distribution records whether the exact Desktop process has an eligible
+standard window before shutdown. If no such window exists, it skips geometry
+restore and the visual banner while retaining the singleton process, IPC, and
+turn-progress checks. Window access, geometry, and process-identity failures
+remain blocking and are logged with fixed sanitized error codes.
+
 ## Runtime Paths & Files
 - `~/.codex/auth.json`: Active authentication tokens used by Codex CLI and `ChatGPT.app` (0600 permissions).
 - `~/.codex/accounts.json`: Configured accounts database, multipliers, and cached quota metrics (0600 permissions).

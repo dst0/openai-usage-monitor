@@ -80,7 +80,7 @@ impl DistributionTransactionService {
                 "Stopping Desktop app gracefully",
             );
             let running_threads = switcher::detect_in_progress_threads();
-            if let Err(error) = DistributionRecoveryAuditService::capture_window_bounds(
+            let capture_mode = match DistributionRecoveryAuditService::capture_window_bounds(
                 &self.logger,
                 self.lifecycle.as_ref(),
                 op_id,
@@ -88,12 +88,19 @@ impl DistributionTransactionService {
                 &request.reason,
                 &running_threads,
             ) {
+                Ok(mode) => mode,
+                Err(error) => {
+                    let _ = DistributionJournal::clear(&home);
+                    return Err(format!(
+                        "Could not capture Codex window before shutdown: {error}"
+                    ));
+                }
+            };
+            if let Err(error) = recovery::save_pending(&running_threads) {
+                self.lifecycle.abort_recovery();
                 let _ = DistributionJournal::clear(&home);
-                return Err(format!(
-                    "Could not capture Codex window before shutdown: {error}"
-                ));
+                return Err(error);
             }
-            recovery::save_pending(&running_threads)?;
             let _ = recovery::arm_automation_cooldown();
 
             if !running_threads.is_empty() {
@@ -101,6 +108,8 @@ impl DistributionTransactionService {
             }
 
             if let Err(e) = self.lifecycle.stop_app() {
+                self.lifecycle.abort_recovery();
+                let _ = recovery::save_pending(&[]);
                 let _ = DistributionJournal::clear(&home);
                 self.logger.log_failure(
                     op_id,
@@ -141,28 +150,18 @@ impl DistributionTransactionService {
                             "Codex relaunch must produce exactly one main process, got {new_pids:?}"
                         ));
                         self.lifecycle.abort_recovery();
-                    } else if let Err(error) =
-                        DistributionRecoveryAuditService::restore_window_bounds(
+                    } else {
+                        if let Err(error) = DistributionRecoveryAuditService::restore_and_recover(
                             &self.logger,
                             self.lifecycle.as_ref(),
                             new_pids[0],
+                            &running_threads,
+                            capture_mode,
                             op_id,
-                            trigger_str,
-                            &request.reason,
-                        )
-                    {
-                        recovery_error = Some(error);
-                        self.lifecycle.abort_recovery();
-                    } else if let Err(error) = DistributionRecoveryAuditService::recover_and_verify(
-                        &self.logger,
-                        self.lifecycle.as_ref(),
-                        &running_threads,
-                        &new_pids,
-                        op_id,
-                        trigger_str,
-                        &request.reason,
-                    ) {
-                        recovery_error = Some(error);
+                            request,
+                        ) {
+                            recovery_error = Some(error);
+                        }
                     }
                 }
                 Err(e) => {
