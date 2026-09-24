@@ -435,6 +435,14 @@ The recovery algorithm is:
 5. Bind proof to the exact turn ID returned by Desktop IPC. Require a post-checkpoint `task_started`, substantive agent reasoning/message/tool/web-search work, and then 10 seconds without an abort or error. An acknowledgement, writer lock, navigation, or start alone is not success.
 6. Restore the primary task once only if recovery had to mount a different cold task, then require the relaunched singleton PID to remain unchanged for another 3 seconds. Verify its visible window when one was captured before restart. Recovery and account switching share an operation lock and the same pipeline.
 
+On the current ChatGPT.app build, macOS may accept a `codex://threads/<id>`
+request for a cold task without mounting it in a Desktop window. The switcher
+then reports `RECOVERY_INCOMPLETE` with `no-client-found`; it does not send a
+turn to an unverified owner. Opening that task through ChatGPT's own task
+navigation and then running `cxi resume <id>` can recover an interrupted turn.
+Check each task's actual state first: a task that completed independently must
+not receive another resume request.
+
 ### ♻️ Account-Bound Weekly Reset Credits
 
 The weekly reset option is off by default and is intentionally independent of account rotation. When enabled, the daemon acts only when all of the following are true: the active account's fresh weekly availability is exactly `0%`, a reset credit is available, the selected strict remaining-time threshold is met, and a recent (up to four hours), unarchived, user-owned task ended with a quota error. It never spends a credit for an idle account, an active task, an aborted task, or a subagent.

@@ -24,6 +24,12 @@ Without Desktop, CLI quota inspection and account switching still work, but
 Desktop restart and thread recovery are unavailable. Optional read-only check:
 `cxi recovery-preflight`.
 
+Cold tasks may fail owner discovery after an accepted macOS deep link even
+when Desktop IPC itself is healthy. In that case automatic distribution reports
+partial recovery rather than sending a turn without an owner. Open the affected
+task in ChatGPT's own navigation, inspect its current turn, then use
+`cxi resume <id>` only if the turn remains interrupted.
+
 Automatic distribution records whether the exact Desktop process has an eligible
 standard window before shutdown. If no such window exists, it skips geometry
 restore and the visual banner while retaining the singleton process, IPC, and
