@@ -1,6 +1,6 @@
 use crate::distribution::{
-    RestoreOutcome, SystemWindowRestoreBackend, WindowCapture, WindowRelaunchRestoreService,
-    WindowRestoreBackend, WindowRestoreService,
+    RestoreOutcome, SystemWindowRestoreBackend, WindowCapture, WindowProcessIdentity,
+    WindowRelaunchRestoreService, WindowRestoreBackend, WindowRestoreService,
 };
 use crate::recovery_banner::{
     BannerSessionStatus, ProcessIdentity as BannerProcessIdentity, RecoveryBannerService,
@@ -16,6 +16,7 @@ use std::{
 const MIN_BANNER_VISIBLE: Duration = Duration::from_secs(5);
 
 pub(crate) struct RecoveryBanner {
+    expected_process: WindowProcessIdentity,
     child: Option<Child>,
     visible_since: Option<Instant>,
     service: Option<RecoveryBannerService>,
@@ -23,13 +24,18 @@ pub(crate) struct RecoveryBanner {
 }
 
 impl RecoveryBanner {
-    pub(crate) fn without_window() -> Self {
+    pub(crate) fn without_window(expected_process: WindowProcessIdentity) -> Self {
         Self {
+            expected_process,
             child: None,
             visible_since: None,
             service: None,
             capture: None,
         }
+    }
+
+    pub(crate) fn expected_process(&self) -> &WindowProcessIdentity {
+        &self.expected_process
     }
 
     pub(crate) fn start(operation_id: &str, ids: &[String], reason: &str) -> Result<Self, String> {
@@ -61,6 +67,7 @@ impl RecoveryBanner {
     ) -> Result<Self, String> {
         if ids.is_empty() {
             return Ok(Self {
+                expected_process: capture.process.clone(),
                 child: None,
                 visible_since: None,
                 service: None,
@@ -120,6 +127,7 @@ impl RecoveryBanner {
                     ids.len()
                 );
                 return Ok(Self {
+                    expected_process: capture.process.clone(),
                     child: Some(child),
                     visible_since: Some(Instant::now()),
                     service: Some(service),

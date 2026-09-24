@@ -2,4 +2,5 @@
 pub enum WindowCaptureMode {
     Captured,
     Absent,
+    Skipped,
 }

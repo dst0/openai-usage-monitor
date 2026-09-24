@@ -27,8 +27,15 @@ Desktop restart and thread recovery are unavailable. Optional read-only check:
 Automatic distribution records whether the exact Desktop process has an eligible
 standard window before shutdown. If no such window exists, it skips geometry
 restore and the visual banner while retaining the singleton process, IPC, and
-turn-progress checks. Window access, geometry, and process-identity failures
-remain blocking and are logged with fixed sanitized error codes.
+turn-progress checks. A launchd daemon may be denied Accessibility access even
+when the same helper succeeds from Terminal. If that happens, set
+`cxi config --preserve-window-bounds false` to explicitly disable geometry
+preservation. Distribution then validates the exact Desktop process without
+reading its window, and still performs IPC recovery and singleton-process
+verification. Window access, geometry, and process-identity failures remain
+blocking while preservation is enabled; process-identity failures remain
+blocking in either mode. With preservation disabled, the prior window position
+and size are not restored or verified by the Monitor.
 
 ## Runtime Paths & Files
 - `~/.codex/auth.json`: Active authentication tokens used by Codex CLI and `ChatGPT.app` (0600 permissions).
@@ -42,7 +49,7 @@ remain blocking and are logged with fixed sanitized error codes.
 - `cxi status`: Check quota table across all accounts (`5H SPRINT`, `7D LIMIT`, `PLAN (MULT)`, `CREDITS`).
 - `cxi switch <account>`: Switch active account (automatically recovers eligible quota-blocked or restart-captured turns; ambiguous active turns are not dispatched by discovery-only recovery).
 - `cxi resume [thread-id]`: Resume an eligible quota-blocked or restart-captured thread through the Desktop owner's same-user IPC channel. Accessibility is used only for recovery visibility/banner verification, not to dispatch the turn.
-- `cxi config`: Inspect and configure auto-switch modes (`--auto-switch-enabled`, `--auto-switch-business-only`, `--auto-switch-business-priority`, `--restart-app-on-switch`).
+- `cxi config`: Inspect and configure auto-switch modes (`--auto-switch-enabled`, `--auto-switch-business-only`, `--auto-switch-business-priority`, `--restart-app-on-switch`, `--preserve-window-bounds`).
 - `cxi set-multiplier <account> <val>`: Set custom quota multiplier override (e.g. 20 for Pro 20x).
 - `cxi reset-multiplier <account>`: Reset multiplier back to auto-detected default.
 - `cxi wrap exec "<prompt>"`: Run unattended command with pre-flight quota check and auto-switch.

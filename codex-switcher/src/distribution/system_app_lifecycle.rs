@@ -1,7 +1,10 @@
 use super::app_lifecycle::AppLifecycle;
 use super::window_capture_mode::WindowCaptureMode;
 use crate::distribution::window_restore_report::RestoreReport;
-use crate::distribution::{RestoreOutcome, SystemWindowRestoreBackend, WindowRestoreService};
+use crate::distribution::{
+    RestoreOutcome, SystemWindowRestoreBackend, WindowProcessValidationService,
+    WindowRestoreService,
+};
 use crate::recovery::{self, RecoveryBanner, RecoveryMode};
 use crate::switcher;
 use std::sync::Mutex;
@@ -37,6 +40,19 @@ impl AppLifecycle for SystemAppLifecycle {
     }
 
     fn stop_app(&self) -> Result<(), String> {
+        let expected = self
+            .recovery_banner
+            .lock()
+            .map_err(|_| "Recovery banner state lock is poisoned".to_string())?
+            .as_ref()
+            .ok_or("Desktop shutdown has no captured process identity")?
+            .expected_process()
+            .clone();
+        if switcher::current_codex_app_pids() != [expected.pid] {
+            return Err("Desktop process set changed before shutdown".into());
+        }
+        let mut backend = SystemWindowRestoreBackend::new()?;
+        WindowProcessValidationService::confirm(&mut backend, &expected)?;
         switcher::stop_codex_app_gracefully()
     }
 
@@ -49,6 +65,7 @@ impl AppLifecycle for SystemAppLifecycle {
         operation_id: &str,
         targets: &[String],
         reason: &str,
+        preserve_window_bounds: bool,
     ) -> Result<WindowCaptureMode, String> {
         let pids = switcher::current_codex_app_pids();
         if pids.len() != 1 {
@@ -57,6 +74,18 @@ impl AppLifecycle for SystemAppLifecycle {
             ));
         }
         let mut backend = SystemWindowRestoreBackend::new()?;
+        if !preserve_window_bounds {
+            let process = WindowProcessValidationService::inspect(&mut backend, pids[0])?;
+            let mut current = self
+                .recovery_banner
+                .lock()
+                .map_err(|_| "Recovery banner state lock is poisoned".to_string())?;
+            if current.is_some() {
+                return Err("A previous recovery banner is still active".into());
+            }
+            *current = Some(RecoveryBanner::without_window(process));
+            return Ok(WindowCaptureMode::Skipped);
+        }
         let result = WindowRestoreService::new(Default::default())?.capture(
             &mut backend,
             operation_id,
@@ -73,7 +102,8 @@ impl AppLifecycle for SystemAppLifecycle {
             if current.is_some() {
                 return Err("A previous recovery banner is still active".into());
             }
-            *current = Some(RecoveryBanner::without_window());
+            let process = WindowProcessValidationService::inspect(&mut backend, pids[0])?;
+            *current = Some(RecoveryBanner::without_window(process));
             return Ok(WindowCaptureMode::Absent);
         }
         let capture = result

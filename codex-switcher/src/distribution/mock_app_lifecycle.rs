@@ -16,6 +16,7 @@ pub struct MockAppLifecycle {
     pub recovery_error: Mutex<Option<String>>,
     pub launch_error: Mutex<Option<String>>,
     pub capture_error: Mutex<Option<String>>,
+    pub process_inspection_error: Mutex<Option<String>>,
     pub capture_mode: Mutex<WindowCaptureMode>,
     pub restore_error: Mutex<Option<String>>,
     pub stability_error: Mutex<Option<String>>,
@@ -42,6 +43,7 @@ impl MockAppLifecycle {
             recovery_error: Mutex::new(None),
             launch_error: Mutex::new(None),
             capture_error: Mutex::new(None),
+            process_inspection_error: Mutex::new(None),
             capture_mode: Mutex::new(WindowCaptureMode::Captured),
             restore_error: Mutex::new(None),
             stability_error: Mutex::new(None),
@@ -62,6 +64,10 @@ impl MockAppLifecycle {
 
     pub fn set_capture_error(&self, err: impl Into<String>) {
         *self.capture_error.lock().unwrap() = Some(err.into());
+    }
+
+    pub fn set_process_inspection_error(&self, err: impl Into<String>) {
+        *self.process_inspection_error.lock().unwrap() = Some(err.into());
     }
 
     pub fn set_capture_mode(&self, mode: WindowCaptureMode) {
@@ -105,7 +111,14 @@ impl AppLifecycle for MockAppLifecycle {
         _operation_id: &str,
         _targets: &[String],
         _reason: &str,
+        preserve_window_bounds: bool,
     ) -> Result<WindowCaptureMode, String> {
+        if !preserve_window_bounds {
+            if let Some(error) = self.process_inspection_error.lock().unwrap().clone() {
+                return Err(error);
+            }
+            return Ok(WindowCaptureMode::Skipped);
+        }
         self.capture_calls.fetch_add(1, Ordering::SeqCst);
         if let Some(error) = self.capture_error.lock().unwrap().clone() {
             return Err(error);

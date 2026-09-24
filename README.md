@@ -401,6 +401,19 @@ Detection runs through a two-phase analysis pipeline before terminating or resta
 | Desktop stabilization | `3 s` | Requires the same singleton main PID throughout; verifies the visible window only when one was captured before restart. |
 | Banner minimum visibility | `5 s` | Keeps the semi-transparent recovery banner visible when a window was captured. |
 
+`launchd` can deny Accessibility reads to the background switcher even when an
+interactive Terminal invocation of the same helper can inspect the window. The
+default `preserve_window_bounds_on_restart=true` treats that denial as blocking:
+no auth change or Desktop restart occurs. If automatic switching is more
+important than restoring the exact prior window geometry, run
+`cxi config --preserve-window-bounds false`. In this explicit mode the switcher
+still validates the exact Desktop PID and birth identity before shutdown,
+recovers eligible tasks through Desktop IPC, and verifies the relaunched
+singleton PID. It skips the geometry capture, banner, window position/size
+restore, and visible-window check. Restore the setting with
+`cxi config --preserve-window-bounds true` only after verifying that the
+background helper can read the Desktop window.
+
 ### 🚦 Rollout Lifecycle States (`ThreadRolloutState`)
 
 - **`InterruptedByQuota`**: The turn's final `task_complete` contains an `error` payload matching `usage_limit_exceeded`, `workspace_owner_credits_depleted`, `out of credits`, or active `rate_limit_reached_type`. **Automatically resumed.**

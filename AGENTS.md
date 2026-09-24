@@ -239,6 +239,7 @@ Rollout files are evaluated backwards from the tail, filtering out post-turn met
 - **Interrupted turn dispatch**: For a task without a pending queue, `cxi` sends exactly one `thread-follower-start-turn` request to the owner with the protocol-valid text `continue` and `turnTrigger = app_update_resume`.
 - **Queued follow-ups**: Existing queued payloads are preserved. `thread-follower-set-queued-follow-ups-state` is used to remove only the exact restart pause reason; user-paused queues are rejected.
 - **Verification**: A dispatch/IPC acknowledgement is not success. Proof requires the exact returned turn ID, a post-checkpoint `task_started`, substantive agent work, a 10-second error-free soak, and Desktop stability verification. Visibility is verified when a window was captured before restart.
+- **Window preservation policy**: With `preserve_window_bounds_on_restart=true`, a denied Accessibility read, invalid geometry, or process mismatch blocks auth changes and restart. With the setting explicitly false, distribution still verifies the exact singleton Desktop PID and birth identity, then skips geometry capture/restore and the visible-window check while retaining IPC recovery and PID stability checks. Never interpret `WINDOW_ACCESS_FAILED` as `WINDOW_NOT_FOUND`.
 - **Accessibility scope**: The native helper may show the recovery banner and verify a visible Desktop window for the exact PID. It is not used to click Play, Resume, Retry, or Steer controls to dispatch recovery.
 
 ---

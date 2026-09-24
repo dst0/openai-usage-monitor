@@ -43,20 +43,24 @@ impl DistributionRecoveryAuditService {
         trigger: &str,
         reason: &str,
         targets: &[String],
+        preserve_window_bounds: bool,
     ) -> Result<WindowCaptureMode, String> {
-        match lifecycle.capture_window_bounds(operation_id, targets, reason) {
+        match lifecycle.capture_window_bounds(operation_id, targets, reason, preserve_window_bounds)
+        {
             Ok(mode) => {
                 logger.log_action(
                     operation_id,
                     match mode {
                         WindowCaptureMode::Captured => "WINDOW_CAPTURED",
                         WindowCaptureMode::Absent => "WINDOW_ABSENT",
+                        WindowCaptureMode::Skipped => "WINDOW_CAPTURE_SKIPPED",
                     },
                     trigger,
                     reason,
                     match mode {
                         WindowCaptureMode::Captured => "Desktop window frame and process identity captured",
                         WindowCaptureMode::Absent => "Desktop has no eligible window; recovery will use Desktop IPC without geometry restore",
+                        WindowCaptureMode::Skipped => "Window preservation disabled; recovery will use Desktop IPC without geometry restore",
                     },
                 );
                 Ok(mode)

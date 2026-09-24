@@ -87,6 +87,7 @@ impl DistributionTransactionService {
                 trigger_str,
                 &request.reason,
                 &running_threads,
+                accounts_file.settings.preserve_window_bounds_on_restart,
             ) {
                 Ok(mode) => mode,
                 Err(error) => {
