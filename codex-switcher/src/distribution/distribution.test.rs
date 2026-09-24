@@ -8,7 +8,7 @@ use super::mock_app_lifecycle::MockAppLifecycle;
 use super::test_helper::{make_account, TestEnv};
 use super::window_capture_mode::WindowCaptureMode;
 use crate::models::{AccountsFile, Settings};
-use crate::storage::{load_accounts, read_active_auth_json};
+use crate::storage::{load_accounts, read_active_auth_json, save_accounts};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -963,6 +963,120 @@ fn window_access_failure_prevents_auth_change_and_restart() {
     mock.set_capture_error("WINDOW_ACCESS_FAILED");
     let result = DistributionCoordinator::with_lifecycle(mock.clone())
         .execute(DistributionRequest::auto("quota_exhausted"));
+    assert!(result.is_err());
+    assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(mock.launch_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        load_accounts().unwrap().active_account_id.as_deref(),
+        Some("old@example.com:old")
+    );
+    assert!(env.log_content().contains("phase=WINDOW_CAPTURE_FAILED"));
+}
+
+#[test]
+fn disabled_window_preservation_bypasses_ax_and_switches() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("window_access_disabled_preservation");
+    env.populate(
+        vec![
+            make_account(
+                "old",
+                None,
+                "old@example.com",
+                "plus",
+                0.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+            make_account(
+                "next",
+                None,
+                "next@example.com",
+                "team",
+                100.0,
+                None,
+                1,
+                None,
+                None,
+            ),
+        ],
+        Some("old"),
+        Some("old"),
+    );
+    let mut accounts = load_accounts().unwrap();
+    accounts.settings.preserve_window_bounds_on_restart = false;
+    save_accounts(&accounts).unwrap();
+
+    let mock = Arc::new(MockAppLifecycle::new(true));
+    mock.set_capture_error("WINDOW_ACCESS_FAILED");
+    let outcome = DistributionCoordinator::with_lifecycle(mock.clone())
+        .execute(DistributionRequest::auto("quota_exhausted"))
+        .unwrap();
+
+    assert_eq!(outcome.status, DistributionStatus::Success);
+    assert_eq!(mock.capture_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.launch_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.restore_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(mock.recovery_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        *mock.require_window_on_stability.lock().unwrap(),
+        Some(false)
+    );
+    assert_eq!(
+        load_accounts().unwrap().active_account_id.as_deref(),
+        Some("next@example.com:next")
+    );
+    assert!(env.log_content().contains("phase=WINDOW_CAPTURE_SKIPPED"));
+}
+
+#[test]
+fn disabled_preservation_process_inspection_failure_blocks_auth_change() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("windowless_process_mismatch");
+    env.populate(
+        vec![
+            make_account(
+                "old",
+                None,
+                "old@example.com",
+                "plus",
+                0.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+            make_account(
+                "next",
+                None,
+                "next@example.com",
+                "team",
+                100.0,
+                None,
+                1,
+                None,
+                None,
+            ),
+        ],
+        Some("old"),
+        Some("old"),
+    );
+    let mut accounts = load_accounts().unwrap();
+    accounts.settings.preserve_window_bounds_on_restart = false;
+    save_accounts(&accounts).unwrap();
+
+    let mock = Arc::new(MockAppLifecycle::new(true));
+    mock.set_process_inspection_error("PROCESS_IDENTITY_REJECTED");
+    let result = DistributionCoordinator::with_lifecycle(mock.clone())
+        .execute(DistributionRequest::auto("quota_exhausted"));
+
     assert!(result.is_err());
     assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 0);
     assert_eq!(mock.launch_calls.load(Ordering::SeqCst), 0);

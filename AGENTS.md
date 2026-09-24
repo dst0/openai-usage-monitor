@@ -211,12 +211,13 @@ The detector scans threads using two distinct layers:
 | `read_rollout_tail_lines` max bytes | `131072` (128 KB) | Reads only the tail of `rollout-*.jsonl` via `SeekFrom::Start(len - 128KB)`. Eliminates multi-second I/O stalls on large sessions (e.g. 500 MB+ files). |
 | App shutdown cooldown | `600 ms` | Sleep after `pgrep` confirms process exit to allow macOS `LaunchServices` and `WindowServer` to clear registration before relaunching. |
 | App launch verification | `3` attempts, up to `15 s` each + `2 s` settle | Uses `open -n -a /Applications/ChatGPT.app`, requires exactly one stable new main PID. |
-| Desktop IPC startup | up to `120 s` | Waits for the standard Codex Desktop same-user IPC socket, validating owner, mode, peer UID, and socket identity. |
-| Desktop owner discovery | up to `30 s` | Resolves the Desktop window that owns a task; a deep link is used only when no owner exists. |
-| IPC recovery dispatch | `180 s` | Bounds the wait for Desktop to accept one owner-routed recovery request and start the expected turn. |
+| Desktop IPC startup | up to `90 s` | Waits for the standard Codex Desktop same-user IPC socket, validating owner, mode, peer UID, and socket identity. |
+| Desktop owner discovery | up to `90 s` | Resolves the Desktop window that owns a task; a deep link is used only when no owner exists. |
+| IPC recovery dispatch | `90 s` | Bounds the wait for Desktop to accept one owner-routed recovery request and start the expected turn. |
 | Recovery execution | `600 s` | Allows a started task to produce substantive new agent work before failing closed. |
-| Desktop stability | `10 s` | Requires the same singleton Desktop PID throughout, then verifies its visible window. |
-| Banner minimum visibility | `5 s` | Keeps the recovery banner visible long enough to prevent flickering while dismissing promptly upon verification. |
+| Recovery evidence soak | `10 s` | Requires substantive work to remain error-free before declaring the recovered turn verified. |
+| Desktop stability | `3 s` | Requires the same singleton Desktop PID throughout; verifies a visible window only when one was captured before restart. |
+| Banner minimum visibility | `5 s` | Keeps the recovery banner visible when a window was captured. |
 
 ### 3. Rollout State Classification (`ThreadRolloutState`)
 
@@ -235,9 +236,11 @@ Rollout files are evaluated backwards from the tail, filtering out post-turn met
 
 - **Standard Desktop contract**: The user installs and runs the official Codex Desktop app normally. Desktop starts its bundled app-server and exposes the same-user IPC router; no separate app-server installation, custom flags, or manual socket setup is part of this project.
 - **Owner discovery**: `cxi` connects to `~/.codex/ipc/ipc.sock`, asks `thread-owner-discovery` for the task owner, and opens a `codex://threads/<tid>` deep link only when Desktop reports no owner for a cold task. Already-owned tasks are never cycled through the UI.
+- **Cold-task navigation limit**: A successful macOS `open` exit for a deep link does not prove the task mounted. On the current Desktop build a cold task can remain `no-client-found` until ChatGPT's own task navigation opens it. Report partial recovery and never dispatch to an unverified owner; inspect the turn before a later explicit `cxi resume <id>`.
 - **Interrupted turn dispatch**: For a task without a pending queue, `cxi` sends exactly one `thread-follower-start-turn` request to the owner with the protocol-valid text `continue` and `turnTrigger = app_update_resume`.
 - **Queued follow-ups**: Existing queued payloads are preserved. `thread-follower-set-queued-follow-ups-state` is used to remove only the exact restart pause reason; user-paused queues are rejected.
-- **Verification**: A dispatch/IPC acknowledgement is not success. Proof requires the exact returned turn ID, a post-checkpoint `task_started`, substantive agent work, a 10-second error-free soak, and Desktop stability/visibility verification.
+- **Verification**: A dispatch/IPC acknowledgement is not success. Proof requires the exact returned turn ID, a post-checkpoint `task_started`, substantive agent work, a 10-second error-free soak, and Desktop stability verification. Visibility is verified when a window was captured before restart.
+- **Window preservation policy**: With `preserve_window_bounds_on_restart=true`, a denied Accessibility read, invalid geometry, or process mismatch blocks auth changes and restart. With the setting explicitly false, distribution still verifies the exact singleton Desktop PID and birth identity, then skips geometry capture/restore and the visible-window check while retaining IPC recovery and PID stability checks. Never interpret `WINDOW_ACCESS_FAILED` as `WINDOW_NOT_FOUND`.
 - **Accessibility scope**: The native helper may show the recovery banner and verify a visible Desktop window for the exact PID. It is not used to click Play, Resume, Retry, or Steer controls to dispatch recovery.
 
 ---

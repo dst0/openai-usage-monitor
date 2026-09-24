@@ -9,6 +9,7 @@ pub trait AppLifecycle: Send + Sync {
         operation_id: &str,
         targets: &[String],
         reason: &str,
+        preserve_window_bounds: bool,
     ) -> Result<WindowCaptureMode, String>;
     fn restore_window_bounds(
         &self,

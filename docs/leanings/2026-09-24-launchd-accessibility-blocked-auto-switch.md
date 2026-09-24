@@ -1,0 +1,22 @@
+# 2026-09-24 — Background Accessibility denial blocked account rotation
+
+- **Status:** Partial
+- **Task/context:** Investigate continued failure of automatic ChatGPT Desktop account rotation after the windowless fix was installed.
+- **Unexpected observation or failure:** The daemon repeatedly selected an eligible account and then failed before changing credentials because window capture returned `WINDOW_ACCESS_FAILED`.
+- **Evidence:** Sanitized switcher audit entries showed `DECISION` with `restart_required=true`, followed by `WINDOW_CAPTURE_FAILED` and `status=failed`. The installed helper captured the same Desktop window when invoked interactively, while a temporary user `launchd` job invoking that exact helper returned `WINDOW_ACCESS_FAILED`. The daemon itself is a `launchd` job. A regression test for `preserve_window_bounds_on_restart=false` failed on the prior code because distribution still attempted window capture.
+- **Approaches tried:**
+  - **Attempt:** Use the previous no-window fallback.
+    - **Outcome:** Did not work.
+    - **Why:** A denied Accessibility query is distinct from an eligible window being absent; conflating them would bypass the fail-closed default.
+  - **Attempt:** Enable Electron's `AXManualAccessibility` attribute in a disposable helper build.
+    - **Outcome:** Did not work.
+    - **Why:** The background `launchd` invocation still returned `WINDOW_ACCESS_FAILED`.
+  - **Attempt:** Honor the existing explicit `preserve_window_bounds_on_restart=false` setting in automatic distribution.
+    - **Outcome:** Partial.
+    - **Why:** Focused tests pass; installation and live automatic-switch verification remain pending.
+- **Root cause:** The background execution context cannot read ChatGPT's Accessibility window list on this host. Automatic distribution ignored the existing setting for disabling exact window geometry preservation, so it always required the denied read before switching.
+- **Resolution:** When window preservation is explicitly disabled, validate the exact Desktop process identity and prepare recovery without a window capture or geometry restore. Revalidate the PID and birth identity immediately before shutdown. Keep capture failures blocking when preservation is enabled.
+- **Verification:** The new regression test failed before the code change and passes after it. Focused process-validation tests cover helper failure, mismatched PID, invalid birth identity, and birth change before shutdown. Live installation and automatic-switch evidence are pending.
+- **Prevention/follow-up:** Test background macOS permissions from an actual `launchd` job, and test both values of any setting that governs a required pre-shutdown step.
+- **Reusable learning:** Interactive Accessibility success does not prove a background LaunchAgent can perform the same read; exercise the real execution context before declaring the switch path fixed.
+- **References:** `codex-switcher/src/distribution/system_app_lifecycle.rs`, `window_process_validation_service.rs`, `distribution.test.rs`, `README.md`, `CODEX.md`.
