@@ -36,12 +36,13 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
 5. **Desktop Application Switching (`ChatGPT.app`)**:
    - The desktop app (`/Applications/ChatGPT.app`, bundle ID `com.openai.codex`) shares the `~/.codex/auth.json` credentials.
    - When an account is switched, the tool gracefully restarts the desktop app (`restart_app_on_switch: true`), immediately updating the interface and active sessions to the new account.
+   - If Desktop has no eligible standard window before a restart, automatic switching continues through the exact main process and Desktop IPC without window geometry restore or a banner. Accessibility failures, malformed geometry, and process identity mismatches still stop the switch before credentials change.
 
 6. **Automated Session & Thread Resumption Across Switches**:
    - Detects eligible mid-turn tasks captured for a restart and threads halted by rate limits or credit exhaustion within the last 4 hours (`RECENT_QUOTA_WINDOW_SECS = 14400s`); discovery-only recovery does not guess about an ambiguous active turn.
    - Scans up to 30 recent threads via `state_5.sqlite` with instantaneous 128 KB tail reads (`read_rollout_tail_lines`), eliminating I/O stalls even on 500 MB+ session files.
    - Resumes through the official Codex Desktop owner's IPC connection to the Desktop-bundled app-server; it never launches a second/headless app-server, uses `codex exec resume`, or clicks UI controls. For an interrupted turn it sends one protocol-valid text input, `continue`, through `thread-follower-start-turn`.
-   - Shows a verified semi-transparent banner while recovery is active and requires a new exact-ID `task_started`, real agent work, and a 90-second error-free observation window before reporting success.
+   - Shows a verified semi-transparent banner when a window is present and requires a new exact-ID `task_started`, real agent work, and a 10-second error-free observation window before reporting success.
    - Filters out internal subagent threads and never resumes cleanly completed or user-aborted tasks.
 
 7. **Native macOS Menu Bar App (`Codex Monitor.app`)**:
@@ -393,12 +394,12 @@ Detection runs through a two-phase analysis pipeline before terminating or resta
 | `read_rollout_tail_lines` buffer | `131072` bytes (128 KB) | Tail seek window for inspecting `.jsonl` rollout events, avoiding reading entire multi-hundred MB logs into RAM. |
 | App shutdown cooldown | `600 ms` | Grace period after `pgrep` exit for macOS `LaunchServices` cleanup. |
 | App launch verification | `3` attempts, up to `15 s` each + `2 s` settle | Uses `open -n`, requires exactly one new exact-main PID, and rejects a PID that changes during settling. |
-| Desktop IPC startup | up to `120 s` | Waits for the relaunched Desktop's same-user IPC socket, validating owner, mode, peer UID, and socket identity. |
+| Desktop IPC startup | up to `90 s` | Waits for the relaunched Desktop's same-user IPC socket, validating owner, mode, peer UID, and socket identity. |
 | Owner discovery | up to `30 s` | Resolves the Desktop window that owns a task. A deep link is used only when no owner exists. |
 | Pre-dispatch activity grace | `3 s` | Detects a task that the user or Desktop has already resumed before any command is sent. |
-| Recovery verification | `180 s` to start, `600 s` to produce work, then `90 s` soak | Requires the IPC-confirmed turn ID, substantive agent work, and no later abort/error; IPC acknowledgement is not success. |
-| Desktop stabilization | `90 s` | Requires the same singleton main PID throughout, then verifies an on-screen, non-minimized layer-0 window for that exact PID. |
-| Banner minimum visibility | `30 s` | Keeps the semi-transparent recovery banner visible long enough to make automation explicit. |
+| Recovery verification | `90 s` to dispatch, `600 s` to produce work, then `10 s` soak | Requires the IPC-confirmed turn ID, substantive agent work, and no later abort/error; IPC acknowledgement is not success. |
+| Desktop stabilization | `3 s` | Requires the same singleton main PID throughout; verifies the visible window only when one was captured before restart. |
+| Banner minimum visibility | `5 s` | Keeps the semi-transparent recovery banner visible when a window was captured. |
 
 ### 🚦 Rollout Lifecycle States (`ThreadRolloutState`)
 
@@ -419,7 +420,7 @@ The recovery algorithm is:
 3. Relaunch Desktop, validate its same-user IPC socket, and resolve the owner of every task. Only ownerless cold tasks are opened once for mounting; already-owned tasks are never cycled through the UI.
 4. Preserve any queued payloads exactly. Only the exact restart-generated pause reason is removed; user-paused queues are rejected. Otherwise send one `app_update_resume` turn-start request containing the short text `continue`. An uncertain send is never retried.
 5. Bind proof to the exact turn ID returned by Desktop IPC. Require a post-checkpoint `task_started`, substantive agent reasoning/message/tool/web-search work, and then 90 seconds without an abort or error. An acknowledgement, writer lock, navigation, or start alone is not success.
-6. Restore the primary task once only if recovery had to mount a different cold task, then require the relaunched singleton PID to remain unchanged for another 90 seconds and verify its visible window. Recovery and account switching share an operation lock and the same pipeline.
+6. Restore the primary task once only if recovery had to mount a different cold task, then require the relaunched singleton PID to remain unchanged for another 3 seconds. Verify its visible window when one was captured before restart. Recovery and account switching share an operation lock and the same pipeline.
 
 ### ♻️ Account-Bound Weekly Reset Credits
 

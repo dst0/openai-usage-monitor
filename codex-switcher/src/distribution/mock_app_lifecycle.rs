@@ -1,4 +1,5 @@
 use super::app_lifecycle::AppLifecycle;
+use super::window_capture_mode::WindowCaptureMode;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -9,10 +10,13 @@ pub struct MockAppLifecycle {
     pub recovery_calls: AtomicUsize,
     pub capture_calls: AtomicUsize,
     pub restore_calls: AtomicUsize,
+    pub abort_calls: AtomicUsize,
+    pub require_window_on_stability: Mutex<Option<bool>>,
     pub stop_error: Mutex<Option<String>>,
     pub recovery_error: Mutex<Option<String>>,
     pub launch_error: Mutex<Option<String>>,
     pub capture_error: Mutex<Option<String>>,
+    pub capture_mode: Mutex<WindowCaptureMode>,
     pub restore_error: Mutex<Option<String>>,
     pub stability_error: Mutex<Option<String>>,
 }
@@ -32,10 +36,13 @@ impl MockAppLifecycle {
             recovery_calls: AtomicUsize::new(0),
             capture_calls: AtomicUsize::new(0),
             restore_calls: AtomicUsize::new(0),
+            abort_calls: AtomicUsize::new(0),
+            require_window_on_stability: Mutex::new(None),
             stop_error: Mutex::new(None),
             recovery_error: Mutex::new(None),
             launch_error: Mutex::new(None),
             capture_error: Mutex::new(None),
+            capture_mode: Mutex::new(WindowCaptureMode::Captured),
             restore_error: Mutex::new(None),
             stability_error: Mutex::new(None),
         }
@@ -55,6 +62,10 @@ impl MockAppLifecycle {
 
     pub fn set_capture_error(&self, err: impl Into<String>) {
         *self.capture_error.lock().unwrap() = Some(err.into());
+    }
+
+    pub fn set_capture_mode(&self, mode: WindowCaptureMode) {
+        *self.capture_mode.lock().unwrap() = mode;
     }
 
     pub fn set_restore_error(&self, err: impl Into<String>) {
@@ -94,12 +105,12 @@ impl AppLifecycle for MockAppLifecycle {
         _operation_id: &str,
         _targets: &[String],
         _reason: &str,
-    ) -> Result<(), String> {
+    ) -> Result<WindowCaptureMode, String> {
         self.capture_calls.fetch_add(1, Ordering::SeqCst);
         if let Some(error) = self.capture_error.lock().unwrap().clone() {
             return Err(error);
         }
-        Ok(())
+        Ok(*self.capture_mode.lock().unwrap())
     }
 
     fn restore_window_bounds(
@@ -115,6 +126,10 @@ impl AppLifecycle for MockAppLifecycle {
         Ok(())
     }
 
+    fn abort_recovery(&self) {
+        self.abort_calls.fetch_add(1, Ordering::SeqCst);
+    }
+
     fn recover_threads(&self, _targets: &[String]) -> Result<(), String> {
         self.recovery_calls.fetch_add(1, Ordering::SeqCst);
         if let Some(ref err) = *self.recovery_error.lock().unwrap() {
@@ -123,7 +138,8 @@ impl AppLifecycle for MockAppLifecycle {
         Ok(())
     }
 
-    fn verify_desktop_stable(&self, _pids: &[u32]) -> Result<(), String> {
+    fn verify_desktop_stable(&self, _pids: &[u32], require_window: bool) -> Result<(), String> {
+        *self.require_window_on_stability.lock().unwrap() = Some(require_window);
         if let Some(ref err) = *self.stability_error.lock().unwrap() {
             return Err(err.clone());
         }

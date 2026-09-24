@@ -222,7 +222,7 @@ pub fn restart_and_recover(
             })
     };
     drop(banner);
-    let stability_result = crate::recovery::verify_desktop_stable(&launched_pids);
+    let stability_result = crate::recovery::verify_desktop_stable(&launched_pids, true);
     match (recovery_result, stability_result) {
         (Ok(()), Ok(())) => {}
         (Err(recovery), Ok(())) => {

@@ -150,7 +150,10 @@ pub(crate) fn restore_desktop_window_bounds(expected_pid: u32) -> Result<(), Str
     Ok(())
 }
 
-pub(crate) fn verify_desktop_stable(expected_pids: &[u32]) -> Result<(), String> {
+pub(crate) fn verify_desktop_stable(
+    expected_pids: &[u32],
+    require_window: bool,
+) -> Result<(), String> {
     if expected_pids.len() != 1 {
         return Err(format!(
             "Codex launch must produce exactly one main process, got {expected_pids:?}"
@@ -168,7 +171,9 @@ pub(crate) fn verify_desktop_stable(expected_pids: &[u32]) -> Result<(), String>
         }
         sleep(Duration::from_millis(250));
     }
-    verify_desktop_window_passive(expected_pids[0])?;
+    if require_window {
+        verify_desktop_window_passive(expected_pids[0])?;
+    }
     crate::runtime_print!(
         "RESTART_STABLE pids={expected_pids:?} observation_secs={}",
         DESKTOP_STABILITY_WINDOW.as_secs()
