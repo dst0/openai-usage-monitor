@@ -395,7 +395,7 @@ Detection runs through a two-phase analysis pipeline before terminating or resta
 | App shutdown cooldown | `600 ms` | Grace period after `pgrep` exit for macOS `LaunchServices` cleanup. |
 | App launch verification | `3` attempts, up to `15 s` each + `2 s` settle | Uses `open -n`, requires exactly one new exact-main PID, and rejects a PID that changes during settling. |
 | Desktop IPC startup | up to `90 s` | Waits for the relaunched Desktop's same-user IPC socket, validating owner, mode, peer UID, and socket identity. |
-| Owner discovery | up to `30 s` | Resolves the Desktop window that owns a task. A deep link is used only when no owner exists. |
+| Owner discovery | up to `90 s` | Resolves the Desktop window that owns a task. A deep link is used only when no owner exists. |
 | Pre-dispatch activity grace | `3 s` | Detects a task that the user or Desktop has already resumed before any command is sent. |
 | Recovery verification | `90 s` to dispatch, `600 s` to produce work, then `10 s` soak | Requires the IPC-confirmed turn ID, substantive agent work, and no later abort/error; IPC acknowledgement is not success. |
 | Desktop stabilization | `3 s` | Requires the same singleton main PID throughout; verifies the visible window only when one was captured before restart. |
@@ -419,7 +419,7 @@ The recovery algorithm is:
 2. Gracefully stop Desktop, wait for the exact main process to exit, then record a second rollout checkpoint. This excludes old work and shutdown-flush events from recovery proof.
 3. Relaunch Desktop, validate its same-user IPC socket, and resolve the owner of every task. Only ownerless cold tasks are opened once for mounting; already-owned tasks are never cycled through the UI.
 4. Preserve any queued payloads exactly. Only the exact restart-generated pause reason is removed; user-paused queues are rejected. Otherwise send one `app_update_resume` turn-start request containing the short text `continue`. An uncertain send is never retried.
-5. Bind proof to the exact turn ID returned by Desktop IPC. Require a post-checkpoint `task_started`, substantive agent reasoning/message/tool/web-search work, and then 90 seconds without an abort or error. An acknowledgement, writer lock, navigation, or start alone is not success.
+5. Bind proof to the exact turn ID returned by Desktop IPC. Require a post-checkpoint `task_started`, substantive agent reasoning/message/tool/web-search work, and then 10 seconds without an abort or error. An acknowledgement, writer lock, navigation, or start alone is not success.
 6. Restore the primary task once only if recovery had to mount a different cold task, then require the relaunched singleton PID to remain unchanged for another 3 seconds. Verify its visible window when one was captured before restart. Recovery and account switching share an operation lock and the same pipeline.
 
 ### ♻️ Account-Bound Weekly Reset Credits
