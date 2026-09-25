@@ -18,7 +18,11 @@ impl LogRedactionService {
                 continue;
             }
             let clean = LogRedactionTokenService::sanitize_token(token);
-            redact_next = token.eq_ignore_ascii_case("bearer");
+            redact_next = token.eq_ignore_ascii_case("bearer")
+                || token.split_once(['=', ':']).is_some_and(|(key, value)| {
+                    key.eq_ignore_ascii_case("authorization")
+                        && value.eq_ignore_ascii_case("bearer")
+                });
             output.push(clean);
         }
         output.join(" ")
@@ -43,6 +47,7 @@ impl LogRedactionService {
             "token" | "access_token" | "refresh_token" | "authorization" | "api_key"
             | "openai_api_key" | "secret" | "password" | "credential" => TOKEN_MARKER.to_string(),
             "arg" | "argv" | "args" | "flag" => ARG_MARKER.to_string(),
+            _ if value.contains('=') || value.contains(':') => TOKEN_MARKER.to_string(),
             _ => Self::sanitize_text(value),
         }
     }
@@ -56,12 +61,16 @@ impl LogRedactionService {
     }
 
     pub fn operation_ref(value: &str) -> String {
-        if value.starts_with("op_dist_")
-            && value.len() <= 64
-            && value
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || character == '_')
-        {
+        let generated = value
+            .strip_prefix("op_dist_")
+            .and_then(|rest| rest.split_once('_'))
+            .is_some_and(|(timestamp, suffix)| {
+                timestamp.len() == 13
+                    && timestamp.bytes().all(|byte| byte.is_ascii_digit())
+                    && suffix.len() == 12
+                    && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
+            });
+        if generated {
             value.to_string()
         } else {
             Self::opaque_ref("op", value)

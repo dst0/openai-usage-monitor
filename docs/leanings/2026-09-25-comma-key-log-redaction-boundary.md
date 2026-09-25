@@ -1,0 +1,25 @@
+# 2026-09-25 — Comma-key boundary in log redaction
+
+- **Status:** Resolved
+- **Task/context:** Final independent adversarial review of the OpenAI and AGY Monitor shared log sanitizer.
+- **Unexpected observation or failure:** A quoted credential followed by a comma and a sensitive key name without `:` or `=` could leave a later word visible in logs.
+- **Evidence:** The synthetic `token="synthetic-one",password synthetic-two`, `token="synthetic-one" ,password synthetic-two`, and `{"token":"synthetic-one"} password synthetic-two` regressions failed before the fix and passed after it. No real credential or customer data was used.
+- **Approaches tried:**
+  - **Attempt:** Accept a recognized next key name as a field boundary.
+    - **Outcome:** Did not work.
+    - **Why:** The later parser rejected the missing delimiter, leaving a plain word outside the redacted span.
+  - **Attempt:** Require `:` or `=` after the next key, without recursively parsing its value.
+    - **Outcome:** Fixed adjacent commas, but independent review found whitespace before a malformed next field bypassed the check.
+    - **Why:** The parser returned early on whitespace and never reached the delimiter check.
+  - **Attempt:** Skip whitespace and validate the following delimiter or closing punctuation.
+    - **Outcome:** Fixed whitespace bypasses, but accepting the first closer released a malformed free-text tail.
+    - **Why:** A forged closer did not prove the whole suffix was structural.
+  - **Attempt:** Scan the complete suffix, including all closers, and hide the tail if any free text remains.
+    - **Outcome:** Worked in the full redaction suite and forged-closer regression.
+    - **Why:** A closer cannot release later text without a complete, valid boundary.
+- **Root cause:** `quoted_suffix_is_structural` treated `parse_sensitive_key` success as proof of a complete next field.
+- **Resolution:** Skip whitespace after the quote; validate the next key and separator after a comma, and scan all closing punctuation through the end of the suffix. Ambiguous remaining text stays hidden. Path, token, and argument markers are verified independently because a mixed ambiguous suffix is deliberately hidden in full.
+- **Verification:** The malformed comma, whitespace, and forged-closer regressions failed before and passed after the parser change in both Monitor repositories. Full gates and remote CI are rerun on the final heads.
+- **Prevention/follow-up:** Retain malformed comma-boundary cases in both suites and compare the parsers when either implementation changes.
+- **Reusable learning:** Validate the complete suffix after a quoted secret; whitespace, a key name, or a forged closer alone is not a safe boundary.
+- **References:** `codex-switcher/src/distribution/log_redaction_structured_parser.rs`, `codex-switcher/src/distribution/log_redaction_service.test.rs`, `docs/leanings/2026-09-25-redaction-boundary-parity.md`.

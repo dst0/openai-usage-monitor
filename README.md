@@ -319,6 +319,11 @@ per-task `RECOVERY_VERIFIED` or `RECOVERY_FAILED` outcomes. Active logs remain
 plain text for live tailing. The tiny atomic `desktop-recovery.json` stores only
 pending task UUIDs and survives a killed worker.
 
+Runtime and historical Monitor log redaction treats incomplete quoted
+credentials and multiword unquoted sensitive values as opaque. It also scans wrapped
+tokens and every email or UUID in list-valued diagnostics, so malformed helper
+output cannot expose a later sensitive value in the same line.
+
 The installer applies the same content-redaction boundary to pre-existing
 Monitor-owned logs before it relaunches the app or daemon. It first verifies
 that the exact Monitor app and daemon are stopped, including a fresh executable

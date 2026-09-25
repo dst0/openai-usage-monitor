@@ -129,7 +129,7 @@ fn logger_and_audit_share_redaction_before_brotli_rotation() {
     let temp_dir = temporary_dir("redaction");
     let previous_home = std::env::var_os("CODEX_HOME");
     std::env::set_var("CODEX_HOME", &temp_dir);
-    let raw = "email=quoted.user@example.test thread=550e8400-e29b-41d4-a716-446655440000 path=/Users/dst/private Bearer secret";
+    let raw = "{\"email\":\"quoted.user@example.test\",\"thread\":\"550e8400-e29b-41d4-a716-446655440000\",\"path\":\"/Users/dst/private\",\"authorization\":\"Bearer secret\"}";
     log("INFO", "RECOVERY", raw);
     DistributionAuditLogger::new(switcher_log_path()).log_action(
         "op_test",

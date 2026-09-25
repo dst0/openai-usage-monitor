@@ -23,6 +23,7 @@ mod historical_log_stream_redactor;
 pub mod log_permissions_service;
 mod log_redaction_output;
 pub mod log_redaction_service;
+mod log_redaction_span_service;
 mod log_redaction_structured_parser;
 mod log_redaction_token_service;
 pub mod mock_app_lifecycle;

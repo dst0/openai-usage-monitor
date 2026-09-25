@@ -50,6 +50,11 @@
   installation may create the lock, so a writer cannot recreate it after
   uninstall removes the locked inode; daemon validation must never create it,
   and a waiter must recheck the named inode after flock acquisition.
+- Runtime and historical log redaction must fail closed on incomplete quoted
+  credentials and multiword unquoted sensitive values. Validate complete generic
+  members after quoted secrets, reject malformed unquoted punctuation, cache
+  trusted boundaries, and bound total suffix scanning. Scan wrapped tokens and every
+  identifier in list-valued diagnostics rather than stopping at the first match.
 - `scripts/uninstall.sh --dry-run` previews cleanup. The confirmed uninstall
   removes the Monitor footprint, launch items, helper, notifier, skills, logs,
   and runtime state while preserving Desktop-owned `auth.json`, databases,
@@ -119,6 +124,7 @@ These rules are the portable minimum for Destination Works repositories. Reposit
 - Use a validation ladder: fast targeted feedback while iterating, the repository pre-commit gate before commit, and the full pre-push/release-relevant gate before push. If a named gate does not exist, run the closest repository-native equivalent and document the exact evidence.
 - A hook is developer feedback, not the authoritative merge gate. CI must rerun required checks from a clean checkout.
 - Never weaken, skip, or replace a failing check merely to make it green. Read the failure, fix the cause, rerun the narrowest relevant test, then rerun the containing gate.
+- After rebasing a PR onto a newly merged main branch, rerun Clippy on the combined tree; compiler-version-sensitive lints can appear in the new base even when the PR's own patch is unchanged.
 - Validate generated artifacts against their source and canonical generator. Do not hand-edit generated output or accept drift.
 - Tests must cover meaningful behavior, negative/error paths, and important boundaries. Coverage is a regression signal, not a reason to add vacuous line-fillers or bypass comments.
 - For non-trivial or high-risk changes, obtain an independent adversarial review of assumptions, tests, failure handling, and rollback before publication.
@@ -137,6 +143,7 @@ These rules are the portable minimum for Destination Works repositories. Reposit
 ### Security and supply chain
 
 - Never store or expose credentials, tokens, private keys, customer data, sensitive payloads, device codes, or unsanitized production evidence in source, logs, fixtures, PRs, or learning records.
+- Treat whitespace, commas, and closing punctuation after a quoted sensitive value as structural only after validating the complete suffix; a forged closer or key name alone leaves the suffix sensitive.
 - Enforce POSIX `0600` permissions on all credential and token files (`auth.json`, `accounts.json`).
 - Ensure atomic file operations (`fs2` flock) when accessing credentials.
 - Zero credential leakage: automated security scans reject any potential API key patterns or secrets.
