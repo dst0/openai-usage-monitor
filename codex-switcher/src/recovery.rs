@@ -1,7 +1,9 @@
 //! Recovery is successful only when the target rollout records new agent work.
 //! IPC dispatch, task_started, or a queue acknowledgement is not proof.
+mod active_auth_binding_service;
 mod automation_guard;
 mod deferred_recovery_service;
+mod desktop_account_binding_service;
 mod desktop_ipc;
 mod dispatch_mark_error;
 mod evidence;

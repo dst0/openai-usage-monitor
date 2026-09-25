@@ -1,13 +1,58 @@
 use super::{
     manifest_store::{
-        finalize_target, load_manifest, load_ownerless_pending, load_pending,
-        mark_dispatch_attempt_for_account, prune_ineligible_targets_with, save_pending,
-        validate_target_account_binding, write_manifest,
+        current_account_binding, finalize_target, load_manifest, load_ownerless_pending,
+        load_pending, mark_dispatch_attempt_for_account, prune_ineligible_targets_with,
+        save_pending, validate_target_account_binding, write_manifest,
     },
     pending_target::PendingTarget,
     stored_manifest::StoredManifest,
 };
 use std::{path::PathBuf, process::Command};
+
+#[test]
+fn restart_recovery_binds_to_committed_auth_before_cli_registry_updates() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = crate::distribution::test_helper::TestEnv::new("recovery_auth_transition");
+    let old = crate::distribution::test_helper::make_account(
+        "old",
+        None,
+        "old@example.com",
+        "plus",
+        0.0,
+        None,
+        0,
+        None,
+        None,
+    );
+    let target = crate::distribution::test_helper::make_account(
+        "target",
+        None,
+        "target@example.com",
+        "team",
+        90.0,
+        None,
+        1,
+        None,
+        None,
+    );
+    env.populate(vec![old, target.clone()], Some("old"), Some("old"));
+    let mut auth = crate::storage::read_active_auth_json().unwrap();
+    auth.tokens = Some(target.tokens);
+    crate::storage::write_active_auth_json(&auth).unwrap();
+    let target_id = crate::storage::load_accounts()
+        .unwrap()
+        .accounts
+        .into_iter()
+        .find(|account| account.account_id == "target")
+        .unwrap()
+        .id;
+    assert_eq!(
+        current_account_binding().as_deref(),
+        Some(target_id.as_str())
+    );
+}
 struct TestCodexHomeGuard {
     path: PathBuf,
 }

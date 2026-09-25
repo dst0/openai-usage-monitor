@@ -33,7 +33,12 @@ retains only pre-dispatch tasks without a verified owner, including transient
 URL-launch and Desktop IPC startup failures. It probes every 15 seconds and
 reissues an ownerless task URL in the background at most once per minute. Once
 ChatGPT mounts the task, it retries using the original checkpoint and normal
-turn verification, provided the active account still matches. Unattended mounting
+turn verification. For a deferred retry after App/CLI distribution, the saved
+Desktop account must match the target, the exact live ChatGPT PID and birth
+identity, and the expected CLI account; an old or unbound session cannot
+authorize dispatch. The initial recovery banner closes after its bounded
+owner waits; a new banner is required before any later owner-routed IPC send.
+There is no persistent banner while Desktop has not mounted the task. Unattended mounting
 after an account switch remains unverified on the current Desktop build. If the daemon is not
 running, inspect the affected task and use
 `cxi resume <id>` only if the turn remains interrupted.

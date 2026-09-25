@@ -144,8 +144,28 @@ pub(super) fn validate_target_account_binding(
 /// Remove the retry intent durably before an owner-routed request can be sent.
 /// A crash after this point has an unknown outcome and must not redispatch.
 pub(super) fn mark_dispatch_attempt(id: &str) -> Result<(), DispatchMarkError> {
-    let binding = current_account_binding();
+    let deferred = load_manifest()
+        .map_err(DispatchMarkError::Other)?
+        .iter()
+        .any(|target| target.id == id && target.awaiting_owner);
+    let binding = recovery_account_binding(deferred);
     mark_dispatch_attempt_for_account(id, binding.as_deref())
+}
+
+pub(super) fn recovery_account_binding(deferred: bool) -> Option<String> {
+    let cli = current_account_binding();
+    let desktop = if deferred {
+        super::desktop_account_binding_service::DesktopAccountBindingService::verified(
+            cli.as_deref(),
+        )
+    } else {
+        None
+    };
+    super::desktop_account_binding_service::choose_recovery_account_binding(
+        cli.as_deref(),
+        desktop.as_deref(),
+        deferred,
+    )
 }
 
 pub(super) fn mark_dispatch_attempt_for_account(
@@ -166,24 +186,9 @@ pub(super) fn mark_dispatch_attempt_for_account(
     write_manifest(&targets).map_err(DispatchMarkError::Other)
 }
 
-/// Confirm both the configured active account and the actual Desktop auth
-/// identity without logging or persisting tokens or email addresses.
+/// Resolve the uniquely matched active auth identity without exposing tokens.
 pub(super) fn current_account_binding() -> Option<String> {
-    let accounts = storage::load_accounts().ok()?;
-    let active_id = accounts.active_account_id?;
-    let active = accounts
-        .accounts
-        .iter()
-        .find(|account| account.id == active_id)?;
-    let auth = storage::read_active_auth_json().ok()?;
-    let tokens = auth.tokens.as_ref()?;
-    let (email, _) = crate::oauth::extract_jwt_metadata_from_tokens(tokens);
-    if tokens.account_id.as_deref() != Some(active.account_id.as_str())
-        || !email?.eq_ignore_ascii_case(&active.email)
-    {
-        return None;
-    }
-    Some(active_id)
+    super::active_auth_binding_service::ActiveAuthBindingService::current()
 }
 
 pub fn load_pending() -> Result<Vec<String>, String> {

@@ -18,6 +18,8 @@ pub struct MockAppLifecycle {
     pub launch_error: Mutex<Option<String>>,
     pub capture_error: Mutex<Option<String>>,
     pub process_inspection_error: Mutex<Option<String>>,
+    pub process_inspection_calls: AtomicUsize,
+    pub change_process_birth_after_first_inspection: AtomicBool,
     pub capture_mode: Mutex<WindowCaptureMode>,
     pub restore_error: Mutex<Option<String>>,
     pub rebind_error: Mutex<Option<String>>,
@@ -47,6 +49,8 @@ impl MockAppLifecycle {
             launch_error: Mutex::new(None),
             capture_error: Mutex::new(None),
             process_inspection_error: Mutex::new(None),
+            process_inspection_calls: AtomicUsize::new(0),
+            change_process_birth_after_first_inspection: AtomicBool::new(false),
             capture_mode: Mutex::new(WindowCaptureMode::Captured),
             restore_error: Mutex::new(None),
             rebind_error: Mutex::new(None),
@@ -72,6 +76,11 @@ impl MockAppLifecycle {
 
     pub fn set_process_inspection_error(&self, err: impl Into<String>) {
         *self.process_inspection_error.lock().unwrap() = Some(err.into());
+    }
+
+    pub fn change_process_birth_after_first_inspection(&self) {
+        self.change_process_birth_after_first_inspection
+            .store(true, Ordering::SeqCst);
     }
 
     pub fn set_capture_mode(&self, mode: WindowCaptureMode) {
@@ -112,6 +121,29 @@ impl AppLifecycle for MockAppLifecycle {
         }
         self.running.store(true, Ordering::SeqCst);
         Ok(vec![9999])
+    }
+
+    fn inspect_process(
+        &self,
+        pid: u32,
+    ) -> Result<super::window_restore_process_identity::ProcessIdentity, String> {
+        if !self.running.load(Ordering::SeqCst) || pid != 9999 {
+            return Err("Desktop process is absent".into());
+        }
+        if let Some(error) = self.process_inspection_error.lock().unwrap().clone() {
+            return Err(error);
+        }
+        let inspected = self.process_inspection_calls.fetch_add(1, Ordering::SeqCst);
+        let birth = if inspected > 0
+            && self
+                .change_process_birth_after_first_inspection
+                .load(Ordering::SeqCst)
+        {
+            "other-birth"
+        } else {
+            "test-birth"
+        };
+        super::window_restore_process_identity::ProcessIdentity::new(pid, birth)
     }
 
     fn capture_window_bounds(

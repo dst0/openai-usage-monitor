@@ -2,6 +2,7 @@ use super::app_lifecycle::AppLifecycle;
 use super::desktop_app_session::DesktopAppSession;
 use super::distribution_account_commit_service::DistributionAccountCommitService;
 use super::distribution_audit_logger::DistributionAuditLogger;
+use super::distribution_desktop_relaunch_service::DistributionDesktopRelaunchService;
 use super::distribution_journal::DistributionJournal;
 use super::distribution_outcome::{DistributionOutcome, DistributionStatus};
 use super::distribution_plan::DistributionPlan;
@@ -143,53 +144,18 @@ impl DistributionTransactionService {
                 &request.reason,
                 "Relaunching Desktop app",
             );
-            match self.lifecycle.launch_app() {
-                Ok(new_pids) => {
-                    restarted_desktop = true;
-                    if new_pids.len() != 1 {
-                        recovery_error = Some(format!(
-                            "Codex relaunch must produce exactly one main process, got {new_pids:?}"
-                        ));
-                        self.lifecycle.abort_recovery();
-                    } else {
-                        if let Err(error) = DistributionRecoveryAuditService::restore_and_recover(
-                            &self.logger,
-                            self.lifecycle.as_ref(),
-                            new_pids[0],
-                            &running_threads,
-                            capture_mode,
-                            op_id,
-                            request,
-                        ) {
-                            recovery_error = Some(error);
-                        }
-                    }
-                }
-                Err(e) => {
-                    recovery_error = Some(e.clone());
-                    self.lifecycle.abort_recovery();
-                    self.logger.log_warning(
-                        op_id,
-                        "RELAUNCH_FAILED",
-                        trigger_str,
-                        &request.reason,
-                        "Desktop relaunch failed",
-                    );
-                }
-            }
-
-            let session_path = home.join("desktop-app-session.json");
-            let _ = DesktopAppSession::new(target_app_id).save(&session_path);
-            self.logger.log_action(
-                op_id,
-                "DESKTOP_SESSION",
-                trigger_str,
-                &request.reason,
-                &format!(
-                    "Desktop session account_ref={}",
-                    LogRedactionService::sanitize_field("account_id", target_app_id)
-                ),
-            );
+            (restarted_desktop, recovery_error) =
+                DistributionDesktopRelaunchService::new(self.lifecycle.as_ref(), &self.logger).run(
+                    &home,
+                    target_app_id,
+                    plan.target_cli_id
+                        .as_deref()
+                        .or(accounts_file.active_account_id.as_deref()),
+                    &running_threads,
+                    capture_mode,
+                    op_id,
+                    request,
+                );
 
             if let Some(target_cli_id) = &plan.target_cli_id {
                 if !target_cli_id.eq_ignore_ascii_case(target_app_id) {

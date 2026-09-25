@@ -458,7 +458,12 @@ pre-dispatch targets in its 0600 journal. The daemon probes periodically with
 a 15-second minimum interval while no recovery is running and reissues an
 ownerless task URL in the background at most once per minute. After a task gains
 a Desktop owner, it retries recovery with the original checkpoint and the same
-turn-progress verification under the same verified account. It rechecks the
+turn-progress verification. Deferred dispatch uses the Desktop session recorded
+by a successful, exact-process relaunch; it checks the saved PID, birth identity,
+and expected CLI account independently of the CLI account selected for Desktop.
+Legacy sessions without that binding fail closed. The first banner closes after
+bounded owner waits, and a fresh visible banner is required when a deferred
+owner-routed recovery actually begins. It rechecks the
 queue and rollout after owner discovery, durably clears retry intent before
 any IPC request, and never retries a request whose outcome is unknown. A URL
 launch or Desktop IPC startup failure before dispatch retains the checkpoint. It

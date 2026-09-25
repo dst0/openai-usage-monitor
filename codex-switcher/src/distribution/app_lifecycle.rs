@@ -1,9 +1,11 @@
 use super::window_capture_mode::WindowCaptureMode;
+use super::window_restore_process_identity::ProcessIdentity;
 
 pub trait AppLifecycle: Send + Sync {
     fn is_app_running(&self) -> bool;
     fn stop_app(&self) -> Result<(), String>;
     fn launch_app(&self) -> Result<Vec<u32>, String>;
+    fn inspect_process(&self, pid: u32) -> Result<ProcessIdentity, String>;
     fn capture_window_bounds(
         &self,
         operation_id: &str,
