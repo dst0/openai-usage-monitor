@@ -38,7 +38,14 @@ pub(super) fn writer_is_locked(home: &Path, id: &str) -> bool {
 }
 
 fn resolve_owner(desktop: &mut DesktopIpc, target: &mut RecoveryTarget) -> Result<String, String> {
-    match desktop.ensure_thread_owner(&target.id) {
+    handle_owner_resolution(desktop.ensure_thread_owner(&target.id), target)
+}
+
+pub(super) fn handle_owner_resolution(
+    result: Result<(String, bool), IpcCallError>,
+    target: &mut RecoveryTarget,
+) -> Result<String, String> {
+    match result {
         Ok((owner, mounted)) => {
             target.mounted_by_recovery = mounted;
             Ok(owner)
@@ -47,7 +54,12 @@ fn resolve_owner(desktop: &mut DesktopIpc, target: &mut RecoveryTarget) -> Resul
             target.owner_unavailable = true;
             Err("Codex Desktop did not mount the thread within 90s (no-client-found)".into())
         }
-        Err(error) => Err(error.to_string()),
+        Err(error) => {
+            // Every error here precedes dispatch. Preserve the original
+            // checkpoint so a transient URL or IPC failure cannot lose work.
+            target.owner_unavailable = true;
+            Err(error.to_string())
+        }
     }
 }
 

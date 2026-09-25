@@ -1,6 +1,11 @@
 use super::{
-    observer::Observer, recovery_mode::RecoveryMode, recovery_target::RecoveryTarget,
-    target_dispatch::revalidate_after_owner,
+    ipc_call_error::IpcCallError,
+    manifest_store::finalize_target,
+    observer::Observer,
+    pending_target::PendingTarget,
+    recovery_mode::RecoveryMode,
+    recovery_target::RecoveryTarget,
+    target_dispatch::{handle_owner_resolution, revalidate_after_owner},
 };
 use crate::switcher::ThreadRolloutState;
 use std::{fs::OpenOptions, io::Write, path::Path, process::Command, time::Instant};
@@ -29,6 +34,40 @@ fn target(home: &Path, id: &str) -> RecoveryTarget {
         expected_turn_id: None,
         proof_observed_at: None,
     }
+}
+
+#[test]
+fn failed_navigation_before_dispatch_keeps_original_checkpoint() {
+    let home = std::env::temp_dir().join(format!("codex-navigation-error-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let mut candidate = target(&home, id);
+    assert!(handle_owner_resolution(
+        Err(IpcCallError::Other("LaunchServices unavailable".into())),
+        &mut candidate,
+    )
+    .is_err());
+    assert!(candidate.owner_unavailable);
+    assert!(!candidate.dispatched);
+    let mut manifest = vec![PendingTarget {
+        id: id.into(),
+        offset: Some(42),
+        awaiting_owner: false,
+        captured_restart: true,
+        owner_account_id: None,
+    }];
+    finalize_target(
+        &mut manifest,
+        id,
+        candidate.owner_unavailable,
+        candidate.dispatched,
+        Some("account-a"),
+        false,
+    );
+    assert_eq!(manifest[0].offset, Some(42));
+    assert!(manifest[0].awaiting_owner);
+    assert_eq!(manifest[0].owner_account_id.as_deref(), Some("account-a"));
+    std::fs::remove_dir_all(home).unwrap();
 }
 
 #[test]

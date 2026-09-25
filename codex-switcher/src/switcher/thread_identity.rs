@@ -12,22 +12,45 @@ pub fn clean_thread_id(raw: &str) -> String {
     }
 }
 
-/// Navigates ChatGPT desktop application directly to a specific thread URL in the background without stealing focus.
-pub fn open_thread_in_codex(thread_id: &str) {
-    let clean = clean_thread_id(thread_id);
-    if clean.is_empty() {
-        return;
+fn thread_open_command(thread_id: &str, foreground: bool) -> Command {
+    let mut command = Command::new("/usr/bin/open");
+    if !foreground {
+        command.arg("-g");
     }
-    crate::runtime_print!("🧭 Opening thread '{}' in ChatGPT (background)...", clean);
-    let _ = Command::new("/usr/bin/open")
-        .args([
-            "-g",
-            "-a",
-            "/Applications/ChatGPT.app",
-            &format!("codex://threads/{}", clean),
-        ])
-        .status();
+    command.args(["-a", "/Applications/ChatGPT.app"]);
+    command.arg(format!("codex://threads/{thread_id}"));
+    command
 }
+
+/// Foreground navigation gives Desktop a chance to mount a cold task. IPC
+/// owner discovery is still required before sending any recovery request.
+pub fn open_thread_in_codex(thread_id: &str) -> Result<(), String> {
+    open_thread(thread_id, true)
+}
+
+/// Reissues an already requested URL without repeatedly stealing focus.
+pub fn retry_thread_link_in_background(thread_id: &str) -> Result<(), String> {
+    open_thread(thread_id, false)
+}
+
+fn open_thread(thread_id: &str, foreground: bool) -> Result<(), String> {
+    let clean = clean_thread_id(thread_id);
+    if !is_valid_thread_id(&clean) {
+        return Err("Invalid thread ID for ChatGPT navigation".into());
+    }
+    crate::runtime_print!("🧭 Opening thread '{}' in ChatGPT...", clean);
+    let status = thread_open_command(&clean, foreground)
+        .status()
+        .map_err(|error| format!("Could not launch ChatGPT task link: {error}"))?;
+    if !status.success() {
+        return Err(format!("ChatGPT task link exited with {status}"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "thread_identity.test.rs"]
+mod tests;
 
 /// Retrieves the most recently updated unarchived threads from state_5.sqlite.
 pub fn get_most_recent_threads(codex_home: &std::path::Path, limit: usize) -> Vec<String> {

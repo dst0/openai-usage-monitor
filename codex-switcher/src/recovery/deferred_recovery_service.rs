@@ -9,13 +9,14 @@ use super::{
     recovery_mode::RecoveryMode,
     recovery_service::recover_threads,
 };
-use crate::storage;
+use crate::{storage, switcher};
 use std::{
     thread,
     time::{Duration, Instant},
 };
 
 const PROBE_INTERVAL: Duration = Duration::from_secs(15);
+const NAVIGATION_RETRY_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Watches only targets that failed before an IPC dispatch because Desktop had
 /// no owner. The daemon owns the probe; a short worker keeps quota polling live
@@ -23,6 +24,7 @@ const PROBE_INTERVAL: Duration = Duration::from_secs(15);
 pub(crate) struct DeferredRecoveryService {
     worker: Option<thread::JoinHandle<()>>,
     last_probe: Option<Instant>,
+    last_navigation: Option<Instant>,
 }
 
 impl DeferredRecoveryService {
@@ -30,6 +32,7 @@ impl DeferredRecoveryService {
         Self {
             worker: None,
             last_probe: None,
+            last_navigation: None,
         }
     }
 
@@ -53,11 +56,12 @@ impl DeferredRecoveryService {
             return;
         }
         self.last_probe = Some(Instant::now());
+        let retry_navigation = should_retry_navigation(self.last_navigation, Instant::now());
         match thread::Builder::new()
             .name("codex-deferred-recovery".into())
             .stack_size(512 * 1024)
-            .spawn(|| {
-                if let Err(error) = Self::run_once() {
+            .spawn(move || {
+                if let Err(error) = Self::run_once(retry_navigation) {
                     crate::logger::log(
                         "WARN",
                         "RECOVERY",
@@ -68,7 +72,12 @@ impl DeferredRecoveryService {
                     );
                 }
             }) {
-            Ok(worker) => self.worker = Some(worker),
+            Ok(worker) => {
+                self.worker = Some(worker);
+                if retry_navigation {
+                    self.last_navigation = Some(Instant::now());
+                }
+            }
             Err(error) => crate::logger::log(
                 "WARN",
                 "RECOVERY",
@@ -77,7 +86,7 @@ impl DeferredRecoveryService {
         }
     }
 
-    fn run_once() -> Result<(), String> {
+    fn run_once(retry_navigation: bool) -> Result<(), String> {
         let _operation = match operation_lock() {
             Ok(lock) => lock,
             Err(error) if error == "Another desktop switch/recovery is in progress" => {
@@ -100,11 +109,11 @@ impl DeferredRecoveryService {
         };
         let mut desktop = DesktopIpc::connect(Duration::from_secs(2))?;
         let ready = select_ready_targets(&targets, &account_id, |id| {
-            match desktop.discover_owner_info_once(id) {
-                Ok(_) => Ok(true),
-                Err(IpcCallError::NoClientFound) => Ok(false),
-                Err(error) => Err(error.to_string()),
-            }
+            probe_or_retry_navigation(
+                || desktop.discover_owner_info_once(id).map(|_| ()),
+                || switcher::retry_thread_link_in_background(id),
+                retry_navigation,
+            )
         })?;
         drop(desktop);
         for id in ready {
@@ -134,6 +143,27 @@ impl DeferredRecoveryService {
             }
         }
         Ok(())
+    }
+}
+
+pub(super) fn should_retry_navigation(last: Option<Instant>, now: Instant) -> bool {
+    last.is_none_or(|at| now.saturating_duration_since(at) >= NAVIGATION_RETRY_INTERVAL)
+}
+
+pub(super) fn probe_or_retry_navigation(
+    discover: impl FnOnce() -> Result<(), IpcCallError>,
+    navigate: impl FnOnce() -> Result<(), String>,
+    retry_navigation: bool,
+) -> Result<bool, String> {
+    match discover() {
+        Ok(()) => Ok(true),
+        Err(IpcCallError::NoClientFound) => {
+            if retry_navigation {
+                navigate()?;
+            }
+            Ok(false)
+        }
+        Err(error) => Err(error.to_string()),
     }
 }
 

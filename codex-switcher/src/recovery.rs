@@ -74,6 +74,9 @@ mod observer_tests;
 #[path = "recovery/queue_snapshot.test.rs"]
 mod queue_snapshot_tests;
 #[cfg(test)]
+#[path = "recovery/recovery_service.test.rs"]
+mod recovery_service_tests;
+#[cfg(test)]
 #[path = "recovery/target_dispatch.test.rs"]
 mod target_dispatch_tests;
 #[cfg(test)]

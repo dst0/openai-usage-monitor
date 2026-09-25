@@ -1,6 +1,9 @@
 use super::{
-    dispatch_mark_error::DispatchMarkError, pending_manifest::PendingManifest,
-    pending_target::PendingTarget, queue_snapshot::pending_count, stored_manifest::StoredManifest,
+    dispatch_mark_error::DispatchMarkError,
+    pending_manifest::PendingManifest,
+    pending_target::PendingTarget,
+    queue_snapshot::{pending_count, query},
+    stored_manifest::StoredManifest,
     thread_identity::valid_id,
 };
 use crate::{storage, switcher};
@@ -48,15 +51,36 @@ pub(super) fn prune_ineligible_targets(
     home: &Path,
     targets: &mut Vec<PendingTarget>,
 ) -> Result<(), String> {
+    let state = home.join("state_5.sqlite");
+    prune_ineligible_targets_with(home, targets, |id| {
+        let updated = query(
+            &state,
+            &format!("SELECT updated_at FROM threads WHERE id = '{id}' AND archived = 0 AND (thread_source IS NULL OR thread_source != 'subagent') LIMIT 1;"),
+        )?;
+        if updated.is_empty() {
+            Ok(None)
+        } else {
+            updated
+                .parse::<i64>()
+                .map(Some)
+                .map_err(|_| "Invalid Codex thread timestamp".into())
+        }
+    })
+}
+
+pub(super) fn prune_ineligible_targets_with(
+    home: &Path,
+    targets: &mut Vec<PendingTarget>,
+    mut updated_at: impl FnMut(&str) -> Result<Option<i64>, String>,
+) -> Result<(), String> {
     let now = chrono::Utc::now().timestamp();
     let mut eligible = Vec::new();
     for target in targets.iter() {
-        if !valid_id(&target.id) || !switcher::is_user_thread(home, &target.id) {
+        if !valid_id(&target.id) {
             continue;
         }
-        let is_recent = switcher::get_thread_updated_at(home, &target.id)
-            .map(|updated| (now - updated).abs() <= switcher::RECENT_QUOTA_WINDOW_SECS)
-            .unwrap_or(false);
+        let is_recent = updated_at(&target.id)?
+            .is_some_and(|updated| (now - updated).abs() <= switcher::RECENT_QUOTA_WINDOW_SECS);
         if !is_recent {
             continue;
         }
@@ -65,7 +89,9 @@ pub(super) fn prune_ineligible_targets(
             | switcher::ThreadRolloutState::InterruptedByQuota
             | switcher::ThreadRolloutState::TurnAborted => true,
             switcher::ThreadRolloutState::CleanCompleted => pending_count(home, &target.id)? > 0,
-            switcher::ThreadRolloutState::Unknown => false,
+            // An unreadable rollout must not erase an undispatched intent.
+            // Recovery still revalidates the state before any IPC send.
+            switcher::ThreadRolloutState::Unknown => target.awaiting_owner,
         };
         if retain {
             eligible.push(target.clone());

@@ -1,4 +1,58 @@
-use super::{deferred_recovery_service::select_ready_targets, pending_target::PendingTarget};
+use super::{
+    deferred_recovery_service::{
+        probe_or_retry_navigation, select_ready_targets, should_retry_navigation,
+    },
+    ipc_call_error::IpcCallError,
+    pending_target::PendingTarget,
+};
+use std::time::{Duration, Instant};
+
+#[test]
+fn background_navigation_retry_has_one_minute_cooldown() {
+    let started = Instant::now();
+    assert!(should_retry_navigation(None, started));
+    assert!(!should_retry_navigation(
+        Some(started),
+        started + Duration::from_secs(59),
+    ));
+    assert!(should_retry_navigation(
+        Some(started),
+        started + Duration::from_secs(60),
+    ));
+}
+
+#[test]
+fn ownerless_deferred_target_reissues_link_without_dispatch() {
+    let mut launches = 0;
+    assert!(!probe_or_retry_navigation(
+        || Err(IpcCallError::NoClientFound),
+        || {
+            launches += 1;
+            Ok(())
+        },
+        true,
+    )
+    .unwrap());
+    assert_eq!(launches, 1);
+    assert!(!probe_or_retry_navigation(
+        || Err(IpcCallError::NoClientFound),
+        || panic!("navigation cooldown ignored"),
+        false,
+    )
+    .unwrap());
+    assert!(probe_or_retry_navigation(
+        || Ok(()),
+        || panic!("an owned task was opened again"),
+        true,
+    )
+    .unwrap());
+    assert!(probe_or_retry_navigation(
+        || Err(IpcCallError::NoClientFound),
+        || Err("LaunchServices unavailable".into()),
+        true,
+    )
+    .is_err());
+}
 
 #[test]
 fn only_explicitly_ownerless_targets_with_a_current_owner_are_retried() {

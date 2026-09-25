@@ -9,7 +9,8 @@ use super::{
     recovery_banner::RecoveryBanner,
     recovery_mode::RecoveryMode,
     recovery_target::{
-        prepare_target, record_target_state, RECOVERY_DISPATCH_TIMEOUT, RECOVERY_EXECUTION_TIMEOUT,
+        prepare_target, record_target_state, RecoveryTarget, RECOVERY_DISPATCH_TIMEOUT,
+        RECOVERY_EXECUTION_TIMEOUT,
     },
     target_dispatch::dispatch_if_needed,
     thread_identity::valid_id,
@@ -118,7 +119,7 @@ pub(crate) fn recover_threads_with_banner(
         for target in &mut targets {
             if !target.completed && target.failure.is_none() {
                 if let Err(error) = record_target_state(target) {
-                    target.failure = Some(error);
+                    mark_pre_dispatch_channel_failure(target, &error);
                 }
             }
         }
@@ -140,7 +141,7 @@ pub(crate) fn recover_threads_with_banner(
                 crate::runtime_print!("RECOVERY_CHANNEL_READY transport=desktop_ipc");
                 for target in &mut targets {
                     if let Err(error) = dispatch_if_needed(&home, &mut desktop, target, mode) {
-                        target.failure = Some(error);
+                        mark_dispatch_failure(target, &error);
                     }
                 }
                 drop(desktop);
@@ -150,7 +151,9 @@ pub(crate) fn recover_threads_with_banner(
                     if record_target_state(target).is_err()
                         || (!target.completed && !target.observer.evidence.started)
                     {
-                        target.failure = Some(error.clone());
+                        // No IPC request was sent. Retain the original
+                        // checkpoint for a later owner-verified attempt.
+                        mark_pre_dispatch_channel_failure(target, &error);
                     }
                 }
             }
@@ -167,7 +170,9 @@ pub(crate) fn recover_threads_with_banner(
             .find(|target| target.mounted_by_recovery)
             .map(|target| target.id.as_str());
         if last_mounted.is_some_and(|mounted| mounted != primary) {
-            switcher::open_thread_in_codex(primary);
+            if let Err(error) = switcher::open_thread_in_codex(primary) {
+                crate::runtime_error!("RECOVERY_PRIMARY_NAVIGATION_FAILED reason={error}");
+            }
         }
     }
 
@@ -225,12 +230,19 @@ pub(crate) fn recover_threads_with_banner(
             &target.id,
             target.owner_unavailable,
             target.dispatched,
-            current_account_binding().as_deref(),
+            binding.as_deref(),
             target.account_mismatch,
         );
     }
     for id in &preparation_failures {
-        pending_manifest.retain(|item| item.id != *id);
+        finalize_target(
+            &mut pending_manifest,
+            id,
+            true,
+            false,
+            binding.as_deref(),
+            false,
+        );
     }
     for id in completed_without_action {
         pending_manifest.retain(|item| item.id != id);
@@ -268,4 +280,18 @@ pub(crate) fn recover_threads_with_banner(
             failures.join(", ")
         ))
     }
+}
+
+pub(super) fn mark_pre_dispatch_channel_failure(target: &mut RecoveryTarget, error: &str) {
+    target.owner_unavailable = true;
+    target.failure = Some(error.to_owned());
+}
+
+pub(super) fn mark_dispatch_failure(target: &mut RecoveryTarget, error: &str) {
+    if !target.dispatched && !target.account_mismatch {
+        // SQLite/queue checks and owner resolution are all before the IPC
+        // send. Keep the checkpoint, but never retry an uncertain send.
+        target.owner_unavailable = true;
+    }
+    target.failure = Some(error.to_owned());
 }

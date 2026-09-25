@@ -1,8 +1,8 @@
 use super::{
     manifest_store::{
         finalize_target, load_manifest, load_ownerless_pending, load_pending,
-        mark_dispatch_attempt_for_account, save_pending, validate_target_account_binding,
-        write_manifest,
+        mark_dispatch_attempt_for_account, prune_ineligible_targets_with, save_pending,
+        validate_target_account_binding, write_manifest,
     },
     pending_target::PendingTarget,
     stored_manifest::StoredManifest,
@@ -10,6 +10,41 @@ use super::{
 use std::{path::PathBuf, process::Command};
 struct TestCodexHomeGuard {
     path: PathBuf,
+}
+
+#[test]
+fn unreadable_thread_index_does_not_erase_deferred_checkpoint() {
+    let home = std::env::temp_dir().join(format!("codex-index-error-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let target = PendingTarget {
+        id: id.into(),
+        offset: Some(42),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("account-a".into()),
+    };
+    let mut pending = vec![target.clone()];
+    assert!(prune_ineligible_targets_with(&home, &mut pending, |_| {
+        Err("SQLite temporarily unavailable".into())
+    })
+    .is_err());
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].offset, Some(42));
+    assert_eq!(pending[0].owner_account_id.as_deref(), Some("account-a"));
+
+    // An unknown rollout is retained only for an already journaled retry;
+    // it is never sufficient evidence to create a new recovery request.
+    let now = chrono::Utc::now().timestamp();
+    prune_ineligible_targets_with(&home, &mut pending, |_| Ok(Some(now))).unwrap();
+    assert_eq!(pending.len(), 1);
+    pending[0].awaiting_owner = false;
+    prune_ineligible_targets_with(&home, &mut pending, |_| Ok(Some(now))).unwrap();
+    assert!(pending.is_empty());
+    let mut archived = vec![target];
+    prune_ineligible_targets_with(&home, &mut archived, |_| Ok(None)).unwrap();
+    assert!(archived.is_empty());
+    std::fs::remove_dir_all(home).unwrap();
 }
 
 impl Drop for TestCodexHomeGuard {

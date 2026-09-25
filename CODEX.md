@@ -25,12 +25,16 @@ Desktop restart and thread recovery are unavailable. Optional read-only check:
 `cxi recovery-preflight`.
 
 Cold tasks may fail owner discovery after an accepted macOS deep link even
-when Desktop IPC itself is healthy. In that case automatic distribution reports
+when Desktop IPC itself is healthy. The monitor now activates ChatGPT once
+for an ownerless task and reissues later links in the background; it still
+requires a real owner before dispatch. In that case automatic distribution reports
 partial recovery rather than sending a turn without an owner. The daemon
-retains only pre-dispatch ownerless tasks and retries them when ChatGPT's own
-navigation later mounts the task, using the original checkpoint and normal
-turn verification, provided the active account still matches. It does not mount
-cold tasks unattended on the current Desktop build. If the daemon is not
+retains only pre-dispatch tasks without a verified owner, including transient
+URL-launch and Desktop IPC startup failures. It probes every 15 seconds and
+reissues an ownerless task URL in the background at most once per minute. Once
+ChatGPT mounts the task, it retries using the original checkpoint and normal
+turn verification, provided the active account still matches. Unattended mounting
+after an account switch remains unverified on the current Desktop build. If the daemon is not
 running, inspect the affected task and use
 `cxi resume <id>` only if the turn remains interrupted.
 

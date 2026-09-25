@@ -34,8 +34,9 @@ pub use switch_outcome::SwitchOutcome;
 pub use switch_trigger::SwitchTrigger;
 pub use thread_detection_service::{
     detect_in_progress_threads, detect_quota_blocked_user_threads_since,
-    detect_recent_quota_blocked_user_threads, get_thread_updated_at,
+    detect_recent_quota_blocked_user_threads,
 };
+pub(crate) use thread_identity::retry_thread_link_in_background;
 pub use thread_identity::{
     clean_thread_id, get_most_recent_threads, is_user_thread, open_thread_in_codex,
 };

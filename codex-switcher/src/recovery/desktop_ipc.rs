@@ -188,7 +188,8 @@ impl DesktopIpc {
             // Every 2 seconds (10 ticks), re-issue background deep link in case ChatGPT was
             // still initializing its URL handler when the initial command was run.
             if loop_count.is_multiple_of(10) {
-                switcher::open_thread_in_codex(thread_id);
+                switcher::retry_thread_link_in_background(thread_id)
+                    .map_err(IpcCallError::Other)?;
             }
         }
     }
@@ -210,7 +211,7 @@ impl DesktopIpc {
         let (owner, mounted_by_recovery) = match self.discover_owner_info_once(thread_id) {
             Ok(owner) => (owner, false),
             Err(IpcCallError::NoClientFound) => {
-                switcher::open_thread_in_codex(thread_id);
+                switcher::open_thread_in_codex(thread_id).map_err(IpcCallError::Other)?;
                 (self.discover_owner_info_with_retry(thread_id)?, true)
             }
             Err(error) => return Err(error),

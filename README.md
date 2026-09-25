@@ -438,25 +438,29 @@ The recovery algorithm is:
 
 1. Detect eligible, unarchived non-subagent tasks and atomically journal their IDs before shutdown. Stale manifest IDs and a caller-provided primary task are revalidated against SQLite and can never force an internal subagent into recovery.
 2. Gracefully stop Desktop, wait for the exact main process to exit, then record a second rollout checkpoint. This excludes old work and shutdown-flush events from recovery proof.
-3. Relaunch Desktop, validate its same-user IPC socket, and resolve the owner of every task. Only ownerless cold tasks are opened once for mounting; already-owned tasks are never cycled through the UI.
+3. Relaunch Desktop, validate its same-user IPC socket, and resolve the owner of every task. Only ownerless cold tasks activate ChatGPT once through a task URL; subsequent URL retries run in the background. Already-owned tasks are never cycled through the UI. A successful URL launch is not proof of mounting: owner discovery remains mandatory before dispatch.
 4. Preserve any queued payloads exactly. Only the exact restart-generated pause reason is removed; user-paused queues are rejected. Otherwise send one `app_update_resume` turn-start request containing the short text `continue`. An uncertain send is never retried.
 5. Bind proof to the exact turn ID returned by Desktop IPC. Require a post-checkpoint `task_started`, substantive agent reasoning/message/tool/web-search work, and then 10 seconds without an abort or error. An acknowledgement, writer lock, navigation, or start alone is not success.
 6. Restore the primary task once only if recovery had to mount a different cold task, then require the relaunched singleton PID to remain unchanged for another 3 seconds. Verify its visible window when one was captured before restart. Recovery and account switching share an operation lock and the same pipeline.
 
 On the current ChatGPT.app build, macOS may accept a `codex://threads/<id>`
-request for a cold task without mounting it in a Desktop window. The switcher
+request for a cold task without mounting it in a Desktop window. Foreground
+activation mounted one cold task in a live check, while a background URL mounted
+another; neither observation guarantees mounting after an account switch. The switcher
 reports incomplete recovery with `no-client-found` and keeps only these
 pre-dispatch targets in its 0600 journal. The daemon probes periodically with
-a 15-second minimum interval while no recovery is running; after the task gains a Desktop owner through ChatGPT's own
-navigation, it retries recovery with the original checkpoint and the same
+a 15-second minimum interval while no recovery is running and reissues an
+ownerless task URL in the background at most once per minute. After a task gains
+a Desktop owner, it retries recovery with the original checkpoint and the same
 turn-progress verification under the same verified account. It rechecks the
 queue and rollout after owner discovery, durably clears retry intent before
-any IPC request, and never retries a request whose outcome is unknown. It
+any IPC request, and never retries a request whose outcome is unknown. A URL
+launch or Desktop IPC startup failure before dispatch retains the checkpoint. It
 drops completed tasks without queued follow-ups, archived, stale, or ambiguous
 uncaptured targets. The pending
 entry expires under the four-hour eligibility window. External deep-link
-acceptance alone remains insufficient; unattended mounting of a cold task is
-not supported by the current Desktop navigation interface. If the daemon is
+acceptance alone remains insufficient; unattended mounting of every cold task
+is not verified on the current Desktop build. If the daemon is
 not running, inspect the task and use `cxi resume <id>` if it is still
 interrupted.
 
