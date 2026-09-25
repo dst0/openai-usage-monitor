@@ -36,13 +36,14 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
 5. **Desktop Application Switching (`ChatGPT.app`)**:
    - The desktop app (`/Applications/ChatGPT.app`, bundle ID `com.openai.codex`) shares the `~/.codex/auth.json` credentials.
    - When an account is switched, the tool gracefully restarts the desktop app (`restart_app_on_switch: true`), immediately updating the interface and active sessions to the new account.
-   - If Desktop has no eligible standard window before a restart, automatic switching continues through the exact main process and Desktop IPC without window geometry restore or a banner. Accessibility failures, malformed geometry, and process identity mismatches still stop the switch before credentials change.
+   - If Desktop has no eligible standard window before a restart, automatic switching can continue without window geometry restore. If there are recovery targets, owner-routed IPC waits for a visible banner after owner mounting; a missing window then defers the target with its original checkpoint. Accessibility failures, malformed geometry, and process identity mismatches still stop a preservation-enabled switch before credentials change.
 
 6. **Automated Session & Thread Resumption Across Switches**:
    - Detects eligible mid-turn tasks captured for a restart and threads halted by rate limits or credit exhaustion within the last 4 hours (`RECENT_QUOTA_WINDOW_SECS = 14400s`); discovery-only recovery does not guess about an ambiguous active turn.
    - Scans up to 30 recent threads via `state_5.sqlite` with instantaneous 128 KB tail reads (`read_rollout_tail_lines`), eliminating I/O stalls even on 500 MB+ session files.
    - Resumes through the official Codex Desktop owner's IPC connection to the Desktop-bundled app-server; it never launches a second/headless app-server, uses `codex exec resume`, or clicks UI controls. For an interrupted turn it sends one protocol-valid text input, `continue`, through `thread-follower-start-turn`.
    - Shows a verified semi-transparent banner when an eligible window and recovery target are present, including when exact window restoration is disabled. Requires a new exact-ID `task_started`, real agent work, and a 10-second error-free observation window before reporting success.
+   - Recovery in an already running ChatGPT uses read-only WindowServer geometry for its banner. If the first capture finds no window, it tries again after Desktop confirms the task owner. A visible, live panel and unchanged queue/rollout are required before IPC; helper and process identity are checked again after SQLite waits, followed by a final queue/rollout check. Failed status replay into a late banner also blocks dispatch. Failures retain the original checkpoint for a later attempt. Window access/geometry failure, panel timeout, identity changes, missing helper, payload/lease failure, and malformed helper responses fail closed before dispatch.
    - Filters out internal subagent threads and never resumes cleanly completed or user-aborted tasks.
 
 7. **Native macOS Menu Bar App (`Codex Monitor.app`)**:
@@ -91,6 +92,10 @@ The installation script checks and guides you through the prerequisites automati
    ```bash
    xcode-select --install
    ```
+   The selected Swift compiler and macOS SDK must come from a matching toolchain.
+   Run `./scripts/test_swift.sh` before installing; if Swift reports an SDK/compiler
+   version mismatch, repair or select matching Command Line Tools and rerun the
+   test. Do not publish or reinstall a partially built app bundle.
 3. **Rust & Cargo** (for building the ultra-lightweight CLI core):
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -434,20 +439,31 @@ The recovery algorithm is:
 
 1. Detect eligible, unarchived non-subagent tasks and atomically journal their IDs before shutdown. Stale manifest IDs and a caller-provided primary task are revalidated against SQLite and can never force an internal subagent into recovery.
 2. Gracefully stop Desktop, wait for the exact main process to exit, then record a second rollout checkpoint. This excludes old work and shutdown-flush events from recovery proof.
-3. Relaunch Desktop, validate its same-user IPC socket, and resolve the owner of every task. Only ownerless cold tasks are opened once for mounting; already-owned tasks are never cycled through the UI.
+3. Relaunch Desktop, validate its same-user IPC socket, and resolve the owner of every task. Only ownerless cold tasks activate ChatGPT once through a task URL; subsequent URL retries run in the background. Already-owned tasks are never cycled through the UI. A successful URL launch is not proof of mounting: owner discovery remains mandatory before dispatch.
 4. Preserve any queued payloads exactly. Only the exact restart-generated pause reason is removed; user-paused queues are rejected. Otherwise send one `app_update_resume` turn-start request containing the short text `continue`. An uncertain send is never retried.
 5. Bind proof to the exact turn ID returned by Desktop IPC. Require a post-checkpoint `task_started`, substantive agent reasoning/message/tool/web-search work, and then 10 seconds without an abort or error. An acknowledgement, writer lock, navigation, or start alone is not success.
 6. Restore the primary task once only if recovery had to mount a different cold task, then require the relaunched singleton PID to remain unchanged for another 3 seconds. Verify its visible window when one was captured before restart. Recovery and account switching share an operation lock and the same pipeline.
 
 On the current ChatGPT.app build, macOS may accept a `codex://threads/<id>`
-request for a cold task without mounting it in a Desktop window. The switcher
-then reports `RECOVERY_INCOMPLETE` with `no-client-found`; it does not send a
-turn to an unverified owner. Opening that task through ChatGPT's own task
-navigation and then running `cxi resume <id>` can recover an interrupted turn.
-The same deep-link failure was reproduced on an unmounted task without changing
-accounts, so retrying the URL is not a reliable mounting contract.
-Check each task's actual state first: a task that completed independently must
-not receive another resume request.
+request for a cold task without mounting it in a Desktop window. Foreground
+activation mounted one cold task in a live check, while a background URL mounted
+another; neither observation guarantees mounting after an account switch. The switcher
+reports incomplete recovery with `no-client-found` and keeps only these
+pre-dispatch targets in its 0600 journal. The daemon probes periodically with
+a 15-second minimum interval while no recovery is running and reissues an
+ownerless task URL in the background at most once per minute. After a task gains
+a Desktop owner, it retries recovery with the original checkpoint and the same
+turn-progress verification under the same verified account. It rechecks the
+queue and rollout after owner discovery, durably clears retry intent before
+any IPC request, and never retries a request whose outcome is unknown. A URL
+launch or Desktop IPC startup failure before dispatch retains the checkpoint. It
+drops completed tasks without queued follow-ups, archived, stale, or ambiguous
+uncaptured targets. The pending
+entry expires under the four-hour eligibility window. External deep-link
+acceptance alone remains insufficient; unattended mounting of every cold task
+is not verified on the current Desktop build. If the daemon is
+not running, inspect the task and use `cxi resume <id>` if it is still
+interrupted.
 
 ### ♻️ Account-Bound Weekly Reset Credits
 

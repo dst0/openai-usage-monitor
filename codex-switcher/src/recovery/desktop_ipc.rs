@@ -171,28 +171,25 @@ impl DesktopIpc {
     pub(super) fn discover_owner_info_with_retry(
         &mut self,
         thread_id: &str,
-    ) -> Result<OwnerInfo, String> {
+    ) -> Result<OwnerInfo, IpcCallError> {
         let deadline = Instant::now() + IPC_OWNER_TIMEOUT;
         let mut loop_count: usize = 0;
         loop {
-            let last_error = match self.discover_owner_info_once(thread_id) {
+            match self.discover_owner_info_once(thread_id) {
                 Ok(owner) => return Ok(owner),
-                Err(IpcCallError::NoClientFound) => "no-client-found".to_string(),
-                Err(error) => return Err(error.to_string()),
-            };
+                Err(IpcCallError::NoClientFound) => {}
+                Err(error) => return Err(error),
+            }
             if Instant::now() >= deadline {
-                return Err(format!(
-                    "Codex Desktop did not mount the thread within {}s ({})",
-                    IPC_OWNER_TIMEOUT.as_secs(),
-                    last_error
-                ));
+                return Err(IpcCallError::NoClientFound);
             }
             sleep(Duration::from_millis(200));
             loop_count += 1;
             // Every 2 seconds (10 ticks), re-issue background deep link in case ChatGPT was
             // still initializing its URL handler when the initial command was run.
             if loop_count.is_multiple_of(10) {
-                switcher::open_thread_in_codex(thread_id);
+                switcher::retry_thread_link_in_background(thread_id)
+                    .map_err(IpcCallError::Other)?;
             }
         }
     }
@@ -200,7 +197,7 @@ impl DesktopIpc {
     pub(super) fn ensure_thread_owner(
         &mut self,
         thread_id: &str,
-    ) -> Result<(String, bool), String> {
+    ) -> Result<(String, bool), IpcCallError> {
         let (owner, mounted_by_recovery) = self.ensure_thread_owner_info(thread_id)?;
         Ok((owner.client_id, mounted_by_recovery))
     }
@@ -208,16 +205,16 @@ impl DesktopIpc {
     pub(super) fn ensure_thread_owner_info(
         &mut self,
         thread_id: &str,
-    ) -> Result<(OwnerInfo, bool), String> {
+    ) -> Result<(OwnerInfo, bool), IpcCallError> {
         // An already visible task may have an owner immediately. A cold task
         // has none until its deep link mounts the Desktop view asynchronously.
         let (owner, mounted_by_recovery) = match self.discover_owner_info_once(thread_id) {
             Ok(owner) => (owner, false),
             Err(IpcCallError::NoClientFound) => {
-                switcher::open_thread_in_codex(thread_id);
+                switcher::open_thread_in_codex(thread_id).map_err(IpcCallError::Other)?;
                 (self.discover_owner_info_with_retry(thread_id)?, true)
             }
-            Err(error) => return Err(error.to_string()),
+            Err(error) => return Err(error),
         };
         Ok((owner, mounted_by_recovery))
     }
@@ -225,27 +222,27 @@ impl DesktopIpc {
     pub(super) fn resume_interrupted_turn(
         &mut self,
         thread_id: &str,
-    ) -> Result<(bool, String), String> {
-        let (owner, mounted_by_recovery) = self.ensure_thread_owner(thread_id)?;
+        owner: &str,
+    ) -> Result<String, String> {
         let response = self
             .request_raw(
                 "thread-follower-start-turn",
                 2,
                 recovery_turn_start_request(thread_id),
-                Some(&owner),
+                Some(owner),
                 IPC_CALL_TIMEOUT,
             )
             .map_err(|error| error.to_string())?;
-        let turn_id = validate_start_response(&response, &owner)?;
-        Ok((mounted_by_recovery, turn_id))
+        let turn_id = validate_start_response(&response, owner)?;
+        Ok(turn_id)
     }
 
     pub(super) fn resume_existing_queue(
         &mut self,
         thread_id: &str,
         messages: Vec<Value>,
-    ) -> Result<bool, String> {
-        let (owner, mounted_by_recovery) = self.ensure_thread_owner(thread_id)?;
+        owner: &str,
+    ) -> Result<(), String> {
         let mut state = serde_json::Map::new();
         state.insert(thread_id.to_string(), Value::Array(messages));
         let response = self
@@ -256,16 +253,16 @@ impl DesktopIpc {
                     "conversationId": thread_id,
                     "state": state
                 }),
-                Some(&owner),
+                Some(owner),
                 IPC_CALL_TIMEOUT,
             )
             .map_err(|error| error.to_string())?;
         if response["method"].as_str() != Some("thread-follower-set-queued-follow-ups-state")
-            || response["handledByClientId"].as_str() != Some(owner.as_str())
+            || response["handledByClientId"].as_str() != Some(owner)
             || response["result"]["ok"].as_bool() != Some(true)
         {
             return Err("Codex Desktop did not confirm queue recovery".into());
         }
-        Ok(mounted_by_recovery)
+        Ok(())
     }
 }

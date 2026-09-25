@@ -25,15 +25,23 @@ Desktop restart and thread recovery are unavailable. Optional read-only check:
 `cxi recovery-preflight`.
 
 Cold tasks may fail owner discovery after an accepted macOS deep link even
-when Desktop IPC itself is healthy. In that case automatic distribution reports
-partial recovery rather than sending a turn without an owner. Open the affected
-task in ChatGPT's own navigation, inspect its current turn, then use
+when Desktop IPC itself is healthy. The monitor now activates ChatGPT once
+for an ownerless task and reissues later links in the background; it still
+requires a real owner before dispatch. In that case automatic distribution reports
+partial recovery rather than sending a turn without an owner. The daemon
+retains only pre-dispatch tasks without a verified owner, including transient
+URL-launch and Desktop IPC startup failures. It probes every 15 seconds and
+reissues an ownerless task URL in the background at most once per minute. Once
+ChatGPT mounts the task, it retries using the original checkpoint and normal
+turn verification, provided the active account still matches. Unattended mounting
+after an account switch remains unverified on the current Desktop build. If the daemon is not
+running, inspect the affected task and use
 `cxi resume <id>` only if the turn remains interrupted.
 
 Automatic distribution records whether the exact Desktop process has an eligible
 standard window before shutdown. If no such window exists, it skips geometry
-restore and the visual banner while retaining the singleton process, IPC, and
-turn-progress checks. A launchd daemon may be denied Accessibility access even
+restore; after task owner mounting, recovery requires a visible banner before
+IPC and retains the original checkpoint if no window appears. A launchd daemon may be denied Accessibility access even
 when the same helper succeeds from Terminal. If that happens, set
 `cxi config --preserve-window-bounds false` to explicitly disable geometry
 preservation. Distribution validates the exact Desktop process without an
@@ -45,6 +53,19 @@ switch. Helper protocol and unknown capture failures block the switch. Window ac
 blocking while preservation is enabled; process-identity failures remain
 blocking in either mode. With preservation disabled, the prior window position
 and size are not restored or verified by the Monitor.
+
+Deferred recovery in an already running ChatGPT never restores window bounds.
+It locates its banner through the read-only WindowServer helper, so a launchd
+Accessibility denial cannot stop IPC recovery when WindowServer can place the
+panel. An initial `WINDOW_NOT_FOUND` is retried after Desktop confirms the owner;
+IPC requires a live panel at that point. The queue and rollout are rechecked
+after panel startup, followed by a second helper/identity check after SQLite
+waits and a final queue/rollout check before the durable dispatch marker.
+Failed status replay into a late banner blocks dispatch. Window access/geometry
+failure, panel timeout, process identity, missing helper, payload/lease failure,
+and malformed helper output block dispatch and retain the original checkpoint.
+Automatic switching stays disabled until a
+quota-interrupted cold task completes end-to-end recovery in the installed app.
 
 On this host the Command Line Tools Swift compiler and default macOS 27.0 SDK
 have mismatched build versions. Until the tools are repaired, use

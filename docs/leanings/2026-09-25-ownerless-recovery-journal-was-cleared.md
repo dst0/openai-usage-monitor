@@ -1,0 +1,22 @@
+# 2026-09-25 — Ownerless recovery journal was cleared before a turn could start
+
+- **Status:** Partial
+- **Task/context:** Investigating cold task recovery after PR #6 merged into the Codex Switcher and Monitor.
+- **Unexpected observation or failure:** A cold task whose Desktop deep link did not mount a window was marked as dispatched and removed from the recovery journal, although no owner-routed turn request had been sent.
+- **Evidence:** `target_dispatch.rs` set `dispatched` before `ensure_thread_owner`; `recovery_service.rs` removed every failed target. The installed ChatGPT build accepted a cold-task URL while `thread-owner-discovery` kept returning `no-client-found`. Opening a task through ChatGPT's own navigation did create an owner.
+- **Approaches tried:**
+  - **Attempt:** Reissue external deep links and try the documented `hostId` query.
+    - **Outcome:** Did not work.
+    - **Why:** Desktop still reported no owner for an unmounted task.
+  - **Attempt:** Use the app's supported read-only task API before the link.
+    - **Outcome:** Did not work.
+    - **Why:** Reading a task did not mount it in a Desktop window.
+  - **Attempt:** Inspect native ChatGPT UI through computer control.
+    - **Outcome:** Unavailable.
+    - **Why:** Computer control denied access to the ChatGPT application.
+- **Root cause:** The monitor discarded a pre-dispatch ownerless target. The current Desktop deep-link handler does not reliably mount cold tasks; its internal reason remains unconfirmed.
+- **Resolution:** Resolve the owner before marking an IPC request dispatched. Retain only ownerless pre-dispatch targets with their original checkpoint and verified account identity. A daemon worker probes for an actual owner, rechecks queue and rollout state, and uses the normal verified recovery path. It durably clears retry intent before possible IPC dispatch, keeps manifest reads non-mutating, preserves queued work after a completed turn, and serializes manual reset with recovery. This does not provide unattended cold-task mounting.
+- **Verification:** Regression tests cover journal compatibility, retention only before dispatch, crash-safe removal, account mismatch, captured restart eligibility, owner-gated retry selection, queued work after a completed turn, post-owner queue/turn changes, and reset/recovery lock exclusion. End-to-end recovery of a real cold task remains unverified until the native Desktop mounts one under this build.
+- **Prevention/follow-up:** Keep auto-switch disabled until a supported unattended mount route exists and its installed-app flow is verified. Never interpret an accepted deep link as owner proof.
+- **Reusable learning:** A recoverable failure must be distinguished from an unknown IPC outcome before deleting or retaining a restart checkpoint.
+- **References:** `codex-switcher/src/recovery/target_dispatch.rs`, `codex-switcher/src/recovery/manifest_store.rs`, `codex-switcher/src/recovery/deferred_recovery_service.rs`, `README.md`, `CODEX.md`, `2026-09-24-cold-desktop-deep-link-did-not-mount-task.md`.

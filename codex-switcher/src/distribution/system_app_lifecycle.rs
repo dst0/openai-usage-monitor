@@ -34,7 +34,7 @@ fn classify_capture_failure(report: &RestoreReport) -> Result<WindowCaptureMode,
         .unwrap_or_else(|| "Codex window capture did not complete successfully".into()))
 }
 
-fn optional_banner_capture_failure(error: &str) -> bool {
+pub(crate) fn optional_banner_capture_failure(error: &str) -> bool {
     matches!(
         error,
         "WINDOW_NOT_FOUND" | "WINDOW_ACCESS_FAILED" | "WINDOW_GEOMETRY_FAILED"
@@ -202,14 +202,17 @@ impl AppLifecycle for SystemAppLifecycle {
     }
 
     fn recover_threads(&self, targets: &[String]) -> Result<(), String> {
-        let banner = self
+        let mut banner = self
             .recovery_banner
             .lock()
             .map_err(|_| "Recovery banner state lock is poisoned".to_string())?
             .take()
             .ok_or_else(|| "Recovery has no active banner".to_string())?;
-        let rec_res =
-            recovery::recover_threads_with_banner(targets, RecoveryMode::CapturedRestart, &banner);
+        let rec_res = recovery::recover_threads_with_banner(
+            targets,
+            RecoveryMode::CapturedRestart,
+            &mut banner,
+        );
         drop(banner);
         rec_res
     }

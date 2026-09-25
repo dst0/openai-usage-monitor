@@ -1,12 +1,16 @@
 use super::{
     automation_guard::operation_id_for_banner,
     desktop_ipc::DesktopIpc,
-    manifest_store::{load_manifest, prune_ineligible_targets, write_manifest},
+    manifest_store::{
+        current_account_binding, finalize_target, load_manifest, prune_ineligible_targets,
+        validate_target_account_binding, write_manifest,
+    },
     pending_target::PendingTarget,
     recovery_banner::RecoveryBanner,
     recovery_mode::RecoveryMode,
     recovery_target::{
-        prepare_target, record_target_state, RECOVERY_DISPATCH_TIMEOUT, RECOVERY_EXECUTION_TIMEOUT,
+        prepare_target, record_target_state, RecoveryTarget, RECOVERY_DISPATCH_TIMEOUT,
+        RECOVERY_EXECUTION_TIMEOUT,
     },
     target_dispatch::dispatch_if_needed,
     thread_identity::valid_id,
@@ -21,21 +25,9 @@ const PRE_DISPATCH_ACTIVITY_GRACE: Duration = Duration::from_secs(3);
 
 pub fn recover_threads(ids: &[String], mode: RecoveryMode) -> Result<(), String> {
     let operation_id = operation_id_for_banner("thread_recovery");
-    let banner = RecoveryBanner::start(&operation_id, ids, "thread_recovery")?;
-    recover_threads_with_banner(ids, mode, &banner)
-}
-
-pub(super) fn update_banner_status(banner: &RecoveryBanner, id: &str, status: BannerSessionStatus) {
-    if let Err(error) = banner.update_status(id, status) {
-        crate::logger::log(
-            "WARN",
-            "RECOVERY",
-            &format!(
-                "RECOVERY_BANNER_STATUS_FAILED status={status:?} reason={}",
-                sanitize_recovery_error(&error)
-            ),
-        );
-    }
+    let mut banner =
+        RecoveryBanner::start_for_running_desktop(&operation_id, ids, "thread_recovery")?;
+    recover_threads_with_banner(ids, mode, &mut banner)
 }
 
 pub(super) fn sanitize_recovery_error(error: &str) -> String {
@@ -49,10 +41,12 @@ pub(super) fn sanitize_recovery_error(error: &str) -> String {
 pub(crate) fn recover_threads_with_banner(
     ids: &[String],
     mode: RecoveryMode,
-    banner: &RecoveryBanner,
+    banner: &mut RecoveryBanner,
 ) -> Result<(), String> {
     let home = storage::codex_home();
     let mut pending_manifest = load_manifest()?;
+    let binding = current_account_binding();
+    validate_target_account_binding(&pending_manifest, ids, binding.as_deref())?;
     for id in ids {
         if !valid_id(id) {
             return Err("Invalid thread ID".into());
@@ -66,13 +60,16 @@ pub(crate) fn recover_threads_with_banner(
             // A recovery-only request is a new operation and must never reuse a
             // stale offset left by an earlier failed restart. A captured restart
             // intentionally retains its pre-shutdown checkpoint.
-            if !mode.captured() {
+            if !mode.preserves_checkpoint() && !target.awaiting_owner {
                 target.offset = offset;
             }
         } else {
             pending_manifest.push(PendingTarget {
                 id: id.clone(),
                 offset,
+                awaiting_owner: false,
+                captured_restart: mode == RecoveryMode::CapturedRestart,
+                owner_account_id: None,
             });
         }
     }
@@ -86,17 +83,17 @@ pub(crate) fn recover_threads_with_banner(
     let mut completed_without_action = Vec::new();
     let mut preparation_failures = Vec::new();
     for id in ids {
-        update_banner_status(banner, id, BannerSessionStatus::InProgress);
+        banner.record_status(id, BannerSessionStatus::InProgress);
         let previous = previous_pending.iter().find(|target| target.id == *id);
         match prepare_target(&home, id, previous.and_then(|target| target.offset)) {
             Ok(Some(target)) => targets.push(target),
             Ok(None) => {
-                update_banner_status(banner, id, BannerSessionStatus::Skipped);
+                banner.record_status(id, BannerSessionStatus::Skipped);
                 completed_without_action.push(id.clone());
             }
             Err(error) => {
                 crate::runtime_error!("RECOVERY_FAILED thread={id} reason={error}");
-                update_banner_status(banner, id, BannerSessionStatus::Failed);
+                banner.record_status(id, BannerSessionStatus::Failed);
                 preparation_failures.push(id.clone());
             }
         }
@@ -110,7 +107,7 @@ pub(crate) fn recover_threads_with_banner(
         for target in &mut targets {
             if !target.completed && target.failure.is_none() {
                 if let Err(error) = record_target_state(target) {
-                    target.failure = Some(error);
+                    mark_pre_dispatch_channel_failure(target, &error);
                 }
             }
         }
@@ -131,8 +128,16 @@ pub(crate) fn recover_threads_with_banner(
             Ok(mut desktop) => {
                 crate::runtime_print!("RECOVERY_CHANNEL_READY transport=desktop_ipc");
                 for target in &mut targets {
-                    if let Err(error) = dispatch_if_needed(&home, &mut desktop, target, mode) {
-                        target.failure = Some(error);
+                    let target_id = target.id.clone();
+                    let before_send = || {
+                        banner.ensure_visible_after_owner(ids, mode)?;
+                        banner.record_status(&target_id, BannerSessionStatus::InProgress);
+                        Ok(())
+                    };
+                    if let Err(error) =
+                        dispatch_if_needed(&home, &mut desktop, target, mode, before_send)
+                    {
+                        mark_dispatch_failure(target, &error);
                     }
                 }
                 drop(desktop);
@@ -142,7 +147,9 @@ pub(crate) fn recover_threads_with_banner(
                     if record_target_state(target).is_err()
                         || (!target.completed && !target.observer.evidence.started)
                     {
-                        target.failure = Some(error.clone());
+                        // No IPC request was sent. Retain the original
+                        // checkpoint for a later owner-verified attempt.
+                        mark_pre_dispatch_channel_failure(target, &error);
                     }
                 }
             }
@@ -159,7 +166,9 @@ pub(crate) fn recover_threads_with_banner(
             .find(|target| target.mounted_by_recovery)
             .map(|target| target.id.as_str());
         if last_mounted.is_some_and(|mounted| mounted != primary) {
-            switcher::open_thread_in_codex(primary);
+            if let Err(error) = switcher::open_thread_in_codex(primary) {
+                crate::runtime_error!("RECOVERY_PRIMARY_NAVIGATION_FAILED reason={error}");
+            }
         }
     }
 
@@ -207,22 +216,39 @@ pub(crate) fn recover_threads_with_banner(
         }
         if let Some(error) = &target.failure {
             crate::runtime_error!("RECOVERY_FAILED thread={} reason={error}", target.id);
-            update_banner_status(banner, &target.id, BannerSessionStatus::Failed);
+            banner.record_status(&target.id, BannerSessionStatus::Failed);
             failures.push(target.id.clone());
         } else if target.completed {
-            update_banner_status(banner, &target.id, BannerSessionStatus::Completed);
+            banner.record_status(&target.id, BannerSessionStatus::Completed);
         }
-        // Whether recovery completed cleanly or failed, this restart run has handled the target.
-        // Never retain handled targets in the manifest to avoid resurrecting stale zombie tasks.
-        pending_manifest.retain(|item| item.id != target.id);
+        finalize_target(
+            &mut pending_manifest,
+            &target.id,
+            target.owner_unavailable,
+            target.dispatched,
+            binding.as_deref(),
+            target.account_mismatch,
+        );
     }
     for id in &preparation_failures {
-        pending_manifest.retain(|item| item.id != *id);
+        finalize_target(
+            &mut pending_manifest,
+            id,
+            true,
+            false,
+            binding.as_deref(),
+            false,
+        );
     }
     for id in completed_without_action {
         pending_manifest.retain(|item| item.id != id);
     }
-    prune_ineligible_targets(&home, &mut pending_manifest);
+    if let Err(error) = prune_ineligible_targets(&home, &mut pending_manifest) {
+        // Keep pre-dispatch ownerless intent on disk if queue/rollout state is
+        // temporarily unreadable. The deferred worker will revalidate later.
+        write_manifest(&pending_manifest)?;
+        return Err(error);
+    }
     write_manifest(&pending_manifest)?;
 
     failures.sort();
@@ -250,4 +276,18 @@ pub(crate) fn recover_threads_with_banner(
             failures.join(", ")
         ))
     }
+}
+
+pub(super) fn mark_pre_dispatch_channel_failure(target: &mut RecoveryTarget, error: &str) {
+    target.owner_unavailable = true;
+    target.failure = Some(error.to_owned());
+}
+
+pub(super) fn mark_dispatch_failure(target: &mut RecoveryTarget, error: &str) {
+    if !target.dispatched && !target.account_mismatch {
+        // SQLite/queue checks and owner resolution are all before the IPC
+        // send. Keep the checkpoint, but never retry an uncertain send.
+        target.owner_unavailable = true;
+    }
+    target.failure = Some(error.to_owned());
 }

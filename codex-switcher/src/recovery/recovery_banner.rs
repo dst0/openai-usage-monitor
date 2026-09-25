@@ -21,6 +21,7 @@ pub(crate) struct RecoveryBanner {
     visible_since: Option<Instant>,
     service: Option<RecoveryBannerService>,
     capture: Option<WindowCapture>,
+    pub(super) pending_statuses: Vec<(String, BannerSessionStatus)>,
 }
 
 impl RecoveryBanner {
@@ -31,11 +32,33 @@ impl RecoveryBanner {
             visible_since: None,
             service: None,
             capture: None,
+            pending_statuses: Vec::new(),
         }
     }
 
     pub(crate) fn expected_process(&self) -> &WindowProcessIdentity {
         &self.expected_process
+    }
+
+    pub(crate) fn has_visible_panel(&self) -> bool {
+        self.service.is_some() && self.visible_since.is_some()
+    }
+
+    pub(crate) fn verify_panel_alive(&mut self) -> Result<(), String> {
+        let child = self
+            .child
+            .as_mut()
+            .ok_or("Recovery banner helper is absent")?;
+        super::running_desktop_banner::verify_helper_running(child)
+    }
+
+    pub(crate) fn panel_process(&self) -> Result<WindowProcessIdentity, String> {
+        let service = self
+            .service
+            .as_ref()
+            .ok_or("Recovery banner has no visible panel")?;
+        let process = service.read_payload()?.expected_process;
+        WindowProcessIdentity::new(process.pid, process.birth_identity)
     }
 
     pub(crate) fn start(operation_id: &str, ids: &[String], reason: &str) -> Result<Self, String> {
@@ -91,6 +114,7 @@ impl RecoveryBanner {
                 visible_since: None,
                 service: None,
                 capture: restore_bounds.then_some(capture),
+                pending_statuses: Vec::new(),
             });
         }
         let expected =
@@ -154,6 +178,7 @@ impl RecoveryBanner {
                     visible_since: Some(Instant::now()),
                     service: Some(service),
                     capture: restore_bounds.then_some(capture),
+                    pending_statuses: Vec::new(),
                 });
             }
             if child.try_wait().ok().flatten().is_some() {
@@ -261,3 +286,7 @@ pub(super) fn banner_helper_candidates() -> Vec<PathBuf> {
         .filter(|path| path.is_file())
         .collect()
 }
+
+#[cfg(test)]
+#[path = "recovery_banner.test.rs"]
+mod tests;
