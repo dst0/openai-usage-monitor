@@ -122,6 +122,7 @@ These rules are the portable minimum for Destination Works repositories. Reposit
 - Use a validation ladder: fast targeted feedback while iterating, the repository pre-commit gate before commit, and the full pre-push/release-relevant gate before push. If a named gate does not exist, run the closest repository-native equivalent and document the exact evidence.
 - A hook is developer feedback, not the authoritative merge gate. CI must rerun required checks from a clean checkout.
 - Never weaken, skip, or replace a failing check merely to make it green. Read the failure, fix the cause, rerun the narrowest relevant test, then rerun the containing gate.
+- After rebasing a PR onto a newly merged main branch, rerun Clippy on the combined tree; compiler-version-sensitive lints can appear in the new base even when the PR's own patch is unchanged.
 - Validate generated artifacts against their source and canonical generator. Do not hand-edit generated output or accept drift.
 - Tests must cover meaningful behavior, negative/error paths, and important boundaries. Coverage is a regression signal, not a reason to add vacuous line-fillers or bypass comments.
 - For non-trivial or high-risk changes, obtain an independent adversarial review of assumptions, tests, failure handling, and rollback before publication.

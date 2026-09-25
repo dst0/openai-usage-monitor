@@ -131,7 +131,7 @@ impl DeferredRecoveryService {
             } else {
                 RecoveryMode::DeferredOwned
             };
-            if let Err(error) = recover_threads(&[id.clone()], mode) {
+            if let Err(error) = recover_threads(std::slice::from_ref(&id), mode) {
                 crate::logger::log(
                     "WARN",
                     "RECOVERY",
