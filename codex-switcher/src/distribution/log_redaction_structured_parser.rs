@@ -162,17 +162,31 @@ fn looks_like_uuid(value: &str) -> bool {
 fn quoted_suffix_is_structural(input: &str, mut cursor: usize) -> bool {
     while let Some(character) = input[cursor..].chars().next() {
         if character.is_whitespace() {
-            return true;
+            cursor += character.len_utf8();
+            continue;
         }
         if character == ',' {
             let next = cursor + character.len_utf8();
             let next = next + input[next..].len() - input[next..].trim_start().len();
-            return parse_sensitive_key(input, next).is_some();
+            let Some((_, after_key, _)) = parse_sensitive_key(input, next) else {
+                return false;
+            };
+            // A key name alone is not a new structured field. If its delimiter
+            // is absent, the text after the quote belongs to the secret tail.
+            return matches!(
+                input
+                    .get(after_key..)
+                    .and_then(|tail| tail.trim_start().chars().next()),
+                Some(':' | '=')
+            );
         }
-        if !matches!(character, '}' | ']' | ')' | '"' | '\'') {
-            return false;
+        if matches!(character, '}' | ']' | ')' | '"' | '\'') {
+            // A forged closer must not release arbitrary text. Keep checking
+            // the complete suffix; only a complete structural tail is safe.
+            cursor += character.len_utf8();
+            continue;
         }
-        cursor += character.len_utf8();
+        return false;
     }
     true
 }

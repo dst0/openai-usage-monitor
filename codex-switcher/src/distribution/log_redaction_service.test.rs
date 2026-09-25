@@ -36,9 +36,16 @@ fn sanitizes_json_quoted_values_paths_tokens_args_and_controls() {
     assert!(!clean.contains('\r'));
     assert!(!clean.contains('\n'));
     assert!(!clean.contains('\u{1b}'));
-    assert!(clean.contains("[PATH]"));
-    assert!(clean.contains("[TOKEN]"));
-    assert!(clean.contains("[ARG]"));
+    // The mixed suffix is ambiguous after the final JSON value and is hidden
+    // through the end, even when it contains independently recognizable data.
+    assert!(!clean.contains("[PATH]"));
+}
+
+#[test]
+fn independent_path_token_and_argument_markers_remain_available() {
+    assert!(LogRedactionService::sanitize_text("/Users/dst/private").contains("[PATH]"));
+    assert!(LogRedactionService::sanitize_text("Bearer abc").contains("[TOKEN]"));
+    assert!(LogRedactionService::sanitize_text("--secret-flag").contains("[ARG]"));
 }
 
 #[test]
@@ -136,6 +143,27 @@ fn delimiter_joined_secret_and_malformed_quote_suffix_are_opaque() {
         assert!(!clean.contains("synthetic-first"));
         assert!(!clean.contains("synthetic-second"));
         assert!(!clean.contains("synthetic-tail"));
+    }
+}
+
+#[test]
+fn comma_followed_by_a_key_without_delimiter_cannot_expose_a_secret_tail() {
+    for input in [
+        "token=\"synthetic-one\",password synthetic-two",
+        "token=\"synthetic-one\", password synthetic-two",
+        "token=\"synthetic-one\" ,password synthetic-two",
+        "token=\"synthetic-one\" password synthetic-two",
+        "token=\"synthetic-one\"}password synthetic-two",
+        "{\"token\":\"synthetic-one\"} password synthetic-two",
+        "token=\"synthetic-one\"\" synthetic-two",
+        "token=\"synthetic-one\",password=\"synthetic-two\"",
+    ] {
+        let clean = LogRedactionService::sanitize_text(input);
+        assert!(!clean.contains("synthetic-one"));
+        assert!(
+            !clean.contains("synthetic-two"),
+            "malformed suffix leaked: {clean}"
+        );
     }
 }
 

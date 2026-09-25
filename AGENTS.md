@@ -141,6 +141,7 @@ These rules are the portable minimum for Destination Works repositories. Reposit
 ### Security and supply chain
 
 - Never store or expose credentials, tokens, private keys, customer data, sensitive payloads, device codes, or unsanitized production evidence in source, logs, fixtures, PRs, or learning records.
+- Treat whitespace, commas, and closing punctuation after a quoted sensitive value as structural only after validating the complete suffix; a forged closer or key name alone leaves the suffix sensitive.
 - Enforce POSIX `0600` permissions on all credential and token files (`auth.json`, `accounts.json`).
 - Ensure atomic file operations (`fs2` flock) when accessing credentials.
 - Zero credential leakage: automated security scans reject any potential API key patterns or secrets.
