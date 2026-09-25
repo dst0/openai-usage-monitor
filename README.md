@@ -444,6 +444,8 @@ request for a cold task without mounting it in a Desktop window. The switcher
 then reports `RECOVERY_INCOMPLETE` with `no-client-found`; it does not send a
 turn to an unverified owner. Opening that task through ChatGPT's own task
 navigation and then running `cxi resume <id>` can recover an interrupted turn.
+The same deep-link failure was reproduced on an unmounted task without changing
+accounts, so retrying the URL is not a reliable mounting contract.
 Check each task's actual state first: a task that completed independently must
 not receive another resume request.
 

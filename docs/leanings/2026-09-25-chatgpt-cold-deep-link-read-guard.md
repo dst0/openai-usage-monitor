@@ -17,3 +17,5 @@
 - **Prevention/follow-up:** Find and verify a supported Desktop-owned navigation method callable by the daemon, or prove that mounting targets before the restart survives relaunch. Require owner discovery before sending any turn.
 - **Reusable learning:** A successful OS deep-link launch is not evidence that a task is mounted; always verify the Desktop owner before dispatch.
 - **References:** `codex-switcher/src/recovery/desktop_ipc.rs`, `scripts/probe-desktop-ipc.js`, `2026-09-24-cold-desktop-deep-link-did-not-mount-task.md`.
+
+**2026-09-25 follow-up:** A completed, unmounted local task returned `no-client-found` before account rotation. macOS accepted its deep link, but owner discovery still returned `no-client-found`. ChatGPT's built-in task navigation immediately mounted the same task, and the same read-only IPC probe then confirmed an owner. The issue therefore also reproduces without a credential transition; automatic recovery still needs a daemon-accessible Desktop navigation route.
