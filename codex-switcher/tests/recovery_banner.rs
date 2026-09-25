@@ -3,7 +3,8 @@ mod recovery_banner;
 
 use recovery_banner::{
     BannerSessionStatus, ProcessIdentity, RecoveryBannerOwner, RecoveryBannerService,
-    RecoverySession, SavedWindow, WindowRect, BANNER_EXPLANATION, BANNER_TITLE,
+    RecoverySession, SavedWindow, WindowRect, BANNER_EXPLANATION,
+    BANNER_EXPLANATION_WITHOUT_RESTORE, BANNER_TITLE,
 };
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -87,6 +88,10 @@ fn row_status_updates_are_dynamic_and_unknown_targets_fail_closed() {
     service
         .update_status("threadone", BannerSessionStatus::InProgress)
         .unwrap();
+    service.skip_window_restore().unwrap();
+    let payload = service.read_payload().unwrap();
+    assert_eq!(payload.explanation, BANNER_EXPLANATION_WITHOUT_RESTORE);
+    assert_eq!(payload.saved_window, geometry());
     assert_eq!(
         service.read_payload().unwrap().sessions[0].status,
         BannerSessionStatus::InProgress

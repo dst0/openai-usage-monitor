@@ -12,7 +12,8 @@ pub use banner_session_status::BannerSessionStatus;
 pub use process_identity::ProcessIdentity;
 pub use recovery_banner_owner::RecoveryBannerOwner;
 pub use recovery_banner_payload::{
-    RecoveryBannerPayload, BANNER_EXPLANATION, BANNER_TITLE, MINIMUM_VISIBLE_MS,
+    RecoveryBannerPayload, BANNER_EXPLANATION, BANNER_EXPLANATION_WITHOUT_RESTORE, BANNER_TITLE,
+    MINIMUM_VISIBLE_MS,
 };
 pub use recovery_banner_service::RecoveryBannerService;
 pub use recovery_session::RecoverySession;

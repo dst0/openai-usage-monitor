@@ -1,0 +1,22 @@
+# 2026-09-25 — Recovery banner disappeared after Accessibility bypass
+
+- **Status:** Partial
+- **Task/context:** Restore the on-window recovery banner while keeping automatic account rotation functional when a user `launchd` job cannot read ChatGPT's Accessibility window list.
+- **Unexpected observation or failure:** `preserve_window_bounds_on_restart=false` made credential rotation work but constructed a `RecoveryBanner` with no panel. A separate geometry probe showed that direct WindowServer coordinates also positioned the panel partly outside the ChatGPT window on a secondary display.
+- **Evidence:** The disabled-preservation branch called `RecoveryBanner::without_window`. The installed Accessibility helper failed from `launchd`, while a one-shot `launchd` job using `CGWindowListCopyWindowInfo` read the exact ChatGPT PID's layer-zero rectangle. A temporary layer-25 panel launched from `launchd` was visible in WindowServer; before coordinate conversion its top was 30 px above ChatGPT, and after conversion it was 12 px inside the window.
+- **Approaches tried:**
+  - **Attempt:** Restore the Accessibility capture requirement.
+    - **Outcome:** Did not work.
+    - **Why:** It would reinstate the previously reproduced pre-commit switch failure.
+  - **Attempt:** Use read-only WindowServer geometry for banner placement while retaining the exact PID/birth checks and leaving geometry restore disabled.
+    - **Outcome:** Worked in the isolated launchd probe; full installed distribution verification remains pending.
+    - **Why:** WindowServer geometry was available to the daemon's execution context without Accessibility.
+  - **Attempt:** Treat every banner capture error as a cosmetic failure.
+    - **Outcome:** Rejected in adversarial review before release.
+    - **Why:** A changed process identity or malformed helper response could otherwise allow credential rotation after the safety precondition failed.
+- **Root cause:** The prior bypass removed banner construction along with Accessibility-dependent geometry restoration. The panel also used top-down WindowServer bounds as bottom-up AppKit coordinates and chose screens using incompatible coordinate spaces.
+- **Resolution:** Capture only banner placement through WindowServer, create the private banner payload for eligible targets, rebind it to the relaunched exact PID, convert coordinates on the display with greatest visible overlap, and clamp the panel inside that display. Explicit WindowServer visibility/geometry failures remain non-blocking; process identity, helper protocol, and unknown failures block rotation.
+- **Verification:** A geometry regression failed before the conversion and passes after it. Focused Rust tests cover exact helper process identity, changed identity rejection, banner-specific text, optional-error classification, and non-blocking rebind failure. The one-shot launchd probe confirmed WindowServer capture on display 2 and an on-screen panel inside ChatGPT. Full installed distribution verification remains pending.
+- **Prevention/follow-up:** Exercise native UI behavior in a real user launchd context. Keep banner placement separate from window restoration, and verify WindowServer-to-AppKit conversions on secondary and partially offscreen displays.
+- **Reusable learning:** Disabling an inaccessible restoration dependency must not accidentally remove independent status UI; convert display coordinate systems explicitly.
+- **References:** `Sources/CodexRecoveryBanner.swift`, `scripts/codex-window-restore.swift`, `codex-switcher/src/distribution/system_app_lifecycle.rs`, `tests/CodexRecoveryBannerGeometryTests.swift`, `2026-09-24-launchd-accessibility-blocked-auto-switch.md`.

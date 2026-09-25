@@ -99,23 +99,21 @@ func mainWindow(_ pid: pid_t) -> (element: AXUIElement, frame: CGRect)? {
 }
 
 func screenRecord(for frame: CGRect) -> ScreenRecord? {
-  let screens = NSScreen.screens
-  let center = CGPoint(x: frame.midX, y: frame.midY)
-  let screen = screens.first(where: { $0.frame.contains(center) })
-    ?? screens.min(by: { distance($0.frame, center) < distance($1.frame, center) })
-  guard let screen,
-    let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
-  let r = screen.frame
+  var best: (id: UInt32, screen: NSScreen, area: CGFloat)?
+  for screen in NSScreen.screens {
+    guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+    else { continue }
+    let visible = frame.intersection(CGDisplayBounds(number.uint32Value))
+    guard !visible.isNull, visible.width > 0, visible.height > 0 else { continue }
+    let area = visible.width * visible.height
+    if best == nil || area > best!.area { best = (number.uint32Value, screen, area) }
+  }
+  guard let best else { return nil }
+  let r = best.screen.frame
   return ScreenRecord(
-    display_id: number.uint32Value,
+    display_id: best.id,
     frame: Rect(x: r.origin.x, y: r.origin.y, width: r.width, height: r.height)
   )
-}
-
-func distance(_ rect: CGRect, _ point: CGPoint) -> CGFloat {
-  let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
-  let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
-  return dx * dx + dy * dy
 }
 
 func capture(_ process: (pid: pid_t, birth: String)) -> CaptureRecord {
@@ -125,6 +123,37 @@ func capture(_ process: (pid: pid_t, birth: String)) -> CaptureRecord {
   return CaptureRecord(
     process: ProcessRecord(pid: process.pid, birth_id: process.birth),
     frame: Rect(x: frame.origin.x, y: frame.origin.y, width: frame.width, height: frame.height),
+    screen: screen
+  )
+}
+
+/// WindowServer geometry is readable by the user LaunchAgent even when its
+/// Accessibility window query is denied. This path is only for banner
+/// placement; it must never be used to authorize a geometry restore.
+func captureBannerWindow(_ process: (pid: pid_t, birth: String)) -> CaptureRecord {
+  guard let windows = CGWindowListCopyWindowInfo(
+    [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+  ) as? [[String: Any]] else { fail("WINDOW_ACCESS_FAILED") }
+  var best: (frame: CGRect, area: CGFloat, named: Bool)?
+  for info in windows {
+    guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == process.pid,
+      (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+      (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0 > 0,
+      let bounds = info[kCGWindowBounds as String],
+      let frame = CGRect(dictionaryRepresentation: bounds as! CFDictionary),
+      frame.width >= 300, frame.height >= 250 else { continue }
+    let named = (info[kCGWindowName as String] as? String) == "ChatGPT"
+    let area = frame.width * frame.height
+    if best == nil || (named && !best!.named) || (named == best!.named && area > best!.area) {
+      best = (frame, area, named)
+    }
+  }
+  guard processBirth(process.pid) == process.birth else { fail("PROCESS_IDENTITY_REJECTED") }
+  guard let frame = best?.frame else { fail("WINDOW_NOT_FOUND") }
+  guard let screen = screenRecord(for: frame) else { fail("WINDOW_GEOMETRY_FAILED") }
+  return CaptureRecord(
+    process: ProcessRecord(pid: process.pid, birth_id: process.birth),
+    frame: Rect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height),
     screen: screen
   )
 }
@@ -168,6 +197,10 @@ case "capture-window", "read-window":
   let process = expectedProcess()
   let record = capture(process)
   let data = try! JSONEncoder().encode(record)
+  FileHandle.standardOutput.write(data)
+case "capture-banner-window":
+  let process = expectedProcess()
+  let data = try! JSONEncoder().encode(captureBannerWindow(process))
   FileHandle.standardOutput.write(data)
 case "set-position":
   let (process, window) = verifyAndWindow()

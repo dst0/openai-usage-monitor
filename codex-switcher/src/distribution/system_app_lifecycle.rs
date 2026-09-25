@@ -34,6 +34,13 @@ fn classify_capture_failure(report: &RestoreReport) -> Result<WindowCaptureMode,
         .unwrap_or_else(|| "Codex window capture did not complete successfully".into()))
 }
 
+fn optional_banner_capture_failure(error: &str) -> bool {
+    matches!(
+        error,
+        "WINDOW_NOT_FOUND" | "WINDOW_ACCESS_FAILED" | "WINDOW_GEOMETRY_FAILED"
+    )
+}
+
 impl AppLifecycle for SystemAppLifecycle {
     fn is_app_running(&self) -> bool {
         switcher::is_codex_app_running()
@@ -76,6 +83,43 @@ impl AppLifecycle for SystemAppLifecycle {
         let mut backend = SystemWindowRestoreBackend::new()?;
         if !preserve_window_bounds {
             let process = WindowProcessValidationService::inspect(&mut backend, pids[0])?;
+            let banner = if targets.is_empty() {
+                RecoveryBanner::without_window(process)
+            } else {
+                match backend.capture_banner_window(process.clone()) {
+                    Ok(placement) => {
+                        if placement.process != process {
+                            return Err("Banner window process identity changed".into());
+                        }
+                        WindowProcessValidationService::confirm(&mut backend, &process)?;
+                        RecoveryBanner::start_without_restore(
+                            operation_id,
+                            targets,
+                            reason,
+                            placement,
+                        )
+                        .unwrap_or_else(|_| {
+                            crate::logger::log(
+                                "WARN",
+                                "RECOVERY",
+                                "RECOVERY_BANNER_UNAVAILABLE: native panel did not become visible",
+                            );
+                            RecoveryBanner::without_window(process)
+                        })
+                    }
+                    Err(error) if optional_banner_capture_failure(&error) => {
+                        if error != "WINDOW_NOT_FOUND" {
+                            crate::logger::log(
+                                "WARN",
+                                "RECOVERY",
+                                "RECOVERY_BANNER_UNAVAILABLE: WindowServer capture failed",
+                            );
+                        }
+                        RecoveryBanner::without_window(process)
+                    }
+                    Err(error) => return Err(format!("Banner capture failed: {error}")),
+                }
+            };
             let mut current = self
                 .recovery_banner
                 .lock()
@@ -83,7 +127,7 @@ impl AppLifecycle for SystemAppLifecycle {
             if current.is_some() {
                 return Err("A previous recovery banner is still active".into());
             }
-            *current = Some(RecoveryBanner::without_window(process));
+            *current = Some(banner);
             return Ok(WindowCaptureMode::Skipped);
         }
         let result = WindowRestoreService::new(Default::default())?.capture(
@@ -135,6 +179,17 @@ impl AppLifecycle for SystemAppLifecycle {
             .as_ref()
             .ok_or_else(|| "Window restore has no pre-shutdown capture".to_string())?;
         banner.restore_after_relaunch(pid, operation_id, reason)
+    }
+
+    fn rebind_banner(&self, pid: u32) -> Result<(), String> {
+        let current = self
+            .recovery_banner
+            .lock()
+            .map_err(|_| "Recovery banner state lock is poisoned".to_string())?;
+        current
+            .as_ref()
+            .ok_or_else(|| "Recovery has no active banner".to_string())?
+            .update_process(pid)
     }
 
     fn abort_recovery(&self) {

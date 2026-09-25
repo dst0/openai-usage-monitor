@@ -36,12 +36,21 @@ restore and the visual banner while retaining the singleton process, IPC, and
 turn-progress checks. A launchd daemon may be denied Accessibility access even
 when the same helper succeeds from Terminal. If that happens, set
 `cxi config --preserve-window-bounds false` to explicitly disable geometry
-preservation. Distribution then validates the exact Desktop process without
-reading its window, and still performs IPC recovery and singleton-process
-verification. Window access, geometry, and process-identity failures remain
+preservation. Distribution validates the exact Desktop process without an
+Accessibility window read, uses read-only WindowServer geometry to place the
+banner when a visible window and recovery target exist, and still performs IPC
+recovery and singleton-process verification. Explicit WindowServer visibility/geometry
+failures and panel visibility failures are logged without blocking the account
+switch. Helper protocol and unknown capture failures block the switch. Window access, geometry, and process-identity failures remain
 blocking while preservation is enabled; process-identity failures remain
 blocking in either mode. With preservation disabled, the prior window position
 and size are not restored or verified by the Monitor.
+
+On this host the Command Line Tools Swift compiler and default macOS 27.0 SDK
+have mismatched build versions. Until the tools are repaired, use
+`SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` and a writable
+`CLANG_MODULE_CACHE_PATH` for Swift tests and installation; verify the exact
+built app signature and running process after installation.
 
 ## Runtime Paths & Files
 - `~/.codex/auth.json`: Active authentication tokens used by Codex CLI and `ChatGPT.app` (0600 permissions).
