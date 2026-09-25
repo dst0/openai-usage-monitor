@@ -19,6 +19,7 @@ mod recovery_banner;
 mod recovery_mode;
 mod recovery_service;
 mod recovery_target;
+mod running_desktop_banner;
 mod stored_manifest;
 mod target_dispatch;
 mod thread_identity;

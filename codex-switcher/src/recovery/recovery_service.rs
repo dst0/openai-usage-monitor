@@ -25,7 +25,7 @@ const PRE_DISPATCH_ACTIVITY_GRACE: Duration = Duration::from_secs(3);
 
 pub fn recover_threads(ids: &[String], mode: RecoveryMode) -> Result<(), String> {
     let operation_id = operation_id_for_banner("thread_recovery");
-    let banner = RecoveryBanner::start(&operation_id, ids, "thread_recovery")?;
+    let banner = RecoveryBanner::start_for_running_desktop(&operation_id, ids, "thread_recovery")?;
     recover_threads_with_banner(ids, mode, &banner)
 }
 

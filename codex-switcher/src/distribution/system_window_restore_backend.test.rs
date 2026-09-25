@@ -101,3 +101,60 @@ fn banner_capture_uses_non_ax_command_and_rejects_changed_process_identity() {
     }
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn running_desktop_recovery_uses_windowserver_and_continues_without_visible_window() {
+    let directory = std::env::temp_dir().join(format!(
+        "codex-running-banner-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let helper = directory.join("window-helper");
+    let script = "#!/bin/sh\ncase \"$1\" in\n  inspect-process) printf '%s' '{\"pid\":4242,\"birth_id\":\"1726789012:000007\"}' ;;\n  capture-banner-window) [ \"$3\" = 4242 ] && [ \"$5\" = '1726789012:000007' ] || exit 2; printf 'WINDOW_NOT_FOUND\\n' >&2; exit 1 ;;\n  *) exit 3 ;;\nesac\n";
+    std::fs::write(&helper, script).unwrap();
+    std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut backend = SystemWindowRestoreBackend {
+        helper: helper.clone(),
+    };
+    let banner = crate::recovery::RecoveryBanner::start_with_backend(
+        "test-running-desktop",
+        &["00000000-0000-0000-0000-000000000001".to_string()],
+        "thread_recovery",
+        4242,
+        &mut backend,
+    )
+    .expect("an absent window must not stop owner-routed task recovery");
+    assert_eq!(banner.expected_process().pid, 4242);
+    assert_eq!(banner.expected_process().birth_id, "1726789012:000007");
+    drop(banner);
+    let invalid_capture = "#!/bin/sh\ncase \"$1\" in\n  inspect-process) printf '%s' '{\"pid\":4242,\"birth_id\":\"1726789012:000007\"}' ;;\n  capture-banner-window) printf '%s' 'invalid data' ;;\n  *) exit 3 ;;\nesac\n";
+    std::fs::write(&helper, invalid_capture).unwrap();
+    assert!(crate::recovery::RecoveryBanner::start_with_backend(
+        "test-running-desktop",
+        &["00000000-0000-0000-0000-000000000001".to_string()],
+        "thread_recovery",
+        4242,
+        &mut backend,
+    )
+    .is_err());
+    let marker = directory.join("inspected-once");
+    let changed_process = format!(
+        "#!/bin/sh\ncase \"$1\" in\n  inspect-process) if [ -f '{}' ]; then printf '%s' '{{\"pid\":4242,\"birth_id\":\"1726789012:000008\"}}'; else : > '{}'; printf '%s' '{{\"pid\":4242,\"birth_id\":\"1726789012:000007\"}}'; fi ;;\n  capture-banner-window) printf 'WINDOW_ACCESS_FAILED\\n' >&2; exit 1 ;;\n  *) exit 3 ;;\nesac\n",
+        marker.display(),
+        marker.display()
+    );
+    std::fs::write(&helper, changed_process).unwrap();
+    let result = crate::recovery::RecoveryBanner::start_with_backend(
+        "test-running-desktop",
+        &["00000000-0000-0000-0000-000000000001".to_string()],
+        "thread_recovery",
+        4242,
+        &mut backend,
+    );
+    assert!(result.is_err(), "a recycled PID must not permit recovery");
+    std::fs::remove_dir_all(directory).unwrap();
+}

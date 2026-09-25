@@ -54,6 +54,14 @@ blocking while preservation is enabled; process-identity failures remain
 blocking in either mode. With preservation disabled, the prior window position
 and size are not restored or verified by the Monitor.
 
+Deferred recovery in an already running ChatGPT never restores window bounds.
+It locates its banner through the read-only WindowServer helper, so a launchd
+Accessibility denial cannot stop IPC recovery. A missing visible window or
+panel visibility timeout is logged without stopping recovery; process identity,
+missing helper, payload/lease failure, and malformed helper output remain blocking.
+Automatic switching stays disabled until a
+quota-interrupted cold task completes end-to-end recovery in the installed app.
+
 On this host the Command Line Tools Swift compiler and default macOS 27.0 SDK
 have mismatched build versions. Until the tools are repaired, use
 `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` and a writable

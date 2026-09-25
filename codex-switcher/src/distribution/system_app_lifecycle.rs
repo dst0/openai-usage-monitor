@@ -34,7 +34,7 @@ fn classify_capture_failure(report: &RestoreReport) -> Result<WindowCaptureMode,
         .unwrap_or_else(|| "Codex window capture did not complete successfully".into()))
 }
 
-fn optional_banner_capture_failure(error: &str) -> bool {
+pub(crate) fn optional_banner_capture_failure(error: &str) -> bool {
     matches!(
         error,
         "WINDOW_NOT_FOUND" | "WINDOW_ACCESS_FAILED" | "WINDOW_GEOMETRY_FAILED"
