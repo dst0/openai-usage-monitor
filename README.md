@@ -43,7 +43,7 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
    - Scans up to 30 recent threads via `state_5.sqlite` with instantaneous 128 KB tail reads (`read_rollout_tail_lines`), eliminating I/O stalls even on 500 MB+ session files.
    - Resumes through the official Codex Desktop owner's IPC connection to the Desktop-bundled app-server; it never launches a second/headless app-server, uses `codex exec resume`, or clicks UI controls. For an interrupted turn it sends one protocol-valid text input, `continue`, through `thread-follower-start-turn`.
    - Shows a verified semi-transparent banner when an eligible window and recovery target are present, including when exact window restoration is disabled. Requires a new exact-ID `task_started`, real agent work, and a 10-second error-free observation window before reporting success.
-   - Deferred recovery of a task in an already running ChatGPT uses read-only WindowServer geometry for its banner. A missing window or panel visibility timeout is logged and does not prevent owner-routed IPC recovery; exact process identity, missing helper, payload/lease failure, and malformed helper responses still fail closed.
+   - Deferred recovery of a task in an already running ChatGPT uses read-only WindowServer geometry for its banner. Only a confirmed missing window permits owner-routed IPC recovery without a panel. Window access/geometry failure, panel timeout, identity changes, missing helper, payload/lease failure, and malformed helper responses fail closed before dispatch.
    - Filters out internal subagent threads and never resumes cleanly completed or user-aborted tasks.
 
 7. **Native macOS Menu Bar App (`Codex Monitor.app`)**:

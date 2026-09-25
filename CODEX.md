@@ -56,9 +56,10 @@ and size are not restored or verified by the Monitor.
 
 Deferred recovery in an already running ChatGPT never restores window bounds.
 It locates its banner through the read-only WindowServer helper, so a launchd
-Accessibility denial cannot stop IPC recovery. A missing visible window or
-panel visibility timeout is logged without stopping recovery; process identity,
-missing helper, payload/lease failure, and malformed helper output remain blocking.
+Accessibility denial cannot stop IPC recovery when WindowServer can place the
+panel. Only confirmed `WINDOW_NOT_FOUND` permits IPC without a panel. Window
+access/geometry failure, panel timeout, process identity, missing helper,
+payload/lease failure, and malformed helper output block dispatch.
 Automatic switching stays disabled until a
 quota-interrupted cold task completes end-to-end recovery in the installed app.
 

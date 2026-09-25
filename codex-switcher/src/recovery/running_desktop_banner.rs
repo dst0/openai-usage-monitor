@@ -1,5 +1,4 @@
 use super::recovery_banner::RecoveryBanner;
-use crate::distribution::system_app_lifecycle::optional_banner_capture_failure;
 use crate::distribution::{SystemWindowRestoreBackend, WindowProcessValidationService};
 use crate::switcher;
 
@@ -26,6 +25,29 @@ impl RecoveryBanner {
         pid: u32,
         backend: &mut SystemWindowRestoreBackend,
     ) -> Result<Self, String> {
+        Self::start_with_backend_and_panel(
+            operation_id,
+            ids,
+            reason,
+            pid,
+            backend,
+            Self::start_without_restore,
+        )
+    }
+
+    pub(crate) fn start_with_backend_and_panel(
+        operation_id: &str,
+        ids: &[String],
+        reason: &str,
+        pid: u32,
+        backend: &mut SystemWindowRestoreBackend,
+        start_panel: impl FnOnce(
+            &str,
+            &[String],
+            &str,
+            crate::distribution::WindowCapture,
+        ) -> Result<Self, String>,
+    ) -> Result<Self, String> {
         let process = WindowProcessValidationService::inspect(backend, pid)?;
         if ids.is_empty() {
             return Ok(Self::without_window(process));
@@ -33,19 +55,9 @@ impl RecoveryBanner {
         match backend.capture_banner_window(process.clone()) {
             Ok(placement) => {
                 WindowProcessValidationService::confirm(backend, &process)?;
-                Self::start_without_restore(operation_id, ids, reason, placement).or_else(|error| {
-                    if error != "Recovery banner helper did not confirm a visible panel" {
-                        return Err(error);
-                    }
-                    crate::logger::log(
-                        "WARN",
-                        "RECOVERY",
-                        "RECOVERY_BANNER_UNAVAILABLE: native panel did not become visible",
-                    );
-                    Ok(Self::without_window(process))
-                })
+                start_panel(operation_id, ids, reason, placement)
             }
-            Err(error) if optional_banner_capture_failure(&error) => {
+            Err(error) if error == "WINDOW_NOT_FOUND" => {
                 WindowProcessValidationService::confirm(backend, &process)?;
                 crate::logger::log(
                     "WARN",

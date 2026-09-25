@@ -143,7 +143,7 @@ fn running_desktop_recovery_uses_windowserver_and_continues_without_visible_wind
     .is_err());
     let marker = directory.join("inspected-once");
     let changed_process = format!(
-        "#!/bin/sh\ncase \"$1\" in\n  inspect-process) if [ -f '{}' ]; then printf '%s' '{{\"pid\":4242,\"birth_id\":\"1726789012:000008\"}}'; else : > '{}'; printf '%s' '{{\"pid\":4242,\"birth_id\":\"1726789012:000007\"}}'; fi ;;\n  capture-banner-window) printf 'WINDOW_ACCESS_FAILED\\n' >&2; exit 1 ;;\n  *) exit 3 ;;\nesac\n",
+        "#!/bin/sh\ncase \"$1\" in\n  inspect-process) if [ -f '{}' ]; then printf '%s' '{{\"pid\":4242,\"birth_id\":\"1726789012:000008\"}}'; else : > '{}'; printf '%s' '{{\"pid\":4242,\"birth_id\":\"1726789012:000007\"}}'; fi ;;\n  capture-banner-window) printf 'WINDOW_NOT_FOUND\\n' >&2; exit 1 ;;\n  *) exit 3 ;;\nesac\n",
         marker.display(),
         marker.display()
     );
@@ -156,5 +156,48 @@ fn running_desktop_recovery_uses_windowserver_and_continues_without_visible_wind
         &mut backend,
     );
     assert!(result.is_err(), "a recycled PID must not permit recovery");
+    for failure in ["WINDOW_ACCESS_FAILED", "WINDOW_GEOMETRY_FAILED"] {
+        let script = format!(
+            "#!/bin/sh\ncase \"$1\" in\n  inspect-process) printf '%s' '{{\"pid\":4242,\"birth_id\":\"1726789012:000007\"}}' ;;\n  capture-banner-window) printf '{}\\n' >&2; exit 1 ;;\n  *) exit 3 ;;\nesac\n",
+            failure
+        );
+        std::fs::write(&helper, script).unwrap();
+        assert!(crate::recovery::RecoveryBanner::start_with_backend(
+            "test-running-desktop",
+            &["00000000-0000-0000-0000-000000000001".to_string()],
+            "thread_recovery",
+            4242,
+            &mut backend,
+        )
+        .is_err());
+    }
+    let valid_capture = json!({
+        "process": {"pid": 4242, "birth_id": "1726789012:000007"},
+        "frame": {"x": 0.0, "y": 0.0, "width": 1200.0, "height": 800.0},
+        "screen": {"display_id": 1, "frame": {"x": 0.0, "y": 0.0, "width": 1600.0, "height": 900.0}}
+    });
+    let visible_window = format!(
+        "#!/bin/sh\ncase \"$1\" in\n  inspect-process) printf '%s' '{{\"pid\":4242,\"birth_id\":\"1726789012:000007\"}}' ;;\n  capture-banner-window) printf '%s' '{}' ;;\n  *) exit 3 ;;\nesac\n",
+        valid_capture
+    );
+    std::fs::write(&helper, visible_window).unwrap();
+    let mut panel_attempted = false;
+    let result = crate::recovery::RecoveryBanner::start_with_backend_and_panel(
+        "test-running-desktop",
+        &["00000000-0000-0000-0000-000000000001".to_string()],
+        "thread_recovery",
+        4242,
+        &mut backend,
+        |_, _, _, placement| {
+            panel_attempted = true;
+            assert_eq!(placement.process.pid, 4242);
+            Err("Recovery banner helper did not confirm a visible panel".into())
+        },
+    );
+    assert!(panel_attempted);
+    assert_eq!(
+        result.err().as_deref(),
+        Some("Recovery banner helper did not confirm a visible panel")
+    );
     std::fs::remove_dir_all(directory).unwrap();
 }
