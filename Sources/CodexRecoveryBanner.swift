@@ -77,8 +77,16 @@ public final class CodexRecoveryBanner {
     renderedPayload = payload
     visibleSince = Date()
     let initialHeight = panelHeight(for: payload.sessions.count)
+    guard let placement = Self.appKitPlacement(for: payload.saved_window.frame.cgRect) else {
+      releaseDisplayOwnership()
+      return false
+    }
     let p = NSPanel(
-      contentRect: Self.panelFrame(for: payload.saved_window.frame.cgRect, width: 540, height: initialHeight),
+      contentRect: Self.panelFrame(
+        for: placement.window,
+        within: placement.screen,
+        width: 540, height: initialHeight
+      ),
       styleMask: [.borderless, .nonactivatingPanel],
       backing: .buffered,
       defer: false
@@ -157,12 +165,55 @@ public final class CodexRecoveryBanner {
 
   /// AppKit-global coordinates are retained, including negative secondary
   /// display origins. No primary-screen height is involved.
-  public static func panelFrame(for windowFrame: CGRect, width: CGFloat, height: CGFloat) -> NSRect {
+  public static func panelFrame(
+    for windowFrame: CGRect, within screenFrame: CGRect, width: CGFloat, height: CGFloat
+  ) -> NSRect {
     NSRect(
-      x: windowFrame.midX - width / 2,
-      y: windowFrame.maxY - height - 12,
+      x: max(screenFrame.minX, min(windowFrame.midX - width / 2, screenFrame.maxX - width)),
+      y: max(screenFrame.minY, min(windowFrame.maxY - height - 12, screenFrame.maxY - height)),
       width: width,
       height: height
+    )
+  }
+
+  /// CoreGraphics and Accessibility expose top-down display coordinates;
+  /// NSPanel takes AppKit's bottom-up coordinates. Convert on the owning
+  /// display so secondary displays and negative origins remain correct.
+  public static func appKitFrame(
+    for windowFrame: CGRect, on cgDisplayFrame: CGRect, within appKitScreenFrame: CGRect
+  ) -> CGRect {
+    CGRect(
+      x: appKitScreenFrame.minX + windowFrame.minX - cgDisplayFrame.minX,
+      y: appKitScreenFrame.minY + cgDisplayFrame.maxY - windowFrame.maxY,
+      width: windowFrame.width,
+      height: windowFrame.height
+    )
+  }
+
+  public static func displayIndex(for window: CGRect, among displays: [CGRect]) -> Int? {
+    var best: (index: Int, area: CGFloat)?
+    for (index, display) in displays.enumerated() {
+      let visible = window.intersection(display)
+      guard !visible.isNull, visible.width > 0, visible.height > 0 else { continue }
+      let area = visible.width * visible.height
+      if best == nil || area > best!.area { best = (index, area) }
+    }
+    return best?.index
+  }
+
+  private static func appKitPlacement(for cgWindowFrame: CGRect) -> (window: CGRect, screen: CGRect)? {
+    let displays: [(screen: NSScreen, cgFrame: CGRect)] = NSScreen.screens.compactMap { screen in
+      guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+      else { return nil }
+      return (screen, CGDisplayBounds(id.uint32Value))
+    }
+    guard let index = displayIndex(for: cgWindowFrame, among: displays.map(\.cgFrame)) else {
+      return nil
+    }
+    let display = displays[index]
+    return (
+      appKitFrame(for: cgWindowFrame, on: display.cgFrame, within: display.screen.frame),
+      display.screen.frame
     )
   }
 
@@ -177,9 +228,13 @@ public final class CodexRecoveryBanner {
     explanationLabel?.stringValue = payload.explanation
     if sessionsChanged { renderRows(payload.sessions) }
     guard let p = panel else { return }
-    let targetFrame = currentCodexFrame(for: payload.expected_process) ?? payload.saved_window.frame.cgRect
+    let cgTargetFrame = currentCodexFrame(for: payload.expected_process) ?? payload.saved_window.frame.cgRect
+    guard let placement = Self.appKitPlacement(for: cgTargetFrame) else { return }
     let height = panelHeight(for: payload.sessions.count)
-    p.setFrame(Self.panelFrame(for: targetFrame, width: 540, height: height), display: true, animate: false)
+    p.setFrame(
+      Self.panelFrame(for: placement.window, within: placement.screen, width: 540, height: height),
+      display: true, animate: false
+    )
     cardView?.frame = NSRect(origin: .zero, size: p.contentRect(forFrameRect: p.frame).size)
     titleLabel?.frame = NSRect(x: 18, y: height - 30, width: 504, height: 18)
     explanationLabel?.frame = NSRect(x: 18, y: height - 51, width: 504, height: 18)

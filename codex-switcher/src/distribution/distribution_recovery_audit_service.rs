@@ -24,6 +24,16 @@ impl DistributionRecoveryAuditService {
                 lifecycle.abort_recovery();
                 return Err(error);
             }
+        } else if capture_mode == WindowCaptureMode::Skipped {
+            if let Err(error) = lifecycle.rebind_banner(pid) {
+                logger.log_warning(
+                    operation_id,
+                    "RECOVERY_BANNER_REBIND_FAILED",
+                    trigger,
+                    reason,
+                    &format!("Recovery banner could not follow relaunched Desktop: {error}"),
+                );
+            }
         }
         Self::recover_and_verify(
             logger,

@@ -42,7 +42,7 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
    - Detects eligible mid-turn tasks captured for a restart and threads halted by rate limits or credit exhaustion within the last 4 hours (`RECENT_QUOTA_WINDOW_SECS = 14400s`); discovery-only recovery does not guess about an ambiguous active turn.
    - Scans up to 30 recent threads via `state_5.sqlite` with instantaneous 128 KB tail reads (`read_rollout_tail_lines`), eliminating I/O stalls even on 500 MB+ session files.
    - Resumes through the official Codex Desktop owner's IPC connection to the Desktop-bundled app-server; it never launches a second/headless app-server, uses `codex exec resume`, or clicks UI controls. For an interrupted turn it sends one protocol-valid text input, `continue`, through `thread-follower-start-turn`.
-   - Shows a verified semi-transparent banner when a window is present and requires a new exact-ID `task_started`, real agent work, and a 10-second error-free observation window before reporting success.
+   - Shows a verified semi-transparent banner when an eligible window and recovery target are present, including when exact window restoration is disabled. Requires a new exact-ID `task_started`, real agent work, and a 10-second error-free observation window before reporting success.
    - Filters out internal subagent threads and never resumes cleanly completed or user-aborted tasks.
 
 7. **Native macOS Menu Bar App (`Codex Monitor.app`)**:
@@ -399,7 +399,7 @@ Detection runs through a two-phase analysis pipeline before terminating or resta
 | Pre-dispatch activity grace | `3 s` | Detects a task that the user or Desktop has already resumed before any command is sent. |
 | Recovery verification | `90 s` to dispatch, `600 s` to produce work, then `10 s` soak | Requires the IPC-confirmed turn ID, substantive agent work, and no later abort/error; IPC acknowledgement is not success. |
 | Desktop stabilization | `3 s` | Requires the same singleton main PID throughout; verifies the visible window only when one was captured before restart. |
-| Banner minimum visibility | `5 s` | Keeps the semi-transparent recovery banner visible when a window was captured. |
+| Banner minimum visibility | `5 s` | Keeps the semi-transparent recovery banner visible when an eligible window and recovery target were found. |
 
 `launchd` can deny Accessibility reads to the background switcher even when an
 interactive Terminal invocation of the same helper can inspect the window. The
@@ -409,8 +409,12 @@ important than restoring the exact prior window geometry, run
 `cxi config --preserve-window-bounds false`. In this explicit mode the switcher
 still validates the exact Desktop PID and birth identity before shutdown,
 recovers eligible tasks through Desktop IPC, and verifies the relaunched
-singleton PID. It skips the geometry capture, banner, window position/size
-restore, and visible-window check. Restore the setting with
+singleton PID. It uses the WindowServer's read-only geometry for banner
+placement when a visible window and recovery target exist; this path does not
+require Accessibility. It skips window position/size restore and the
+Accessibility-based visible-window check. Explicit WindowServer visibility or
+geometry failures and panel visibility failures are logged without blocking
+credential rotation; identity and helper protocol failures block it. Restore the setting with
 `cxi config --preserve-window-bounds true` only after verifying that the
 background helper can read the Desktop window.
 
@@ -440,6 +444,8 @@ request for a cold task without mounting it in a Desktop window. The switcher
 then reports `RECOVERY_INCOMPLETE` with `no-client-found`; it does not send a
 turn to an unverified owner. Opening that task through ChatGPT's own task
 navigation and then running `cxi resume <id>` can recover an interrupted turn.
+The same deep-link failure was reproduced on an unmounted task without changing
+accounts, so retrying the URL is not a reliable mounting contract.
 Check each task's actual state first: a task that completed independently must
 not receive another resume request.
 

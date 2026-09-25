@@ -61,6 +61,12 @@ impl RecoveryBannerService {
         write_atomic(&self.payload_path, &payload)
     }
 
+    pub fn skip_window_restore(&self) -> Result<(), String> {
+        let mut payload = self.lock_payload()?;
+        payload.skip_window_restore();
+        write_atomic(&self.payload_path, &payload)
+    }
+
     pub fn update_target(
         &self,
         expected_process: ProcessIdentity,

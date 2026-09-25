@@ -7,6 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const BANNER_TITLE: &str = "Codex Monitor • Восстановление задач";
 pub const BANNER_EXPLANATION: &str =
     "Codex перезапускается, вернёт окно на прежнее место и продолжит эти задачи:";
+pub const BANNER_EXPLANATION_WITHOUT_RESTORE: &str =
+    "Codex перезапускается и продолжит эти задачи:";
 pub const MINIMUM_VISIBLE_MS: u64 = 5_000;
 
 /// Versioned private hand-off consumed by the native banner helper.
@@ -52,6 +54,11 @@ impl RecoveryBannerPayload {
 
     pub fn replace_sessions(&mut self, sessions: Vec<RecoverySession>) {
         self.sessions = sessions;
+        self.updated_at_unix_ms = now_unix_ms();
+    }
+
+    pub fn skip_window_restore(&mut self) {
+        self.explanation = BANNER_EXPLANATION_WITHOUT_RESTORE.to_string();
         self.updated_at_unix_ms = now_unix_ms();
     }
 

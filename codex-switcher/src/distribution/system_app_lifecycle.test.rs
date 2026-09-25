@@ -35,3 +35,22 @@ fn only_explicit_missing_window_allows_windowless_switch() {
         assert!(classify_capture_failure(&failed_capture(phase, detail)).is_err());
     }
 }
+
+#[test]
+fn optional_banner_failures_exclude_identity_and_protocol_errors() {
+    for error in [
+        "WINDOW_NOT_FOUND",
+        "WINDOW_ACCESS_FAILED",
+        "WINDOW_GEOMETRY_FAILED",
+    ] {
+        assert!(optional_banner_capture_failure(error));
+    }
+    for error in [
+        "PROCESS_IDENTITY_REJECTED",
+        "Codex window restore helper returned invalid data",
+        "Codex window restore helper could not start",
+        "unexpected helper error",
+    ] {
+        assert!(!optional_banner_capture_failure(error));
+    }
+}

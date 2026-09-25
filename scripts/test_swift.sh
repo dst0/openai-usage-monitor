@@ -64,6 +64,20 @@ swiftc -parse-as-library \
     -o "${TMP_BIN_DIR}/codex-recovery-payload-reader_test"
 "${TMP_BIN_DIR}/codex-recovery-payload-reader_test"
 
+echo "👉 Running recovery banner geometry tests..."
+RECOVERY_BANNER_SOURCES=()
+while IFS= read -r recovery_source || [ -n "${recovery_source}" ]; do
+    [ -n "${recovery_source}" ] || continue
+    RECOVERY_BANNER_SOURCES+=("${recovery_source}")
+done < "scripts/codex-recovery-banner-sources.txt"
+swiftc -parse-as-library \
+    -target "$(uname -m)-apple-macosx13.0" \
+    -framework AppKit -framework Foundation -framework ApplicationServices \
+    "${RECOVERY_BANNER_SOURCES[@]}" \
+    tests/CodexRecoveryBannerGeometryTests.swift \
+    -o "${TMP_BIN_DIR}/codex-recovery-banner-geometry_test"
+"${TMP_BIN_DIR}/codex-recovery-banner-geometry_test"
+
 echo "👉 Running App/CLI identity separation tests..."
 swiftc -parse-as-library \
     Sources/Localization.swift \

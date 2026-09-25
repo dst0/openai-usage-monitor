@@ -62,8 +62,27 @@ impl RecoveryBanner {
     pub(crate) fn start_with_capture(
         operation_id: &str,
         ids: &[String],
+        reason: &str,
+        capture: WindowCapture,
+    ) -> Result<Self, String> {
+        Self::start_with_placement(operation_id, ids, reason, capture, true)
+    }
+
+    pub(crate) fn start_without_restore(
+        operation_id: &str,
+        ids: &[String],
+        reason: &str,
+        placement: WindowCapture,
+    ) -> Result<Self, String> {
+        Self::start_with_placement(operation_id, ids, reason, placement, false)
+    }
+
+    fn start_with_placement(
+        operation_id: &str,
+        ids: &[String],
         _reason: &str,
         capture: WindowCapture,
+        restore_bounds: bool,
     ) -> Result<Self, String> {
         if ids.is_empty() {
             return Ok(Self {
@@ -71,7 +90,7 @@ impl RecoveryBanner {
                 child: None,
                 visible_since: None,
                 service: None,
-                capture: Some(capture),
+                capture: restore_bounds.then_some(capture),
             });
         }
         let expected =
@@ -98,6 +117,9 @@ impl RecoveryBanner {
             saved_window,
             RecoverySessionCatalog::load(&home, ids),
         )?;
+        if !restore_bounds {
+            service.skip_window_restore()?;
+        }
         let payload = service.payload_path().to_path_buf();
         let ready = payload
             .parent()
@@ -131,7 +153,7 @@ impl RecoveryBanner {
                     child: Some(child),
                     visible_since: Some(Instant::now()),
                     service: Some(service),
-                    capture: Some(capture),
+                    capture: restore_bounds.then_some(capture),
                 });
             }
             if child.try_wait().ok().flatten().is_some() {

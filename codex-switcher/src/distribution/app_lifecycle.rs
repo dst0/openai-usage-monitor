@@ -17,6 +17,9 @@ pub trait AppLifecycle: Send + Sync {
         operation_id: &str,
         reason: &str,
     ) -> Result<(), String>;
+    fn rebind_banner(&self, _pid: u32) -> Result<(), String> {
+        Ok(())
+    }
     fn abort_recovery(&self) {}
     fn recover_threads(&self, targets: &[String]) -> Result<(), String>;
     fn verify_desktop_stable(&self, pids: &[u32], require_window: bool) -> Result<(), String>;

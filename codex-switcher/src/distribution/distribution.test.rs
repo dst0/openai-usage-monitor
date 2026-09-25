@@ -913,6 +913,7 @@ fn windowless_desktop_still_switches_and_recovers_without_geometry_restore() {
     assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 1);
     assert_eq!(mock.launch_calls.load(Ordering::SeqCst), 1);
     assert_eq!(mock.restore_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(mock.rebind_calls.load(Ordering::SeqCst), 0);
     assert_eq!(mock.recovery_calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         *mock.require_window_on_stability.lock().unwrap(),
@@ -1032,6 +1033,58 @@ fn disabled_window_preservation_bypasses_ax_and_switches() {
         Some("next@example.com:next")
     );
     assert!(env.log_content().contains("phase=WINDOW_CAPTURE_SKIPPED"));
+}
+
+#[test]
+fn banner_rebind_failure_does_not_block_desktop_recovery() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("banner_rebind_failure");
+    env.populate(
+        vec![
+            make_account(
+                "old",
+                None,
+                "old@example.com",
+                "plus",
+                0.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+            make_account(
+                "next",
+                None,
+                "next@example.com",
+                "team",
+                100.0,
+                None,
+                1,
+                None,
+                None,
+            ),
+        ],
+        Some("old"),
+        Some("old"),
+    );
+    let mut accounts = load_accounts().unwrap();
+    accounts.settings.preserve_window_bounds_on_restart = false;
+    save_accounts(&accounts).unwrap();
+    let mock = Arc::new(MockAppLifecycle::new(true));
+    mock.set_rebind_error("panel not visible");
+
+    let outcome = DistributionCoordinator::with_lifecycle(mock.clone())
+        .execute(DistributionRequest::auto("quota_exhausted"))
+        .unwrap();
+
+    assert_eq!(outcome.status, DistributionStatus::Success);
+    assert_eq!(mock.rebind_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.recovery_calls.load(Ordering::SeqCst), 1);
+    assert!(env
+        .log_content()
+        .contains("phase=RECOVERY_BANNER_REBIND_FAILED"));
 }
 
 #[test]

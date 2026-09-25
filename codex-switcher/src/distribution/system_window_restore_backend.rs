@@ -12,6 +12,19 @@ pub struct SystemWindowRestoreBackend {
 }
 
 impl SystemWindowRestoreBackend {
+    pub fn capture_banner_window(
+        &mut self,
+        process: ProcessIdentity,
+    ) -> Result<WindowCapture, String> {
+        let capture = Self::parse_capture(self.invoke(&Self::args_for_process(
+            "capture-banner-window",
+            process.clone(),
+        ))?)?;
+        if capture.process != process {
+            return Err("PROCESS_IDENTITY_REJECTED".into());
+        }
+        Ok(capture)
+    }
     pub fn new() -> Result<Self, String> {
         let mut candidates = Vec::new();
         if let Some(path) = std::env::var_os("CODEX_WINDOW_RESTORE_HELPER") {
@@ -50,6 +63,7 @@ impl SystemWindowRestoreBackend {
             b"WINDOW_NOT_FOUND" => "WINDOW_NOT_FOUND".into(),
             b"WINDOW_ACCESS_FAILED" => "WINDOW_ACCESS_FAILED".into(),
             b"WINDOW_GEOMETRY_FAILED" => "WINDOW_GEOMETRY_FAILED".into(),
+            b"PROCESS_IDENTITY_REJECTED" => "PROCESS_IDENTITY_REJECTED".into(),
             _ => "Codex window restore helper rejected the request".into(),
         }
     }
