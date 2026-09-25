@@ -6,7 +6,21 @@ use super::{
     recovery_target::RecoveryTarget,
 };
 use crate::switcher::ThreadRolloutState;
+use crate::{distribution::WindowProcessIdentity, recovery::RecoveryBanner};
 use std::time::Instant;
+
+#[test]
+fn cold_mount_without_a_visible_window_must_not_enter_ipc_dispatch() {
+    let process = WindowProcessIdentity::new(4242, "1726789012:000007").unwrap();
+    let mut banner = RecoveryBanner::without_window(process.clone());
+    let result = banner
+        .ensure_visible_after_owner_with(false, || Ok(RecoveryBanner::without_window(process)));
+    assert!(
+        result.is_err(),
+        "owner proof alone cannot replace a visible panel"
+    );
+    assert!(!banner.has_visible_panel());
+}
 
 #[test]
 fn desktop_ipc_startup_failure_keeps_undispatched_checkpoint() {

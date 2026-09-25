@@ -17,3 +17,5 @@
 - **Prevention/follow-up:** Test the full launchd ownerless-to-owned transition with an actual quota-interrupted task, including on-screen banner and substantive post-checkpoint work; keep automatic switching disabled until then.
 - **Reusable learning:** Entry points that share a recovery engine must choose banner capture based on whether a Desktop restart and window restoration are actually occurring.
 - **References:** `codex-switcher/src/recovery/deferred_recovery_service.rs`, `codex-switcher/src/recovery/running_desktop_banner.rs`, `codex-switcher/src/distribution/system_window_restore_backend.test.rs`, `2026-09-25-windowserver-banner-after-accessibility-bypass.md`.
+
+2026-09-25 follow-up: A later review found that a cold task may create its window only after owner mounting. The initial missing-window allowance is therefore followed by a mandatory live-panel check before IPC. See `2026-09-25-cold-window-mounted-after-banner-capture.md` for the added gate and queue/rollout recheck.

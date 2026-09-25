@@ -40,8 +40,8 @@ running, inspect the affected task and use
 
 Automatic distribution records whether the exact Desktop process has an eligible
 standard window before shutdown. If no such window exists, it skips geometry
-restore and the visual banner while retaining the singleton process, IPC, and
-turn-progress checks. A launchd daemon may be denied Accessibility access even
+restore; after task owner mounting, recovery requires a visible banner before
+IPC and retains the original checkpoint if no window appears. A launchd daemon may be denied Accessibility access even
 when the same helper succeeds from Terminal. If that happens, set
 `cxi config --preserve-window-bounds false` to explicitly disable geometry
 preservation. Distribution validates the exact Desktop process without an
@@ -57,9 +57,13 @@ and size are not restored or verified by the Monitor.
 Deferred recovery in an already running ChatGPT never restores window bounds.
 It locates its banner through the read-only WindowServer helper, so a launchd
 Accessibility denial cannot stop IPC recovery when WindowServer can place the
-panel. Only confirmed `WINDOW_NOT_FOUND` permits IPC without a panel. Window
-access/geometry failure, panel timeout, process identity, missing helper,
-payload/lease failure, and malformed helper output block dispatch.
+panel. An initial `WINDOW_NOT_FOUND` is retried after Desktop confirms the owner;
+IPC requires a live panel at that point. The queue and rollout are rechecked
+after panel startup, followed by a second helper/identity check after SQLite
+waits and a final queue/rollout check before the durable dispatch marker.
+Failed status replay into a late banner blocks dispatch. Window access/geometry
+failure, panel timeout, process identity, missing helper, payload/lease failure,
+and malformed helper output block dispatch and retain the original checkpoint.
 Automatic switching stays disabled until a
 quota-interrupted cold task completes end-to-end recovery in the installed app.
 

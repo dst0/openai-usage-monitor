@@ -25,21 +25,9 @@ const PRE_DISPATCH_ACTIVITY_GRACE: Duration = Duration::from_secs(3);
 
 pub fn recover_threads(ids: &[String], mode: RecoveryMode) -> Result<(), String> {
     let operation_id = operation_id_for_banner("thread_recovery");
-    let banner = RecoveryBanner::start_for_running_desktop(&operation_id, ids, "thread_recovery")?;
-    recover_threads_with_banner(ids, mode, &banner)
-}
-
-pub(super) fn update_banner_status(banner: &RecoveryBanner, id: &str, status: BannerSessionStatus) {
-    if let Err(error) = banner.update_status(id, status) {
-        crate::logger::log(
-            "WARN",
-            "RECOVERY",
-            &format!(
-                "RECOVERY_BANNER_STATUS_FAILED status={status:?} reason={}",
-                sanitize_recovery_error(&error)
-            ),
-        );
-    }
+    let mut banner =
+        RecoveryBanner::start_for_running_desktop(&operation_id, ids, "thread_recovery")?;
+    recover_threads_with_banner(ids, mode, &mut banner)
 }
 
 pub(super) fn sanitize_recovery_error(error: &str) -> String {
@@ -53,7 +41,7 @@ pub(super) fn sanitize_recovery_error(error: &str) -> String {
 pub(crate) fn recover_threads_with_banner(
     ids: &[String],
     mode: RecoveryMode,
-    banner: &RecoveryBanner,
+    banner: &mut RecoveryBanner,
 ) -> Result<(), String> {
     let home = storage::codex_home();
     let mut pending_manifest = load_manifest()?;
@@ -95,17 +83,17 @@ pub(crate) fn recover_threads_with_banner(
     let mut completed_without_action = Vec::new();
     let mut preparation_failures = Vec::new();
     for id in ids {
-        update_banner_status(banner, id, BannerSessionStatus::InProgress);
+        banner.record_status(id, BannerSessionStatus::InProgress);
         let previous = previous_pending.iter().find(|target| target.id == *id);
         match prepare_target(&home, id, previous.and_then(|target| target.offset)) {
             Ok(Some(target)) => targets.push(target),
             Ok(None) => {
-                update_banner_status(banner, id, BannerSessionStatus::Skipped);
+                banner.record_status(id, BannerSessionStatus::Skipped);
                 completed_without_action.push(id.clone());
             }
             Err(error) => {
                 crate::runtime_error!("RECOVERY_FAILED thread={id} reason={error}");
-                update_banner_status(banner, id, BannerSessionStatus::Failed);
+                banner.record_status(id, BannerSessionStatus::Failed);
                 preparation_failures.push(id.clone());
             }
         }
@@ -140,7 +128,15 @@ pub(crate) fn recover_threads_with_banner(
             Ok(mut desktop) => {
                 crate::runtime_print!("RECOVERY_CHANNEL_READY transport=desktop_ipc");
                 for target in &mut targets {
-                    if let Err(error) = dispatch_if_needed(&home, &mut desktop, target, mode) {
+                    let target_id = target.id.clone();
+                    let before_send = || {
+                        banner.ensure_visible_after_owner(ids, mode)?;
+                        banner.record_status(&target_id, BannerSessionStatus::InProgress);
+                        Ok(())
+                    };
+                    if let Err(error) =
+                        dispatch_if_needed(&home, &mut desktop, target, mode, before_send)
+                    {
                         mark_dispatch_failure(target, &error);
                     }
                 }
@@ -220,10 +216,10 @@ pub(crate) fn recover_threads_with_banner(
         }
         if let Some(error) = &target.failure {
             crate::runtime_error!("RECOVERY_FAILED thread={} reason={error}", target.id);
-            update_banner_status(banner, &target.id, BannerSessionStatus::Failed);
+            banner.record_status(&target.id, BannerSessionStatus::Failed);
             failures.push(target.id.clone());
         } else if target.completed {
-            update_banner_status(banner, &target.id, BannerSessionStatus::Completed);
+            banner.record_status(&target.id, BannerSessionStatus::Completed);
         }
         finalize_target(
             &mut pending_manifest,

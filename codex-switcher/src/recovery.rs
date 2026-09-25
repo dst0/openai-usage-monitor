@@ -16,6 +16,7 @@ mod pending_manifest;
 mod pending_target;
 mod queue_snapshot;
 mod recovery_banner;
+mod recovery_banner_status;
 mod recovery_mode;
 mod recovery_service;
 mod recovery_target;

@@ -202,14 +202,17 @@ impl AppLifecycle for SystemAppLifecycle {
     }
 
     fn recover_threads(&self, targets: &[String]) -> Result<(), String> {
-        let banner = self
+        let mut banner = self
             .recovery_banner
             .lock()
             .map_err(|_| "Recovery banner state lock is poisoned".to_string())?
             .take()
             .ok_or_else(|| "Recovery has no active banner".to_string())?;
-        let rec_res =
-            recovery::recover_threads_with_banner(targets, RecoveryMode::CapturedRestart, &banner);
+        let rec_res = recovery::recover_threads_with_banner(
+            targets,
+            RecoveryMode::CapturedRestart,
+            &mut banner,
+        );
         drop(banner);
         rec_res
     }

@@ -100,11 +100,33 @@ pub(super) fn revalidate_after_owner(
     Ok(true)
 }
 
+pub(super) fn revalidate_after_banner_gate(
+    home: &Path,
+    target: &mut RecoveryTarget,
+    prior_revision: u64,
+    prior_pending: usize,
+    mode: RecoveryMode,
+    mut before_send: impl FnMut() -> Result<(), String>,
+) -> Result<bool, String> {
+    before_send()?;
+    // Panel startup can take five seconds. Recheck the same queue and rollout
+    // snapshot immediately before the durable marker and Desktop IPC request.
+    if !revalidate_after_owner(home, target, prior_revision, prior_pending, mode)? {
+        return Ok(false);
+    }
+    // SQLite busy retries can also outlive the panel or Desktop process. This
+    // second callback can itself take time, so it cannot be the final state
+    // check before the irreversible dispatch marker.
+    before_send()?;
+    revalidate_after_owner(home, target, prior_revision, prior_pending, mode)
+}
+
 pub(super) fn dispatch_if_needed(
     home: &Path,
     desktop: &mut DesktopIpc,
     target: &mut RecoveryTarget,
     mode: RecoveryMode,
+    mut before_send: impl FnMut() -> Result<(), String>,
 ) -> Result<(), String> {
     if target.completed || target.failure.is_some() || target.observer.evidence.started {
         return Ok(());
@@ -121,6 +143,16 @@ pub(super) fn dispatch_if_needed(
         // Owner discovery can take 90 seconds. Never replace a queue snapshot
         // that changed while Desktop or the user was mounting the task.
         if !revalidate_after_owner(home, target, queue_revision_after, pending, mode)? {
+            return Ok(());
+        }
+        if !revalidate_after_banner_gate(
+            home,
+            target,
+            queue_revision_after,
+            pending,
+            mode,
+            &mut before_send,
+        )? {
             return Ok(());
         }
         mark_target_dispatch(target)?;
@@ -154,6 +186,16 @@ pub(super) fn dispatch_if_needed(
     }
     let owner = resolve_owner(desktop, target)?;
     if !revalidate_after_owner(home, target, queue_revision_after, 0, mode)? {
+        return Ok(());
+    }
+    if !revalidate_after_banner_gate(
+        home,
+        target,
+        queue_revision_after,
+        0,
+        mode,
+        &mut before_send,
+    )? {
         return Ok(());
     }
     mark_target_dispatch(target)?;

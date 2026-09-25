@@ -216,7 +216,7 @@ pub fn switch_to_account(
                     crate::recovery::recover_threads_with_banner(
                         &running_threads,
                         crate::recovery::RecoveryMode::CapturedRestart,
-                        recovery_banner.as_ref().unwrap(),
+                        recovery_banner.as_mut().unwrap(),
                     )
                 });
                 drop(recovery_banner.take());

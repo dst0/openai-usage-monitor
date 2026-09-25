@@ -188,7 +188,7 @@ pub fn restart_and_recover(
         targets
     );
     let operation_id = crate::recovery::operation_id_for_banner("captured_restart");
-    let banner =
+    let mut banner =
         crate::recovery::RecoveryBanner::start(&operation_id, &targets, "captured_restart")?;
     if !targets.is_empty() {
         crate::recovery::preflight_desktop_dispatch()?;
@@ -217,7 +217,7 @@ pub fn restart_and_recover(
                 crate::recovery::recover_threads_with_banner(
                     &targets,
                     crate::recovery::RecoveryMode::CapturedRestart,
-                    &banner,
+                    &mut banner,
                 )
             })
     };
