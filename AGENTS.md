@@ -51,7 +51,9 @@
   uninstall removes the locked inode; daemon validation must never create it,
   and a waiter must recheck the named inode after flock acquisition.
 - Runtime and historical log redaction must fail closed on incomplete quoted
-  credentials and multiword unquoted sensitive values. Scan wrapped tokens and every
+  credentials and multiword unquoted sensitive values. Validate complete generic
+  members after quoted secrets, reject malformed unquoted punctuation, cache
+  trusted boundaries, and bound total suffix scanning. Scan wrapped tokens and every
   identifier in list-valued diagnostics rather than stopping at the first match.
 - `scripts/uninstall.sh --dry-run` previews cleanup. The confirmed uninstall
   removes the Monitor footprint, launch items, helper, notifier, skills, logs,

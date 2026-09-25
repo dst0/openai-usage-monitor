@@ -1,0 +1,22 @@
+# 2026-09-26 — Structured log suffix members and bounded validation
+
+- **Status:** Resolved
+- **Task/context:** Review feedback on shared OpenAI and AGY Monitor log redaction before merging parity PRs.
+- **Unexpected observation or failure:** A quoted credential followed by valid `status` and `attempt` fields hid the useful fields; the first generic-member fix then accepted malformed punctuation, repeatedly scanned long suffixes, and cached every whitespace position.
+- **Evidence:** Synthetic regressions covered `{"token":"synthetic-one","status":"failed","attempt":2,"password":"synthetic-two"}`, a quote or semicolon inside unquoted `status`, 5,000 valid sensitive members, and a 1 MiB whitespace tail. The malformed cases failed before the final fix; the whitespace test first found 1,048,576 cached offsets. No real credentials were used.
+- **Approaches tried:**
+  - **Attempt:** Restrict suffixes to sensitive keys.
+    - **Outcome:** Partial.
+    - **Why:** Sensitive values stayed hidden, but valid operational fields disappeared.
+  - **Attempt:** Accept generic keys without fully validating the next value.
+    - **Outcome:** Did not work.
+    - **Why:** Malformed punctuation could leave a synthetic tail visible.
+  - **Attempt:** Validate full generic members with a trusted-boundary cache and scan budget.
+    - **Outcome:** Worked in focused regressions.
+    - **Why:** Each queryable valid member boundary is reused, and ambiguous or excessive work hides the tail without caching every whitespace position.
+- **Root cause:** Suffix validation needs to distinguish complete generic members from key-shaped fragments and share validation state across sensitive fields.
+- **Resolution:** Validate complete generic members, restrict unquoted scalar punctuation, cache only queryable quoted-member boundaries, and fail closed when total suffix scanning exceeds a bound proportional to input length.
+- **Verification:** The privacy and cache-size regressions failed before correction. The 27 focused redaction tests, Rust check, and file-limit tests pass, including preservation of 5,000 valid members and bounded cache growth for 1 MiB of whitespace. Full repository gates and remote CI are checked separately before merge.
+- **Prevention/follow-up:** Keep positive operational-field, malformed-tail, and many-member cases paired in both Monitor suites.
+- **Reusable learning:** A safe quoted-secret boundary requires complete member validation with bounded work; preserve valid operational members and hide ambiguous tails.
+- **References:** `codex-switcher/src/distribution/log_redaction_structured_parser.rs`, `codex-switcher/src/distribution/log_redaction_structured_suffix.rs`, `codex-switcher/src/distribution/log_redaction_service.test.rs`, `docs/leanings/2026-09-25-comma-key-log-redaction-boundary.md`.

@@ -62,6 +62,54 @@ fn sanitizes_spaced_json_keyed_values_without_leaking_the_following_token() {
 }
 
 #[test]
+fn preserves_valid_operational_members_after_quoted_secret() {
+    let input =
+        r#"{"token":"synthetic-one","status":"failed","attempt":2,"password":"synthetic-two"}"#;
+    let clean = LogRedactionService::sanitize_text(input);
+    assert!(clean.contains("\"status\":\"failed\""), "{clean}");
+    assert!(clean.contains("\"attempt\":2"), "{clean}");
+    assert!(!clean.contains("synthetic-one"));
+    assert!(!clean.contains("synthetic-two"));
+    assert_eq!(clean.matches("[TOKEN]").count(), 2);
+}
+
+#[test]
+fn malformed_member_after_valid_operational_member_stays_hidden() {
+    let input = r#"{"token":"synthetic-one","status":"failed",password synthetic-two}"#;
+    let clean = LogRedactionService::sanitize_text(input);
+    assert!(!clean.contains("synthetic-one"));
+    assert!(!clean.contains("synthetic-two"));
+}
+
+#[test]
+fn embedded_quote_in_unquoted_operational_member_hides_secret_tail() {
+    let input = r#"{"token":"synthetic-one","status":failed"synthetic-two"}"#;
+    let clean = LogRedactionService::sanitize_text(input);
+    assert!(!clean.contains("synthetic-one"));
+    assert!(!clean.contains("synthetic-two"), "{clean}");
+}
+
+#[test]
+fn semicolon_in_unquoted_operational_member_hides_secret_tail() {
+    let input = r#"{"token":"synthetic-one","status":failed;synthetic-two}"#;
+    let clean = LogRedactionService::sanitize_text(input);
+    assert!(!clean.contains("synthetic-one"));
+    assert!(!clean.contains("synthetic-two"), "{clean}");
+}
+
+#[test]
+fn many_valid_sensitive_members_keep_all_structural_boundaries() {
+    let input = format!(
+        r#"{{{}"status":"ok"}}"#,
+        r#""token":"synthetic-secret","#.repeat(5_000)
+    );
+    let clean = LogRedactionService::sanitize_text(&input);
+    assert_eq!(clean.matches("[TOKEN]").count(), 5_000);
+    assert!(clean.contains(r#""status":"ok""#));
+    assert!(!clean.contains("synthetic-secret"));
+}
+
+#[test]
 fn marker_prefix_does_not_make_a_secret_suffix_trusted() {
     let clean = LogRedactionService::sanitize_text("token=[TOKEN]synthetic-secret");
 

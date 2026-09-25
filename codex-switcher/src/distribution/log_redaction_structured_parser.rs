@@ -1,9 +1,17 @@
 use super::log_redaction_service::LogRedactionService;
+#[path = "log_redaction_structured_suffix.rs"]
+mod structured_suffix;
+use std::collections::HashSet;
+use structured_suffix::{quoted_suffix_is_structural, SuffixValidation};
 
 pub(super) fn sanitize_structured_values(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     let mut copied_until = 0;
     let mut cursor = 0;
+    let mut suffix = SuffixValidation {
+        trusted: HashSet::new(),
+        remaining: input.len().saturating_mul(4),
+    };
 
     while cursor < input.len() {
         let Some((field, after_key, escaped_key)) = parse_sensitive_key(input, cursor) else {
@@ -14,7 +22,8 @@ pub(super) fn sanitize_structured_values(input: &str) -> String {
                 .max(input[cursor..].chars().next().unwrap().len_utf8());
             continue;
         };
-        let Some((value_start, value_end)) = parse_value(input, field, after_key, escaped_key)
+        let Some((value_start, value_end)) =
+            parse_value(input, field, after_key, escaped_key, &mut suffix)
         else {
             cursor += input[cursor..].chars().next().unwrap().len_utf8();
             continue;
@@ -37,6 +46,11 @@ pub(super) fn sanitize_structured_values(input: &str) -> String {
 }
 
 fn parse_sensitive_key(input: &str, start: usize) -> Option<(&str, usize, bool)> {
+    let (field, after_key, escaped_key) = parse_key(input, start)?;
+    is_sensitive_field(field).then_some((field, after_key, escaped_key))
+}
+
+fn parse_key(input: &str, start: usize) -> Option<(&str, usize, bool)> {
     if start > 0 {
         let previous = input[..start].chars().next_back()?;
         if previous.is_ascii_alphanumeric() || previous == '_' {
@@ -70,7 +84,7 @@ fn parse_sensitive_key(input: &str, start: usize) -> Option<(&str, usize, bool)>
     } else {
         &input[field_start..field_end]
     };
-    if !is_sensitive_field(field) {
+    if field.is_empty() {
         return None;
     }
     Some((field, after_key, escaped_key))
@@ -81,6 +95,7 @@ fn parse_value(
     field: &str,
     after_key: usize,
     escaped_key: bool,
+    suffix: &mut SuffixValidation,
 ) -> Option<(usize, usize)> {
     let mut separator = after_key;
     while let Some(character) = input[separator..].chars().next() {
@@ -124,7 +139,7 @@ fn parse_value(
         let after_quote = value_end + first.len_utf8();
         return Some((
             value_start,
-            if quoted_suffix_is_structural(input, after_quote) {
+            if quoted_suffix_is_structural(input, after_quote, suffix) {
                 value_end
             } else {
                 input.len()
@@ -157,38 +172,6 @@ fn looks_like_uuid(value: &str) -> bool {
                 byte.is_ascii_hexdigit()
             }
         })
-}
-
-fn quoted_suffix_is_structural(input: &str, mut cursor: usize) -> bool {
-    while let Some(character) = input[cursor..].chars().next() {
-        if character.is_whitespace() {
-            cursor += character.len_utf8();
-            continue;
-        }
-        if character == ',' {
-            let next = cursor + character.len_utf8();
-            let next = next + input[next..].len() - input[next..].trim_start().len();
-            let Some((_, after_key, _)) = parse_sensitive_key(input, next) else {
-                return false;
-            };
-            // A key name alone is not a new structured field. If its delimiter
-            // is absent, the text after the quote belongs to the secret tail.
-            return matches!(
-                input
-                    .get(after_key..)
-                    .and_then(|tail| tail.trim_start().chars().next()),
-                Some(':' | '=')
-            );
-        }
-        if matches!(character, '}' | ']' | ')' | '"' | '\'') {
-            // A forged closer must not release arbitrary text. Keep checking
-            // the complete suffix; only a complete structural tail is safe.
-            cursor += character.len_utf8();
-            continue;
-        }
-        return false;
-    }
-    true
 }
 
 fn quoted_value_end(input: &str, start: usize, quote: char) -> Option<usize> {
