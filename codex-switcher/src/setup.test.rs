@@ -1,6 +1,23 @@
 use super::*;
 use crate::models::{AccountConfig, AccountsFile, AuthJson, AuthTokens};
 
+#[test]
+fn manual_credit_reset_refuses_to_race_desktop_recovery() {
+    let _serial = TEST_CODEX_HOME_MUTEX.lock().unwrap();
+    let home =
+        std::env::temp_dir().join(format!("codex-reset-recovery-lock-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    std::env::set_var("CODEX_HOME", &home);
+    let recovery = crate::recovery::operation_lock().unwrap();
+    let result = reset_account("active");
+    assert!(result
+        .unwrap_err()
+        .contains("Another desktop switch/recovery"));
+    drop(recovery);
+    std::env::remove_var("CODEX_HOME");
+    std::fs::remove_dir_all(home).unwrap();
+}
+
 fn make_test_account(
     id: &str,
     email: &str,

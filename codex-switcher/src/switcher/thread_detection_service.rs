@@ -138,6 +138,13 @@ pub fn detect_in_progress_threads() -> Vec<String> {
         &mut in_progress,
         crate::recovery::load_pending().unwrap_or_default(),
     );
+    if let Ok(ownerless) = crate::recovery::load_ownerless_pending() {
+        in_progress.retain(|id| !ownerless.contains(id));
+    } else {
+        // A broken journal must not cause a new restart to revive an old
+        // ownerless target under an unverified account.
+        return Vec::new();
+    }
     in_progress
 }
 

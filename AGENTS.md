@@ -213,6 +213,7 @@ The detector scans threads using two distinct layers:
 | App launch verification | `3` attempts, up to `15 s` each + `2 s` settle | Uses `open -n -a /Applications/ChatGPT.app`, requires exactly one stable new main PID. |
 | Desktop IPC startup | up to `90 s` | Waits for the standard Codex Desktop same-user IPC socket, validating owner, mode, peer UID, and socket identity. |
 | Desktop owner discovery | up to `90 s` | Resolves the Desktop window that owns a task; a deep link is used only when no owner exists. |
+| Deferred owner probe | minimum interval `15 s` while daemon is running | Retries only a pre-dispatch target after ChatGPT has mounted an owner under the same account; daemon ticks or another running recovery may lengthen the interval, and the four-hour eligibility window still applies. |
 | IPC recovery dispatch | `90 s` | Bounds the wait for Desktop to accept one owner-routed recovery request and start the expected turn. |
 | Recovery execution | `600 s` | Allows a started task to produce substantive new agent work before failing closed. |
 | Recovery evidence soak | `10 s` | Requires substantive work to remain error-free before declaring the recovered turn verified. |
@@ -236,6 +237,7 @@ Rollout files are evaluated backwards from the tail, filtering out post-turn met
 
 - **Standard Desktop contract**: The user installs and runs the official Codex Desktop app normally. Desktop starts its bundled app-server and exposes the same-user IPC router; no separate app-server installation, custom flags, or manual socket setup is part of this project.
 - **Owner discovery**: `cxi` connects to `~/.codex/ipc/ipc.sock`, asks `thread-owner-discovery` for the task owner, and opens a `codex://threads/<tid>` deep link only when Desktop reports no owner for a cold task. Already-owned tasks are never cycled through the UI.
+- **Cold task fallback**: If Desktop never mounts that deep link, the recovery journal retains only the target whose owner was unavailable before any request was sent. The daemon later probes for a real owner and resumes from the original checkpoint once ChatGPT's own navigation mounts it under the same verified account. It rechecks queue and rollout state after owner discovery and durably removes the retry intent before any IPC request. Unattended mounting is not guaranteed by the current Desktop build; no unknown-outcome IPC send is retried.
 - **Cold-task navigation limit**: A successful macOS `open` exit for a deep link does not prove the task mounted. On the current Desktop build a cold task can remain `no-client-found` until ChatGPT's own task navigation opens it. Report partial recovery and never dispatch to an unverified owner; inspect the turn before a later explicit `cxi resume <id>`.
 - **Interrupted turn dispatch**: For a task without a pending queue, `cxi` sends exactly one `thread-follower-start-turn` request to the owner with the protocol-valid text `continue` and `turnTrigger = app_update_resume`.
 - **Queued follow-ups**: Existing queued payloads are preserved. `thread-follower-set-queued-follow-ups-state` is used to remove only the exact restart pause reason; user-paused queues are rejected.

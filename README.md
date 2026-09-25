@@ -91,6 +91,10 @@ The installation script checks and guides you through the prerequisites automati
    ```bash
    xcode-select --install
    ```
+   The selected Swift compiler and macOS SDK must come from a matching toolchain.
+   Run `./scripts/test_swift.sh` before installing; if Swift reports an SDK/compiler
+   version mismatch, repair or select matching Command Line Tools and rerun the
+   test. Do not publish or reinstall a partially built app bundle.
 3. **Rust & Cargo** (for building the ultra-lightweight CLI core):
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -441,13 +445,20 @@ The recovery algorithm is:
 
 On the current ChatGPT.app build, macOS may accept a `codex://threads/<id>`
 request for a cold task without mounting it in a Desktop window. The switcher
-then reports `RECOVERY_INCOMPLETE` with `no-client-found`; it does not send a
-turn to an unverified owner. Opening that task through ChatGPT's own task
-navigation and then running `cxi resume <id>` can recover an interrupted turn.
-The same deep-link failure was reproduced on an unmounted task without changing
-accounts, so retrying the URL is not a reliable mounting contract.
-Check each task's actual state first: a task that completed independently must
-not receive another resume request.
+reports incomplete recovery with `no-client-found` and keeps only these
+pre-dispatch targets in its 0600 journal. The daemon probes periodically with
+a 15-second minimum interval while no recovery is running; after the task gains a Desktop owner through ChatGPT's own
+navigation, it retries recovery with the original checkpoint and the same
+turn-progress verification under the same verified account. It rechecks the
+queue and rollout after owner discovery, durably clears retry intent before
+any IPC request, and never retries a request whose outcome is unknown. It
+drops completed tasks without queued follow-ups, archived, stale, or ambiguous
+uncaptured targets. The pending
+entry expires under the four-hour eligibility window. External deep-link
+acceptance alone remains insufficient; unattended mounting of a cold task is
+not supported by the current Desktop navigation interface. If the daemon is
+not running, inspect the task and use `cxi resume <id>` if it is still
+interrupted.
 
 ### ♻️ Account-Bound Weekly Reset Credits
 

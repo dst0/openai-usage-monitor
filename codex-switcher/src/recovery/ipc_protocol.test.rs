@@ -15,6 +15,8 @@ use std::{io::Write, os::unix::net::UnixStream, time::Duration};
 fn desktop_ipc_dispatches_only_eligible_work() {
     for mode in [
         RecoveryMode::CapturedRestart,
+        RecoveryMode::DeferredCaptured,
+        RecoveryMode::DeferredOwned,
         RecoveryMode::ExplicitTarget,
         RecoveryMode::DiscoveredOnly,
     ] {
@@ -32,12 +34,22 @@ fn desktop_ipc_dispatches_only_eligible_work() {
     assert!(should_dispatch(
         ActiveInProgress,
         0,
+        RecoveryMode::DeferredCaptured
+    ));
+    assert!(should_dispatch(
+        ActiveInProgress,
+        0,
         RecoveryMode::ExplicitTarget
     ));
     assert!(!should_dispatch(
         ActiveInProgress,
         0,
         RecoveryMode::DiscoveredOnly
+    ));
+    assert!(!should_dispatch(
+        ActiveInProgress,
+        0,
+        RecoveryMode::DeferredOwned
     ));
 }
 

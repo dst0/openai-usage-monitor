@@ -1,7 +1,9 @@
 //! Recovery is successful only when the target rollout records new agent work.
 //! IPC dispatch, task_started, or a queue acknowledgement is not proof.
 mod automation_guard;
+mod deferred_recovery_service;
 mod desktop_ipc;
+mod dispatch_mark_error;
 mod evidence;
 mod ipc_call_error;
 mod ipc_protocol;
@@ -28,8 +30,9 @@ pub(crate) use automation_guard::{
     operation_id_for_banner, restart_cancellation_requested,
 };
 pub use automation_guard::{claim_restart_operation, operation_lock};
+pub(crate) use deferred_recovery_service::DeferredRecoveryService;
 use desktop_ipc::DesktopIpc;
-pub use manifest_store::{load_pending, save_pending};
+pub use manifest_store::{load_ownerless_pending, load_pending, save_pending};
 pub(crate) use recovery_banner::RecoveryBanner;
 pub(crate) use recovery_mode::RecoveryMode;
 pub use recovery_service::recover_threads;
@@ -53,6 +56,9 @@ pub(crate) fn preflight_desktop_dispatch() -> Result<(), String> {
 #[path = "recovery/automation_guard.test.rs"]
 mod automation_guard_tests;
 #[cfg(test)]
+#[path = "recovery/deferred_recovery.test.rs"]
+mod deferred_recovery_tests;
+#[cfg(test)]
 #[path = "recovery/evidence.test.rs"]
 mod evidence_tests;
 #[cfg(test)]
@@ -67,6 +73,9 @@ mod observer_tests;
 #[cfg(test)]
 #[path = "recovery/queue_snapshot.test.rs"]
 mod queue_snapshot_tests;
+#[cfg(test)]
+#[path = "recovery/target_dispatch.test.rs"]
+mod target_dispatch_tests;
 #[cfg(test)]
 #[path = "recovery/thread_identity.test.rs"]
 mod thread_identity_tests;

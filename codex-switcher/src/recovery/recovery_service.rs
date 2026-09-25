@@ -1,7 +1,10 @@
 use super::{
     automation_guard::operation_id_for_banner,
     desktop_ipc::DesktopIpc,
-    manifest_store::{load_manifest, prune_ineligible_targets, write_manifest},
+    manifest_store::{
+        current_account_binding, finalize_target, load_manifest, prune_ineligible_targets,
+        validate_target_account_binding, write_manifest,
+    },
     pending_target::PendingTarget,
     recovery_banner::RecoveryBanner,
     recovery_mode::RecoveryMode,
@@ -53,6 +56,8 @@ pub(crate) fn recover_threads_with_banner(
 ) -> Result<(), String> {
     let home = storage::codex_home();
     let mut pending_manifest = load_manifest()?;
+    let binding = current_account_binding();
+    validate_target_account_binding(&pending_manifest, ids, binding.as_deref())?;
     for id in ids {
         if !valid_id(id) {
             return Err("Invalid thread ID".into());
@@ -66,13 +71,16 @@ pub(crate) fn recover_threads_with_banner(
             // A recovery-only request is a new operation and must never reuse a
             // stale offset left by an earlier failed restart. A captured restart
             // intentionally retains its pre-shutdown checkpoint.
-            if !mode.captured() {
+            if !mode.preserves_checkpoint() && !target.awaiting_owner {
                 target.offset = offset;
             }
         } else {
             pending_manifest.push(PendingTarget {
                 id: id.clone(),
                 offset,
+                awaiting_owner: false,
+                captured_restart: mode == RecoveryMode::CapturedRestart,
+                owner_account_id: None,
             });
         }
     }
@@ -212,9 +220,14 @@ pub(crate) fn recover_threads_with_banner(
         } else if target.completed {
             update_banner_status(banner, &target.id, BannerSessionStatus::Completed);
         }
-        // Whether recovery completed cleanly or failed, this restart run has handled the target.
-        // Never retain handled targets in the manifest to avoid resurrecting stale zombie tasks.
-        pending_manifest.retain(|item| item.id != target.id);
+        finalize_target(
+            &mut pending_manifest,
+            &target.id,
+            target.owner_unavailable,
+            target.dispatched,
+            current_account_binding().as_deref(),
+            target.account_mismatch,
+        );
     }
     for id in &preparation_failures {
         pending_manifest.retain(|item| item.id != *id);
@@ -222,7 +235,12 @@ pub(crate) fn recover_threads_with_banner(
     for id in completed_without_action {
         pending_manifest.retain(|item| item.id != id);
     }
-    prune_ineligible_targets(&home, &mut pending_manifest);
+    if let Err(error) = prune_ineligible_targets(&home, &mut pending_manifest) {
+        // Keep pre-dispatch ownerless intent on disk if queue/rollout state is
+        // temporarily unreadable. The deferred worker will revalidate later.
+        write_manifest(&pending_manifest)?;
+        return Err(error);
+    }
     write_manifest(&pending_manifest)?;
 
     failures.sort();

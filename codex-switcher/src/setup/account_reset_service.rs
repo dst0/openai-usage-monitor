@@ -3,6 +3,7 @@ use crate::storage::{load_accounts, save_accounts};
 
 /// Consumes an available rate-limit reset credit for the specified account, restoring its quota.
 pub fn reset_account(account_id: &str) -> Result<(), String> {
+    let _operation = crate::recovery::operation_lock()?;
     let mut file = load_accounts()?;
     // Sync any live credentials from auth.json
     let _ = crate::daemon::sync_active_tokens(&mut file);

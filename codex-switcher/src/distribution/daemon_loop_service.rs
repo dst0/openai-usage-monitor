@@ -62,6 +62,8 @@ impl DaemonLoopService {
             return;
         }
 
+        let mut deferred_recovery = crate::recovery::DeferredRecoveryService::new();
+
         loop {
             let _ = crate::logger::rotate_all_logs(
                 crate::logger::DEFAULT_MAX_LOG_SIZE,
@@ -71,6 +73,7 @@ impl DaemonLoopService {
                 LogRedactionService::eprint_background(&format!("Error in daemon tick: {error}"));
                 crate::logger::log("ERROR", "DAEMON", "Daemon tick failed");
             }
+            deferred_recovery.poll();
 
             let last_auth_mtime = auth_mtime();
             let interval_secs = load_accounts()
@@ -81,6 +84,7 @@ impl DaemonLoopService {
             let mut watchdog_ticks = 0_u32;
             while sleep_start.elapsed() < target_duration {
                 sleep(Duration::from_secs(1));
+                deferred_recovery.poll();
                 watchdog_ticks = watchdog_ticks.wrapping_add(1);
                 let current_auth_mtime = auth_mtime();
                 if current_auth_mtime != last_auth_mtime && current_auth_mtime.is_some() {
