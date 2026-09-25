@@ -57,7 +57,7 @@ fn redaction_temps(home: &Path) -> Vec<PathBuf> {
 #[test]
 fn sanitizes_every_owned_log_scope_preserves_foreign_files_and_is_inode_idempotent() {
     let home = temporary_home("all_scopes");
-    let raw = "email=legacy.person@example.test path=/private/legacy token=synthetic-secret\n";
+    let raw = "{\"email\":\"legacy.person@example.test\",\"path\":\"/private/legacy\",\"token\":\"synthetic-secret\"}\n";
     for path in [
         home.join("log/switcher.log"),
         home.join("account-switcher-daemon.log"),

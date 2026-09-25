@@ -1,4 +1,5 @@
 use super::log_redaction_service::LogRedactionService;
+use super::log_redaction_span_service::LogRedactionSpanService;
 
 pub(crate) const PATH_MARKER: &str = "[PATH]";
 pub(crate) const TOKEN_MARKER: &str = "[TOKEN]";
@@ -8,39 +9,23 @@ pub(crate) struct LogRedactionTokenService;
 
 impl LogRedactionTokenService {
     pub(crate) fn sanitize_token(token: &str) -> String {
-        if let Some((prefix, field, value, suffix)) = Self::keyed_value(token) {
-            let suffix = if suffix.is_empty() {
-                String::new()
-            } else {
-                LogRedactionService::sanitize_text(suffix)
-            };
-            return format!(
-                "{prefix}{}{suffix}",
-                LogRedactionService::sanitize_field(&field, value)
-            );
-        }
-        if let Some((start, end)) = Self::email_span(token) {
-            return Self::replace_span(
-                token,
-                start,
-                end,
-                &LogRedactionService::opaque_ref("email", &token[start..end]),
-            );
-        }
-        if let Some((start, end)) = Self::path_span(token) {
-            return Self::replace_span(token, start, end, PATH_MARKER);
+        if !matches!(token.chars().next(), Some('{' | '[' | '"' | '\'')) {
+            if let Some((prefix, field, value, suffix)) = Self::keyed_value(token) {
+                return format!(
+                    "{prefix}{}{suffix}",
+                    LogRedactionService::sanitize_field(&field, value)
+                );
+            }
         }
         if token.starts_with("--") || token.contains(" --") {
             return ARG_MARKER.to_string();
         }
-        if token.starts_with("sk-")
-            || token.starts_with("tok_")
-            || token.starts_with("rt_")
-            || Self::looks_like_jwt(token)
-        {
+        if Self::contains_credential(token) {
             return TOKEN_MARKER.to_string();
         }
-        Self::replace_uuid(token)
+        let clean = LogRedactionSpanService::redact_emails(token);
+        let clean = LogRedactionSpanService::redact_paths(&clean);
+        LogRedactionSpanService::redact_uuids(&clean)
     }
 
     pub(crate) fn remove_controls(value: &str) -> String {
@@ -137,107 +122,60 @@ impl LogRedactionTokenService {
             .next()
             .filter(|character| *character == '\'' || *character == '"')
         {
-            let close = value[quote.len_utf8()..].find(quote)? + quote.len_utf8();
+            let Some(close) = value[quote.len_utf8()..].find(quote) else {
+                return Some((
+                    &token[..prefix_end + quote.len_utf8()],
+                    field,
+                    &value[quote.len_utf8()..],
+                    "",
+                ));
+            };
+            let close = close + quote.len_utf8();
+            let suffix = &value[close + quote.len_utf8()..];
+            let suffix = if suffix.chars().all(|character| ",}]();".contains(character)) {
+                suffix
+            } else {
+                ""
+            };
             return Some((
                 &token[..prefix_end + quote.len_utf8()],
                 field,
                 &value[quote.len_utf8()..close],
-                &value[close + quote.len_utf8()..],
+                suffix,
             ));
         }
-        let end = value
-            .char_indices()
-            .find(|(_, character)| ",}();".contains(*character))
-            .map(|(index, _)| index)
-            .unwrap_or(value.len());
-        Some((&token[..prefix_end], field, &value[..end], &value[end..]))
+        Some((&token[..prefix_end], field, value, ""))
     }
 
-    fn email_span(token: &str) -> Option<(usize, usize)> {
-        let bytes = token.as_bytes();
-        for start in 0..bytes.len() {
-            if !bytes[start].is_ascii_alphanumeric() {
-                continue;
+    fn contains_credential(token: &str) -> bool {
+        if !["sk-", "tok_", "rt_", "eyJ"]
+            .iter()
+            .any(|prefix| token.contains(prefix))
+        {
+            return false;
+        }
+        let mut dots_remaining = token.bytes().filter(|byte| *byte == b'.').count();
+        for (index, character) in token.char_indices() {
+            if character == '.' {
+                dots_remaining -= 1;
             }
-            let mut at = start;
-            while at < bytes.len()
-                && (bytes[at].is_ascii_alphanumeric() || b"._%+-".contains(&bytes[at]))
+            if index > 0
+                && token[..index]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|character| character.is_ascii_alphanumeric() || character == '_')
             {
-                if bytes[at] == b'@' {
-                    break;
-                }
-                at += 1;
-            }
-            if at >= bytes.len() || bytes[at] != b'@' || at == start {
                 continue;
             }
-            let mut end = at + 1;
-            let mut dot = false;
-            while end < bytes.len()
-                && (bytes[end].is_ascii_alphanumeric() || b".-".contains(&bytes[end]))
+            let candidate = &token[index..];
+            if ["sk-", "tok_", "rt_"]
+                .iter()
+                .any(|prefix| candidate.starts_with(prefix))
+                || (candidate.starts_with("eyJ") && dots_remaining >= 2)
             {
-                dot |= bytes[end] == b'.';
-                end += 1;
-            }
-            if dot && end > at + 2 {
-                return Some((start, end));
+                return true;
             }
         }
-        None
-    }
-
-    fn path_span(token: &str) -> Option<(usize, usize)> {
-        let bytes = token.as_bytes();
-        for start in 0..bytes.len() {
-            let slash =
-                bytes[start] == b'/' && bytes.get(start + 1).is_some_and(|byte| *byte != b'/');
-            let tilde = bytes[start] == b'~' && bytes.get(start + 1) == Some(&b'/');
-            if !slash && !tilde {
-                continue;
-            }
-            let mut end = start;
-            while end < bytes.len() && !b" \t\"'`,;)]}".contains(&bytes[end]) {
-                end += 1;
-            }
-            if end > start + 1 {
-                return Some((start, end));
-            }
-        }
-        None
-    }
-
-    fn looks_like_jwt(token: &str) -> bool {
-        token.starts_with("eyJ") && token.matches('.').count() >= 2
-    }
-
-    fn replace_uuid(token: &str) -> String {
-        let bytes = token.as_bytes();
-        if bytes.len() < 36 {
-            return token.to_string();
-        }
-        for start in 0..=bytes.len() - 36 {
-            let candidate = &bytes[start..start + 36];
-            let valid = candidate.iter().enumerate().all(|(index, byte)| {
-                if [8, 13, 18, 23].contains(&index) {
-                    *byte == b'-'
-                } else {
-                    byte.is_ascii_hexdigit()
-                }
-            });
-            if valid {
-                let value = String::from_utf8_lossy(candidate);
-                return Self::replace_span(
-                    token,
-                    start,
-                    start + 36,
-                    &LogRedactionService::opaque_ref("id", &value),
-                );
-            }
-        }
-        token.to_string()
-    }
-
-    fn replace_span(value: &str, start: usize, end: usize, replacement: &str) -> String {
-        format!("{}{}{}", &value[..start], replacement, &value[end..])
+        false
     }
 }
