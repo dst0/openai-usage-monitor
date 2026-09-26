@@ -54,7 +54,7 @@ pub(super) fn prune_ineligible_targets(
         return Ok(());
     }
     let updates = recent_thread_updates(home, targets)?;
-    ManifestPruneService::run_with(home, targets, |id| Ok(updates.get(id).copied()))
+    ManifestPruneService::shared().run_with(home, targets, |id| Ok(updates.get(id).copied()))
 }
 
 #[cfg(test)]
@@ -63,7 +63,7 @@ pub(super) fn prune_ineligible_targets_with(
     targets: &mut Vec<PendingTarget>,
     updated_at: impl FnMut(&str) -> Result<Option<i64>, String>,
 ) -> Result<(), String> {
-    ManifestPruneService::run_with(home, targets, updated_at)
+    ManifestPruneService::shared().run_with(home, targets, updated_at)
 }
 
 pub(super) fn finalize_target(

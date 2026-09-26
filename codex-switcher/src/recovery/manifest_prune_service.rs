@@ -1,4 +1,5 @@
 use super::{
+    ownerless_probe_rotation::OwnerlessProbeRotation,
     pending_target::PendingTarget,
     queue_snapshot::pending_count,
     restart_checkpoint_service::{
@@ -9,24 +10,36 @@ use super::{
 };
 use crate::switcher::{self, ThreadRolloutState};
 use std::{
-    collections::HashMap,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
 };
 
-const MAX_ROTATION_HOMES: usize = 128;
-static NEXT_OWNERLESS_SCAN: OnceLock<Mutex<HashMap<PathBuf, usize>>> = OnceLock::new();
+/// Drops journaled recovery targets that can no longer be resumed. It borrows
+/// the ownerless rotation, so tests can inject an isolated instance.
+pub(super) struct ManifestPruneService<'a> {
+    rotation: &'a OwnerlessProbeRotation,
+}
 
-pub(super) struct ManifestPruneService;
+impl ManifestPruneService<'static> {
+    /// Production prune passes share one rotation, so each deferred probe
+    /// continues where the previous pass over the same home ended.
+    pub(super) fn shared() -> Self {
+        Self::new(OwnerlessProbeRotation::shared())
+    }
+}
 
-impl ManifestPruneService {
+impl<'a> ManifestPruneService<'a> {
+    pub(super) fn new(rotation: &'a OwnerlessProbeRotation) -> Self {
+        Self { rotation }
+    }
+
     pub(super) fn run_with(
+        &self,
         home: &Path,
         targets: &mut Vec<PendingTarget>,
         updated_at: impl FnMut(&str) -> Result<Option<i64>, String>,
     ) -> Result<(), String> {
-        Self::run_with_inspector(
+        self.run_with_inspector(
             home,
             targets,
             updated_at,
@@ -35,6 +48,7 @@ impl ManifestPruneService {
     }
 
     pub(super) fn run_with_inspector(
+        &self,
         home: &Path,
         targets: &mut Vec<PendingTarget>,
         mut updated_at: impl FnMut(&str) -> Result<Option<i64>, String>,
@@ -47,7 +61,7 @@ impl ManifestPruneService {
             .iter()
             .filter(|target| target.awaiting_owner)
             .count();
-        let selected_ownerless = Self::next_ownerless_for_home(home, ownerless_count);
+        let selected_ownerless = self.rotation.select(home, ownerless_count);
         let mut ownerless_index = 0;
         for target in targets.iter() {
             let selected_for_scan =
@@ -201,25 +215,6 @@ impl ManifestPruneService {
             && before.modified().ok() == after.modified().ok()
             && (before.ctime(), before.ctime_nsec()) == (after.ctime(), after.ctime_nsec())
             && switcher::find_thread_rollout_path(home, id).as_deref() == Some(path)
-    }
-
-    fn next_ownerless_for_home(home: &Path, count: usize) -> Option<usize> {
-        if count == 0 {
-            return None;
-        }
-        let mut cursors = NEXT_OWNERLESS_SCAN
-            .get_or_init(|| Mutex::new(HashMap::new()))
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        if !cursors.contains_key(home) && cursors.len() >= MAX_ROTATION_HOMES {
-            if let Some(evicted) = cursors.keys().next().cloned() {
-                cursors.remove(&evicted);
-            }
-        }
-        let cursor = cursors.entry(home.to_path_buf()).or_default();
-        let selected = *cursor % count;
-        *cursor = (selected + 1) % count;
-        Some(selected)
     }
 }
 

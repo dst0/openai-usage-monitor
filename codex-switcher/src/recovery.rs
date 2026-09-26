@@ -20,6 +20,7 @@ mod observer;
 mod owner_info;
 mod owner_link_retry_schedule;
 mod ownerless_link_mount;
+mod ownerless_probe_rotation;
 mod pending_manifest;
 mod pending_target;
 mod queue_snapshot;
@@ -92,6 +93,9 @@ mod manifest_store_tests;
 #[cfg(test)]
 #[path = "recovery/observer.test.rs"]
 mod observer_tests;
+#[cfg(test)]
+#[path = "recovery/ownerless_probe_rotation.test.rs"]
+mod ownerless_probe_rotation_tests;
 #[cfg(test)]
 #[path = "recovery/queue_snapshot.test.rs"]
 mod queue_snapshot_tests;

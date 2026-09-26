@@ -790,6 +790,60 @@ fn ownerless_rotation_is_fair_when_other_homes_are_probed() {
 }
 
 #[test]
+fn detection_pass_without_ownerless_targets_keeps_rotation_turn() {
+    use super::{
+        manifest_prune_service::ManifestPruneService,
+        ownerless_probe_rotation::OwnerlessProbeRotation,
+    };
+    let home = std::env::temp_dir().join(format!("codex-prune-detection-{}", std::process::id()));
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let mut targets = Vec::new();
+    let mut rollouts = Vec::new();
+    for index in 1..=2 {
+        let id = format!("01a098c2-0fae-74d2-a80c-{index:012x}");
+        let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+        let mut contents = b"checkpoint\n".to_vec();
+        contents.extend(vec![b'x'; 1024 * 1024]);
+        std::fs::write(&rollout, contents).unwrap();
+        rollouts.push(rollout);
+        targets.push(PendingTarget {
+            id,
+            offset: Some(11),
+            awaiting_owner: true,
+            captured_restart: true,
+            owner_account_id: Some("owner".into()),
+        });
+    }
+    let rotation = OwnerlessProbeRotation::new(4);
+    let service = ManifestPruneService::new(&rotation);
+    let now = || Ok(Some(chrono::Utc::now().timestamp()));
+    let scanned = |rollouts: &[PathBuf]| -> Vec<bool> {
+        rollouts
+            .iter()
+            .map(|path| scanned_bytes_for(path, 11).is_some())
+            .collect()
+    };
+    service.run_with(&home, &mut targets, |_| now()).unwrap();
+    assert_eq!(scanned(&rollouts), [true, false]);
+    // `load_pending()` prunes only restart targets in the same home. That
+    // pass must not consume the next ownerless turn.
+    let mut restart_only = vec![PendingTarget {
+        id: "01a098c2-0fae-74d2-a80c-0000000000fe".into(),
+        awaiting_owner: false,
+        owner_account_id: None,
+        ..targets[0].clone()
+    }];
+    service
+        .run_with(&home, &mut restart_only, |_| now())
+        .unwrap();
+    service.run_with(&home, &mut targets, |_| now()).unwrap();
+    assert_eq!(targets.len(), 2);
+    assert_eq!(scanned(&rollouts), [true, true]);
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn ownerless_prune_inspects_only_the_selected_tail() {
     use super::manifest_prune_service::ManifestPruneService;
     let home = std::env::temp_dir().join(format!("codex-prune-tail-{}", std::process::id()));
@@ -813,16 +867,17 @@ fn ownerless_prune_inspects_only_the_selected_tail() {
         });
     }
     let mut tail_reads = 0;
-    ManifestPruneService::run_with_inspector(
-        &home,
-        &mut targets,
-        |_| Ok(Some(chrono::Utc::now().timestamp())),
-        |_, _| {
-            tail_reads += 1;
-            crate::switcher::ThreadRolloutState::CleanCompleted
-        },
-    )
-    .unwrap();
+    ManifestPruneService::shared()
+        .run_with_inspector(
+            &home,
+            &mut targets,
+            |_| Ok(Some(chrono::Utc::now().timestamp())),
+            |_, _| {
+                tail_reads += 1;
+                crate::switcher::ThreadRolloutState::CleanCompleted
+            },
+        )
+        .unwrap();
     assert_eq!(targets.len(), 3);
     assert_eq!(tail_reads, 1, "ownerless pruning must not read every tail");
     assert_eq!(

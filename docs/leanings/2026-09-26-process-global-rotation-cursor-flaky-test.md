@@ -1,0 +1,28 @@
+# 2026-09-26 — Process-global rotation cursor made a rotation test flaky
+
+- **Status:** Resolved
+- **Task/context:** A review of the cold-task recovery work reported that `ownerless_prune_rotates_one_rollout_scan_per_pass` in `codex-switcher/src/recovery/manifest_store.test.rs` failed in parallel `cargo test` runs on an unmodified build. [2026-09-26-tests-fell-back-to-live-codex-home-and-network.md](2026-09-26-tests-fell-back-to-live-codex-home-and-network.md) also recorded it as an open flake.
+- **Unexpected observation or failure:** The test runs two prune passes over two ownerless targets and expects the second pass to scan the other rollout. Sometimes the second pass scanned the same rollout again, so the final assertion (every rollout scanned) failed. A later local attempt passed 6 of 6 full runs, which made the report look unreproducible.
+- **Evidence:** On main at a8ab321, `prune_ineligible_targets_with` chose the scanned target with a process-global `static NEXT_OWNERLESS_PROBE: AtomicUsize`. Running `recovery::` tests from that test binary 30 times in parallel produced 14 failures, all at the second-pass assertion of this test. A regression test that prunes an unrelated ownerless target between the two passes failed on every isolated run of that code.
+- **Approaches tried:**
+  - **Attempt:** Rerun full `cargo test` a few times to confirm the report.
+    - **Outcome:** Did not work.
+    - **Why:** Whether the test fails depends on how many other ownerless prunes land between its two calls, which varies with scheduling. A few green runs cannot rule it out. A narrower filter (`recovery::`) run 30 times showed the failure rate clearly.
+  - **Attempt:** Keep the global counter and have the production wrapper advance it on every call, passing only the index into the pruning function.
+    - **Outcome:** Rejected.
+    - **Why:** `load_pending()` prunes only restart targets and runs alongside the deferred worker. Advancing on passes without ownerless targets would let detection passes consume the worker's next turn and could repeat the same cold target.
+  - **Attempt:** Inject one `OwnerlessProbeRotation` cursor into the prune pass. The production wrapper owns one process-wide instance, and each test owns its own.
+    - **Outcome:** Partial.
+    - **Why:** It removed the flake, but one cursor shared by every home is not fair. With three ownerless targets in one home and two passes over another home between its passes, the first home's cursor advances by three each cycle and always lands on the same target.
+  - **Attempt:** Main at 687c081 (#15) independently replaced the counter with `NEXT_OWNERLESS_SCAN`, a process-global map of cursors keyed by `CODEX_HOME`.
+    - **Outcome:** Partial.
+    - **Why:** Tests that use distinct homes no longer advance each other's cursor, and rotation stays fair when other homes are probed. The map was still process-global, capped at 128 homes, and evicted `keys().next()`, whose order depends on `RandomState`. That branch could not be tested deterministically, and a test that filled the map could evict another test's cursor.
+  - **Attempt:** Keep per-home cursors, but move them into an injected `OwnerlessProbeRotation`. `ManifestPruneService` borrows the rotation, `ManifestPruneService::shared()` uses one process-wide instance, and a full rotation evicts the least recently selected home.
+    - **Outcome:** Worked.
+    - **Why:** Production keeps one fair, per-home round-robin that advances only when ownerless targets exist. Tests can own a rotation, and eviction depends only on selection order.
+- **Root cause:** A test asserted the order of a process-global cursor that other tests running in parallel could advance.
+- **Resolution:** `codex-switcher/src/recovery/ownerless_probe_rotation.rs` holds per-home cursors ordered from least to most recently selected. `ManifestPruneService` takes the rotation by reference, and the production wrappers in `manifest_store.rs` call `ManifestPruneService::shared()`.
+- **Verification:** On a8ab321, the interleaving regression test failed before the injected cursor and passed after it, and the 30-run parallel `recovery::` loop went from 14 failures to 0. After rebasing onto main at 0b45207, `ownerless_probe_rotation.test.rs` covers in-order rotation, no advance without ownerless targets, a shrinking target set, independent instances, independent homes, least-recently-selected eviction, a single-home rotation, and zero capacity. `detection_pass_without_ownerless_targets_keeps_rotation_turn` fails when a restart-only pass advances the cursor. Main's `prune_rotates_one_ownerless_rollout_scan_per_pass` exercises the shared production rotation, and `ownerless_rotation_is_fair_when_other_homes_are_probed` covers interleaved homes.
+- **Prevention/follow-up:** AGENTS.md requires tests to own rotating and bounded-cache state and requires deterministic eviction.
+- **Reusable learning:** Inject any cursor, counter, or other rotating state that a test asserts a sequence on. Keep the process-global instance only in the production entry point. Key a round-robin by the resource it rotates over, or one busy resource can pin another's selection. Measure a suspected parallel flake with many narrowly filtered runs, not a few full-suite runs.
+- **References:** `codex-switcher/src/recovery/ownerless_probe_rotation.rs`, `codex-switcher/src/recovery/ownerless_probe_rotation.test.rs`, `codex-switcher/src/recovery/manifest_prune_service.rs`, `codex-switcher/src/recovery/manifest_store.test.rs`, [2026-09-26-repeated-cold-checkpoint-scan.md](2026-09-26-repeated-cold-checkpoint-scan.md), `AGENTS.md`.

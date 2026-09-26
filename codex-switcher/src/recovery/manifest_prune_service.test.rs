@@ -1,4 +1,4 @@
-use super::{ManifestPruneService, PendingTarget};
+use super::{ManifestPruneService, OwnerlessProbeRotation, PendingTarget};
 use chrono::{TimeZone, Utc};
 
 fn quota_fixture(
@@ -49,8 +49,11 @@ fn quota_manifest_pruning_uses_failure_time_even_when_sqlite_moves() {
         ] {
             let (home, target) = quota_fixture(label, failed_at, awaiting_owner);
             let mut pending = vec![target.clone()];
-            let result =
-                ManifestPruneService::run_with(&home, &mut pending, |_| Ok(Some(updated_at)));
+            // A fresh rotation selects this home's only ownerless target, so
+            // the deferred path dates it instead of keeping it unexamined.
+            let rotation = OwnerlessProbeRotation::new(1);
+            let result = ManifestPruneService::new(&rotation)
+                .run_with(&home, &mut pending, |_| Ok(Some(updated_at)));
             std::fs::remove_dir_all(&home).unwrap();
             if awaiting_owner && failed_at.is_none() {
                 assert!(
@@ -80,7 +83,8 @@ fn rollout_append_during_prune_retains_checkpoint_for_retry() {
             .join("sessions")
             .join(format!("rollout-2026-09-27T00-00-00-{}.jsonl", target.id));
         let mut pending = vec![target.clone()];
-        let result = ManifestPruneService::run_with_inspector(
+        let rotation = OwnerlessProbeRotation::new(1);
+        let result = ManifestPruneService::new(&rotation).run_with_inspector(
             &home,
             &mut pending,
             |_| Ok(Some(now - 5 * 3600)),
