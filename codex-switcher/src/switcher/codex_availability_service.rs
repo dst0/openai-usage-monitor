@@ -1,3 +1,4 @@
+use super::desktop_session_binding_service::DesktopSessionBindingService;
 use super::{is_codex_app_running, launch_codex_app};
 
 pub(super) struct CodexAvailabilityService;
@@ -5,7 +6,19 @@ pub(super) struct CodexAvailabilityService;
 impl CodexAvailabilityService {
     pub(super) fn relaunch_previous_state(error: String) -> String {
         match launch_codex_app() {
-            Ok(_) => format!("{error}; Codex was relaunched with the previous account state"),
+            Ok(pids) => {
+                match DesktopSessionBindingService::bind_current_cli_after_emergency_launch(
+                    &crate::storage::codex_home(),
+                    &pids,
+                ) {
+                    Ok(()) => {
+                        format!("{error}; Codex was relaunched with the previous account state")
+                    }
+                    Err(binding) => {
+                        format!("{error}; Codex relaunched but account binding failed: {binding}")
+                    }
+                }
+            }
             Err(relaunch_error) => {
                 format!("{error}; emergency Codex relaunch also failed: {relaunch_error}")
             }
@@ -46,9 +59,17 @@ impl CodexAvailabilityService {
             return error;
         }
         match launch_codex_app() {
-            Ok(pids) => format!(
-                "{error}; Codex was relaunched after the failed automation with pids={pids:?}"
-            ),
+            Ok(pids) => {
+                match DesktopSessionBindingService::bind_current_cli_after_emergency_launch(
+                    &crate::storage::codex_home(),
+                    &pids,
+                ) {
+                    Ok(()) => format!("{error}; Codex was relaunched after the failed automation"),
+                    Err(binding) => {
+                        format!("{error}; Codex relaunched but account binding failed: {binding}")
+                    }
+                }
+            }
             Err(relaunch_error) => {
                 format!("{error}; emergency Codex relaunch also failed: {relaunch_error}")
             }

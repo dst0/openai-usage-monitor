@@ -1,3 +1,5 @@
+#[path = "switcher/account_switch_noop_service.rs"]
+mod account_switch_noop_service;
 #[path = "switcher/account_switch_service.rs"]
 mod account_switch_service;
 #[path = "switcher/account_target_resolver.rs"]
@@ -6,6 +8,8 @@ mod account_target_resolver;
 mod codex_app_lifecycle;
 #[path = "switcher/codex_availability_service.rs"]
 mod codex_availability_service;
+#[path = "switcher/desktop_session_binding_service.rs"]
+mod desktop_session_binding_service;
 #[path = "switcher/recovery_command_service.rs"]
 mod recovery_command_service;
 #[path = "switcher/switch_outcome.rs"]

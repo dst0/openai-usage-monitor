@@ -9,9 +9,7 @@ extension AppDelegate {
     into menu: NSMenu,
     insertIdx: inout Int
   ) {
-    let cliPrimary =
-      snapshot.cliAccount ?? snapshot.accounts.first(where: { $0.isCurrentActive })
-      ?? snapshot.accounts.first
+    let cliPrimary = snapshot.cliAccount
     let reserveAccs = snapshot.accounts.filter { $0.id != (cliPrimary?.id ?? "") }
     guard !reserveAccs.isEmpty else { return }
 
@@ -50,9 +48,7 @@ extension AppDelegate {
 
     func sectionEntries(for accounts: [AccountQuota]) -> [ReserveAccountSectionEntry] {
       let appAccId = snapshot.isAppRunning ? snapshot.appAccount?.id : nil
-      let cliAccId =
-        snapshot.cliAccount?.id
-        ?? snapshot.accounts.first(where: { $0.isCurrentActive })?.id
+      let cliAccId = snapshot.cliAccount?.id
       return accounts.map { account in
         globalReserveIdx += 1
         let isCli = cliAccId != nil && (account.id.caseInsensitiveCompare(cliAccId!) == .orderedSame || account.email.caseInsensitiveCompare(cliAccId!) == .orderedSame)

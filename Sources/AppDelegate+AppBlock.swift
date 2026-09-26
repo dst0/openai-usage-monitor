@@ -161,8 +161,9 @@ extension AppDelegate {
         insertIdx += 1
       }
     } else {
-      let notDetectedTitle =
-        isRu ? "⚪ Сессия ChatGPT.app не обнаружена" : "⚪ ChatGPT.app session not detected"
+      let notDetectedTitle = snapshot.isAppRunning
+        ? (isRu ? "⚪ Аккаунт ChatGPT.app пока не подтверждён" : "⚪ ChatGPT.app account not yet verified")
+        : (isRu ? "⚪ Сессия ChatGPT.app не обнаружена" : "⚪ ChatGPT.app session not detected")
       let notDetectedItem = NSMenuItem(
         title: notDetectedTitle, action: #selector(noop), keyEquivalent: "")
       notDetectedItem.target = self
@@ -176,10 +177,10 @@ extension AppDelegate {
       dynamicAccountItems.append(notDetectedItem)
       insertIdx += 1
 
-      let hintTitle =
-        isRu
-        ? "  (Запустите ChatGPT.app для синхронизации)"
-        : "  (Start ChatGPT.app to monitor desktop session)"
+      let hintTitle = snapshot.isAppRunning
+        ? (isRu ? "  (Ожидание подтверждения текущей сессии)" : "  (Waiting for current session verification)")
+        : (isRu ? "  (Запустите ChatGPT.app для синхронизации)"
+          : "  (Start ChatGPT.app to monitor desktop session)")
       let hintItem = NSMenuItem(title: hintTitle, action: #selector(noop), keyEquivalent: "")
       hintItem.target = self
       hintItem.attributedTitle = NSAttributedString(

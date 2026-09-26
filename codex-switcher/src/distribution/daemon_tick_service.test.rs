@@ -1,9 +1,11 @@
-use super::coordinate_automatic_distribution_with;
+use super::{build_status, coordinate_automatic_distribution_with, CliAuthFileIdentityService};
 use crate::distribution::distribution_executor::DistributionExecutor;
 use crate::distribution::distribution_outcome::{DistributionOutcome, DistributionStatus};
 use crate::distribution::distribution_request::DistributionRequest;
 use crate::distribution::test_account_spec::TestAccountSpec;
+use crate::distribution::test_helper::TestEnv;
 use crate::models::{AccountsFile, Settings};
+use crate::storage::{read_active_auth_json, write_active_auth_json};
 use std::sync::Mutex;
 
 struct DaemonRecordingExecutor {
@@ -109,4 +111,45 @@ fn daemon_entrypoint_returns_coordinator_cooldown_without_retry() {
 
     assert_eq!(outcome.status, DistributionStatus::DeferredCooldown);
     assert_eq!(executor.requests().len(), 1);
+}
+
+#[test]
+fn status_does_not_attribute_cli_quota_without_verified_auth_file() {
+    let accounts = depleted_accounts(true);
+    let active = &accounts.accounts[0];
+    let status = build_status(&accounts, Some(active), &active.id, None);
+
+    assert!(status.active_account_id.is_none());
+    assert!(status.accounts.iter().all(|account| !account.is_active));
+}
+
+#[test]
+fn cli_status_file_identity_requires_matching_live_auth_tokens() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("cli_status_identity");
+    let account = TestAccountSpec {
+        id: "active",
+        email: "active@example.com",
+        plan: "plus",
+        sprint_pct: 45.0,
+        ..TestAccountSpec::default()
+    }
+    .build();
+    env.populate(vec![account.clone()], Some("active"), None);
+    let binding = CliAuthFileIdentityService::verified_id(&account);
+    assert!(binding.is_some());
+    let status = build_status(
+        &depleted_accounts(true),
+        Some(&account),
+        &account.id,
+        binding,
+    );
+    assert_eq!(status.active_account_id.as_deref(), Some("active"));
+
+    let mut auth = read_active_auth_json().unwrap();
+    auth.tokens.as_mut().unwrap().access_token = "different-test-token".into();
+    write_active_auth_json(&auth).unwrap();
+    assert!(CliAuthFileIdentityService::verified_id(&account).is_none());
 }

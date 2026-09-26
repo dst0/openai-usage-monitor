@@ -1,7 +1,4 @@
-use super::{
-    choose_recovery_account_binding, session_matches_binding, session_matches_process_lifetime,
-    verified_with,
-};
+use super::{choose_recovery_account_binding, session_matches_binding, verified_with};
 use crate::distribution::{DesktopAppSession, WindowProcessIdentity};
 use chrono::{Duration, Utc};
 use std::cell::Cell;
@@ -26,22 +23,15 @@ fn deferred_binding_selector_uses_desktop_id_after_verification() {
 fn stale_or_invalid_desktop_session_cannot_bind_a_new_process() {
     let now = Utc::now();
     let birth = format!("{}:000000", (now - Duration::seconds(60)).timestamp());
-    assert!(session_matches_process_lifetime(
-        &(now - Duration::seconds(30)).to_rfc3339(),
-        &birth
-    ));
-    assert!(!session_matches_process_lifetime(
-        &(now - Duration::seconds(90)).to_rfc3339(),
-        &birth
-    ));
-    assert!(!session_matches_process_lifetime(
-        &(now + Duration::seconds(30)).to_rfc3339(),
-        &birth
-    ));
-    assert!(!session_matches_process_lifetime(
-        &now.to_rfc3339(),
-        "invalid"
-    ));
+    let mut session = DesktopAppSession::new("desktop-account");
+    session.updated_at = (now - Duration::seconds(30)).to_rfc3339();
+    assert!(session.matches_process_lifetime(&birth));
+    session.updated_at = (now - Duration::seconds(90)).to_rfc3339();
+    assert!(!session.matches_process_lifetime(&birth));
+    session.updated_at = (now + Duration::seconds(30)).to_rfc3339();
+    assert!(!session.matches_process_lifetime(&birth));
+    session.updated_at = now.to_rfc3339();
+    assert!(!session.matches_process_lifetime("invalid"));
 }
 
 #[test]

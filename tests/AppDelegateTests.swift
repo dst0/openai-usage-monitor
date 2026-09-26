@@ -514,6 +514,9 @@ struct AppDelegateTestRunner {
       resetTime: nil, resetAfterSeconds: nil, credits: 0,
       accounts: [personalAccount, bizAccount], appAccount: personalAccount
     )
+    assertEqual(
+      AppDelegate.resolveStatusBarSessions(from: missingCliSnapshot).cliSession.fiveHPct,
+      "—", "Unknown CLI identity must not display another account's quota")
     let missingCliIdentityClient = CodexClient(
       distributionRunner: { arguments in
         delegateIdentityLock.lock()
@@ -2144,7 +2147,7 @@ struct AppDelegateTestRunner {
       assertEqual(fallbackActiveSessions.cliSession.fiveHPct, "45%", "CLI session must fall back to active account 5h percentage")
       assertEqual(fallbackActiveSessions.cliSession.weeklyPct, "55%", "CLI session must fall back to active account weekly percentage")
 
-      // Subtest 4: Use top-level snapshot values only when no CLI account exists
+      // Subtest 4: Top-level quota without a verified CLI account is unknown
       let topLevelOnlySnapshot = MultiAccountSnapshot(
         timestamp: Date(),
         activeAccountId: nil,
@@ -2155,13 +2158,14 @@ struct AppDelegateTestRunner {
         resetTime: nil,
         resetAfterSeconds: 3600,
         credits: 0,
+        isAppRunning: false,
         planMultiplier: 1.0,
         accounts: [],
         cliAccount: nil
       )
       let topLevelSessions = AppDelegate.resolveStatusBarSessions(from: topLevelOnlySnapshot, isScreenActive: true)
-      assertEqual(topLevelSessions.cliSession.fiveHPct, "12%", "CLI session must use top-level 5h when no CLI account exists")
-      assertEqual(topLevelSessions.cliSession.weeklyPct, "24%", "CLI session must use top-level weekly when no CLI account exists")
+      assertEqual(topLevelSessions.cliSession.fiveHPct, "—", "Unknown CLI session must not use top-level 5h")
+      assertEqual(topLevelSessions.cliSession.weeklyPct, "—", "Unknown CLI session must not use top-level weekly")
       assertTrue(topLevelSessions.appSession == nil, "APP session must be nil when no app account exists")
 
       // Subtest 5: APP must still use snapshot.appAccount only while the app is running
@@ -2192,6 +2196,34 @@ struct AppDelegateTestRunner {
       assertTrue(!closedAppAttr.string.contains("APP "), "Attributed string must not display APP session when app is closed")
       assertTrue(closedAppAttr.string.contains("CLI "), "Attributed string must display CLI session when app is closed")
 
+      // A running Desktop with an unverified or previous-process marker must not show a false 0%.
+      let unknownAppSnapshot = MultiAccountSnapshot(
+        timestamp: Date(), activeAccountId: accCli.id, activeEmail: accCli.email,
+        activePlan: accCli.planType, fiveHourPercentage: 90, weeklyPercentage: 85,
+        resetTime: nil, resetAfterSeconds: 3600, credits: 0,
+        isAppRunning: true, accounts: [accCli, accApp], appAccount: nil, cliAccount: accCli)
+      let unknownSessions = AppDelegate.resolveStatusBarSessions(from: unknownAppSnapshot)
+      assertEqual(unknownSessions.appSession?.fiveHPct, "—", "Unknown APP quota must be explicit")
+      assertEqual(unknownSessions.cliSession.fiveHPct, "90%", "CLI quota must stay independent")
+
+      let app1160 = AccountQuota(
+        id: "app-1160", email: "app@example.com", planType: "pro", isCurrentActive: false,
+        fiveHourPercentage: 1160, weeklyPercentage: 1160, resetTime: nil,
+        resetAfterSeconds: 3600, credits: 0, planMultiplier: 20)
+      let cliZero = AccountQuota(
+        id: "cli-zero", email: "cli@example.com", planType: "plus", isCurrentActive: true,
+        fiveHourPercentage: 0, weeklyPercentage: 33, resetTime: nil,
+        resetAfterSeconds: 3600, credits: 0)
+      let splitSnapshot = MultiAccountSnapshot(
+        timestamp: Date(), activeAccountId: cliZero.id, activeEmail: cliZero.email,
+        activePlan: cliZero.planType, fiveHourPercentage: 0, weeklyPercentage: 33,
+        resetTime: nil, resetAfterSeconds: 3600, credits: 0,
+        isAppRunning: true, accounts: [app1160, cliZero], appAccount: app1160,
+        cliAccount: cliZero)
+      let splitSessions = AppDelegate.resolveStatusBarSessions(from: splitSnapshot)
+      assertEqual(splitSessions.appSession?.fiveHPct, "1160%", "APP must show its 20x quota")
+      assertEqual(splitSessions.cliSession.fiveHPct, "0%", "CLI must show its separate exhausted quota")
+
       // Subtest 6: updateStatusBar execution with image and tooltip routing
       let appDelegateTest = AppDelegate()
       appDelegateTest.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -2203,6 +2235,55 @@ struct AppDelegateTestRunner {
 
       print("  ✅ Status Bar CLI Account Resolution & Quota Decoupling verified")
     }
+
+    // A marker created after startup, then atomically replaced, must refresh
+    // the menu without waiting for the quota-status file to change.
+    let watcherHome = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "codex-desktop-watcher-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: watcherHome, withIntermediateDirectories: true)
+    let previousCodexHome = ProcessInfo.processInfo.environment["CODEX_HOME"]
+    setenv("CODEX_HOME", watcherHome.path, 1)
+    let watcher = AppDelegate()
+    var markerRefreshes = 0
+    watcher.desktopSessionSnapshotRefreshOverride = { markerRefreshes += 1 }
+    watcher.startDesktopSessionFileWatcher()
+    let marker = watcherHome.appendingPathComponent("desktop-app-session.json")
+    let firstTemp = watcherHome.appendingPathComponent("first.tmp")
+    try! Data("first".utf8).write(to: firstTemp)
+    assertEqual(rename(firstTemp.path, marker.path), 0, "first marker rename must succeed")
+    let firstDeadline = Date().addingTimeInterval(2)
+    while markerRefreshes < 1 && Date() < firstDeadline {
+      RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+    }
+    assertTrue(markerRefreshes >= 1, "new marker must trigger an immediate menu refresh")
+    let firstCount = markerRefreshes
+    let secondTemp = watcherHome.appendingPathComponent("second.tmp")
+    try! Data("second".utf8).write(to: secondTemp)
+    assertEqual(rename(secondTemp.path, marker.path), 0, "replacement marker rename must succeed")
+    let secondDeadline = Date().addingTimeInterval(2)
+    while markerRefreshes <= firstCount && Date() < secondDeadline {
+      RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+    }
+    assertTrue(markerRefreshes > firstCount, "replacement marker must refresh the menu")
+    let authFile = watcherHome.appendingPathComponent("auth.json")
+    try! Data("{}".utf8).write(to: authFile)
+    watcher.startAuthFileWatcher()
+    let beforeAuthChange = markerRefreshes
+    let authTemp = watcherHome.appendingPathComponent("auth.tmp")
+    try! Data("{ }".utf8).write(to: authTemp)
+    assertEqual(rename(authTemp.path, authFile.path), 0, "auth replacement must succeed")
+    waitUntil("auth replacement must re-evaluate the displayed identity before quota polling") {
+      markerRefreshes > beforeAuthChange
+    }
+    watcher.stopAuthFileWatcher()
+    watcher.stopDesktopSessionFileWatcher()
+    watcher.desktopSessionSnapshotRefreshOverride = nil
+    if let previousCodexHome { setenv("CODEX_HOME", previousCodexHome, 1) } else { unsetenv("CODEX_HOME") }
+    try! FileManager.default.removeItem(at: watcherHome)
+    assertTrue(AppDelegate.isOfficialDesktopExecutable(
+      "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"), "official Desktop event must refresh")
+    assertTrue(!AppDelegate.isOfficialDesktopExecutable(
+      "/Applications/Other.app/Contents/MacOS/ChatGPT"), "foreign app event must be ignored")
 
     // 5. 300-Line Limit & Single Entity Invariant Verification
     let sourceFilesToCheck = [
@@ -2218,6 +2299,7 @@ struct AppDelegateTestRunner {
       "Sources/AccountSectionCardView+Tracking.swift",
       "Sources/AppDelegate.swift",
       "Sources/AppDelegate+FileWatchers.swift",
+      "Sources/AppDelegate+DesktopLifecycle.swift",
       "Sources/StatusBarBracketRenderer.swift",
       "Sources/AppDelegate+StatusBar.swift",
       "Sources/AppDelegate+StatusBarOverloads.swift",

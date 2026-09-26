@@ -10,9 +10,7 @@ extension AppDelegate {
     insertIdx: inout Int
   ) {
     let isRu = LocalizationManager.shared.currentLanguage == .ru
-    let cliPrimary =
-      snapshot.cliAccount ?? snapshot.accounts.first(where: { $0.isCurrentActive })
-      ?? snapshot.accounts.first
+    let cliPrimary = snapshot.cliAccount
     let baseCliHeader =
       isRu ? "Codex CLI (мульти-аккаунт ротация)" : "Codex CLI (multi-account rotation)"
     let cliHeaderTitle: String
@@ -27,7 +25,16 @@ extension AppDelegate {
     dynamicAccountItems.append(cliHeader)
     insertIdx += 1
 
-    guard let activeAcc = cliPrimary else { return }
+    guard let activeAcc = cliPrimary else {
+      let unknown = NSMenuItem(
+        title: isRu ? "⚪ Аккаунт CLI пока не подтверждён" : "⚪ CLI account not yet verified",
+        action: #selector(noop), keyEquivalent: "")
+      unknown.target = self
+      menu.insertItem(unknown, at: insertIdx)
+      dynamicAccountItems.append(unknown)
+      insertIdx += 1
+      return
+    }
 
     let statusTag = L10n.activeInCli
     let cliWeeklyExhausted = MenuBarAppearanceHelper.isWeeklyExhausted(activeAcc.weeklyPercentage)

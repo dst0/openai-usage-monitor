@@ -57,6 +57,73 @@ extension AppDelegate {
     fileWatcherFD = -1
   }
 
+  // MARK: - Desktop Session Marker Watcher
+
+  internal func startDesktopSessionFileWatcher() {
+    stopDesktopSessionFileWatcher()
+    let markerPath = CodexClient.desktopAppSessionURL.path
+    guard FileManager.default.fileExists(atPath: markerPath) else {
+      scheduleDesktopSessionWatcherRetry()
+      return
+    }
+    let fd = open(markerPath, O_EVTONLY)
+    guard fd >= 0 else {
+      scheduleDesktopSessionWatcherRetry()
+      return
+    }
+    desktopSessionWatcherFD = fd
+
+    let source = DispatchSource.makeFileSystemObjectSource(
+      fileDescriptor: fd, eventMask: [.write, .delete, .rename, .attrib],
+      queue: DispatchQueue.main)
+    source.setEventHandler { [weak self] in
+      guard let self else { return }
+      let flags = source.data
+      self.desktopSessionUpdateWorkItem?.cancel()
+      let update = DispatchWorkItem { [weak self] in
+        self?.refreshDesktopSessionSnapshot()
+      }
+      self.desktopSessionUpdateWorkItem = update
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: update)
+
+      if flags.contains(.delete) || flags.contains(.rename) {
+        self.stopDesktopSessionFileWatcher()
+        self.scheduleDesktopSessionWatcherRetry(after: 0.2)
+      }
+    }
+    source.setCancelHandler { close(fd) }
+    source.resume()
+    desktopSessionWatcherSource = source
+    refreshDesktopSessionSnapshot()
+  }
+
+  internal func stopDesktopSessionFileWatcher() {
+    desktopSessionRestartWorkItem?.cancel()
+    desktopSessionRestartWorkItem = nil
+    desktopSessionWatcherSource?.cancel()
+    desktopSessionWatcherSource = nil
+    desktopSessionWatcherFD = -1
+  }
+
+  internal func refreshDesktopSessionSnapshot() {
+    if let desktopSessionSnapshotRefreshOverride {
+      desktopSessionSnapshotRefreshOverride()
+      return
+    }
+    guard let snapshot = client.loadCachedSnapshot() else { return }
+    lastSnapshot = snapshot
+    updateUI(with: snapshot)
+  }
+
+  private func scheduleDesktopSessionWatcherRetry(after delay: TimeInterval = 1.0) {
+    desktopSessionRestartWorkItem?.cancel()
+    let retry = DispatchWorkItem { [weak self] in
+      self?.startDesktopSessionFileWatcher()
+    }
+    desktopSessionRestartWorkItem = retry
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: retry)
+  }
+
   // MARK: - Auth File Watcher (Instant Auto-Save of Logins in Codex App)
 
   internal func startAuthFileWatcher() {
@@ -85,6 +152,8 @@ extension AppDelegate {
     source.setEventHandler { [weak self] in
       guard let self = self else { return }
       let flags = source.data
+
+      self.refreshDesktopSessionSnapshot()
 
       self.authRefreshWorkItem?.cancel()
       let refreshItem = DispatchWorkItem { [weak self] in
