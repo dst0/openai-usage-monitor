@@ -3,8 +3,10 @@
 //! compliant workflow and `with` helper are shared with the per-rule test
 //! files next to `checkout.rs` and `triggers.rs`.
 
+use crate::required_checks::required_check_violations;
 use crate::rules::*;
-use crate::yaml_lines::{entry, jobs, Entry, Job};
+use crate::workflow_jobs::{jobs, Job};
+use crate::yaml_lines::{entry, Entry};
 
 pub const SHA: &str = "11d5960a326750d5838078e36cf38b85af677262";
 

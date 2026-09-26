@@ -107,21 +107,45 @@ fn filters_that_can_skip_pull_requests_are_rejected() {
 
 #[test]
 fn trigger_shapes_the_reader_cannot_parse_fail_closed() {
-    for on in [
-        "on: {pull_request: {branches: [main]}}\n",
-        "on: [push,\n  pull_request]\n",
-        "on:\n",
-        "on:\n  - push\n  - pull_request:\n      branches: [ main ]\n",
-        "on:\n  pull_request: {branches: [main]}\n",
-        // Equivalent to a bare `pull_request:`, but only block style is read.
-        "on:\n  pull_request: {}\n",
+    const SHAPE: &str = "`on:` must be an event name, a one-line list";
+    for (on, reason) in [
+        ("on: {pull_request: {branches: [main]}}\n", SHAPE),
+        ("on: [push,\n  pull_request]\n", SHAPE),
+        ("on:\n", SHAPE),
+        (
+            "on:\n  - push\n  - pull_request:\n      branches: [ main ]\n",
+            SHAPE,
+        ),
+        (
+            "on:\n  pull_request: {branches: [main]}\n",
+            "`pull_request:` must be empty or a block mapping",
+        ),
         // Valid YAML for `push:`, but not a key the line reader parses.
-        "on:\n  pull_request:\n  push :\n",
+        ("on:\n  pull_request:\n  push :\n", "is not an event key"),
+        // A compact sequence under `pull_request` itself is not a filter.
+        ("on:\n  pull_request:\n  - main\n", "is not a filter"),
     ] {
         let v = violations_for(on);
         assert_eq!(v.len(), 1, "{on:?}: {v:?}");
+        assert!(v[0].contains(reason), "{on:?}: {v:?}");
     }
-    // A sequence at the key's own indentation is not read as the list value.
-    let compact = violations_for("on:\n  pull_request:\n    branches:\n    - main\n");
-    assert_eq!(compact.len(), 2, "{compact:?}");
+}
+
+/// Compact sequences (`- ` at the key's own indentation) and the explicit
+/// empty spellings of `pull_request` are common, valid, and unconditional.
+#[test]
+fn compact_sequences_and_empty_pull_request_values_comply() {
+    for on in [
+        "on:\n  pull_request:\n    branches:\n    - main\n",
+        "on:\n  pull_request:\n    branches: [ main ]\n  schedule:\n  - cron: '0 1 * * *'\n",
+        "on:\n- push\n- pull_request\n",
+        "on:\n  pull_request: {}\n",
+        "on:\n  pull_request: ~\n",
+        "on:\n  pull_request: null # every PR\n",
+    ] {
+        assert_eq!(violations_for(on), Vec::<String>::new(), "{on:?}");
+    }
+    let compact_other_branch =
+        violations_for("on:\n  pull_request:\n    branches:\n    - develop\n");
+    assert_eq!(compact_other_branch.len(), 1, "{compact_other_branch:?}");
 }

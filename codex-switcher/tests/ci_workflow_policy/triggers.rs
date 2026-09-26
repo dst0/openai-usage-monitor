@@ -12,6 +12,8 @@ const TRIGGER_FILTERS: [&str; 3] = ["paths", "paths-ignore", "branches-ignore"];
 /// Activity types `pull_request` runs for without a `types:` filter. A push
 /// to an open pull request is `synchronize`.
 const DEFAULT_ACTIVITY_TYPES: [&str; 3] = ["opened", "synchronize", "reopened"];
+/// Spellings of an empty `pull_request:` trigger: no filters.
+const EMPTY_VALUES: [&str; 3] = ["{}", "~", "null"];
 const MISSING: &str =
     "`on:` needs exactly one unconditional `pull_request` trigger so required checks report on every PR";
 
@@ -81,9 +83,13 @@ fn event_mapping_violations(
         out.push(MISSING.to_string());
         return out;
     };
-    if raw_value(lines[pull_request]) != Some("") {
-        out.push("`pull_request:` must be empty or a block mapping of filters".to_string());
-        return out;
+    match raw_value(lines[pull_request]) {
+        Some("") => {}
+        Some(value) if EMPTY_VALUES.contains(&value) => return out,
+        _ => {
+            out.push("`pull_request:` must be empty or a block mapping of filters".to_string());
+            return out;
+        }
     }
     for i in direct_members(lines, pull_request) {
         let Some(filter) = entry(lines[i]).filter(|e| !e.list_item) else {

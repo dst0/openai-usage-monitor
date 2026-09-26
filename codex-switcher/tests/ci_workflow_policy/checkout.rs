@@ -4,7 +4,8 @@
 //! counts. The same text under `env:`, inside another input's value, or in a
 //! nested mapping does not.
 
-use crate::yaml_lines::{direct_members, entry, indent, is_content, key_column};
+use crate::workflow_jobs::step_properties;
+use crate::yaml_lines::{direct_members, entry};
 
 const MISSING: &str =
     "must set `persist-credentials: false` exactly once, directly under its `with:`";
@@ -54,25 +55,6 @@ fn credential_problem(lines: &[&str], at: usize) -> Option<&'static str> {
         .map(|e| e.value)
         .collect();
     (settings != ["false"]).then_some(MISSING)
-}
-
-/// Indices of the direct properties of the step whose property is on
-/// `lines[at]`: its `- ` marker line plus later lines at the same key column.
-/// `None` when no list-item marker owns that line.
-fn step_properties(lines: &[&str], at: usize) -> Option<Vec<usize>> {
-    let column = key_column(lines[at]);
-    let is_list_item = |i: usize| lines[i].trim_start().starts_with("- ");
-    let outside = |i: &usize| is_content(lines[*i]) && indent(lines[*i]) < column;
-    let start = (0..=at).rev().find(outside)?;
-    if !is_list_item(start) || key_column(lines[start]) != column {
-        return None;
-    }
-    let end = (start + 1..lines.len())
-        .find(outside)
-        .unwrap_or(lines.len());
-    let siblings = (start + 1..end)
-        .filter(|&i| is_content(lines[i]) && indent(lines[i]) == column && !is_list_item(i));
-    Some(std::iter::once(start).chain(siblings).collect())
 }
 
 #[cfg(test)]

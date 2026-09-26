@@ -2,9 +2,9 @@
 //! violations; an empty vector means the input complies.
 
 use crate::checkout::checkout_credential_violations;
-use crate::triggers::pull_request_trigger_violations;
+use crate::workflow_jobs::jobs;
 use crate::yaml_limits::unreadable_line_violations;
-use crate::yaml_lines::{block_after, entry, indent, is_content, jobs, top_level_block};
+use crate::yaml_lines::{block_after, entry, indent, is_content, top_level_block};
 
 /// Upper bound for any job's `timeout-minutes`; a larger value is not a guard.
 pub const MAX_JOB_TIMEOUT_MINUTES: u32 = 60;
@@ -17,8 +17,6 @@ const TOOLCHAIN_OVERRIDES: [&str; 5] = [
     "rustup default",
     "cargo +",
 ];
-/// Job keys that let a required check be skipped, renamed, or pass on failure.
-const REQUIRED_JOB_FORBIDDEN_KEYS: [&str; 3] = ["if", "strategy", "continue-on-error"];
 const MASKED_FAILURES: [&str; 3] = ["|| true", "|| :", "set +e"];
 
 fn is_full_sha(rev: &str) -> bool {
@@ -176,36 +174,6 @@ pub fn masked_failure_violations(text: &str) -> Vec<String> {
         .filter(|l| is_content(l) && MASKED_FAILURES.iter().any(|m| l.contains(m)))
         .map(|l| format!("command failure is masked: `{}`", l.trim()))
         .collect()
-}
-
-/// Required branch-protection contexts must be unconditional, unfiltered jobs
-/// of a workflow that runs for every pull request into `protected_branch`.
-pub fn required_check_violations(
-    text: &str,
-    contexts: &[String],
-    protected_branch: &str,
-) -> Vec<String> {
-    let jobs = jobs(text);
-    let mut out = Vec::new();
-    for context in contexts {
-        let Some(job) = jobs
-            .iter()
-            .find(|j| j.prop("name") == Some(context.as_str()))
-        else {
-            out.push(format!(
-                "required check `{context}` has no job with that name"
-            ));
-            continue;
-        };
-        for key in REQUIRED_JOB_FORBIDDEN_KEYS
-            .iter()
-            .filter(|k| job.prop(k).is_some())
-        {
-            out.push(format!("required job `{}` must not set `{key}`", job.id));
-        }
-    }
-    out.extend(pull_request_trigger_violations(text, protected_branch));
-    out
 }
 
 fn toml_setting<'a>(text: &'a str, key: &str) -> Option<&'a str> {

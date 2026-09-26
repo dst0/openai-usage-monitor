@@ -43,7 +43,7 @@ fn unquote(s: &str) -> &str {
 /// `(key, text after the colon, list_item)` of a `key: value` line.
 fn split_entry(line: &str) -> Option<(&str, &str, bool)> {
     let mut t = line.trim_start();
-    let list_item = t.starts_with("- ") || t == "-";
+    let list_item = is_list_item(t);
     if list_item {
         t = t[1..].trim_start();
     }
@@ -89,13 +89,25 @@ pub fn raw_value(line: &str) -> Option<&str> {
     Some(rest.split(" #").next().unwrap_or("").trim())
 }
 
+/// Whether the line starts with a `- ` sequence marker.
+pub fn is_list_item(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with("- ") || t == "-"
+}
+
 /// Indices of the content lines nested under the key on `lines[at]`: those
-/// indented past its key column, up to the first line that is not.
-fn nested(lines: &[&str], at: usize) -> Vec<usize> {
+/// indented past its key column, plus the `- ` items of a compact sequence at
+/// that column when the key has no inline value, up to the first line that
+/// is neither.
+pub fn nested(lines: &[&str], at: usize) -> Vec<usize> {
     let base = key_column(lines[at]);
+    let compact = raw_value(lines[at]) == Some("");
     (at + 1..lines.len())
         .filter(|&i| is_content(lines[i]))
-        .take_while(|&i| indent(lines[i]) > base)
+        .take_while(|&i| {
+            indent(lines[i]) > base
+                || (compact && indent(lines[i]) == base && is_list_item(lines[i]))
+        })
         .collect()
 }
 
@@ -105,13 +117,19 @@ pub fn block_after<'a>(lines: &[&'a str], at: usize) -> Vec<&'a str> {
 }
 
 /// Indices of the direct members of the block under `lines[at]`: nested lines
-/// at the first nested line's indentation. Deeper lines belong to a member.
+/// at the first nested line's indentation. Deeper lines belong to a member,
+/// and so do the `- ` items of a member's compact sequence, which share the
+/// members' indentation in a mapping.
 pub fn direct_members(lines: &[&str], at: usize) -> Vec<usize> {
     let nested = nested(lines, at);
-    let column = nested.first().map_or(0, |&i| indent(lines[i]));
+    let Some(&first) = nested.first() else {
+        return Vec::new();
+    };
+    let column = indent(lines[first]);
+    let sequence = is_list_item(lines[first]);
     nested
         .into_iter()
-        .filter(|&i| indent(lines[i]) == column)
+        .filter(|&i| indent(lines[i]) == column && (sequence || !is_list_item(lines[i])))
         .collect()
 }
 
@@ -125,50 +143,4 @@ pub fn top_level_index(lines: &[&str], key: &str) -> Option<usize> {
 /// Block of the first top-level (`indent == 0`) key named `key`.
 pub fn top_level_block<'a>(lines: &[&'a str], key: &str) -> Option<Vec<&'a str>> {
     Some(block_after(lines, top_level_index(lines, key)?))
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Job {
-    pub id: String,
-    /// Direct `key: value` properties of the job (not of its steps).
-    pub props: Vec<(String, String)>,
-}
-
-impl Job {
-    pub fn prop(&self, key: &str) -> Option<&str> {
-        self.props
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
-    }
-}
-
-pub fn jobs(text: &str) -> Vec<Job> {
-    let lines: Vec<&str> = text.lines().collect();
-    let Some(body) = top_level_block(&lines, "jobs") else {
-        return Vec::new();
-    };
-    let job_indent = body.first().map_or(0, |l| indent(l));
-    let mut out: Vec<Job> = Vec::new();
-    let mut prop_indent = None;
-    for line in body {
-        if indent(line) == job_indent {
-            let id = entry(line).map_or(line.trim(), |e| e.key).to_string();
-            out.push(Job {
-                id,
-                props: Vec::new(),
-            });
-            prop_indent = None;
-            continue;
-        }
-        let Some(job) = out.last_mut() else { continue };
-        let at = *prop_indent.get_or_insert(indent(line));
-        if indent(line) != at {
-            continue;
-        }
-        if let Some(e) = entry(line).filter(|e| !e.list_item) {
-            job.props.push((e.key.to_string(), e.value.to_string()));
-        }
-    }
-    out
 }

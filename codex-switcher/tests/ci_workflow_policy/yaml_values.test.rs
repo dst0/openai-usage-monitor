@@ -60,6 +60,11 @@ fn list_values_read_flow_or_block_sequences() {
         read("b: # c\n  - main # m\n  - 'r/**'\nnext: x"),
         Some(vec!["main", "r/**"])
     );
+    // A compact sequence at the key's own indentation.
+    assert_eq!(
+        read("b:\n- main\n- dev\nnext: x"),
+        Some(vec!["main", "dev"])
+    );
     // A quoted string, a lone scalar, a null, mixed or nested items.
     for text in [
         "b: \"[main]\"",

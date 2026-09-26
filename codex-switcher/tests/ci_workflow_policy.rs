@@ -18,8 +18,14 @@ mod yaml_limits;
 #[path = "ci_workflow_policy/yaml_values.rs"]
 mod yaml_values;
 
+#[path = "ci_workflow_policy/workflow_jobs.rs"]
+mod workflow_jobs;
+
 #[path = "ci_workflow_policy/rules.rs"]
 mod rules;
+
+#[path = "ci_workflow_policy/required_checks.rs"]
+mod required_checks;
 
 #[path = "ci_workflow_policy/checkout.rs"]
 mod checkout;
@@ -62,7 +68,9 @@ fn every_workflow_meets_ci_baseline() {
         let text = fs::read_to_string(&path).expect("read workflow");
         let mut found = rules::workflow_violations(&text);
         if name == "ci.yml" {
-            found.extend(rules::required_check_violations(&text, &contexts, branch));
+            found.extend(required_checks::required_check_violations(
+                &text, &contexts, branch,
+            ));
         }
         violations.extend(found.into_iter().map(|v| format!("{name}: {v}")));
     }
