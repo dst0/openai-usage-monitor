@@ -60,12 +60,15 @@
   and runtime state while preserving Desktop-owned `auth.json`, databases,
   sessions, IPC, writer locks, and source checkouts. `--purge-data` is required
   before removing the Monitor-owned `accounts.json` registry. Interrupted
-  exact-name 0600 staging files from every Monitor writer are runtime state,
-  including `manual-reset-state.<pid>.<16 hex>.tmp.json` and the Monitor's own
-  `auth.json.<pid>.<16 hex>.tmp` credential copy. A change that adds or renames
-  a staging writer must extend the uninstall pattern list (or the fd-anchored
-  `monitor-logs` cleanup) and `tests/log_permissions_and_uninstall.sh` in the
-  same change.
+  staging files from every Monitor writer are runtime state. The shell list in
+  `scripts/uninstall.sh` matches the distribution-journal, direct-switch,
+  Desktop-session, `manual-reset-state.<pid>.<16 hex>.tmp.json`, and the
+  Monitor's own `auth.json.<pid>.<16 hex>.tmp` credential copy by exact name,
+  current owner, `0600` mode, and regular non-symlink file. The fd-anchored
+  `monitor-logs` cleanup removes the remaining staging names by prefix and
+  suffix as regular non-symlink files, without an owner or mode check. A
+  change that adds or renames a staging writer must extend one of those lists
+  and `tests/log_permissions_and_uninstall.sh` in the same change.
 - “No traces” means no persistent Monitor-owned installation artifacts. Shell
   history, unified logs, LaunchServices/TCC records, APFS snapshots, and
   backups are outside the app's ownership and are not forensic-erased.

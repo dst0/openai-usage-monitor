@@ -133,15 +133,37 @@ FAKE_CODEX_HOME="$(cd "${FAKE_HOME}/.codex" && /bin/pwd -P)"
 /usr/bin/printf 'desktop staging sentinel\n' > "${FAKE_HOME}/.codex/desktop-app-session.123.0123456789abcdef0123456789abcdef.tmp"
 /usr/bin/printf 'foreign staging sentinel\n' > "${FAKE_HOME}/.codex/distribution-journal.abc.0123456789abcdef.tmp"
 # ManualResetAttemptStore stages `manual-reset-state.<pid>.<16 hex>.tmp.json`;
-# ActiveAuthCompareWriteService stages `auth.json.<pid>.<16 hex>.tmp`. Each
-# look-alike below differs in exactly one validated property.
+# ActiveAuthCompareWriteService stages `auth.json.<pid>.<16 hex>.tmp`. For both
+# names, each look-alike differs from a valid file in exactly one validated
+# property: decimal pid, nonce length, lowercase-hex nonce, or 0600 mode. A
+# valid-name directory and a valid-name symlink (link mode 0600) must also
+# survive. A file owned by another uid needs root to create and is not tested.
+# Do not use uppercase hex look-alikes: the default APFS volume is
+# case-insensitive, so they alias the valid fixture.
 /usr/bin/printf 'manual staging sentinel\n' > "${FAKE_HOME}/.codex/manual-reset-state.123.0123456789abcdef.tmp.json"
-/usr/bin/printf 'foreign manual pid\n' > "${FAKE_HOME}/.codex/manual-reset-state.abc.0123456789abcdef.tmp.json"
-/usr/bin/printf 'foreign manual nonce\n' > "${FAKE_HOME}/.codex/manual-reset-state.123.0123456789abcde.tmp.json"
-/usr/bin/printf 'foreign manual mode\n' > "${FAKE_HOME}/.codex/manual-reset-state.124.0123456789abcdef.tmp.json"
 /usr/bin/printf 'auth staging sentinel\n' > "${FAKE_HOME}/.codex/auth.json.123.0123456789abcdef.tmp"
-/usr/bin/printf 'foreign auth nonce\n' > "${FAKE_HOME}/.codex/auth.json.123.0123456789abcdeg.tmp"
-/usr/bin/printf 'foreign auth mode\n' > "${FAKE_HOME}/.codex/auth.json.124.0123456789abcdef.tmp"
+STAGING_LOOKALIKES_0600=(
+    manual-reset-state.abc.0123456789abcdef.tmp.json
+    manual-reset-state.123.0123456789abcde.tmp.json
+    manual-reset-state.123.0123456789abcdeg.tmp.json
+    auth.json.abc.0123456789abcdef.tmp
+    auth.json.123.0123456789abcde.tmp
+    auth.json.123.0123456789abcdeg.tmp
+)
+STAGING_LOOKALIKES_0644=(
+    manual-reset-state.124.0123456789abcdef.tmp.json
+    auth.json.124.0123456789abcdef.tmp
+)
+for name in "${STAGING_LOOKALIKES_0600[@]}" "${STAGING_LOOKALIKES_0644[@]}"; do
+    /usr/bin/printf 'look-alike %s\n' "${name}" > "${FAKE_HOME}/.codex/${name}"
+done
+STAGING_DIRECTORY="${FAKE_HOME}/.codex/auth.json.125.0123456789abcdef.tmp"
+STAGING_SYMLINK="${FAKE_HOME}/.codex/manual-reset-state.126.0123456789abcdef.tmp.json"
+STAGING_SYMLINK_TARGET="${TEMP_ROOT}/staging-symlink-target"
+/bin/mkdir -m 600 "${STAGING_DIRECTORY}"
+/usr/bin/printf 'symlink target sentinel\n' > "${STAGING_SYMLINK_TARGET}"
+/bin/ln -s "${STAGING_SYMLINK_TARGET}" "${STAGING_SYMLINK}"
+/bin/chmod -h 600 "${STAGING_SYMLINK}"
 /usr/bin/printf 'sqlite sentinel\n' > "${FAKE_HOME}/.codex/state_5.sqlite"
 /usr/bin/printf 'wal sentinel\n' > "${FAKE_HOME}/.codex/state_5.sqlite-wal"
 /usr/bin/printf 'shm sentinel\n' > "${FAKE_HOME}/.codex/state_5.sqlite-shm"
@@ -160,10 +182,7 @@ FAKE_CODEX_HOME="$(cd "${FAKE_HOME}/.codex" && /bin/pwd -P)"
     "${FAKE_HOME}/.codex/direct-switch-journal.123.0123456789abcdef.tmp" \
     "${FAKE_HOME}/.codex/desktop-app-session.123.0123456789abcdef0123456789abcdef.tmp" \
     "${FAKE_HOME}/.codex/manual-reset-state.123.0123456789abcdef.tmp.json" \
-    "${FAKE_HOME}/.codex/manual-reset-state.abc.0123456789abcdef.tmp.json" \
-    "${FAKE_HOME}/.codex/manual-reset-state.123.0123456789abcde.tmp.json" \
     "${FAKE_HOME}/.codex/auth.json.123.0123456789abcdef.tmp" \
-    "${FAKE_HOME}/.codex/auth.json.123.0123456789abcdeg.tmp" \
     "${FAKE_HOME}/.codex/state_5.sqlite" \
     "${FAKE_HOME}/.codex/state_5.sqlite-wal" \
     "${FAKE_HOME}/.codex/state_5.sqlite-shm"
@@ -171,9 +190,9 @@ FAKE_CODEX_HOME="$(cd "${FAKE_HOME}/.codex" && /bin/pwd -P)"
 /usr/bin/printf '#!/bin/sh\nexit 0\n' > "${FAKE_BIN}/osascript"
 /usr/bin/printf '#!/bin/sh\nexit 0\n' > "${FAKE_BIN}/defaults"
 /usr/bin/printf '#!/bin/sh\nexit 0\n' > "${FAKE_BIN}/lsregister"
-/bin/chmod 644 \
-    "${FAKE_HOME}/.codex/manual-reset-state.124.0123456789abcdef.tmp.json" \
-    "${FAKE_HOME}/.codex/auth.json.124.0123456789abcdef.tmp"
+for name in "${STAGING_LOOKALIKES_0600[@]}"; do /bin/chmod 600 "${FAKE_HOME}/.codex/${name}"; done
+for name in "${STAGING_LOOKALIKES_0644[@]}"; do /bin/chmod 644 "${FAKE_HOME}/.codex/${name}"; done
+[ "$(/usr/bin/stat -f '%Lp' "${STAGING_SYMLINK}")" = 600 ] || fail 'symlink look-alike mode setup failed'
 /bin/chmod 755 "${FAKE_BIN}/launchctl" "${FAKE_BIN}/osascript" "${FAKE_BIN}/defaults" "${FAKE_BIN}/lsregister"
 
 UNINSTALL_COPY="${TEMP_ROOT}/uninstall.sh"
@@ -216,12 +235,8 @@ HOME="${FAKE_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
     fail 'dry-run omitted manual reset staging'
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/auth.json.123.0123456789abcdef.tmp" "${DRY_RUN_OUTPUT}" >/dev/null ||
     fail 'dry-run omitted credential compare-write staging'
-for foreign in \
-    manual-reset-state.abc.0123456789abcdef.tmp.json \
-    manual-reset-state.123.0123456789abcde.tmp.json \
-    manual-reset-state.124.0123456789abcdef.tmp.json \
-    auth.json.123.0123456789abcdeg.tmp \
-    auth.json.124.0123456789abcdef.tmp; do
+for foreign in "${STAGING_LOOKALIKES_0600[@]}" "${STAGING_LOOKALIKES_0644[@]}" \
+    "${STAGING_DIRECTORY##*/}" "${STAGING_SYMLINK##*/}"; do
     /usr/bin/grep -F "${foreign}" "${DRY_RUN_OUTPUT}" >/dev/null &&
         fail "dry-run listed foreign staging look-alike ${foreign}"
 done
@@ -255,11 +270,13 @@ assert_absent "${FAKE_HOME}/.codex/desktop-app-session.123.0123456789abcdef01234
 assert_exists "${FAKE_HOME}/.codex/distribution-journal.abc.0123456789abcdef.tmp"
 assert_absent "${FAKE_HOME}/.codex/manual-reset-state.123.0123456789abcdef.tmp.json"
 assert_absent "${FAKE_HOME}/.codex/auth.json.123.0123456789abcdef.tmp"
-assert_content 'foreign manual pid' "${FAKE_HOME}/.codex/manual-reset-state.abc.0123456789abcdef.tmp.json"
-assert_content 'foreign manual nonce' "${FAKE_HOME}/.codex/manual-reset-state.123.0123456789abcde.tmp.json"
-assert_content 'foreign manual mode' "${FAKE_HOME}/.codex/manual-reset-state.124.0123456789abcdef.tmp.json"
-assert_content 'foreign auth nonce' "${FAKE_HOME}/.codex/auth.json.123.0123456789abcdeg.tmp"
-assert_content 'foreign auth mode' "${FAKE_HOME}/.codex/auth.json.124.0123456789abcdef.tmp"
+for name in "${STAGING_LOOKALIKES_0600[@]}" "${STAGING_LOOKALIKES_0644[@]}"; do
+    assert_content "look-alike ${name}" "${FAKE_HOME}/.codex/${name}"
+done
+[ -d "${STAGING_DIRECTORY}" ] && [ ! -L "${STAGING_DIRECTORY}" ] ||
+    fail 'uninstall removed a valid-name staging directory'
+[ -L "${STAGING_SYMLINK}" ] || fail 'uninstall removed a valid-name staging symlink'
+assert_content 'symlink target sentinel' "${STAGING_SYMLINK_TARGET}"
 assert_absent "${FAKE_HOME}/.codex/auth.temporary.tmp.json"
 assert_absent "${FAKE_HOME}/.codex/.redact-1-1.tmp"
 assert_absent "${FAKE_HOME}/.codex/log/.redact-1-2.tmp"
