@@ -81,7 +81,7 @@ impl LogRedactionService {
         let mut hash = 0xcbf29ce484222325_u64;
         for byte in namespace
             .bytes()
-            .chain([0].into_iter())
+            .chain([0])
             .chain(value.as_bytes().iter().copied())
         {
             hash ^= u64::from(byte);

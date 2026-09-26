@@ -150,10 +150,15 @@ pub fn detect_in_progress_threads() -> Vec<String> {
                 ThreadRolloutState::ActiveInProgress => {
                     in_progress.push(thread_id.to_string());
                 }
-                ThreadRolloutState::InterruptedByQuota => {
-                    if recent_quota_failure(&codex_home, thread_id, now, RECENT_QUOTA_WINDOW_SECS) {
-                        in_progress.push(thread_id.to_string());
-                    }
+                ThreadRolloutState::InterruptedByQuota
+                    if recent_quota_failure(
+                        &codex_home,
+                        thread_id,
+                        now,
+                        RECENT_QUOTA_WINDOW_SECS,
+                    ) =>
+                {
+                    in_progress.push(thread_id.to_string());
                 }
                 _ => {}
             }
