@@ -1,11 +1,7 @@
 use super::{
-    dispatch_mark_error::DispatchMarkError,
-    manifest_prune_service::ManifestPruneService,
-    pending_manifest::PendingManifest,
-    pending_target::PendingTarget,
-    recovery_mode::RecoveryMode,
-    stored_manifest::StoredManifest,
-    thread_identity::valid_id,
+    dispatch_mark_error::DispatchMarkError, manifest_prune_service::ManifestPruneService,
+    pending_manifest::PendingManifest, pending_target::PendingTarget, recovery_mode::RecoveryMode,
+    stored_manifest::StoredManifest, thread_identity::valid_id,
     thread_index_service::recent_thread_updates,
 };
 use crate::storage;

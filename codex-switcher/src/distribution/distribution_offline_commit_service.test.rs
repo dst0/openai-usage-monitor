@@ -54,14 +54,13 @@ fn marker_failure_rollback_preserves_concurrent_registry_changes() {
     let lifecycle = MockAppLifecycle::new(false);
     let logger = DistributionAuditLogger::default();
 
-    let message = DistributionOfflineCommitService::new(&lifecycle, &logger)
+    let message = DistributionOfflineCommitService::new(&lifecycle, &logger, "test")
         .rollback_marker_failure(
             env.home(),
             &mut accounts,
             &before_accounts,
             Some(&(previous_auth, committed_auth)),
-            None,
-            &DesktopAppSession::new("next"),
+            (None, &DesktopAppSession::new("next")),
             "synthetic marker failure".into(),
         );
 
@@ -131,14 +130,13 @@ fn marker_failure_cannot_clear_journal_after_previous_account_relogin() {
     let lifecycle = MockAppLifecycle::new(false);
     let logger = DistributionAuditLogger::default();
 
-    let message = DistributionOfflineCommitService::new(&lifecycle, &logger)
+    let message = DistributionOfflineCommitService::new(&lifecycle, &logger, "test")
         .rollback_marker_failure(
             env.home(),
             &mut accounts,
             &before_accounts,
             Some(&(previous_auth, committed_auth)),
-            None,
-            &DesktopAppSession::new("next"),
+            (None, &DesktopAppSession::new("next")),
             "synthetic marker failure".into(),
         );
 
@@ -163,14 +161,13 @@ fn post_rename_marker_failure_restores_marker_before_journal_cleanup() {
     let lifecycle = MockAppLifecycle::new(false);
     let logger = DistributionAuditLogger::default();
 
-    let message = DistributionOfflineCommitService::new(&lifecycle, &logger)
+    let message = DistributionOfflineCommitService::new(&lifecycle, &logger, "test")
         .rollback_marker_failure(
             env.home(),
             &mut accounts,
             &before_accounts,
             None,
-            Some(&previous),
-            &attempted,
+            (Some(&previous), &attempted),
             "synthetic post-rename failure".into(),
         );
 
@@ -199,14 +196,13 @@ fn changed_marker_keeps_journal_when_rollback_cannot_be_verified() {
     let lifecycle = MockAppLifecycle::new(false);
     let logger = DistributionAuditLogger::default();
 
-    let message = DistributionOfflineCommitService::new(&lifecycle, &logger)
+    let message = DistributionOfflineCommitService::new(&lifecycle, &logger, "test")
         .rollback_marker_failure(
             env.home(),
             &mut accounts,
             &before_accounts,
             None,
-            Some(&previous),
-            &attempted,
+            (Some(&previous), &attempted),
             "synthetic post-rename failure".into(),
         );
 
@@ -297,17 +293,18 @@ fn full_offline_commit_rolls_back_auth_registry_and_marker_after_post_rename_err
     let lifecycle = MockAppLifecycle::new(false);
     let logger = DistributionAuditLogger::default();
 
-    let result = DistributionOfflineCommitService::new(&lifecycle, &logger).run_with_marker_writer(
-        env.home(),
-        &mut journal,
-        &plan,
-        &DistributionRequest::user("synthetic_postrename"),
-        &mut accounts,
-        "full-marker-rollback",
-        |marker, path| {
-            marker.save_with_post_rename(path, |_| Err("synthetic post-rename sync error".into()))
-        },
-    );
+    let result = DistributionOfflineCommitService::new(&lifecycle, &logger, "full-marker-rollback")
+        .run_with_marker_writer(
+            env.home(),
+            &mut journal,
+            &plan,
+            &DistributionRequest::user("synthetic_postrename"),
+            &mut accounts,
+            |marker, path| {
+                marker
+                    .save_with_post_rename(path, |_| Err("synthetic post-rename sync error".into()))
+            },
+        );
 
     assert!(result.unwrap_err().contains("rolled back"));
     assert_eq!(storage::read_active_auth_json().unwrap(), before_auth);

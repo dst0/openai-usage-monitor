@@ -14,14 +14,20 @@ use std::path::Path;
 pub(super) struct DistributionOfflineCommitService<'a> {
     lifecycle: &'a dyn AppLifecycle,
     logger: &'a DistributionAuditLogger,
+    operation_id: &'a str,
 }
 
 impl<'a> DistributionOfflineCommitService<'a> {
     pub(super) fn new(
         lifecycle: &'a dyn AppLifecycle,
         logger: &'a DistributionAuditLogger,
+        operation_id: &'a str,
     ) -> Self {
-        Self { lifecycle, logger }
+        Self {
+            lifecycle,
+            logger,
+            operation_id,
+        }
     }
 
     pub(super) fn run(
@@ -31,7 +37,6 @@ impl<'a> DistributionOfflineCommitService<'a> {
         plan: &DistributionPlan,
         request: &DistributionRequest,
         accounts: &mut AccountsFile,
-        operation_id: &str,
     ) -> Result<(), String> {
         self.run_with_marker_writer(
             home,
@@ -39,7 +44,6 @@ impl<'a> DistributionOfflineCommitService<'a> {
             plan,
             request,
             accounts,
-            operation_id,
             DesktopAppSession::save,
         )
     }
@@ -51,7 +55,6 @@ impl<'a> DistributionOfflineCommitService<'a> {
         plan: &DistributionPlan,
         request: &DistributionRequest,
         accounts: &mut AccountsFile,
-        operation_id: &str,
         save_marker: impl FnOnce(&DesktopAppSession, &Path) -> Result<(), String>,
     ) -> Result<(), String> {
         let before_accounts = accounts.clone();
@@ -95,7 +98,7 @@ impl<'a> DistributionOfflineCommitService<'a> {
                 }
             };
             self.logger.log_action(
-                operation_id,
+                self.operation_id,
                 "AUTH_COMMIT_CLI",
                 request.trigger.as_str(),
                 &request.reason,
@@ -119,13 +122,12 @@ impl<'a> DistributionOfflineCommitService<'a> {
                     accounts,
                     &before_accounts,
                     auth_commit.as_ref(),
-                    marker_before.as_ref(),
-                    &marker,
+                    (marker_before.as_ref(), &marker),
                     error,
                 ));
             }
             self.logger.log_action(
-                operation_id,
+                self.operation_id,
                 "DESKTOP_SESSION",
                 request.trigger.as_str(),
                 &request.reason,
@@ -149,10 +151,10 @@ impl<'a> DistributionOfflineCommitService<'a> {
         accounts: &mut AccountsFile,
         before_accounts: &AccountsFile,
         auth_commit: Option<&(AuthJson, AuthJson)>,
-        marker_before: Option<&DesktopAppSession>,
-        attempted_marker: &DesktopAppSession,
+        marker_transition: (Option<&DesktopAppSession>, &DesktopAppSession),
         error: String,
     ) -> String {
+        let (marker_before, attempted_marker) = marker_transition;
         if let Some((previous, committed)) = auth_commit {
             let Some(target_id) = accounts.active_account_id.as_deref() else {
                 return format!("Desktop marker save failed: {error}; target registry identity unavailable for rollback");

@@ -57,6 +57,34 @@ struct CodexWindowSafetyChecksTests {
     if case .notCandidate = bannerWindowFrame(otherProcess, expectedPID: pid) {
     } else { fatalError("Foreign process was classified as candidate") }
 
+    let standardFrame = CGRect(x: 37, y: 30, width: 2518, height: 1331)
+    let detachedFrame = CGRect(x: 0, y: 0, width: 960, height: 720)
+    var unidentified = base
+    unidentified[kCGWindowName as String] = ""
+    assert(!unidentifiedWindowIsAmbiguous(
+      unidentified, frame: detachedFrame, standardFrames: [standardFrame]
+    ), "A distinct hidden renderer window must preserve the known single-window case")
+    unidentified[kCGWindowIsOnscreen as String] = NSNumber(value: true)
+    assert(unidentifiedWindowIsAmbiguous(
+      unidentified, frame: detachedFrame, standardFrames: [standardFrame]
+    ), "An unnamed visible window is ambiguous")
+    unidentified.removeValue(forKey: kCGWindowIsOnscreen as String)
+    assert(unidentifiedWindowIsAmbiguous(
+      unidentified, frame: standardFrame, standardFrames: [standardFrame]
+    ), "An unnamed offscreen window matching an AX standard window cannot be excluded")
+    unidentified[kCGWindowName as String] = "Unexpected window"
+    assert(unidentifiedWindowIsAmbiguous(
+      unidentified, frame: detachedFrame, standardFrames: [standardFrame]
+    ), "A titled offscreen window with an unknown role cannot be excluded")
+    unidentified[kCGWindowName as String] = NSNumber(value: 7)
+    assert(unidentifiedWindowIsAmbiguous(
+      unidentified, frame: detachedFrame, standardFrames: [standardFrame]
+    ), "A malformed offscreen window title cannot be trusted")
+    unidentified.removeValue(forKey: kCGWindowName as String)
+    assert(unidentifiedWindowIsAmbiguous(
+      unidentified, frame: detachedFrame, standardFrames: [standardFrame]
+    ), "A missing window title cannot be trusted")
+
     assert(processIdentityMatches(pid, expectedBirth: "1:000001", birthReader: { _ in "1:000001" }))
     assert(!processIdentityMatches(pid, expectedBirth: "1:000001", birthReader: { _ in "1:000002" }))
     assert(!processIdentityMatches(pid, expectedBirth: "1:000001", birthReader: { _ in nil }))

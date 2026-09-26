@@ -3,7 +3,7 @@ use crate::models::{AuthJson, AuthTokens};
 use std::cell::Cell;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
@@ -38,11 +38,11 @@ fn fixture() -> (PathBuf, AuthJson) {
     (path, original)
 }
 
-fn read_auth(path: &PathBuf) -> AuthJson {
+fn read_auth(path: &Path) -> AuthJson {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
 }
 
-fn cleanup(path: &PathBuf) {
+fn cleanup(path: &Path) {
     fs::remove_dir_all(path.parent().unwrap()).unwrap();
 }
 

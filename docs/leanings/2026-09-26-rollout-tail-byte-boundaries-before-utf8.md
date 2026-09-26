@@ -16,7 +16,7 @@
     - **Why:** Valid suffixes survive seek boundaries while malformed complete records remain uncertain.
 - **Root cause:** The seek boundary was treated as a line boundary after character decoding instead of being resolved in bytes first.
 - **Resolution:** The bounded reader now distinguishes an exact newline boundary from a partial record, discards only the latter, and rejects invalid UTF-8 in remaining records.
-- **Verification:** The three regressions were red before the corresponding fixes and green afterward; the pre-rebase Rust workspace gate passed before the final byte-boundary adjustment and will be rerun.
+- **Verification:** The three regressions were red before the corresponding fixes and green afterward; the final combined-tree Rust workspace gate passed with 493 unit tests and all integration suites.
 - **Prevention/follow-up:** Keep byte framing ahead of text decoding in bounded JSONL readers; preserve unknown state for malformed complete events.
 - **Reusable learning:** Resolve stream framing in bytes before strict text decoding.
 - **References:** `codex-switcher/src/switcher/thread_rollout_inspector.rs`, `codex-switcher/src/switcher.test.rs`, `docs/leanings/2026-09-26-malformed-rollout-tail-must-block-dispatch.md`.

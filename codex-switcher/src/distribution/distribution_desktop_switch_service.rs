@@ -176,8 +176,7 @@ impl<'a> DistributionDesktopSwitchService<'a> {
         let (restarted_desktop, recovery_error) =
             DistributionDesktopRelaunchService::new(self.lifecycle, self.logger).run(
                 home,
-                target_id,
-                plan.target_cli_id.as_deref(),
+                plan,
                 &running_threads,
                 capture_mode,
                 operation_id,

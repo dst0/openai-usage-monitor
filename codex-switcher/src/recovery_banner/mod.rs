@@ -20,3 +20,7 @@ pub use recovery_session::RecoverySession;
 pub use recovery_session_catalog::RecoverySessionCatalog;
 pub use saved_window::SavedWindow;
 pub use window_rect::WindowRect;
+
+#[cfg(test)]
+#[path = "recovery_banner.test.rs"]
+mod tests;

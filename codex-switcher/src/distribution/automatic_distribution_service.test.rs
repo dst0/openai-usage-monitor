@@ -54,8 +54,10 @@ impl DistributionExecutor for RecordingExecutor {
 }
 
 fn accounts(active_percent: f64) -> AccountsFile {
-    let mut settings = Settings::default();
-    settings.auto_switch_enabled = true;
+    let settings = Settings {
+        auto_switch_enabled: true,
+        ..Settings::default()
+    };
     AccountsFile {
         active_account_id: Some("active".into()),
         settings,

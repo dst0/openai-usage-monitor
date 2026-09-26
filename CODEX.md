@@ -185,7 +185,9 @@ probes read newly appended bytes. Replacing or pruning an ownerless retry
 requires a second scan of the complete, unchanged snapshot. An incomplete or
 malformed or oversized JSONL record anywhere in that interval cannot certify error-free work. Each prune pass
 selects one ownerless task, rotating per `CODEX_HOME`, and does not tail-inspect
-the others. Older deferred intervals are scanned in chunks of at most 16 MiB
+the others. A selected target with a stable terminal non-quota error is dropped
+because unattended recovery cannot dispatch it; malformed or changed tails
+keep the retry. Older deferred intervals are scanned in chunks of at most 16 MiB
 per probe and yield no lifecycle result until the snapshot end is reached. Foreground
 recovery scans at most 16 MiB of rollout payload per pass across its targets,
 plus small boundary samples, and waits for a complete newline-terminated
@@ -225,6 +227,11 @@ the Desktop process birth immediately before each Accessibility geometry write.
 Window title and geometry heuristics alone cannot prove that a window is
 non-user-owned; ambiguous inventory blocks the restart. Automatic switching
 stays disabled until exact selected-task restoration across windows is proven.
+The helper excludes an unnamed offscreen renderer only when its frame differs
+from every Accessibility standard-window frame. An unexpected or malformed
+offscreen title, or an overlapping standard frame, blocks shutdown. This
+allows the observed single-window Desktop while still leaving Accessibility
+window-roster completeness unproven.
 
 Automatic distribution records whether the exact Desktop process has an eligible
 standard window before shutdown. If no such window exists, it skips geometry

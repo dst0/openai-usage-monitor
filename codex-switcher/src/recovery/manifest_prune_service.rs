@@ -64,7 +64,8 @@ impl ManifestPruneService {
                 continue;
             }
             if target.awaiting_owner {
-                if selected_for_scan && Self::stable_error_ended_tail(home, &target.id, &mut inspect)
+                if selected_for_scan
+                    && Self::stable_error_ended_tail(home, &target.id, &mut inspect)
                 {
                     // Unattended recovery cannot continue a non-quota error,
                     // including one with queued work. Inspect only this pass's
@@ -81,9 +82,9 @@ impl ManifestPruneService {
                 {
                     continue;
                 }
-                // No tail classification can retire an undispatched retry.
-                // Inspecting every ownerless tail would defeat the one-target
-                // bounded scan even when the cached cursor stays untouched.
+                // Apart from a stable terminal non-quota error, tail state
+                // cannot retire an undispatched retry. Never inspect an
+                // unselected ownerless tail under this bounded prune pass.
                 eligible.push(target.clone());
                 continue;
             }

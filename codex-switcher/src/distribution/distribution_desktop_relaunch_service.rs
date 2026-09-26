@@ -1,6 +1,6 @@
 use super::{
     app_lifecycle::AppLifecycle, desktop_app_session::DesktopAppSession,
-    distribution_audit_logger::DistributionAuditLogger,
+    distribution_audit_logger::DistributionAuditLogger, distribution_plan::DistributionPlan,
     distribution_recovery_audit_service::DistributionRecoveryAuditService,
     distribution_request::DistributionRequest, log_redaction_service::LogRedactionService,
     window_capture_mode::WindowCaptureMode,
@@ -23,8 +23,7 @@ impl<'a> DistributionDesktopRelaunchService<'a> {
     pub(super) fn run(
         &self,
         home: &Path,
-        app_account_id: &str,
-        cli_account_id: Option<&str>,
+        plan: &DistributionPlan,
         running_threads: &[String],
         capture_mode: WindowCaptureMode,
         operation_id: &str,
@@ -62,9 +61,13 @@ impl<'a> DistributionDesktopRelaunchService<'a> {
                 return (true, Some(error));
             }
         };
-        let Some(cli_account_id) = cli_account_id else {
+        let Some(cli_account_id) = plan.target_cli_id.as_deref() else {
             self.lifecycle.abort_recovery();
             return (true, Some("CLI account identity is unavailable".into()));
+        };
+        let Some(app_account_id) = plan.target_app_id.as_deref() else {
+            self.lifecycle.abort_recovery();
+            return (true, Some("Desktop account identity is unavailable".into()));
         };
         let path = home.join("desktop-app-session.json");
         let previous = match DesktopAppSession::load_checked(&path) {

@@ -29,6 +29,22 @@ func bannerWindowFrame(_ info: [String: Any], expectedPID: pid_t) -> BannerWindo
   return .frame(frame)
 }
 
+/// An unnamed offscreen renderer can be excluded only when it does not share
+/// the frame of any Accessibility standard window. A title that is missing,
+/// malformed, or unexpected leaves the window's role unproved.
+func unidentifiedWindowIsAmbiguous(
+  _ info: [String: Any], frame: CGRect, standardFrames: [CGRect]
+) -> Bool {
+  guard let name = info[kCGWindowName as String] as? String, name.isEmpty else { return true }
+  if (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true { return true }
+  return standardFrames.contains { framesMatch($0, frame) }
+}
+
+func framesMatch(_ left: CGRect, _ right: CGRect) -> Bool {
+  abs(left.minX - right.minX) <= 2 && abs(left.minY - right.minY) <= 2 &&
+    abs(left.width - right.width) <= 2 && abs(left.height - right.height) <= 2
+}
+
 private func finiteWindowNumber(_ value: Any?) -> CGFloat? {
   guard let number = value as? NSNumber,
     CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }

@@ -111,7 +111,7 @@ fn login_and_add_account_with_codex_bin(
 
     let status = Command::new(codex_bin)
         .arg("login")
-        .env("CODEX_HOME", &temp_dir)
+        .env("CODEX_HOME", temp_dir)
         .status()
         .map_err(|e| format!("Failed to run codex login: {}", e))?;
 

@@ -181,9 +181,11 @@ fn test_coordinator_decision_preserves_strategy_and_business_only_filters() {
     let service = DistributionDecisionService::new();
     let request = DistributionRequest::auto("quota_exhausted");
 
-    let mut settings = Settings::default();
-    settings.strategy = "reset-first".to_string();
-    settings.auto_switch_business_only = true;
+    let mut settings = Settings {
+        strategy: "reset-first".to_string(),
+        auto_switch_business_only: true,
+        ..Settings::default()
+    };
     let reset_first = AccountsFile {
         active_account_id: Some("active".to_string()),
         settings: settings.clone(),

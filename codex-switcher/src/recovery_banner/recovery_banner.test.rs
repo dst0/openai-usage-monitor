@@ -1,7 +1,4 @@
-#[path = "../src/recovery_banner/mod.rs"]
-mod recovery_banner;
-
-use recovery_banner::{
+use super::{
     BannerSessionStatus, ProcessIdentity, RecoveryBannerOwner, RecoveryBannerService,
     RecoverySession, SavedWindow, WindowRect, BANNER_EXPLANATION,
     BANNER_EXPLANATION_WITHOUT_RESTORE, BANNER_TITLE,

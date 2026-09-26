@@ -189,9 +189,13 @@ mod tests {
         fs::create_dir_all(&path_dir).unwrap();
         let replaced = path_dir.join("codex");
         std::os::unix::fs::symlink(&standalone, &replaced).unwrap();
-        assert!(
-            resolve_real_codex_bin_with(&app, &[path_dir.clone()], &shim, Some(&replaced)).is_err()
-        );
+        assert!(resolve_real_codex_bin_with(
+            &app,
+            std::slice::from_ref(&path_dir),
+            &shim,
+            Some(&replaced)
+        )
+        .is_err());
         assert_eq!(fs::read_link(&replaced).unwrap(), standalone);
         let alias = root.join("bin-alias");
         std::os::unix::fs::symlink(&path_dir, &alias).unwrap();

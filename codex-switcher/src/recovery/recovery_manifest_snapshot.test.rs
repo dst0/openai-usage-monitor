@@ -17,7 +17,7 @@ fn rejected_shutdown_restores_previous_ownerless_retry() {
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
     };
-    write_manifest(&[old.clone()]).unwrap();
+    write_manifest(std::slice::from_ref(&old)).unwrap();
     let snapshot = RecoveryManifestSnapshot::capture().unwrap();
     write_manifest(&[PendingTarget {
         id: "01a098c2-0fae-74d2-a80c-45d89e910e80".into(),

@@ -105,14 +105,8 @@ impl DistributionTransactionService {
             recovery_error = outcome.recovery_error;
             commit_verified = outcome.commit_verified;
         } else {
-            DistributionOfflineCommitService::new(self.lifecycle.as_ref(), &self.logger).run(
-                &home,
-                &mut journal,
-                plan,
-                request,
-                &mut accounts_file,
-                op_id,
-            )?;
+            DistributionOfflineCommitService::new(self.lifecycle.as_ref(), &self.logger, op_id)
+                .run(&home, &mut journal, plan, request, &mut accounts_file)?;
         }
 
         let _ = recovery::arm_automation_cooldown();

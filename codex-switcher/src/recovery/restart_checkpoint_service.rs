@@ -1,3 +1,5 @@
+#[cfg(test)]
+use super::observer::Observer;
 use super::{
     checkpoint_confirmation::CheckpointConfirmation,
     checkpoint_scan_cache::CachedCheckpointScan,
@@ -6,8 +8,6 @@ use super::{
     queue_snapshot::pending_count,
     thread_identity::valid_id,
 };
-#[cfg(test)]
-use super::observer::Observer;
 use crate::{storage, switcher};
 use std::{
     collections::HashMap,

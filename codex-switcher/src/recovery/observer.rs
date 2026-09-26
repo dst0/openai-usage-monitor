@@ -114,10 +114,8 @@ impl Observer {
             remaining -= n as u64;
             for byte in &buffer[..n] {
                 if *byte == b'\n' {
-                    if !self.oversized {
-                        if !self.evidence.event(&self.partial) {
-                            self.saw_malformed = true;
-                        }
+                    if !self.oversized && !self.evidence.event(&self.partial) {
+                        self.saw_malformed = true;
                     }
                     self.partial.clear();
                     self.oversized = false;

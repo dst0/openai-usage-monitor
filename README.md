@@ -41,6 +41,7 @@ The switching and monitoring core is written in **Rust**, paired with a native m
    - Re-login requires a usable decoded email claim from the official CLI login matching the selected account and a non-default workspace ID; a workspace ID alone cannot identify a user. Conflicting ID/access token email claims fail closed. JWT signatures are not verified locally. Active-auth replacement checks file identity, contents, and running credential writers immediately before writing. ChatGPT does not honor the Monitor's advisory lock, so concurrent Desktop launch remains an unsupported race.
    - With `restart_app_on_switch: true`, the tool gracefully restarts the desktop app under the selected account. Eligible tasks are resumed only after Desktop mounts their owners and the recovery checks pass; a switch can therefore finish with partial recovery.
    - Before any restart, it checks the exact ChatGPT process and WindowServer window inventory. A process with multiple user windows, or an ambiguous inventory, blocks the restart before credentials change until exact window-to-task restoration is available. This applies even when window-bound preservation is disabled.
+   - Window inventory cross-checks named WindowServer windows against Accessibility standard-window frames. An unnamed offscreen window is excluded only if its frame is distinct from every standard-window frame; an unexpected or malformed offscreen title blocks shutdown. This preserves the observed single-window Desktop with a detached renderer, but the completeness of Accessibility's window roster is still unproven.
    - Keep automatic switching disabled until unattended cold-task mounting and exact selected-task restoration across windows are proven on the installed Desktop.
    - If Desktop has no eligible standard window before a restart, automatic switching can continue without window geometry restore. If there are recovery targets, owner-routed IPC waits for a visible banner after owner mounting; a missing window then defers the target with its original checkpoint. Accessibility failures, malformed geometry, and process identity mismatches still stop a preservation-enabled switch before credentials change.
 
@@ -596,8 +597,8 @@ is not verified on the current Desktop build. If the daemon is
 not running, inspect the task and use `cxi resume <id>` if it is still
 interrupted.
 
-Deferred probes use a bounded append cursor as a hint. Replacing or removing a
-saved ownerless retry requires a fresh scan of one unchanged, newline-terminated
+Deferred probes use a bounded append cursor as a hint. Replacing or pruning a
+saved ownerless retry as recovered work requires a fresh scan of one unchanged, newline-terminated
 rollout snapshot; a partial, malformed, or oversized record in that interval cannot prove that a
 new turn was error-free. One ownerless task is selected per prune pass with
 rotation scoped to `CODEX_HOME`, without
@@ -608,6 +609,9 @@ previously scanned bytes could have changed during owner mounting, it retains
 the checkpoint for a fresh attempt. The Desktop account and task owner are
 verified afresh before every dispatch. Ordinary thread detection leaves
 ownerless retries to the deferred worker.
+For the one selected ownerless target, a stable terminal non-quota error drops
+unattended retry intent because only explicit resume can continue that turn.
+Malformed or changed tail state keeps the original intent.
 
 ### ♻️ Account-Bound Weekly Reset Credits
 

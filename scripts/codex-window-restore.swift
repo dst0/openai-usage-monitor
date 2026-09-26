@@ -182,11 +182,6 @@ func standardWindowFrames(_ pid: pid_t) -> [CGRect] {
   return frames
 }
 
-func framesMatch(_ left: CGRect, _ right: CGRect) -> Bool {
-  abs(left.minX - right.minX) <= 2 && abs(left.minY - right.minY) <= 2 &&
-    abs(left.width - right.width) <= 2 && abs(left.height - right.height) <= 2
-}
-
 /// Reads every ChatGPT window in this process, including windows on another
 /// Space. An unidentified visible layer-0 window is ambiguous; it must not be
 /// treated as proof that the user had only one window open.
@@ -201,7 +196,6 @@ func countStandardWindows(_ process: (pid: pid_t, birth: String)) -> WindowInven
   for info in windows {
     guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == process.pid,
       (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0 else { continue }
-    let onscreen = (info[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true
     guard let bounds = info[kCGWindowBounds as String] as? [String: Any],
       let x = (bounds["X"] as? NSNumber)?.doubleValue,
       let y = (bounds["Y"] as? NSNumber)?.doubleValue,
@@ -218,9 +212,9 @@ func countStandardWindows(_ process: (pid: pid_t, birth: String)) -> WindowInven
       continue
     }
     guard name == "ChatGPT" else {
-      // Offscreen nonstandard renderer windows are excluded only when the AX
-      // standard-window roster independently accounts for every named window.
-      if onscreen { ambiguous += 1 }
+      if unidentifiedWindowIsAmbiguous(
+        info, frame: CGRect(x: x, y: y, width: width, height: height), standardFrames: axFrames
+      ) { ambiguous += 1 }
       continue
     }
     guard let number = info[kCGWindowNumber as String] as? NSNumber,

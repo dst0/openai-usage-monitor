@@ -27,8 +27,10 @@ fn pending_manual_reset_blocks_auto_reset_before_dispatch_preparation() {
     let path = env.home().join("manual-reset-state.json");
     fs::write(&path, serde_json::to_vec(&attempt).unwrap()).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-    let mut settings = Settings::default();
-    settings.auto_reset_weekly_enabled = true;
+    let settings = Settings {
+        auto_reset_weekly_enabled: true,
+        ..Settings::default()
+    };
     let result = maybe_consume_weekly_reset(&settings, &test_account());
     let no_auto_journal = !env.home().join("auto-reset-state.json").exists();
     drop(env);
@@ -56,8 +58,10 @@ fn malformed_manual_reset_journal_blocks_auto_reset() {
     let path = env.home().join("manual-reset-state.json");
     fs::write(&path, b"invalid synthetic journal").unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-    let mut settings = Settings::default();
-    settings.auto_reset_weekly_enabled = true;
+    let settings = Settings {
+        auto_reset_weekly_enabled: true,
+        ..Settings::default()
+    };
     let result = maybe_consume_weekly_reset(&settings, &test_account());
     let no_auto_journal = !env.home().join("auto-reset-state.json").exists();
     drop(env);
@@ -81,8 +85,10 @@ fn any_unresolved_manual_attempt_blocks_auto_across_local_ids() {
         None,
     );
     let path = env.home().join("manual-reset-state.json");
-    let mut settings = Settings::default();
-    settings.auto_reset_weekly_enabled = true;
+    let settings = Settings {
+        auto_reset_weekly_enabled: true,
+        ..Settings::default()
+    };
     for target_id in [
         "alias@example.invalid:account-id",
         "other@example.invalid:another-account",
@@ -129,8 +135,10 @@ fn corrected_weekly_marker_does_not_overwrite_unknown_auto_attempt() {
     };
     let path = env.home().join("auto-reset-state.json");
     write_journal_at(&path, &journal).unwrap();
-    let mut settings = Settings::default();
-    settings.auto_reset_weekly_enabled = true;
+    let settings = Settings {
+        auto_reset_weekly_enabled: true,
+        ..Settings::default()
+    };
     let report = maybe_consume_weekly_reset(&settings, &test_account()).unwrap();
     let display = status_for_active(&settings, Some(&test_account()));
     let mut no_credit = test_account();
@@ -171,8 +179,10 @@ fn unresolved_auto_attempt_for_another_account_keeps_single_slot_journal() {
     };
     let path = env.home().join("auto-reset-state.json");
     write_journal_at(&path, &journal).unwrap();
-    let mut settings = Settings::default();
-    settings.auto_reset_weekly_enabled = true;
+    let settings = Settings {
+        auto_reset_weekly_enabled: true,
+        ..Settings::default()
+    };
     let report = maybe_consume_weekly_reset(&settings, &test_account()).unwrap();
     let preserved = load_journal_at(&path).unwrap().episode_key == journal.episode_key;
     drop(env);
@@ -199,8 +209,10 @@ fn restored_quota_does_not_erase_an_uncertain_auto_reset_attempt() {
         Some("user@example.invalid:account-id"),
         None,
     );
-    let mut settings = Settings::default();
-    settings.auto_reset_weekly_enabled = true;
+    let settings = Settings {
+        auto_reset_weekly_enabled: true,
+        ..Settings::default()
+    };
     let path = env.home().join("auto-reset-state.json");
     for state in ["pending", "unknown"] {
         let journal = ResetJournal {

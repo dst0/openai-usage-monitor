@@ -26,7 +26,7 @@ fn write_ignored_records(writer: &mut impl std::io::Write, minimum_bytes: usize)
 
 fn no_op_line_of_length(length: usize) -> Vec<u8> {
     let mut line = b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\"}}".to_vec();
-    assert!(length >= line.len() + 1);
+    assert!(length > line.len());
     line.resize(length - 1, b' ');
     line.push(b'\n');
     line
@@ -610,7 +610,7 @@ fn middle_only_rewrite_cannot_replace_old_ownerless_checkpoint() {
     let _guard = TestCodexHomeGuard { path: home.clone() };
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let (rollout, target) = cached_proof_fixture(&home, id);
-    write_manifest(&[target.clone()]).unwrap();
+    write_manifest(std::slice::from_ref(&target)).unwrap();
     rewrite_middle_after_cached_proof(&rollout);
 
     save_pending(&[id.into()]).unwrap();
@@ -632,7 +632,7 @@ fn rewrite_during_bounded_confirmation_restarts_full_proof() {
     let _guard = TestCodexHomeGuard { path: home.clone() };
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let (rollout, target) = cached_proof_fixture(&home, id);
-    write_manifest(&[target.clone()]).unwrap();
+    write_manifest(std::slice::from_ref(&target)).unwrap();
     let mut writer = std::fs::OpenOptions::new()
         .append(true)
         .open(&rollout)
@@ -964,7 +964,7 @@ fn incomplete_failed_turn_cannot_retire_ownerless_checkpoint() {
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
     };
-    write_manifest(&[old.clone()]).unwrap();
+    write_manifest(std::slice::from_ref(&old)).unwrap();
     let started = b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"new-turn\"}}\n";
     let work = b"{\"type\":\"response_item\",\"payload\":{\"type\":\"reasoning\"}}\n";
     let partial_failure = b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"new-turn\",\"error\":";
@@ -1025,7 +1025,7 @@ fn oversized_completed_failure_cannot_retire_ownerless_checkpoint() {
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
     };
-    write_manifest(&[old.clone()]).unwrap();
+    write_manifest(std::slice::from_ref(&old)).unwrap();
     let started = serde_json::json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"new-turn"}});
     let work = serde_json::json!({"type":"response_item","payload":{"type":"reasoning"}});
     let failure = serde_json::json!({"type":"event_msg","payload":{"type":"task_complete","turn_id":"new-turn","error":{"codex_error_info":"usage_limit_exceeded","padding":"x".repeat(super::observer::MAX_LINE)}}});

@@ -15,9 +15,8 @@ impl DistributionJournalGateService {
         trigger: &str,
         reason: &str,
     ) -> Result<Option<DistributionOutcome>, String> {
-        let existing = DistributionJournal::load(home).map_err(|error| {
+        let existing = DistributionJournal::load(home).inspect_err(|_| {
             Self::log_failed(logger, operation_id, trigger, reason, "journal_invalid");
-            error
         })?;
         let Some(existing) = existing else {
             return Ok(None);
@@ -57,7 +56,7 @@ impl DistributionJournalGateService {
             reason,
             &format!("Cleaning up stale journal from pid={}", existing.pid),
         );
-        DistributionJournal::clear(home).map_err(|error| {
+        DistributionJournal::clear(home).inspect_err(|_| {
             Self::log_failed(
                 logger,
                 operation_id,
@@ -65,7 +64,6 @@ impl DistributionJournalGateService {
                 reason,
                 "stale_journal_cleanup_failed",
             );
-            error
         })?;
         let _ = crate::recovery::arm_automation_cooldown();
         Ok(None)
