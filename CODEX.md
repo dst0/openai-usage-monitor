@@ -325,11 +325,14 @@ current-account read, treat that case as requiring a verified restart.
 On this host the Command Line Tools Swift compiler and default macOS 27.0 SDK
 have mismatched build versions. Until the tools are repaired, use
 `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` and a writable
-`CLANG_MODULE_CACHE_PATH` for Swift tests and installation. Use a fresh,
-canonical `/private/tmp/...` cache path rather than the `/tmp` symlink: the
-Swift compiler can otherwise load the same PCM under both names and fail with
-a duplicate-module error. Verify the exact built app signature and running
-process after installation.
+`CLANG_MODULE_CACHE_PATH` for Swift tests and installation. Point it at a new,
+empty directory under the canonical `/private/tmp/...` path for each install;
+that combination is the verified workaround. One failed install reused an
+existing cache through the `/tmp` alias and hit a duplicate-module
+(`_DarwinFoundation1`) error. The successful retry changed both the path
+spelling and the cache contents, so whether the alias itself or the stale
+cache caused the failure is unverified. Verify the exact built app signature
+and running process after installation.
 
 ## Runtime Paths & Files
 - `~/.codex/auth.json`: Active authentication tokens used by Codex CLI and `ChatGPT.app` (0600 permissions).
