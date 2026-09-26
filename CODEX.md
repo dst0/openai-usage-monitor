@@ -268,31 +268,34 @@ tests whether the installed Desktop exposes a one-to-one mapping through Copy
 deeplink. It is evidence gathering only and has not been run against a live
 multiwindow Desktop: it foregrounds each window, lets ChatGPT replace the
 clipboard with each task link, and neither persists task IDs nor authorizes
-restart. Before any visible change it requires the Codex home ChatGPT uses
-(`~/.codex`), holds the switch/recovery operation lock for its whole run, and
-refuses a customized ChatGPT keymap, more than one ChatGPT process, a build
-other than 26.924.20706, a macOS App Shortcut on Cmd+Opt+L, a keyboard layout
-on which that key does not type `l` with Command held, missing Accessibility
-or event-posting access, a pasteboard that would ask before a read (macOS
-15.4 and later), and minimized windows. ChatGPT 26.924.20706 binds its hidden
-`copyDeeplink` command to Cmd+Opt+L by default and reads overrides from
+restart. Before any visible change it requires the account's `~/.codex` as
+the Codex home (resolved from the user database, not `$HOME`), holds the
+switch/recovery operation lock for its whole run, and refuses a customized
+ChatGPT keymap, more than one ChatGPT process, a build other than 26.924.20706
+(11431) or a bundle changed since launch, a macOS App Shortcut on
+Cmd+Opt+L, a keyboard layout on which that key does not type `l` with
+Command held, missing Accessibility or event-posting access, pasteboard
+access set to deny, and minimized windows. ChatGPT 26.924.20706 binds its
+hidden `copyDeeplink` command to Cmd+Opt+L by default and reads overrides from
 `$CODEX_HOME/keybindings.json`, re-reading it whenever a window gains focus;
 an override could move that shortcut to another command, so only an absent,
-blank, or `[]` keymap is accepted, and an edit during the run voids the
-result. The Desktop copies the link of `BrowserWindow.getFocusedWindow()` and
-otherwise falls back to its primary window, so the helper sends the shortcut
-only to the verified ChatGPT PID, reads keyboard focus live from
+blank, or `[]` keymap is accepted, and an edit still present when the probe
+ends voids the result. A ChatGPT started with its own `CODEX_HOME` is not
+detected. The Desktop copies the link of `BrowserWindow.getFocusedWindow()`
+and otherwise falls back to its primary window, so the helper sends the
+shortcut only to the verified ChatGPT PID, reads keyboard focus live from
 Accessibility before and after each copy, and requires one clipboard write
 without a concealed or transient marker that stays unchanged while it reads
-the link. It also rejects ambiguous AX/WindowServer frame matches,
-process/window drift, and duplicate or invalid task links. The helper never
-outputs task IDs, and the CLI prints only a count or a fixed failure code,
-noting when a failure came after the first focus change. Each copied link is
-on the system clipboard, where other apps, clipboard history, and Universal
-Clipboard can see it; one competing write of a valid task link still cannot
-be attributed. A successful probe does not prove targeted navigation into
-each replacement window or match IPC owner client IDs to WindowServer IDs, so
-the shutdown guard remains.
+the link. On macOS 15.4 and later the system may ask before that read; a
+prompt that takes focus makes the probe fail closed. It also rejects
+ambiguous AX/WindowServer frame matches, process/window drift, and duplicate
+or invalid task links. The helper never outputs task IDs, and the CLI prints
+only a count or a fixed failure code, adding a note when a failure may have
+followed a focus change. Each copied link is on the system clipboard, where
+other apps, clipboard history, and Universal Clipboard can see it; one
+competing write of a valid task link still cannot be attributed. A successful
+probe does not prove targeted navigation into each replacement window or
+match IPC owner client IDs to WindowServer IDs, so the shutdown guard remains.
 The helper rejects malformed or non-finite WindowServer bounds and rechecks
 the Desktop process birth immediately before each Accessibility geometry write.
 Window title and geometry heuristics alone cannot prove that a window is
