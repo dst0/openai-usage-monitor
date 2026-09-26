@@ -132,6 +132,13 @@ route even when the cached weekly marker changes. The single automatic journal
 cannot be replaced for another account while an attempt is unresolved. An unparsed HTTP status
 never proves non-consumption. Restored quota does not clear an uncertain auto
 journal or allow rotation; corrupt journal reads fail closed.
+Automatic reset runs every final check (registry account and policy, weekly
+quota and window marker, credits, threshold, live auth, a buildable request
+route/token/key, Desktop) before it writes `pending`, then sends at once; a
+refusal never leaves an unsent attempt unresolved. A refused retry of an
+existing `pending`/`unknown` attempt, or one whose request could not be built
+(`Unavailable`), is left unchanged with rotation suppressed because the first
+request may have been applied; other retries are re-marked `pending` first.
 Credential and registry staging uses unpredictable `create_new`, `O_NOFOLLOW`,
 mode-0600 temporary files instead of reopening a predictable filename.
 Active-auth reads open with `O_NOFOLLOW`, require a private regular file, and
@@ -338,11 +345,14 @@ current-account read, treat that case as requiring a verified restart.
 On this host the Command Line Tools Swift compiler and default macOS 27.0 SDK
 have mismatched build versions. Until the tools are repaired, use
 `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` and a writable
-`CLANG_MODULE_CACHE_PATH` for Swift tests and installation. Use a fresh,
-canonical `/private/tmp/...` cache path rather than the `/tmp` symlink: the
-Swift compiler can otherwise load the same PCM under both names and fail with
-a duplicate-module error. Verify the exact built app signature and running
-process after installation.
+`CLANG_MODULE_CACHE_PATH` for Swift tests and installation. Point it at a new,
+empty directory under the canonical `/private/tmp/...` path for each install;
+that combination is the verified workaround. One failed install reused an
+existing cache through the `/tmp` alias and hit a duplicate-module
+(`_DarwinFoundation1`) error. The successful retry changed both the path
+spelling and the cache contents, so whether the alias itself or the stale
+cache caused the failure is unverified. Verify the exact built app signature
+and running process after installation.
 
 ## Runtime Paths & Files
 - `~/.codex/auth.json`: Active authentication tokens used by Codex CLI and `ChatGPT.app` (0600 permissions).
@@ -376,7 +386,14 @@ shims, copied guide, app-owned logs/journals, app-specific support/cache/state
 directories, preferences, and project skill links. It asks for confirmation; use `--yes` only for an explicitly approved
 non-interactive run. Runtime status/recovery files are removed by the normal
 uninstall; add `--purge-data` only to remove the Monitor-owned account registry
-such as `~/.codex/accounts.json`.
+such as `~/.codex/accounts.json`. Interrupted Monitor staging files are removed
+by two lists. The shell list matches the journal, Desktop-session,
+`manual-reset-state.<pid>.<16 hex>.tmp.json`, and the Monitor's
+`auth.json.<pid>.<16 hex>.tmp` credential copy by exact name, current owner,
+`0600` mode, and regular non-symlink file. The fd-anchored `monitor-logs`
+helper removes the other Monitor staging names by prefix and suffix as regular
+non-symlink files, without an owner or mode check. Any new or renamed staging
+writer needs a matching pattern and shell test in the same change.
 
 During installation, log migration occurs only after the newly built app is
 copied to same-filesystem staging and strictly signature-verified. The exact

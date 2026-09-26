@@ -8,12 +8,22 @@
 mod auto_reset_report;
 #[path = "auto_reset/auto_reset_status.rs"]
 mod auto_reset_status;
+#[path = "auto_reset/reset_dispatch_service.rs"]
+mod reset_dispatch_service;
 #[path = "auto_reset/reset_journal.rs"]
 mod reset_journal;
 #[path = "auto_reset/reset_journal_store.rs"]
 mod reset_journal_store;
 #[path = "auto_reset/reset_outcome_service.rs"]
 mod reset_outcome_service;
+#[path = "auto_reset/reset_preflight.rs"]
+mod reset_preflight;
+#[path = "auto_reset/reset_preflight_service.rs"]
+mod reset_preflight_service;
+#[path = "auto_reset/system_weekly_reset_environment.rs"]
+mod system_weekly_reset_environment;
+#[path = "auto_reset/weekly_reset_environment.rs"]
+mod weekly_reset_environment;
 #[path = "auto_reset/weekly_reset_policy.rs"]
 mod weekly_reset_policy;
 #[path = "auto_reset/weekly_reset_service.rs"]
@@ -38,7 +48,11 @@ pub(crate) fn maybe_consume_weekly_reset(
     settings: &Settings,
     active: &AccountConfig,
 ) -> Result<AutoResetReport, String> {
-    weekly_reset_service::WeeklyResetService::maybe_consume_weekly_reset(settings, active)
+    weekly_reset_service::WeeklyResetService::maybe_consume_weekly_reset(
+        settings,
+        active,
+        &system_weekly_reset_environment::SystemWeeklyResetEnvironment,
+    )
 }
 
 /// Prevent a manual reset from minting a second request while an automatic
@@ -49,6 +63,9 @@ pub(crate) fn unresolved_auto_reset_for(account: &AccountConfig) -> Result<bool,
     Ok(weekly_reset_policy::unresolved_for_route(&journal, account))
 }
 
+#[cfg(test)]
+#[path = "auto_reset/fake_weekly_reset_environment.test.rs"]
+mod fake_weekly_reset_environment;
 #[cfg(test)]
 use reset_journal::ResetJournal;
 #[cfg(test)]

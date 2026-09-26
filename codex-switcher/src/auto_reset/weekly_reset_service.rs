@@ -1,14 +1,15 @@
+use super::reset_dispatch_service::ResetDispatchService;
 use super::reset_journal::{ResetJournal, JOURNAL_VERSION};
 use super::reset_journal_store::ResetJournalStore;
-use super::reset_outcome_service::ResetOutcomeService;
+use super::weekly_reset_environment::WeeklyResetEnvironment;
 use super::weekly_reset_policy::{
-    episode_key, new_idempotency_key, now_string, report, same_episode, terminal_no_spend_state,
+    episode_key, new_idempotency_key, report, same_episode, terminal_no_spend_state,
     threshold_eligible, unresolved_attempt, weekly_exhausted,
 };
 use super::weekly_reset_status_service::WeeklyResetStatusService;
 use super::AutoResetReport;
 use crate::models::{AccountConfig, Settings};
-use crate::{quota, recovery, storage, switcher};
+use crate::{recovery, storage};
 
 pub(super) struct WeeklyResetService;
 
@@ -19,6 +20,7 @@ impl WeeklyResetService {
     pub(super) fn maybe_consume_weekly_reset(
         settings: &Settings,
         active: &AccountConfig,
+        environment: &impl WeeklyResetEnvironment,
     ) -> Result<AutoResetReport, String> {
         if !settings.auto_reset_weekly_enabled {
             return Ok(report("disabled", None, None, false));
@@ -116,7 +118,7 @@ impl WeeklyResetService {
                 true,
             ));
         }
-        let blocked_threads = switcher::detect_recent_quota_blocked_user_threads();
+        let blocked_threads = environment.quota_blocked_threads();
         let Some(discovered_anchor) = blocked_threads.first().cloned() else {
             if journal_matches_episode {
                 if journal.state == "applied" {
@@ -176,112 +178,37 @@ impl WeeklyResetService {
                 ));
             }
         } else {
-            let anchor_thread = discovered_anchor;
+            // A new attempt stays in memory until every final check passes;
+            // the dispatch service persists it as `pending` only immediately
+            // before sending the request.
             journal = ResetJournal {
                 version: JOURNAL_VERSION,
                 episode_key: Some(episode_key(active)),
                 account_id: Some(active.account_id.clone()),
-                thread_id: Some(anchor_thread.clone()),
+                thread_id: Some(discovered_anchor),
                 idempotency_key: Some(new_idempotency_key()?),
-                state: "pending".into(),
+                state: "ready".into(),
                 reason: None,
-                updated_at: Some(now_string()),
+                updated_at: None,
             };
-            // Persist before dispatch. A process crash after the service request
-            // is sent must retry this exact operation rather than manufacture a
-            // new credit use.
-            ResetJournalStore::write(&journal)?;
         }
-
-        let idempotency_key = journal
-            .idempotency_key
-            .clone()
-            .ok_or("Auto-reset journal has no idempotency key")?;
-        // Re-check both the active account and opt-in after acquiring the operation
-        // lock. A menu change or account switch while quota was being fetched must
-        // never spend a credit for an outdated account.
-        let latest = storage::load_accounts()?;
-        let still_active = latest.active_account_id.as_deref() == Some(active.id.as_str());
-        let still_enabled = latest.settings.auto_reset_weekly_enabled
-            && latest.settings.auto_reset_weekly_min_remaining_seconds
-                == settings.auto_reset_weekly_min_remaining_seconds;
-        if !still_active || !still_enabled {
-            return Ok(report(
-                "policy_changed",
-                Some("active_account_or_auto_reset_policy_changed".into()),
-                journal.updated_at,
-                false,
-            ));
-        }
-        let Some(latest_active) = latest
-            .accounts
-            .iter()
-            .find(|account| account.id == active.id)
-        else {
-            return Ok(report(
-                "policy_changed",
-                Some("active_account_disappeared".into()),
-                journal.updated_at,
-                false,
-            ));
-        };
-        // Recheck the freshly persisted service snapshot after taking the same
-        // operation lock used by account switching. This prevents a stale daemon
-        // decision from spending against a recovered or differently-routed account.
-        if latest_active.account_id != active.account_id
-            || latest_active.last_error.is_some()
-            || !weekly_exhausted(latest_active)
-        {
-            return Ok(report(
-                "policy_changed",
-                Some("active_account_or_weekly_quota_changed".into()),
-                journal.updated_at,
-                false,
-            ));
-        }
-        if latest_active.last_credits.unwrap_or(0) == 0 {
-            return Ok(report("no_credit", None, journal.updated_at, false));
-        }
-        if !threshold_eligible(
-            latest_active,
-            latest.settings.auto_reset_weekly_min_remaining_seconds,
-        )? {
-            return Ok(report(
-                "waiting_for_window",
-                None,
-                journal.updated_at,
-                false,
-            ));
-        }
-        let live_auth_matches = storage::read_active_auth_json()
-            .ok()
-            .and_then(|auth| auth.tokens)
-            .is_some_and(|tokens| {
-                tokens.access_token == latest_active.tokens.access_token
-                    && tokens.account_id.as_deref() == latest_active.tokens.account_id.as_deref()
-            });
-        if !live_auth_matches {
-            return Ok(report(
-                "policy_changed",
-                Some("active_auth_changed_before_reset".into()),
-                journal.updated_at,
-                false,
-            ));
-        }
-        if !switcher::is_codex_app_running_checked()? {
-            journal.state = "waiting_for_desktop".into();
-            journal.reason = Some("desktop_not_running".into());
-            journal.updated_at = Some(now_string());
-            ResetJournalStore::write(&journal)?;
-            return Ok(report(
-                journal.state,
-                journal.reason,
-                journal.updated_at,
-                false,
-            ));
-        }
-
-        let outcome = quota::consume_rate_limit_reset_credit(latest_active, &idempotency_key);
-        ResetOutcomeService::handle(outcome, journal, &blocked_threads, latest_active)
+        ResetDispatchService::dispatch(
+            settings,
+            active,
+            environment,
+            journal,
+            journal_matches_episode,
+            &blocked_threads,
+        )
     }
 }
+
+#[cfg(test)]
+#[path = "weekly_reset_fixture.test.rs"]
+mod fixture;
+#[cfg(test)]
+#[path = "weekly_reset_retry.test.rs"]
+mod retry_tests;
+#[cfg(test)]
+#[path = "weekly_reset_service.test.rs"]
+mod tests;

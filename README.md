@@ -106,8 +106,11 @@ The installation script checks and guides you through the prerequisites automati
    Run `./scripts/test_swift.sh` before installing; if Swift reports an SDK/compiler
    version mismatch, repair or select matching Command Line Tools and rerun the
    test. Do not publish or reinstall a partially built app bundle.
-   If you set `CLANG_MODULE_CACHE_PATH`, use a fresh canonical path (on macOS,
-   `/private/tmp/...` rather than its `/tmp` symlink) for each installation.
+   If you set `CLANG_MODULE_CACHE_PATH`, point it at a new, empty directory for
+   each installation; a new directory under the canonical `/private/tmp/...`
+   path is the verified workaround. Whether reusing a cache through the `/tmp`
+   alias, or reusing a cache at all, caused the duplicate-module failure seen
+   once is still unverified.
 3. **Rust & Cargo** (for building the ultra-lightweight CLI core):
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -679,7 +682,7 @@ The monitor writes a private, atomic `~/.codex/auto-reset-state.json` journal be
 
 The reset is account-scoped and does not participate in thread ownership:
 
-1. After taking the same operation lock as account switching, the monitor reloads the active account and revalidates its exact weekly exhaustion, selected threshold, reset-credit count, and account routing ID.
+1. After taking the same operation lock as account switching, the monitor reloads the active account and revalidates its exact weekly exhaustion and window marker, selected threshold, reset-credit count, account routing ID, live CLI authentication, that a request can be built for the account route and token, and running Desktop. Only then does it write the `pending` journal entry, and the request follows immediately, so a change noticed during preparation never leaves an unsent attempt marked unresolved. If a check fails, or the request cannot be built, while retrying an attempt that is already `pending` or `unknown`, the journal stays unchanged and switching stays suppressed, because the earlier request may have reached the service.
 2. It sends one authenticated request to the ChatGPT reset service used by Codex, with the active account header and the journaled idempotency key. No token, email, or response body is logged.
 3. `reset` and `already_redeemed` are treated as idempotent success. `nothing_to_reset` and `no_credit` permit normal auto-switch fallback. A transport failure or unparsed HTTP response, including 4xx, retains the same key and suppresses switching until the result is settled.
 4. Only after a confirmed success does the monitor use Desktop's existing owner-routed IPC recovery path to resume the blocked task(s).
@@ -742,7 +745,7 @@ The Monitor stores its account registry, status cache, and recovery journals in
 - `~/.codex/usage-status.json` — Real-time quota snapshot consumed by the macOS Menu Bar app; removed by the normal uninstall.
 - `~/.codex/desktop-app-session.json` — Private APP account binding to the exact Desktop PID and birth identity, plus expected CLI account; an unbound or previous-process record is not display or recovery authority.
 - `~/.codex/monitor.lock`, `daemon.lock`, `codex.lock` — Monitor coordination locks; removed when not held.
-- `~/.codex/auto-reset-state.json`, `manual-reset-state.json`, `distribution-journal.json`, `direct-switch-journal.json`, `desktop-recovery.json`, `desktop-recovery.lock`, `desktop-automation-cooldown` — Private switching/recovery/reset state removed by uninstall.
+- `~/.codex/auto-reset-state.json`, `manual-reset-state.json`, `distribution-journal.json`, `direct-switch-journal.json`, `desktop-recovery.json`, `desktop-recovery.lock`, `desktop-automation-cooldown` — Private switching/recovery/reset state removed by uninstall. Interrupted staging files from Monitor writers are removed too. Journal, Desktop-session, `manual-reset-state.<pid>.<nonce>.tmp.json`, and the Monitor's `auth.json.<pid>.<nonce>.tmp` credential copy must match the exact name, your user, mode `0600`, and be a regular file (not a symlink or directory), so look-alikes are kept. Other Monitor staging names are removed by name prefix and suffix as regular, non-symlink files.
 - `~/.codex/recovery-runs/`, `account-switcher-daemon.log`, and `account-switcher-daemon.err` — private Monitor recovery records and daemon logs; new output is redacted at write time and exact pre-existing Monitor log files are redacted during installation before writers restart; removed by uninstall.
 - `~/.codex/helps.html` — Copied offline interactive documentation guide removed by uninstall.
 - `~/.local/share/codex-monitor/` — Retained skill source used by one-line remote installs; removed by uninstall.
