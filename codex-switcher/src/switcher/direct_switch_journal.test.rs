@@ -43,21 +43,8 @@ fn fixture(label: &str) -> (TestEnv, AccountConfig, AuthJson, AuthJson) {
     (env, target, previous, committed)
 }
 
-fn restore_home(env: TestEnv, prior_home: Option<std::ffi::OsString>) {
-    drop(env);
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
-}
-
 #[test]
 fn crash_after_auth_write_reconciles_fresh_registry_before_next_switch() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let (env, target, previous, committed) = fixture("direct_switch_auth_crash");
     let previous_id = load_accounts().unwrap().active_account_id.unwrap();
     crate::switcher::create_direct_switch_intent_for_test(
@@ -88,15 +75,11 @@ fn crash_after_auth_write_reconciles_fresh_registry_before_next_switch() {
     assert!(DirectSwitchJournalStore::load(env.home())
         .unwrap()
         .is_none());
-    restore_home(env, prior_home);
+    drop(env);
 }
 
 #[test]
 fn crash_before_auth_write_clears_intent_only_with_exact_prior_state() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let (env, target, previous, committed) = fixture("direct_switch_before_write_crash");
     let previous_id = load_accounts().unwrap().active_account_id.unwrap();
     DirectSwitchJournal::begin(
@@ -118,15 +101,11 @@ fn crash_before_auth_write_clears_intent_only_with_exact_prior_state() {
     assert!(DirectSwitchJournalStore::load(env.home())
         .unwrap()
         .is_none());
-    restore_home(env, prior_home);
+    drop(env);
 }
 
 #[test]
 fn changed_auth_extension_retains_intent_and_blocks_registry_commit() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let (env, target, previous, committed) = fixture("direct_switch_changed_extension");
     let previous_id = load_accounts().unwrap().active_account_id.unwrap();
     DirectSwitchJournal::begin(
@@ -152,15 +131,11 @@ fn changed_auth_extension_retains_intent_and_blocks_registry_commit() {
     assert!(DirectSwitchJournalStore::load(env.home())
         .unwrap()
         .is_some());
-    restore_home(env, prior_home);
+    drop(env);
 }
 
 #[test]
 fn unsafe_intent_symlink_and_mode_fail_closed() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let (env, target, previous, committed) = fixture("direct_switch_unsafe_intent");
     let previous_id = load_accounts().unwrap().active_account_id.unwrap();
     let path = env.home().join("direct-switch-journal.json");
@@ -188,5 +163,5 @@ fn unsafe_intent_symlink_and_mode_fail_closed() {
     .unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
     assert!(DirectSwitchJournalStore::load(env.home()).is_err());
-    restore_home(env, prior_home);
+    drop(env);
 }

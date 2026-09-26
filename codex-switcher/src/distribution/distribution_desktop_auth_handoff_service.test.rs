@@ -7,9 +7,6 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
 #[test]
 fn shutdown_token_handoff_preserves_concurrent_registry_changes() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("handoff_registry_concurrency");
     let mut old = make_account(
         "old",

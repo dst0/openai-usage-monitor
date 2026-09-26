@@ -54,10 +54,6 @@ fn target_auth_drops_prior_api_key_and_account_bound_token_extensions() {
 
 #[test]
 fn stale_target_rotation_before_auth_write_preserves_prior_auth() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = crate::distribution::test_helper::TestEnv::new("switch_stale_post_stop_target");
     env.populate(
         vec![
@@ -105,19 +101,10 @@ fn stale_target_rotation_before_auth_write_preserves_prior_auth() {
     );
     assert_eq!(read_active_auth_json().unwrap(), previous);
     drop(env);
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
 }
 
 #[test]
 fn prewrite_failure_relaunches_only_with_exact_prior_auth_and_registry() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = crate::distribution::test_helper::TestEnv::new("switch_prewrite_relaunch_guard");
     env.populate(
         vec![
@@ -185,19 +172,10 @@ fn prewrite_failure_relaunches_only_with_exact_prior_auth_and_registry() {
     assert!(result.contains("Desktop remains stopped"));
     assert_eq!(read_active_auth_json().unwrap(), external);
     drop(env);
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
 }
 
 #[test]
 fn failed_commit_clears_verified_prior_intent_before_desktop_relaunch() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = crate::distribution::test_helper::TestEnv::new("switch_commit_rollback_order");
     env.populate(
         vec![
@@ -285,19 +263,10 @@ fn failed_commit_clears_verified_prior_intent_before_desktop_relaunch() {
     assert!(relaunched.get());
     assert!(error.contains("Selected account credentials changed"));
     drop(env);
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
 }
 
 #[test]
 fn failed_commit_never_relaunches_if_rollback_or_readback_is_uncertain() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     for mode in ["rollback_failed", "readback_changed"] {
         let env = crate::distribution::test_helper::TestEnv::new(mode);
         env.populate(
@@ -380,10 +349,5 @@ fn failed_commit_never_relaunches_if_rollback_or_readback_is_uncertain() {
             "{mode} must retain the journal"
         );
         drop(env);
-    }
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
     }
 }

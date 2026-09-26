@@ -228,9 +228,6 @@ fn rollback_failure_fixture(
 
 #[test]
 fn prepare_rollback_failure_retains_distribution_journal_before_desktop_stop() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let (env, mut accounts, plan, mut journal, before_auth, checkpoint_path) =
         rollback_failure_fixture("prepare_rollback_failure");
     let lifecycle = MockAppLifecycle::new(true);
@@ -259,9 +256,6 @@ fn prepare_rollback_failure_retains_distribution_journal_before_desktop_stop() {
 
 #[test]
 fn before_signal_stop_rollback_failure_retains_distribution_journal() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let (env, mut accounts, plan, mut journal, before_auth, checkpoint_path) =
         rollback_failure_fixture("stop_rollback_failure");
     let lifecycle = MockAppLifecycle::new(true);
@@ -290,9 +284,6 @@ fn before_signal_stop_rollback_failure_retains_distribution_journal() {
 
 #[test]
 fn prepare_rejection_clears_journal_only_after_prior_checkpoint_is_restored() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let (env, mut accounts, plan, mut journal, before_auth, checkpoint_path) =
         rollback_failure_fixture("prepare_rollback_success");
     let before_checkpoint: Value =
@@ -337,9 +328,6 @@ fn prepare_rejection_clears_journal_only_after_prior_checkpoint_is_restored() {
 
 #[test]
 fn before_signal_stop_rejection_clears_journal_after_checkpoint_restore() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let (env, mut accounts, plan, mut journal, before_auth, checkpoint_path) =
         rollback_failure_fixture("stop_rollback_success");
     let before_checkpoint: Value =
@@ -384,9 +372,6 @@ fn before_signal_stop_rejection_clears_journal_after_checkpoint_restore() {
 
 #[test]
 fn failed_recovery_preflight_keeps_desktop_running_and_restores_prior_checkpoint() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("recovery_preflight_before_stop");
     env.populate(
         vec![
@@ -511,9 +496,6 @@ fn failed_recovery_preflight_keeps_desktop_running_and_restores_prior_checkpoint
 
 #[test]
 fn failed_preflight_retains_distribution_journal_when_checkpoint_rollback_fails() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("recovery_preflight_rollback_failure");
     let checkpoint_path = env.home().join("desktop-recovery.json");
     std::fs::write(

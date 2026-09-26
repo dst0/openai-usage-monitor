@@ -1,39 +1,6 @@
 use super::DaemonLoopService;
 use crate::models::{AccountConfig, AccountsFile, Settings};
-use std::{cell::Cell, ffi::OsString, os::unix::fs::PermissionsExt, path::PathBuf};
-
-struct TestHome {
-    path: PathBuf,
-    previous: Option<OsString>,
-}
-
-impl TestHome {
-    fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "codex-watchdog-off-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir(&path).unwrap();
-        let previous = std::env::var_os("CODEX_HOME");
-        std::env::set_var("CODEX_HOME", &path);
-        Self { path, previous }
-    }
-}
-
-impl Drop for TestHome {
-    fn drop(&mut self) {
-        if let Some(value) = &self.previous {
-            std::env::set_var("CODEX_HOME", value);
-        } else {
-            std::env::remove_var("CODEX_HOME");
-        }
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
+use std::{cell::Cell, os::unix::fs::PermissionsExt};
 
 fn accounts_with_quota(primary: f64, weekly: f64, credits: u32) -> AccountsFile {
     let account: AccountConfig = serde_json::from_value(serde_json::json!({
@@ -55,10 +22,7 @@ fn accounts_with_quota(primary: f64, weekly: f64, credits: u32) -> AccountsFile 
 
 #[test]
 fn disabled_auto_switch_does_not_wake_watchdog_for_depleted_account() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let _home = TestHome::new();
+    let _home = crate::storage::test_codex_home::TestCodexHome::new("watchdog-off");
     let mut accounts = accounts_with_quota(0.0, 100.0, 0);
     assert!(!accounts.settings.auto_switch_enabled);
     crate::storage::save_accounts(&accounts).unwrap();
@@ -116,11 +80,8 @@ fn weekly_reset_only_preserves_recent_task_probe() {
 
 #[test]
 fn invalid_registry_does_not_start_immediate_quota_scan() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let home = TestHome::new();
-    let path = home.path.join("accounts.json");
+    let home = crate::storage::test_codex_home::TestCodexHome::new("watchdog-off");
+    let path = home.path().join("accounts.json");
     std::fs::write(&path, b"invalid registry").unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     assert!(!DaemonLoopService::watchdog_needs_immediate_check());

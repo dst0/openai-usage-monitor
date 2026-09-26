@@ -8,7 +8,6 @@ use super::{
     recovery_checkpoint::checkpoint_targets_with,
     recovery_mode::RecoveryMode,
 };
-use std::path::PathBuf;
 
 const STALE: &str = "01a0d9eb-87c8-7213-b62d-a312d00c4ae5";
 const OTHER: &str = "01a0d9ec-7059-7432-93ae-866965f28ac3";
@@ -50,33 +49,6 @@ fn assert_original_deferred(target: &PendingTarget) {
     assert_eq!(target.offset, Some(STALE_OFFSET));
 }
 
-struct CodexHomeGuard {
-    path: PathBuf,
-    previous: Option<std::ffi::OsString>,
-}
-
-impl Drop for CodexHomeGuard {
-    fn drop(&mut self) {
-        match self.previous.take() {
-            Some(home) => std::env::set_var("CODEX_HOME", home),
-            None => std::env::remove_var("CODEX_HOME"),
-        }
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
-
-fn temporary_codex_home(name: &str) -> CodexHomeGuard {
-    let path = std::env::temp_dir().join(format!(
-        "codex-checkpoint-{name}-{}-{}",
-        std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-    ));
-    std::fs::create_dir_all(&path).unwrap();
-    let previous = std::env::var_os("CODEX_HOME");
-    std::env::set_var("CODEX_HOME", &path);
-    CodexHomeGuard { path, previous }
-}
-
 #[test]
 fn explicit_resume_claims_stale_deferred_target_only_in_memory() {
     for binding in [Some(OWNER), Some(SECOND), None] {
@@ -102,10 +74,7 @@ fn explicit_resume_claims_stale_deferred_target_only_in_memory() {
 
 #[test]
 fn stale_deferred_binding_no_longer_blocks_the_explicit_dispatch_marker() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let _home = temporary_codex_home("marker");
+    let _home = crate::storage::test_codex_home::TestCodexHome::new("checkpoint-marker");
 
     // Regression for `RECOVERY_FAILED reason=Active Desktop account changed
     // before deferred recovery`: the pre-IPC marker compared the deferred

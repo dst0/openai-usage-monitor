@@ -198,10 +198,6 @@ fn changed_auth_extension_blocks_relaunch_after_restore_readback() {
 
 #[test]
 fn changed_auth_before_restore_is_not_overwritten_or_relaunched() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = crate::distribution::test_helper::TestEnv::new("direct_switch_restore_cas");
     let previous = old_auth();
     let mut external = old_auth();
@@ -231,19 +227,10 @@ fn changed_auth_before_restore_is_not_overwritten_or_relaunched() {
         "{error}"
     );
     drop(env);
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
 }
 
 #[test]
 fn switch_auth_cas_keeps_top_level_extension_without_copying_old_token_extension() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = crate::distribution::test_helper::TestEnv::new("switch_token_extension_boundary");
     let mut previous = old_auth();
     previous.extra.insert(
@@ -273,19 +260,10 @@ fn switch_auth_cas_keeps_top_level_extension_without_copying_old_token_extension
         .get("old_account_only")
         .is_none());
     drop(env);
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
 }
 
 #[test]
 fn first_auth_creation_refuses_a_new_external_auth_file() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = crate::distribution::test_helper::TestEnv::new("switch_first_auth_create_race");
     let external = old_auth();
     let replacement = committed_auth();
@@ -304,19 +282,10 @@ fn first_auth_creation_refuses_a_new_external_auth_file() {
     assert!(result.is_err());
     assert_eq!(read_active_auth_json().unwrap(), external);
     drop(env);
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
 }
 
 #[test]
 fn first_auth_creation_writes_private_complete_file() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = crate::distribution::test_helper::TestEnv::new("switch_first_auth_create");
     let replacement = committed_auth();
     let path = crate::storage::auth_json_path();
@@ -331,19 +300,10 @@ fn first_auth_creation_writes_private_complete_file() {
         0o600
     );
     drop(env);
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
 }
 
 #[test]
 fn first_auth_creation_refuses_file_appearing_after_staging() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = crate::distribution::test_helper::TestEnv::new("switch_first_auth_staged_race");
     let external = old_auth();
     let replacement = committed_auth();
@@ -370,19 +330,10 @@ fn first_auth_creation_refuses_file_appearing_after_staging() {
             .contains("tmp.json")
     }));
     drop(env);
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
 }
 
 #[test]
 fn first_auth_rollback_restores_absent_file_after_registry_failure() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = crate::distribution::test_helper::TestEnv::new("switch_first_auth_rollback");
     let committed = committed_auth();
     write_active_auth_json(&committed).unwrap();
@@ -396,19 +347,10 @@ fn first_auth_rollback_restores_absent_file_after_registry_failure() {
 
     assert!(!crate::storage::auth_json_path().exists());
     drop(env);
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
 }
 
 #[test]
 fn first_auth_rollback_never_removes_external_replacement() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = crate::distribution::test_helper::TestEnv::new("switch_first_auth_rollback_external");
     let committed = committed_auth();
     let external = old_auth();
@@ -424,9 +366,4 @@ fn first_auth_rollback_never_removes_external_replacement() {
     assert!(error.contains("restoration failed"));
     assert_eq!(read_active_auth_json().unwrap(), external);
     drop(env);
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
 }

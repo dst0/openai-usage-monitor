@@ -49,6 +49,8 @@ fn interactive_login_rejects_unreadable_existing_active_auth() {
 
 #[test]
 fn interactive_login_never_removes_a_preexisting_pid_directory() {
+    // Login copies config.toml from CODEX_HOME, which must not be the live home.
+    let _home = crate::storage::test_codex_home::TestCodexHome::new("interactive-login");
     let legacy = std::env::temp_dir().join(format!("codex-login-{}", std::process::id()));
     std::fs::create_dir(&legacy).expect("legacy PID path must not exist before this test");
     let sentinel = legacy.join("keep-this-file");

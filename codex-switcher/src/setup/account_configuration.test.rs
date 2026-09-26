@@ -4,7 +4,6 @@ use crate::storage::{load_accounts, save_accounts};
 
 #[test]
 fn unrelated_setting_change_keeps_newer_auto_switch_disable_and_credentials() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
     let env = TestEnv::new("config_concurrent_auth_and_disable");
     env.populate(
         vec![make_account(
@@ -38,5 +37,4 @@ fn unrelated_setting_change_keeps_newer_auto_switch_disable_and_credentials() {
         Some("fresh-refresh")
     );
     drop(env);
-    std::env::remove_var("CODEX_HOME");
 }

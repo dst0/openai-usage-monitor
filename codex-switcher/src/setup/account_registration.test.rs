@@ -5,7 +5,6 @@ use crate::storage::{load_accounts, save_accounts, write_active_auth_json};
 
 #[test]
 fn account_removal_keeps_concurrent_account_and_fresh_credentials() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
     let env = TestEnv::new("remove_concurrent_account");
     env.populate(
         vec![
@@ -74,12 +73,10 @@ fn account_removal_keeps_concurrent_account_and_fresh_credentials() {
         Some("fresh-refresh")
     );
     drop(env);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
 fn account_addition_merges_into_newer_registry_without_replaying_stale_settings() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
     let env = TestEnv::new("add_concurrent_registry_change");
     env.populate(
         vec![make_account(
@@ -152,12 +149,10 @@ fn account_addition_merges_into_newer_registry_without_replaying_stale_settings(
         Some("newer-refresh")
     );
     drop(env);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
 fn first_account_creates_missing_registry_without_a_stale_snapshot_write() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
     let env = TestEnv::new("first_account_atomic_initialize");
     let mut snapshot = AccountsFile::default();
     let tokens = make_account(
@@ -178,12 +173,10 @@ fn first_account_creates_missing_registry_without_a_stale_snapshot_write() {
     assert_eq!(snapshot.accounts[0].id, saved.accounts[0].id);
     assert_eq!(snapshot.accounts[0].tokens, saved.accounts[0].tokens);
     drop(env);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
 fn save_current_refuses_to_replace_an_unreadable_registry() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
     let env = TestEnv::new("save_current_corrupt_registry");
     let auth = AuthJson {
         auth_mode: Some("chatgpt".into()),
@@ -213,5 +206,4 @@ fn save_current_refuses_to_replace_an_unreadable_registry() {
         b"invalid registry"
     );
     drop(env);
-    std::env::remove_var("CODEX_HOME");
 }

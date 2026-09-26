@@ -3,6 +3,16 @@ use crate::storage::{load_accounts, sync_settings_to_status_file, update_account
 /// Renames an account's display nickname, or clears it if new_name is None.
 /// Guarantees that nicknames are not duplicated across different accounts.
 pub fn rename_account(query: &str, new_name: Option<&str>) -> Result<(), String> {
+    rename_account_with(query, new_name, crate::daemon::refresh_quotas_and_status)
+}
+
+/// Renames an account, then runs `refresh_status` so the Menu Bar app shows the
+/// new label. A failed refresh does not undo or fail the saved rename.
+pub(crate) fn rename_account_with(
+    query: &str,
+    new_name: Option<&str>,
+    refresh_status: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     let clean_new = new_name.map(str::trim).filter(|s| !s.is_empty());
     let (mut updated_id, mut updated_name) = (String::new(), None);
     update_accounts_atomically(|file| {
@@ -29,7 +39,7 @@ pub fn rename_account(query: &str, new_name: Option<&str>) -> Result<(), String>
     })?;
 
     // Refresh quotas and status file so Menu Bar app updates immediately
-    let _ = crate::daemon::refresh_quotas_and_status();
+    let _ = refresh_status();
 
     if let Some(name) = updated_name {
         println!("✅ Account '{}' renamed to '{}'", updated_id, name);

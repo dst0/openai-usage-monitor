@@ -313,9 +313,6 @@ fn auto_actions_require_exact_active_desktop_tokens() {
 
 #[test]
 fn ambiguous_live_auth_cannot_be_persisted_to_account_registry() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("ambiguous_desktop_auth");
     let first = account(
         "first",
@@ -354,7 +351,6 @@ fn ambiguous_live_auth_cannot_be_persisted_to_account_registry() {
 
 #[test]
 fn active_sync_cannot_replay_snapshot_after_relogin_commit() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
     let env = TestEnv::new("active_sync_relogin_interleave");
     env.populate(
         vec![account(

@@ -1,5 +1,6 @@
 use super::ActiveAuthRegistrySyncService;
 use crate::models::{AccountConfig, AccountsFile, AuthJson, AuthTokens, Settings};
+use crate::storage::test_codex_home::TestCodexHome;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
 fn tokens(email: &str, provider: &str, generation: &str) -> AuthTokens {
@@ -148,11 +149,8 @@ fn blank_optional_tokens_do_not_alias_another_saved_account() {
 
 #[test]
 fn latest_desktop_refresh_is_persisted_before_auth_replacement() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let prior_home = std::env::var_os("CODEX_HOME");
-    let home = std::env::temp_dir().join(format!("codex-active-auth-sync-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
+    let test_home = TestCodexHome::new("active-auth-sync");
+    let home = test_home.path().to_path_buf();
 
     let mut accounts = AccountsFile {
         active_account_id: Some("first".into()),
@@ -173,21 +171,13 @@ fn latest_desktop_refresh_is_persisted_before_auth_replacement() {
         latest
     );
 
-    if let Some(prior) = prior_home {
-        std::env::set_var("CODEX_HOME", prior);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
     std::fs::remove_dir_all(home).unwrap();
 }
 
 #[test]
 fn active_auth_sync_preserves_registry_change_after_initial_snapshot() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let prior_home = std::env::var_os("CODEX_HOME");
-    let home = std::env::temp_dir().join(format!("codex-active-sync-race-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
+    let test_home = TestCodexHome::new("active-sync-race");
+    let home = test_home.path().to_path_buf();
     let mut snapshot = AccountsFile {
         active_account_id: Some("first".into()),
         settings: Settings::default(),
@@ -206,11 +196,6 @@ fn active_auth_sync_preserves_registry_change_after_initial_snapshot() {
         crate::storage::save_accounts(&latest)
     });
     let saved = crate::storage::load_accounts().unwrap();
-    if let Some(prior) = prior_home {
-        std::env::set_var("CODEX_HOME", prior);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
     std::fs::remove_dir_all(home).unwrap();
     result.unwrap();
     assert_eq!(saved.settings.poll_interval_seconds, 127);

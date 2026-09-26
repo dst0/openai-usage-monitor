@@ -10,9 +10,6 @@ fn jwt(email: &str, generation: &str) -> String {
 
 #[test]
 fn same_email_distinct_provider_token_aliases_cannot_bind_recovery() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("recovery_cross_provider_alias");
     let first = make_account(
         "provider-a",
@@ -66,9 +63,6 @@ fn same_email_distinct_provider_token_aliases_cannot_bind_recovery() {
 
 #[test]
 fn same_email_distinct_provider_without_alias_binds_unique_recovery_account() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("recovery_cross_provider_unique");
     let first = make_account(
         "provider-a",

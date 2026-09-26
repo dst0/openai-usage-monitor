@@ -16,9 +16,6 @@ use std::sync::Arc;
 
 #[test]
 fn test_candidate_skip_reasons() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let env = TestEnv::new("skip_reasons");
 
     let accounts = vec![
@@ -332,9 +329,6 @@ fn automatic_offline_plan_keeps_next_desktop_launch_on_cli_account() {
 
 #[test]
 fn test_stale_snapshot_already_optimal() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let env = TestEnv::new("already_optimal");
 
     let accounts = vec![
@@ -383,9 +377,6 @@ fn test_stale_snapshot_already_optimal() {
 
 #[test]
 fn test_duplicate_overlapping_automatic_operations() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let env = TestEnv::new("in_flight");
 
     let accounts = vec![
@@ -442,9 +433,6 @@ fn test_duplicate_overlapping_automatic_operations() {
 
 #[test]
 fn test_transaction_failure_logs_sanitized_correlated_outcome() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("failed_outcome");
     env.populate(
         vec![
@@ -501,9 +489,6 @@ fn test_transaction_failure_logs_sanitized_correlated_outcome() {
 
 #[test]
 fn test_invalid_journal_and_cooldown_fail_closed_with_outcomes() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("invalid_coordination_state");
     env.populate(
         vec![
@@ -558,9 +543,6 @@ fn test_invalid_journal_and_cooldown_fail_closed_with_outcomes() {
 
 #[test]
 fn test_trigger_reason_correlation_and_operation_id_continuity() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let env = TestEnv::new("correlation");
 
     let accounts = vec![
@@ -620,9 +602,6 @@ fn test_trigger_reason_correlation_and_operation_id_continuity() {
 
 #[test]
 fn test_logging_redaction_and_privacy() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let env = TestEnv::new("redaction");
 
     let secret_email = "sensitive.executive@confidential-corp.com";
@@ -699,9 +678,6 @@ fn test_logging_redaction_and_privacy() {
 
 #[test]
 fn test_partial_account_switch_terminal_and_cooldown() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let env = TestEnv::new("partial_terminal");
 
     let accounts = vec![
@@ -772,9 +748,6 @@ fn test_partial_account_switch_terminal_and_cooldown() {
 
 #[test]
 fn recovery_sees_new_desktop_account_marker_before_dispatch() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("marker_before_recovery");
     env.populate(
         vec![
@@ -826,9 +799,6 @@ fn recovery_sees_new_desktop_account_marker_before_dispatch() {
 
 #[test]
 fn failed_desktop_launch_cannot_claim_the_target_account_for_deferred_recovery() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("failed_launch_no_session_claim");
     env.populate(
         vec![
@@ -886,9 +856,6 @@ fn failed_desktop_launch_cannot_claim_the_target_account_for_deferred_recovery()
 
 #[test]
 fn replaced_desktop_process_cannot_claim_the_target_account() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("replaced_process_no_session_claim");
     env.populate(
         vec![
@@ -940,9 +907,6 @@ fn replaced_desktop_process_cannot_claim_the_target_account() {
 
 #[test]
 fn test_at_most_one_desktop_restart() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let env = TestEnv::new("at_most_one_restart");
 
     let accounts = vec![
@@ -1066,9 +1030,6 @@ fn test_at_most_one_desktop_restart() {
 
 #[test]
 fn running_desktop_rejects_cli_only_split_before_journal_or_auth_change() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("running_desktop_cli_split");
     env.populate(
         vec![
@@ -1128,9 +1089,6 @@ fn running_desktop_rejects_cli_only_split_before_journal_or_auth_change() {
 
 #[test]
 fn running_desktop_rejects_distinct_app_and_cli_targets_before_stop() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("running_desktop_distinct_targets");
     env.populate(
         vec![
@@ -1200,9 +1158,6 @@ fn running_desktop_rejects_distinct_app_and_cli_targets_before_stop() {
 
 #[test]
 fn desktop_rotated_refresh_token_is_saved_before_replacing_auth() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("desktop_refresh_before_switch");
     env.populate(
         vec![
@@ -1263,9 +1218,6 @@ fn desktop_rotated_refresh_token_is_saved_before_replacing_auth() {
 
 #[test]
 fn stale_journal_after_shutdown_or_auth_commit_cannot_be_discarded_automatically() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     for phase in [
         "stopping_desktop",
         "auth_commit_app",
@@ -1324,9 +1276,6 @@ fn stale_journal_after_shutdown_or_auth_commit_cannot_be_discarded_automatically
 
 #[test]
 fn stale_journal_cleanup_rebinds_offline_target_without_a_live_process() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let env = TestEnv::new("stale_journal");
 
     let accounts = vec![make_account(
@@ -1384,9 +1333,6 @@ fn stale_journal_cleanup_rebinds_offline_target_without_a_live_process() {
 
 #[test]
 fn test_window_restore_failure_is_a_distribution_recovery_failure() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("window_restore_failure");
     env.populate(
         vec![
@@ -1436,9 +1382,6 @@ fn test_window_restore_failure_is_a_distribution_recovery_failure() {
 
 #[test]
 fn windowless_desktop_still_switches_and_recovers_without_geometry_restore() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("windowless_switch");
     env.populate(
         vec![
@@ -1492,9 +1435,6 @@ fn windowless_desktop_still_switches_and_recovers_without_geometry_restore() {
 
 #[test]
 fn window_access_failure_prevents_auth_change_and_restart() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("window_access_failure");
     env.populate(
         vec![
@@ -1540,9 +1480,6 @@ fn window_access_failure_prevents_auth_change_and_restart() {
 
 #[test]
 fn disabled_window_preservation_skips_geometry_but_checks_window_inventory() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("window_access_disabled_preservation");
     env.populate(
         vec![
@@ -1602,9 +1539,6 @@ fn disabled_window_preservation_skips_geometry_but_checks_window_inventory() {
 
 #[test]
 fn banner_rebind_failure_does_not_block_desktop_recovery() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("banner_rebind_failure");
     env.populate(
         vec![
@@ -1654,9 +1588,6 @@ fn banner_rebind_failure_does_not_block_desktop_recovery() {
 
 #[test]
 fn disabled_preservation_process_inspection_failure_blocks_auth_change() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("windowless_process_mismatch");
     env.populate(
         vec![
@@ -1707,9 +1638,6 @@ fn disabled_preservation_process_inspection_failure_blocks_auth_change() {
 
 #[test]
 fn failed_shutdown_clears_recovery_state_before_a_retry() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("shutdown_failure_cleanup");
     env.populate(
         vec![
@@ -1762,9 +1690,6 @@ fn failed_shutdown_clears_recovery_state_before_a_retry() {
 
 #[test]
 fn failed_post_shutdown_checkpoint_keeps_old_auth_and_relaunches_desktop() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("post_shutdown_checkpoint_failure");
     env.populate(
         vec![

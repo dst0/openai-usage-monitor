@@ -7,9 +7,6 @@ static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[test]
 fn pending_manual_reset_blocks_auto_reset_before_dispatch_preparation() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("auto_vs_manual_reset");
     env.populate(
         vec![test_account()],
@@ -34,8 +31,6 @@ fn pending_manual_reset_blocks_auto_reset_before_dispatch_preparation() {
     let result = maybe_consume_weekly_reset(&settings, &test_account());
     let no_auto_journal = !env.home().join("auto-reset-state.json").exists();
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(
         result.is_ok_and(|report| report.status.state == "waiting_for_manual_reset"
             && report.suppress_auto_switch)
@@ -46,9 +41,6 @@ fn pending_manual_reset_blocks_auto_reset_before_dispatch_preparation() {
 
 #[test]
 fn malformed_manual_reset_journal_blocks_auto_reset() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("auto_vs_malformed_manual");
     env.populate(
         vec![test_account()],
@@ -65,8 +57,6 @@ fn malformed_manual_reset_journal_blocks_auto_reset() {
     let result = maybe_consume_weekly_reset(&settings, &test_account());
     let no_auto_journal = !env.home().join("auto-reset-state.json").exists();
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(
         result.is_err() && no_auto_journal,
         "malformed manual journal did not fail closed"
@@ -75,9 +65,6 @@ fn malformed_manual_reset_journal_blocks_auto_reset() {
 
 #[test]
 fn any_unresolved_manual_attempt_blocks_auto_across_local_ids() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("other_manual_account");
     env.populate(
         vec![test_account()],
@@ -110,15 +97,10 @@ fn any_unresolved_manual_attempt_blocks_auto_across_local_ids() {
         );
     }
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
 }
 
 #[test]
 fn corrected_weekly_marker_does_not_overwrite_unknown_auto_attempt() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("auto_changed_marker");
     env.populate(
         vec![test_account()],
@@ -146,8 +128,6 @@ fn corrected_weekly_marker_does_not_overwrite_unknown_auto_attempt() {
     let no_credit_report = maybe_consume_weekly_reset(&settings, &no_credit).unwrap();
     let preserved = load_journal_at(&path).unwrap().episode_key == journal.episode_key;
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(
         preserved
             && report.status.state == "waiting_for_previous_reset"
@@ -160,9 +140,6 @@ fn corrected_weekly_marker_does_not_overwrite_unknown_auto_attempt() {
 
 #[test]
 fn unresolved_auto_attempt_for_another_account_keeps_single_slot_journal() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("auto_other_route");
     env.populate(
         vec![test_account()],
@@ -186,8 +163,6 @@ fn unresolved_auto_attempt_for_another_account_keeps_single_slot_journal() {
     let report = maybe_consume_weekly_reset(&settings, &test_account()).unwrap();
     let preserved = load_journal_at(&path).unwrap().episode_key == journal.episode_key;
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(
         preserved
             && report.status.state == "waiting_for_previous_reset"
@@ -198,9 +173,6 @@ fn unresolved_auto_attempt_for_another_account_keeps_single_slot_journal() {
 
 #[test]
 fn restored_quota_does_not_erase_an_uncertain_auto_reset_attempt() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("auto_uncertain_cleanup");
     let mut account = test_account();
     account.last_weekly_percentage = Some(50.0);
@@ -246,8 +218,6 @@ fn restored_quota_does_not_erase_an_uncertain_auto_reset_attempt() {
         );
     }
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
 }
 
 #[test]

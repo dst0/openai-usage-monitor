@@ -32,7 +32,6 @@ fn status() -> StatusFile {
 
 #[test]
 fn stale_status_writers_cannot_reenable_auto_switch_after_registry_disable() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
     let env = TestEnv::new("status_cache_disable_race");
     env.populate(
         vec![make_account(
@@ -63,12 +62,10 @@ fn stale_status_writers_cannot_reenable_auto_switch_after_registry_disable() {
     assert!(!observed.auto_switch_enabled);
     assert!(!observed.auto_switch_business_priority);
     drop(env);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
 fn status_writer_never_follows_a_preexisting_temporary_symlink() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
     let env = TestEnv::new("status_temp_symlink");
     env.populate(
         vec![make_account(
@@ -104,12 +101,10 @@ fn status_writer_never_follows_a_preexisting_temporary_symlink() {
         "status write followed an existing temporary symlink"
     );
     drop(env);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
 fn settings_sync_leaves_a_missing_status_cache_for_the_daemon() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
     let env = TestEnv::new("status_cache_missing");
     env.populate(
         vec![make_account(
@@ -134,5 +129,4 @@ fn settings_sync_leaves_a_missing_status_cache_for_the_daemon() {
         "settings sync created an incomplete quota snapshot"
     );
     drop(env);
-    std::env::remove_var("CODEX_HOME");
 }

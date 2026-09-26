@@ -6,9 +6,6 @@ use super::{
 
 #[test]
 fn rejected_shutdown_restores_previous_ownerless_retry() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("window_recheck_rollback");
     let old = PendingTarget {
         id: "01a098c2-0fae-74d2-a80c-45d89e910e79".into(),
@@ -41,9 +38,6 @@ fn rejected_shutdown_restores_previous_ownerless_retry() {
 
 #[test]
 fn failed_journal_rollback_is_reported_with_original_shutdown_error() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("window_rollback_error");
     let snapshot = RecoveryManifestSnapshot::capture().unwrap();
     std::fs::create_dir(env.home().join("desktop-recovery.json")).unwrap();

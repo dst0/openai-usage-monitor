@@ -13,21 +13,18 @@ mod active_auth_compare_write_service;
 mod active_auth_create_service;
 #[path = "storage/active_auth_remove_service.rs"]
 mod active_auth_remove_service;
+#[path = "storage/codex_home_resolver.rs"]
+mod codex_home_resolver;
 pub(crate) use active_auth_remove_service::compare_and_remove_active_auth_json;
 #[path = "storage/status_file_service.rs"]
 mod status_file_service;
 pub use status_file_service::{sync_settings_to_status_file, write_status_file};
 
-pub fn codex_home() -> PathBuf {
-    if let Ok(p) = std::env::var("CODEX_HOME") {
-        if !p.is_empty() {
-            return PathBuf::from(p);
-        }
-    }
-    dirs::home_dir()
-        .map(|h| h.join(".codex"))
-        .unwrap_or_else(|| PathBuf::from(".codex"))
-}
+#[cfg(test)]
+#[path = "storage/test_codex_home.rs"]
+pub(crate) mod test_codex_home;
+
+pub use codex_home_resolver::codex_home;
 
 pub fn auth_json_path() -> PathBuf {
     codex_home().join("auth.json")

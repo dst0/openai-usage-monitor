@@ -12,13 +12,11 @@ use super::{
     },
     stored_manifest::StoredManifest,
 };
+use crate::storage::test_codex_home::TestCodexHome;
 use std::{path::PathBuf, process::Command};
 
 #[test]
 fn marker_write_failure_after_rename_restores_exact_checkpoint_before_ipc() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("marker_post_rename_error");
     let original = PendingTarget {
         id: "01a098c2-0fae-74d2-a80c-45d89e910e79".into(),
@@ -41,8 +39,6 @@ fn marker_write_failure_after_rename_restores_exact_checkpoint_before_ipc() {
     assert!(error.to_string().contains("synthetic directory sync error"));
     assert_eq!(load_manifest().unwrap(), vec![original]);
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
 }
 
 fn write_ignored_records(writer: &mut impl std::io::Write, minimum_bytes: usize) {
@@ -65,9 +61,6 @@ fn no_op_line_of_length(length: usize) -> Vec<u8> {
 
 #[test]
 fn restart_recovery_binds_to_committed_auth_before_cli_registry_updates() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("recovery_auth_transition");
     let old = crate::distribution::test_helper::make_account(
         "old",
@@ -111,9 +104,6 @@ fn restart_recovery_binds_to_committed_auth_before_cli_registry_updates() {
 #[test]
 fn conflicting_token_emails_do_not_bind_a_recovery_account() {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("recovery_conflicting_email");
     let target = crate::distribution::test_helper::make_account(
         "target",
@@ -136,10 +126,6 @@ fn conflicting_token_emails_do_not_bind_a_recovery_account() {
     crate::storage::write_active_auth_json(&auth).unwrap();
     assert_eq!(current_account_binding(), None);
 }
-struct TestCodexHomeGuard {
-    path: PathBuf,
-}
-
 #[test]
 fn unreadable_thread_index_does_not_erase_deferred_checkpoint() {
     let home = std::env::temp_dir().join(format!("codex-index-error-{}", std::process::id()));
@@ -173,13 +159,6 @@ fn unreadable_thread_index_does_not_erase_deferred_checkpoint() {
     prune_ineligible_targets_with(&home, &mut archived, |_| Ok(None)).unwrap();
     assert!(archived.is_empty());
     std::fs::remove_dir_all(home).unwrap();
-}
-
-impl Drop for TestCodexHomeGuard {
-    fn drop(&mut self) {
-        std::env::remove_var("CODEX_HOME");
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
 }
 
 #[test]
@@ -290,11 +269,7 @@ fn wrong_account_cannot_recheckpoint_or_rebind_an_ownerless_target() {
 
 #[test]
 fn dispatch_marker_is_durable_before_any_ipc_send() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let home = std::env::temp_dir().join(format!("codex-dispatch-marker-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
-    let _guard = TestCodexHomeGuard { path: home };
+    let _home = TestCodexHome::new("dispatch-marker");
     let first = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let other = "01a098c2-0fae-74d2-a80c-45d89e910e80";
     write_manifest(&[
@@ -339,12 +314,7 @@ fn dispatch_marker_is_durable_before_any_ipc_send() {
 
 #[test]
 fn new_restart_preserves_an_older_ownerless_checkpoint_and_account() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let home =
-        std::env::temp_dir().join(format!("codex-ownerless-preserve-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
-    let _guard = TestCodexHomeGuard { path: home };
+    let _home = TestCodexHome::new("ownerless-preserve");
     let old = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let new = "01a098c2-0fae-74d2-a80c-45d89e910e80";
     write_manifest(&[PendingTarget {
@@ -368,13 +338,8 @@ fn new_restart_preserves_an_older_ownerless_checkpoint_and_account() {
 
 #[test]
 fn second_restart_checkpoint_excludes_shutdown_events() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let home = std::env::temp_dir().join(format!("codex-recheckpoint-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
-    let _guard = TestCodexHomeGuard { path: home.clone() };
+    let test_home = TestCodexHome::new("recheckpoint");
+    let home = test_home.path().to_path_buf();
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let sessions = home.join("sessions");
     std::fs::create_dir_all(&sessions).unwrap();
@@ -393,13 +358,8 @@ fn second_restart_checkpoint_excludes_shutdown_events() {
 
 #[test]
 fn new_turn_needs_work_before_replacing_stale_ownerless_checkpoint() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let home = std::env::temp_dir().join(format!("codex-new-turn-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
-    let _guard = TestCodexHomeGuard { path: home.clone() };
+    let test_home = TestCodexHome::new("new-turn");
+    let home = test_home.path().to_path_buf();
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let sessions = home.join("sessions");
     std::fs::create_dir_all(&sessions).unwrap();
@@ -473,13 +433,8 @@ fn new_turn_needs_work_before_replacing_stale_ownerless_checkpoint() {
 
 #[test]
 fn queued_follow_up_preserves_old_ownerless_checkpoint_after_new_work() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let home = std::env::temp_dir().join(format!("codex-queued-checkpoint-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
-    let _guard = TestCodexHomeGuard { path: home.clone() };
+    let test_home = TestCodexHome::new("queued-checkpoint");
+    let home = test_home.path().to_path_buf();
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let sessions = home.join("sessions");
     std::fs::create_dir_all(&sessions).unwrap();
@@ -529,13 +484,8 @@ fn queued_follow_up_preserves_old_ownerless_checkpoint_after_new_work() {
 
 #[test]
 fn long_rollout_after_old_checkpoint_still_supersedes_stale_binding() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let home = std::env::temp_dir().join(format!("codex-long-checkpoint-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
-    let _guard = TestCodexHomeGuard { path: home.clone() };
+    let test_home = TestCodexHome::new("long-checkpoint");
+    let home = test_home.path().to_path_buf();
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let sessions = home.join("sessions");
     std::fs::create_dir_all(&sessions).unwrap();
@@ -632,13 +582,8 @@ fn cached_proof_fixture(home: &std::path::Path, id: &str) -> (PathBuf, PendingTa
 
 #[test]
 fn middle_only_rewrite_cannot_replace_old_ownerless_checkpoint() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let home = std::env::temp_dir().join(format!("codex-middle-save-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
-    let _guard = TestCodexHomeGuard { path: home.clone() };
+    let test_home = TestCodexHome::new("middle-save");
+    let home = test_home.path().to_path_buf();
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let (rollout, target) = cached_proof_fixture(&home, id);
     write_manifest(std::slice::from_ref(&target)).unwrap();
@@ -654,13 +599,8 @@ fn middle_only_rewrite_cannot_replace_old_ownerless_checkpoint() {
 
 #[test]
 fn rewrite_during_bounded_confirmation_restarts_full_proof() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let home = std::env::temp_dir().join(format!("codex-middle-rescan-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
-    let _guard = TestCodexHomeGuard { path: home.clone() };
+    let test_home = TestCodexHome::new("middle-rescan");
+    let home = test_home.path().to_path_buf();
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let (rollout, target) = cached_proof_fixture(&home, id);
     write_manifest(std::slice::from_ref(&target)).unwrap();
@@ -976,13 +916,8 @@ fn failed_new_turn_does_not_retire_deferred_retry_as_verified_work() {
 
 #[test]
 fn incomplete_failed_turn_cannot_retire_ownerless_checkpoint() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let home = std::env::temp_dir().join(format!("codex-partial-failure-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
-    let _guard = TestCodexHomeGuard { path: home.clone() };
+    let test_home = TestCodexHome::new("partial-failure");
+    let home = test_home.path().to_path_buf();
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let sessions = home.join("sessions");
     std::fs::create_dir_all(&sessions).unwrap();
@@ -1037,13 +972,8 @@ fn incomplete_failed_turn_cannot_retire_ownerless_checkpoint() {
 
 #[test]
 fn oversized_completed_failure_cannot_retire_ownerless_checkpoint() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let home = std::env::temp_dir().join(format!("codex-oversized-failure-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
-    let _guard = TestCodexHomeGuard { path: home.clone() };
+    let test_home = TestCodexHome::new("oversized-failure");
+    let home = test_home.path().to_path_buf();
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let sessions = home.join("sessions");
     std::fs::create_dir_all(&sessions).unwrap();
@@ -1401,13 +1331,7 @@ fn same_inode_rewrite_with_preserved_boundary_invalidates_evidence() {
 
 #[test]
 fn load_pending_skips_ownerless_targets_without_a_thread_index() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let home = std::env::temp_dir().join(format!("codex-skip-ownerless-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
-    let _guard = TestCodexHomeGuard { path: home.clone() };
+    let _home = TestCodexHome::new("skip-ownerless");
     let target = PendingTarget {
         id: "01a098c2-0fae-74d2-a80c-45d89e910e79".into(),
         offset: Some(11),
@@ -1422,14 +1346,8 @@ fn load_pending_skips_ownerless_targets_without_a_thread_index() {
 
 #[test]
 fn manifest_cleared_when_targets_empty() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let temp_dir =
-        std::env::temp_dir().join(format!("codex-manifest-clear-test-{}", std::process::id()));
-    std::fs::create_dir_all(&temp_dir).unwrap();
-    std::env::set_var("CODEX_HOME", &temp_dir);
-    let _guard = TestCodexHomeGuard {
-        path: temp_dir.clone(),
-    };
+    let test_home = TestCodexHome::new("manifest-clear-test");
+    let temp_dir = test_home.path().to_path_buf();
 
     let targets = vec![PendingTarget {
         id: "01a07d3c-3008-75c2-87a6-2c5c75f0e401".to_string(),
@@ -1454,14 +1372,8 @@ fn manifest_cleared_when_targets_empty() {
 
 #[test]
 fn duplicate_thread_ids_in_recovery_manifest_fail_closed() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let home =
-        std::env::temp_dir().join(format!("codex-duplicate-manifest-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
-    let _guard = TestCodexHomeGuard { path: home.clone() };
+    let test_home = TestCodexHome::new("duplicate-manifest");
+    let home = test_home.path().to_path_buf();
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let first = PendingTarget {
         id: id.into(),
@@ -1493,14 +1405,8 @@ fn duplicate_thread_ids_in_recovery_manifest_fail_closed() {
 
 #[test]
 fn load_pending_filters_stale_targets_without_writing_the_manifest() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let temp_dir =
-        std::env::temp_dir().join(format!("codex-manifest-prune-test-{}", std::process::id()));
-    std::fs::create_dir_all(&temp_dir).unwrap();
-    std::env::set_var("CODEX_HOME", &temp_dir);
-    let _guard = TestCodexHomeGuard {
-        path: temp_dir.clone(),
-    };
+    let test_home = TestCodexHome::new("manifest-prune-test");
+    let temp_dir = test_home.path().to_path_buf();
 
     let stale_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e401";
     let completed_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e402";

@@ -36,6 +36,8 @@ pub use interactive_setup::{login_and_add_account, resolve_codex_bin, run_intera
 pub use relogin_service::relogin_account;
 
 #[cfg(test)]
+use account_configuration::rename_account_with;
+#[cfg(test)]
 use account_deduplication::deduplicate_accounts;
 #[cfg(test)]
 use account_identity::find_existing_account_idx_from_parts;

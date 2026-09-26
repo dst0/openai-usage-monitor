@@ -17,9 +17,6 @@ use std::{io::Write, time::Instant};
 
 #[test]
 fn failed_explicit_claim_keeps_older_owner_binding_through_manifest_finalize() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("explicit_claim_finalize");
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let original = PendingTarget {
@@ -78,8 +75,6 @@ fn failed_explicit_claim_keeps_older_owner_binding_through_manifest_finalize() {
     assert_eq!(load_manifest().unwrap(), vec![original]);
 
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
 }
 
 #[test]

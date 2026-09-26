@@ -1,20 +1,17 @@
 use super::*;
 use crate::models::{AccountConfig, AccountsFile, AuthJson, AuthTokens};
+use crate::storage::test_codex_home::TestCodexHome;
 
 #[test]
 fn manual_credit_reset_refuses_to_race_desktop_recovery() {
-    let _serial = TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let home =
-        std::env::temp_dir().join(format!("codex-reset-recovery-lock-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
+    let test_home = TestCodexHome::new("reset-recovery-lock");
+    let home = test_home.path().to_path_buf();
     let recovery = crate::recovery::operation_lock().unwrap();
     let result = reset_account("active");
     assert!(result
         .unwrap_err()
         .contains("Another desktop switch/recovery"));
     drop(recovery);
-    std::env::remove_var("CODEX_HOME");
     std::fs::remove_dir_all(home).unwrap();
 }
 
@@ -433,10 +430,8 @@ fn test_save_current_as_replaces_active_account() {
 
 #[test]
 fn test_rename_account_updates_nickname() {
-    let _lock = TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let temp_dir = std::env::temp_dir().join(format!("codex_rename_test_{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&temp_dir);
-    std::env::set_var("CODEX_HOME", &temp_dir);
+    let test_home = TestCodexHome::new("rename-test");
+    let temp_dir = test_home.path().to_path_buf();
 
     let mut file = AccountsFile {
         active_account_id: Some("user1@example.com:uuid-1".to_string()),
@@ -462,30 +457,43 @@ fn test_rename_account_updates_nickname() {
     file.accounts[1].name = Some("second".to_string());
     crate::storage::save_accounts(&file).unwrap();
 
+    // The status refresh stands in for the live quota refresh, which would
+    // contact chatgpt.com with these fake tokens. It records the saved name
+    // to prove the refresh runs after the rename is durable.
+    let mut refreshed_names = Vec::new();
+    let mut refresh = || {
+        let saved = crate::storage::load_accounts().unwrap();
+        refreshed_names.push(saved.accounts[0].name.clone());
+        Ok(())
+    };
+
     // 1. Rename first account to "work"
-    assert!(rename_account("first", Some("work")).is_ok());
+    assert!(rename_account_with("first", Some("work"), &mut refresh).is_ok());
     let loaded = crate::storage::load_accounts().unwrap();
     assert_eq!(loaded.accounts[0].name.as_deref(), Some("work"));
 
     // 2. Renaming to existing nickname "second" must fail with error (avoids duplicate labels!)
-    assert!(rename_account("work", Some("second")).is_err());
+    assert!(rename_account_with("work", Some("second"), &mut refresh).is_err());
 
     // 3. Clear nickname
-    assert!(rename_account("work", None).is_ok());
+    assert!(rename_account_with("work", None, &mut refresh).is_ok());
     let loaded = crate::storage::load_accounts().unwrap();
     assert_eq!(loaded.accounts[0].name, None);
+    assert_eq!(refreshed_names, [Some("work".to_string()), None]);
+
+    // An offline refresh must not undo or fail a completed rename.
+    let offline = || Err("offline".to_string());
+    assert!(rename_account_with("user1@example.com:uuid-1", Some("home"), offline).is_ok());
+    let loaded = crate::storage::load_accounts().unwrap();
+    assert_eq!(loaded.accounts[0].name.as_deref(), Some("home"));
 
     let _ = std::fs::remove_dir_all(&temp_dir);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
 fn test_apply_relogin_successful_update() {
-    let _lock = TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let temp_dir =
-        std::env::temp_dir().join(format!("codex_relogin_succ_test_{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&temp_dir);
-    std::env::set_var("CODEX_HOME", &temp_dir);
+    let test_home = TestCodexHome::new("relogin-succ-test");
+    let temp_dir = test_home.path().to_path_buf();
 
     let mut file = AccountsFile {
         active_account_id: Some("test-user@example.com:uuid-1".to_string()),
@@ -528,18 +536,12 @@ fn test_apply_relogin_successful_update() {
     assert!(file.accounts[0].enabled);
 
     let _ = std::fs::remove_dir_all(&temp_dir);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
 fn test_apply_relogin_rejects_email_mismatch() {
-    let _lock = TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let temp_dir = std::env::temp_dir().join(format!(
-        "codex_relogin_mismatch_test_{}",
-        std::process::id()
-    ));
-    let _ = std::fs::create_dir_all(&temp_dir);
-    std::env::set_var("CODEX_HOME", &temp_dir);
+    let test_home = TestCodexHome::new("relogin-mismatch-test");
+    let temp_dir = test_home.path().to_path_buf();
 
     let mut file = AccountsFile {
         active_account_id: Some("test-user@example.com:uuid-1".to_string()),
@@ -585,16 +587,12 @@ fn test_apply_relogin_rejects_email_mismatch() {
     );
 
     let _ = std::fs::remove_dir_all(&temp_dir);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
 fn test_apply_relogin_stages_active_tokens_without_touching_auth_json() {
-    let _lock = TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let temp_dir =
-        std::env::temp_dir().join(format!("codex_relogin_sync_test_{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&temp_dir);
-    std::env::set_var("CODEX_HOME", &temp_dir);
+    let test_home = TestCodexHome::new("relogin-sync-test");
+    let temp_dir = test_home.path().to_path_buf();
 
     let initial_auth = AuthJson {
         auth_mode: Some("chatgpt".to_string()),
@@ -646,7 +644,6 @@ fn test_apply_relogin_stages_active_tokens_without_touching_auth_json() {
     );
 
     let _ = std::fs::remove_dir_all(&temp_dir);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]

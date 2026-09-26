@@ -7,9 +7,6 @@ use crate::storage::{read_active_auth_json, write_active_auth_json};
 
 #[test]
 fn cli_binding_preserves_inferred_app_provenance_and_rejects_replaced_auth() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("inferred_binding_provenance");
     let account = make_account(
         "active",

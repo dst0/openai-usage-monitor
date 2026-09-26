@@ -5,9 +5,6 @@ use std::os::unix::fs::{symlink, PermissionsExt};
 
 #[test]
 fn registry_write_does_not_follow_a_preexisting_temporary_symlink() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("registry_temp_symlink");
     let victim = env.home().join("unrelated.txt");
     std::fs::write(&victim, "leave intact").unwrap();
@@ -29,14 +26,10 @@ fn registry_write_does_not_follow_a_preexisting_temporary_symlink() {
     );
 
     drop(env);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
 fn active_auth_write_does_not_follow_a_preexisting_temporary_symlink() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("auth_temp_symlink");
     let victim = env.home().join("unrelated.txt");
     std::fs::write(&victim, "leave intact").unwrap();
@@ -63,14 +56,10 @@ fn active_auth_write_does_not_follow_a_preexisting_temporary_symlink() {
     );
 
     drop(env);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
 fn registry_autoheal_cannot_replay_stale_tokens_after_a_concurrent_commit() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("registry_autoheal_race");
     let original = crate::distribution::test_helper::make_account(
         "owner",
@@ -111,14 +100,10 @@ fn registry_autoheal_cannot_replay_stale_tokens_after_a_concurrent_commit() {
     );
 
     drop(env);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
 fn registry_autoimport_cannot_replace_a_concurrent_registry_creation() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("registry_autoimport_race");
     let auth: AuthJson = serde_json::from_value(serde_json::json!({
         "auth_mode": "chatgpt",
@@ -154,5 +139,4 @@ fn registry_autoimport_cannot_replace_a_concurrent_registry_creation() {
     assert_eq!(crate::storage::load_accounts().unwrap().accounts.len(), 1);
 
     drop(env);
-    std::env::remove_var("CODEX_HOME");
 }
