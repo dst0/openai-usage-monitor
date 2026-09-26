@@ -2,9 +2,13 @@ use super::{
     manifest_store::{
         current_account_binding, finalize_target, load_manifest, load_ownerless_pending,
         load_pending, mark_dispatch_attempt_for_account, prune_ineligible_targets_with,
-        save_pending, validate_target_account_binding, write_manifest,
+        validate_target_account_binding, write_manifest,
     },
     pending_target::PendingTarget,
+    restart_checkpoint_service::{
+        cached_partial_capacity_for, post_checkpoint_status,
+        post_checkpoint_status_fresh_after_scan, save_pending, scanned_bytes_for,
+    },
     stored_manifest::StoredManifest,
 };
 use std::{path::PathBuf, process::Command};
@@ -273,6 +277,617 @@ fn new_restart_preserves_an_older_ownerless_checkpoint_and_account() {
 }
 
 #[test]
+fn second_restart_checkpoint_excludes_shutdown_events() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let home = std::env::temp_dir().join(format!("codex-recheckpoint-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    std::env::set_var("CODEX_HOME", &home);
+    let _guard = TestCodexHomeGuard { path: home.clone() };
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+    std::fs::write(&rollout, b"initial event\n").unwrap();
+
+    save_pending(&[id.into()]).unwrap();
+    let first = load_manifest().unwrap()[0].offset.unwrap();
+    assert_eq!(first, 14);
+    std::fs::write(&rollout, b"initial event\nshutdown event\n").unwrap();
+    save_pending(&[id.into()]).unwrap();
+    let second = load_manifest().unwrap()[0].offset.unwrap();
+    assert_eq!(second, std::fs::metadata(&rollout).unwrap().len());
+    assert!(second > first);
+}
+
+#[test]
+fn new_turn_replaces_stale_ownerless_checkpoint_but_metadata_does_not() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let home = std::env::temp_dir().join(format!("codex-new-turn-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    std::env::set_var("CODEX_HOME", &home);
+    let _guard = TestCodexHomeGuard { path: home.clone() };
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+    std::fs::write(&rollout, b"checkpoint\n").unwrap();
+    let old_offset = std::fs::metadata(&rollout).unwrap().len();
+    write_manifest(&[PendingTarget {
+        id: id.into(),
+        offset: Some(old_offset),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("old-account".into()),
+    }])
+    .unwrap();
+
+    let metadata = b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\"}}\n";
+    std::fs::write(&rollout, [b"checkpoint\n".as_slice(), metadata].concat()).unwrap();
+    save_pending(&[id.into()]).unwrap();
+    let unchanged = load_manifest().unwrap();
+    assert!(unchanged[0].awaiting_owner);
+    assert_eq!(unchanged[0].offset, Some(old_offset));
+    assert_eq!(
+        unchanged[0].owner_account_id.as_deref(),
+        Some("old-account")
+    );
+
+    let started = b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"new-turn\"}}\n";
+    std::fs::write(
+        &rollout,
+        [b"checkpoint\n".as_slice(), metadata, started].concat(),
+    )
+    .unwrap();
+    save_pending(&[id.into()]).unwrap();
+    let recaptured = load_manifest().unwrap();
+    assert!(!recaptured[0].awaiting_owner);
+    assert_eq!(recaptured[0].owner_account_id, None);
+    assert_eq!(
+        recaptured[0].offset,
+        Some(std::fs::metadata(&rollout).unwrap().len())
+    );
+}
+
+#[test]
+fn long_rollout_after_old_checkpoint_still_supersedes_stale_binding() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let home = std::env::temp_dir().join(format!("codex-long-checkpoint-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    std::env::set_var("CODEX_HOME", &home);
+    let _guard = TestCodexHomeGuard { path: home.clone() };
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+    std::fs::write(&rollout, b"checkpoint\n").unwrap();
+    write_manifest(&[PendingTarget {
+        id: id.into(),
+        offset: Some(11),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("old-account".into()),
+    }])
+    .unwrap();
+    let mut writer = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&rollout)
+        .unwrap();
+    std::io::Write::write_all(&mut writer, &vec![b'x'; 32 * 1024 * 1024 + 1]).unwrap();
+    std::io::Write::write_all(
+        &mut writer,
+        b"\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"new-turn\"}}\n",
+    )
+    .unwrap();
+    save_pending(&[id.into()]).unwrap();
+    let updated = load_manifest().unwrap();
+    assert!(!updated[0].awaiting_owner);
+    assert_eq!(updated[0].owner_account_id, None);
+}
+
+#[test]
+fn manually_started_turn_retires_old_ownerless_retry() {
+    let home = std::env::temp_dir().join(format!("codex-manual-prune-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+    std::fs::write(
+        &rollout,
+        b"checkpoint\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"new-turn\"}}\n",
+    )
+    .unwrap();
+    let mut targets = vec![PendingTarget {
+        id: id.into(),
+        offset: Some(11),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("old-account".into()),
+    }];
+    prune_ineligible_targets_with(&home, &mut targets, |_| {
+        Ok(Some(chrono::Utc::now().timestamp()))
+    })
+    .unwrap();
+    assert_eq!(targets.len(), 1, "a start alone is not resumed work");
+
+    let mut rollout_writer = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&rollout)
+        .unwrap();
+    std::io::Write::write_all(
+        &mut rollout_writer,
+        b"{\"type\":\"response_item\",\"payload\":{\"type\":\"reasoning\"}}\n",
+    )
+    .unwrap();
+    prune_ineligible_targets_with(&home, &mut targets, |_| {
+        Ok(Some(chrono::Utc::now().timestamp()))
+    })
+    .unwrap();
+    assert!(targets.is_empty());
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn failed_new_turn_does_not_retire_deferred_retry_as_verified_work() {
+    let home = std::env::temp_dir().join(format!("codex-failed-manual-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+    std::fs::write(
+        &rollout,
+        b"checkpoint\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"new-turn\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"reasoning\"}}\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"new-turn\",\"error\":{\"codex_error_info\":\"usage_limit_exceeded\"}}}\n",
+    )
+    .unwrap();
+    let mut targets = vec![PendingTarget {
+        id: id.into(),
+        offset: Some(11),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("old-account".into()),
+    }];
+    prune_ineligible_targets_with(&home, &mut targets, |_| {
+        Ok(Some(chrono::Utc::now().timestamp()))
+    })
+    .unwrap();
+    assert_eq!(targets.len(), 1);
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn new_agent_work_does_not_discard_an_existing_queued_follow_up() {
+    let home = std::env::temp_dir().join(format!("codex-manual-queue-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+    std::fs::write(
+        &rollout,
+        b"checkpoint\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"new-turn\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"reasoning\"}}\n",
+    )
+    .unwrap();
+    let queue = home.join("queue_1.sqlite");
+    let sql = format!(
+        "CREATE TABLE queued_items (thread_id TEXT, payload TEXT); INSERT INTO queued_items VALUES ('{id}', 'restart-paused');"
+    );
+    assert!(Command::new("/usr/bin/sqlite3")
+        .arg(&queue)
+        .arg(sql)
+        .status()
+        .unwrap()
+        .success());
+    let mut targets = vec![PendingTarget {
+        id: id.into(),
+        offset: Some(11),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("old-account".into()),
+    }];
+    prune_ineligible_targets_with(&home, &mut targets, |_| {
+        Ok(Some(chrono::Utc::now().timestamp()))
+    })
+    .unwrap();
+    assert_eq!(targets.len(), 1);
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn unchanged_ownerless_rollout_is_not_rescanned_on_every_probe() {
+    let home = std::env::temp_dir().join(format!("codex-incremental-scan-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+    std::fs::write(&rollout, b"checkpoint\n").unwrap();
+    let mut writer = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&rollout)
+        .unwrap();
+    std::io::Write::write_all(&mut writer, &vec![b'x'; 8 * 1024 * 1024]).unwrap();
+    std::io::Write::write_all(
+        &mut writer,
+        b"\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"new-turn\"}}\n",
+    )
+    .unwrap();
+    drop(writer);
+    let target = PendingTarget {
+        id: id.into(),
+        offset: Some(11),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("account-a".into()),
+    };
+    assert_eq!(post_checkpoint_status(&home, &target), Some((true, false)));
+    let first_bytes = scanned_bytes_for(&rollout, 11).unwrap();
+    assert!(first_bytes >= 8 * 1024 * 1024);
+    assert_eq!(post_checkpoint_status(&home, &target), Some((true, false)));
+    assert_eq!(scanned_bytes_for(&rollout, 11), Some(first_bytes));
+
+    let work = b"{\"type\":\"response_item\",\"payload\":{\"type\":\"reasoning\"}}\n";
+    let mut writer = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&rollout)
+        .unwrap();
+    std::io::Write::write_all(&mut writer, work).unwrap();
+    drop(writer);
+    assert_eq!(post_checkpoint_status(&home, &target), Some((true, true)));
+    assert_eq!(
+        scanned_bytes_for(&rollout, 11),
+        Some(first_bytes + work.len() as u64)
+    );
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn checkpoint_cursor_resets_after_rollout_replacement_or_truncation() {
+    let home = std::env::temp_dir().join(format!("codex-cache-replace-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+    std::fs::write(
+        &rollout,
+        b"checkpoint\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"new-turn\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"reasoning\"}}\n",
+    )
+    .unwrap();
+    let target = PendingTarget {
+        id: id.into(),
+        offset: Some(11),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("account-a".into()),
+    };
+    assert_eq!(post_checkpoint_status(&home, &target), Some((true, true)));
+
+    let replacement = sessions.join("replacement.jsonl");
+    std::fs::write(&replacement, b"checkpoint\nmetadata\n").unwrap();
+    std::fs::rename(&replacement, &rollout).unwrap();
+    assert_eq!(post_checkpoint_status(&home, &target), Some((false, false)));
+
+    std::fs::write(&rollout, b"checkpoint\n").unwrap();
+    assert_eq!(post_checkpoint_status(&home, &target), Some((false, false)));
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn appended_fragment_completes_one_lifecycle_record() {
+    let home = std::env::temp_dir().join(format!("codex-cache-partial-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+    std::fs::write(
+        &rollout,
+        b"checkpoint\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_sta",
+    )
+    .unwrap();
+    let target = PendingTarget {
+        id: id.into(),
+        offset: Some(11),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("account-a".into()),
+    };
+    assert_eq!(post_checkpoint_status(&home, &target), Some((false, false)));
+    let first_bytes = scanned_bytes_for(&rollout, 11).unwrap();
+    let mut writer = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&rollout)
+        .unwrap();
+    std::io::Write::write_all(&mut writer, b"rted\",\"turn_id\":\"new-turn\"}}\n").unwrap();
+    drop(writer);
+    assert_eq!(post_checkpoint_status(&home, &target), Some((true, false)));
+    assert!(scanned_bytes_for(&rollout, 11).unwrap() > first_bytes);
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn long_snapshot_scans_in_bounded_chunks_before_reporting_evidence() {
+    let home = std::env::temp_dir().join(format!("codex-scan-budget-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+    std::fs::write(&rollout, b"checkpoint\n").unwrap();
+    let mut writer = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&rollout)
+        .unwrap();
+    std::io::Write::write_all(&mut writer, &vec![b'x'; 32 * 1024 * 1024]).unwrap();
+    std::io::Write::write_all(
+        &mut writer,
+        b"\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"new-turn\"}}\n",
+    )
+    .unwrap();
+    drop(writer);
+    let target = PendingTarget {
+        id: id.into(),
+        offset: Some(11),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("account-a".into()),
+    };
+    assert_eq!(post_checkpoint_status(&home, &target), None);
+    assert!(scanned_bytes_for(&rollout, 11).unwrap() <= 16 * 1024 * 1024);
+    assert_eq!(post_checkpoint_status(&home, &target), None);
+    assert_eq!(post_checkpoint_status(&home, &target), Some((true, false)));
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn ownerless_prune_rotates_one_rollout_scan_per_pass() {
+    let home = std::env::temp_dir().join(format!("codex-scan-round-robin-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let mut targets = Vec::new();
+    let mut rollouts = Vec::new();
+    for index in 1..=2 {
+        let id = format!("01a098c2-0fae-74d2-a80c-{index:012x}");
+        let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+        let mut bytes = b"checkpoint\n".to_vec();
+        bytes.extend(vec![b'x'; 4 * 1024 * 1024]);
+        std::fs::write(&rollout, bytes).unwrap();
+        rollouts.push(rollout);
+        targets.push(PendingTarget {
+            id,
+            offset: Some(11),
+            awaiting_owner: true,
+            captured_restart: true,
+            owner_account_id: Some("old-account".into()),
+        });
+    }
+    let now = chrono::Utc::now().timestamp();
+    prune_ineligible_targets_with(&home, &mut targets, |_| Ok(Some(now))).unwrap();
+    assert_eq!(targets.len(), 2);
+    let scanned = rollouts
+        .iter()
+        .filter(|path| scanned_bytes_for(path, 11).is_some())
+        .count();
+    assert_eq!(scanned, 1);
+    prune_ineligible_targets_with(&home, &mut targets, |_| Ok(Some(now))).unwrap();
+    assert!(rollouts
+        .iter()
+        .all(|path| scanned_bytes_for(path, 11).is_some()));
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn unselected_ownerless_target_is_checked_for_archive_and_age() {
+    let home = std::env::temp_dir().join(format!("codex-ownerless-age-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let first = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let second = "01a098c2-0fae-74d2-a80c-45d89e910e80";
+    let new_target = |id: &str| PendingTarget {
+        id: id.into(),
+        offset: Some(11),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("old-account".into()),
+    };
+    let now = chrono::Utc::now().timestamp();
+    let mut targets = vec![new_target(first), new_target(second)];
+    prune_ineligible_targets_with(&home, &mut targets, |id| Ok((id == first).then_some(now)))
+        .unwrap();
+    assert_eq!(
+        targets.len(),
+        1,
+        "an unselected archived target cannot be probed"
+    );
+    assert_eq!(targets[0].id, first);
+
+    let mut targets = vec![new_target(first), new_target(second)];
+    prune_ineligible_targets_with(&home, &mut targets, |id| {
+        Ok(Some(if id == first { now } else { now - 24 * 3600 }))
+    })
+    .unwrap();
+    assert_eq!(
+        targets.len(),
+        1,
+        "an unselected stale target cannot be probed"
+    );
+    assert_eq!(targets[0].id, first);
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn oversized_lines_do_not_pin_buffers_across_cold_targets() {
+    let home = std::env::temp_dir().join(format!("codex-scan-memory-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    for index in 1..=12 {
+        let id = format!("01a098c2-0fae-74d2-a80c-{index:012x}");
+        let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+        let mut bytes = b"checkpoint\n".to_vec();
+        bytes.extend(vec![b'x'; 131_073]);
+        std::fs::write(&rollout, bytes).unwrap();
+        let target = PendingTarget {
+            id,
+            offset: Some(11),
+            awaiting_owner: true,
+            captured_restart: true,
+            owner_account_id: Some("account-a".into()),
+        };
+        assert_eq!(post_checkpoint_status(&home, &target), Some((false, false)));
+        assert!(cached_partial_capacity_for(&rollout, 11).unwrap() < 1024);
+    }
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn same_inode_rewrite_with_preserved_boundary_invalidates_evidence() {
+    use std::os::unix::fs::MetadataExt;
+
+    let home = std::env::temp_dir().join(format!("codex-scan-rewrite-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+    let mut original = b"checkpoint\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"new-turn\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"reasoning\"}}\n".to_vec();
+    original.extend([b'x'; 63]);
+    original.push(b'\n');
+    std::fs::write(&rollout, &original).unwrap();
+    let before = std::fs::metadata(&rollout).unwrap();
+    let target = PendingTarget {
+        id: id.into(),
+        offset: Some(11),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("account-a".into()),
+    };
+    assert_eq!(post_checkpoint_status(&home, &target), Some((true, true)));
+
+    let mut rewritten = b"checkpoint\n".to_vec();
+    rewritten.extend(vec![b'x'; original.len() - 11]);
+    rewritten[original.len() - 1] = b'\n';
+    rewritten.extend(b"\nmetadata\n");
+    std::fs::write(&rollout, rewritten).unwrap();
+    assert_eq!(std::fs::metadata(&rollout).unwrap().ino(), before.ino());
+    assert_eq!(post_checkpoint_status(&home, &target), Some((false, false)));
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn middle_rewrite_with_intact_samples_cannot_prune_ownerless_retry() {
+    use std::os::unix::fs::MetadataExt;
+
+    let home = std::env::temp_dir().join(format!("codex-middle-rewrite-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+    let mut original = b"checkpoint\n".to_vec();
+    original.extend([b'p'; 64]);
+    original.push(b'\n');
+    let middle_start = original.len();
+    original.extend(b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"new-turn\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"reasoning\"}}\n");
+    let middle_end = original.len();
+    original.extend([b's'; 64]);
+    original.push(b'\n');
+    std::fs::write(&rollout, &original).unwrap();
+    let inode = std::fs::metadata(&rollout).unwrap().ino();
+    let target = PendingTarget {
+        id: id.into(),
+        offset: Some(11),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("old-account".into()),
+    };
+    assert_eq!(post_checkpoint_status(&home, &target), Some((true, true)));
+
+    // A writer can rewrite the middle in place and append while preserving
+    // both 64-byte samples. The cached result is then stale by design.
+    let mut rewritten = original;
+    rewritten[middle_start..middle_end].fill(b'x');
+    rewritten[middle_end - 1] = b'\n';
+    rewritten.extend(b"metadata\n");
+    std::fs::write(&rollout, rewritten).unwrap();
+    assert_eq!(std::fs::metadata(&rollout).unwrap().ino(), inode);
+    assert_eq!(post_checkpoint_status(&home, &target), Some((true, true)));
+
+    let mut targets = vec![target];
+    prune_ineligible_targets_with(&home, &mut targets, |_| {
+        Ok(Some(chrono::Utc::now().timestamp()))
+    })
+    .unwrap();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].owner_account_id.as_deref(), Some("old-account"));
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn fresh_confirmation_rejects_growth_after_scan() {
+    use std::io::Write;
+    let home = std::env::temp_dir().join(format!("codex-scan-race-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+    std::fs::write(
+        &rollout,
+        b"checkpoint\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"new-turn\"}}\n{\"type\":\"response_item\",\"payload\":{\"type\":\"reasoning\"}}\n",
+    )
+    .unwrap();
+    let target = PendingTarget {
+        id: id.into(),
+        offset: Some(11),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("old-account".into()),
+    };
+    let result = post_checkpoint_status_fresh_after_scan(&home, &target, |path| {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .unwrap()
+            .write_all(b"later\n")
+            .unwrap();
+    });
+    assert!(
+        result.is_err(),
+        "a growing snapshot cannot confirm stale evidence"
+    );
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn load_pending_skips_ownerless_targets_without_a_thread_index() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let home = std::env::temp_dir().join(format!("codex-skip-ownerless-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    std::env::set_var("CODEX_HOME", &home);
+    let _guard = TestCodexHomeGuard { path: home.clone() };
+    let target = PendingTarget {
+        id: "01a098c2-0fae-74d2-a80c-45d89e910e79".into(),
+        offset: Some(11),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("account-a".into()),
+    };
+    write_manifest(&[target]).unwrap();
+    assert!(load_pending().unwrap().is_empty());
+    assert_eq!(load_ownerless_pending().unwrap().len(), 1);
+}
+
+#[test]
 fn manifest_cleared_when_targets_empty() {
     let _lock = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
     let temp_dir =
@@ -302,6 +917,40 @@ fn manifest_cleared_when_targets_empty() {
     assert!(!manifest_path.exists());
     let reloaded = load_manifest().unwrap();
     assert!(reloaded.is_empty());
+}
+
+#[test]
+fn duplicate_thread_ids_in_recovery_manifest_fail_closed() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let home =
+        std::env::temp_dir().join(format!("codex-duplicate-manifest-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    std::env::set_var("CODEX_HOME", &home);
+    let _guard = TestCodexHomeGuard { path: home.clone() };
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let first = PendingTarget {
+        id: id.into(),
+        offset: Some(42),
+        awaiting_owner: false,
+        captured_restart: true,
+        owner_account_id: None,
+    };
+    let second = PendingTarget {
+        awaiting_owner: true,
+        owner_account_id: Some("account-a".into()),
+        ..first.clone()
+    };
+    assert!(write_manifest(&[first.clone(), second.clone()]).is_err());
+    let bytes = serde_json::to_vec(&super::pending_manifest::PendingManifest {
+        version: 1,
+        targets: vec![first, second],
+    })
+    .unwrap();
+    std::fs::write(home.join("desktop-recovery.json"), bytes).unwrap();
+    assert!(load_manifest().is_err());
+    assert!(mark_dispatch_attempt_for_account(id, Some("account-a")).is_err());
 }
 
 #[test]

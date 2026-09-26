@@ -2,17 +2,23 @@ use super::{
     dispatch_mark_error::DispatchMarkError,
     pending_manifest::PendingManifest,
     pending_target::PendingTarget,
-    queue_snapshot::{pending_count, query},
+    queue_snapshot::pending_count,
+    restart_checkpoint_service::{post_checkpoint_status, post_checkpoint_status_fresh},
     stored_manifest::StoredManifest,
     thread_identity::valid_id,
+    thread_index_service::recent_thread_updates,
 };
 use crate::{storage, switcher};
 use std::{
+    collections::HashSet,
     fs::{File, OpenOptions},
     io::Write,
     os::unix::fs::OpenOptionsExt,
     path::Path,
+    sync::atomic::{AtomicUsize, Ordering},
 };
+
+static NEXT_OWNERLESS_PROBE: AtomicUsize = AtomicUsize::new(0);
 
 pub(super) fn load_manifest() -> Result<Vec<PendingTarget>, String> {
     let path = storage::codex_home().join("desktop-recovery.json");
@@ -36,7 +42,7 @@ pub(super) fn load_manifest() -> Result<Vec<PendingTarget>, String> {
                     })
                     .collect(),
             };
-            if targets.iter().all(|target| valid_id(&target.id)) {
+            if valid_unique_targets(&targets) {
                 Ok(targets)
             } else {
                 Err("Invalid recovery manifest".into())
@@ -51,21 +57,11 @@ pub(super) fn prune_ineligible_targets(
     home: &Path,
     targets: &mut Vec<PendingTarget>,
 ) -> Result<(), String> {
-    let state = home.join("state_5.sqlite");
-    prune_ineligible_targets_with(home, targets, |id| {
-        let updated = query(
-            &state,
-            &format!("SELECT updated_at FROM threads WHERE id = '{id}' AND archived = 0 AND (thread_source IS NULL OR thread_source != 'subagent') LIMIT 1;"),
-        )?;
-        if updated.is_empty() {
-            Ok(None)
-        } else {
-            updated
-                .parse::<i64>()
-                .map(Some)
-                .map_err(|_| "Invalid Codex thread timestamp".into())
-        }
-    })
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let updates = recent_thread_updates(home, targets)?;
+    prune_ineligible_targets_with(home, targets, |id| Ok(updates.get(id).copied()))
 }
 
 pub(super) fn prune_ineligible_targets_with(
@@ -75,6 +71,16 @@ pub(super) fn prune_ineligible_targets_with(
 ) -> Result<(), String> {
     let now = chrono::Utc::now().timestamp();
     let mut eligible = Vec::new();
+    // Only one ownerless rollout may use the scan budget while this caller
+    // holds the recovery operation lock. Rotate the selected target so an
+    // older long rollout cannot starve the other cold tasks.
+    let ownerless_count = targets
+        .iter()
+        .filter(|target| target.awaiting_owner)
+        .count();
+    let selected_ownerless = (ownerless_count > 0)
+        .then(|| NEXT_OWNERLESS_PROBE.fetch_add(1, Ordering::Relaxed) % ownerless_count);
+    let mut ownerless_index = 0;
     for target in targets.iter() {
         if !valid_id(&target.id) {
             continue;
@@ -82,6 +88,21 @@ pub(super) fn prune_ineligible_targets_with(
         let is_recent = updated_at(&target.id)?
             .is_some_and(|updated| (now - updated).abs() <= switcher::RECENT_QUOTA_WINDOW_SECS);
         if !is_recent {
+            continue;
+        }
+        if target.awaiting_owner {
+            let selected = selected_ownerless == Some(ownerless_index);
+            ownerless_index += 1;
+            if !selected {
+                eligible.push(target.clone());
+                continue;
+            }
+        }
+        if target.awaiting_owner
+            && post_checkpoint_status(home, target).is_some_and(|(_, verified)| verified)
+            && post_checkpoint_status_fresh(home, target)?.1
+            && pending_count(home, &target.id)? == 0
+        {
             continue;
         }
         let retain = match switcher::inspect_thread_rollout_state(home, &target.id) {
@@ -194,6 +215,10 @@ pub(super) fn current_account_binding() -> Option<String> {
 pub fn load_pending() -> Result<Vec<String>, String> {
     let home = storage::codex_home();
     let mut targets = load_manifest()?;
+    // This caller only returns restart targets. Deferred ownerless targets are
+    // handled by the probe worker and must not trigger a full checkpoint scan
+    // or SQLite retries on each ordinary thread-detection pass.
+    targets.retain(|target| !target.awaiting_owner);
     prune_ineligible_targets(&home, &mut targets)?;
     // Read-only: callers may run during recovery, whose operation lock owns
     // manifest writes. Writing an old snapshot here could resurrect a target.
@@ -213,8 +238,8 @@ pub fn load_ownerless_pending() -> Result<Vec<String>, String> {
 }
 
 pub(super) fn write_manifest(targets: &[PendingTarget]) -> Result<(), String> {
-    if !targets.iter().all(|target| valid_id(&target.id)) {
-        return Err("Invalid thread ID".into());
+    if !valid_unique_targets(targets) {
+        return Err("Invalid or duplicate recovery thread ID".into());
     }
     let home = storage::codex_home();
     let manifest_path = home.join("desktop-recovery.json");
@@ -254,29 +279,9 @@ pub(super) fn write_manifest(targets: &[PendingTarget]) -> Result<(), String> {
     result
 }
 
-/// Small atomic restart journal. Contains task/account identifiers and byte
-/// offsets only, never prompts, transcript content, tokens, or credentials.
-pub fn save_pending(ids: &[String]) -> Result<(), String> {
-    if !ids.iter().all(|id| valid_id(id)) {
-        return Err("Invalid thread ID".into());
-    }
-    let home = storage::codex_home();
-    let mut targets = load_manifest()?
-        .into_iter()
-        .filter(|target| target.awaiting_owner)
-        .collect::<Vec<_>>();
-    for id in ids {
-        if targets.iter().any(|target| target.id == *id) {
-            continue;
-        }
-        targets.push(PendingTarget {
-            id: id.clone(),
-            offset: switcher::find_thread_rollout_path(&home, id)
-                .and_then(|path| path.metadata().ok().map(|metadata| metadata.len())),
-            awaiting_owner: false,
-            captured_restart: true,
-            owner_account_id: None,
-        });
-    }
-    write_manifest(&targets)
+fn valid_unique_targets(targets: &[PendingTarget]) -> bool {
+    let mut ids = HashSet::with_capacity(targets.len());
+    targets
+        .iter()
+        .all(|target| valid_id(&target.id) && ids.insert(target.id.as_str()))
 }

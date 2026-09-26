@@ -9,6 +9,10 @@
 
 ## Official Codex Desktop Integration
 
+**Condition of use:** Every ChatGPT account configured in this Monitor belongs
+to the same human owner of this device. Continuing that owner's local Codex
+tasks after switching between those accounts is the intended product behavior.
+
 The supported Desktop setup is the normal OpenAI Codex Desktop installation
 (`/Applications/ChatGPT.app` in the standard macOS layout), signed in and
 running normally. The installer does not patch `ChatGPT.app`, install a second
@@ -19,6 +23,10 @@ same-user IPC client: it connects to `~/.codex/ipc/ipc.sock`, discovers the
 Desktop window that owns a task, and routes `thread-follower-start-turn` or
 queued-follow-up requests to that owner. The Desktop-owned app-server remains
 the only thread writer; the Monitor never runs `codex exec resume`.
+Owner discovery runs separately for each task, including when one account has
+tasks open in several ChatGPT windows. The single-process restart check counts
+ChatGPT's main processes, not its windows; recovery does not assume that the
+frontmost window owns every task.
 
 Without Desktop, CLI quota inspection and account switching still work, but
 Desktop restart and thread recovery are unavailable. Optional read-only check:
@@ -38,10 +46,45 @@ Desktop account must match the target, the exact live ChatGPT PID and birth
 identity, and the expected CLI account; an old or unbound session cannot
 authorize dispatch. The initial recovery banner closes after its bounded
 owner waits; a new banner is required before any later owner-routed IPC send.
+An older ownerless checkpoint stays eligible across another switch only while
+the task has no new turn. If a later `task_started` appears after that
+checkpoint, the new restart records a fresh offset and clears the old owner
+account binding. A separate `task_started` followed by substantive agent work
+retires the old retry when no queued follow-up remains, even when the user
+resumed the task manually. An existing queued follow-up keeps the retry
+eligible; metadata or a start without work does not count as completed recovery.
+The evidence scan covers the complete post-checkpoint interval up to a captured
+rollout length, using fixed-size read buffers and a bounded line buffer. Large
+legitimate turns do not lose their retry solely because they exceed a byte
+cutoff. Recovery manifests with duplicate task IDs fail validation on both
+read and write, so two entries cannot claim conflicting account bindings.
+The deferred worker keeps a bounded append cursor for a rollout it already
+scanned, so later probes read newly appended bytes instead of replaying the
+whole interval. File replacement, truncation, or changed identity resets that
+cursor; account and Desktop-owner checks remain fresh on every probe. Ordinary
+thread detection excludes ownerless entries from `load_pending()` because the
+deferred worker owns those retries. An older interval is scanned in chunks of
+at most 16 MiB per probe; partial scans return no lifecycle result until the
+captured snapshot end is reached.
 There is no persistent banner while Desktop has not mounted the task. Unattended mounting
 after an account switch remains unverified on the current Desktop build. If the daemon is not
 running, inspect the affected task and use
 `cxi resume <id>` only if the turn remains interrupted.
+
+An account switch records its recovery targets before shutdown and takes a
+second checkpoint after the old ChatGPT process exits. The later offset keeps
+shutdown-flushed events out of proof for the replacement turn. If that second
+checkpoint cannot be saved, account switching stops before changing
+`auth.json` and relaunches the previous Desktop account; a successful shutdown
+alone is not permission to rotate credentials. `cxi restart` also relaunches
+the previous Desktop state if its post-shutdown checkpoint fails.
+
+The current Desktop interfaces do not give Monitor a stable mapping from each
+window to its selected task, nor a way to reopen a specific task in a specific
+new window. A WindowServer count based on window title and geometry was
+rejected because it can classify a real user window as a hidden renderer.
+Automatic switching stays disabled until multiple-window recovery can be
+verified against the live Desktop.
 
 Automatic distribution records whether the exact Desktop process has an eligible
 standard window before shutdown. If no such window exists, it skips geometry

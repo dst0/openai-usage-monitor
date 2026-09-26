@@ -1306,3 +1306,57 @@ fn failed_shutdown_clears_recovery_state_before_a_retry() {
         .unwrap();
     assert_eq!(outcome.status, DistributionStatus::Success);
 }
+
+#[test]
+fn failed_post_shutdown_checkpoint_keeps_old_auth_and_relaunches_desktop() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("post_shutdown_checkpoint_failure");
+    env.populate(
+        vec![
+            make_account(
+                "old",
+                None,
+                "old@example.com",
+                "plus",
+                0.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+            make_account(
+                "next",
+                None,
+                "next@example.com",
+                "team",
+                100.0,
+                None,
+                1,
+                None,
+                None,
+            ),
+        ],
+        Some("old"),
+        Some("old"),
+    );
+    let old_auth = read_active_auth_json().unwrap();
+    let mock = Arc::new(MockAppLifecycle::new(true));
+    mock.set_capture_mode(WindowCaptureMode::Absent);
+    *mock.corrupt_manifest_after_stop.lock().unwrap() =
+        Some(env.home().join("desktop-recovery.json"));
+    let result = DistributionCoordinator::with_lifecycle(mock.clone()).execute(
+        DistributionRequest::user("checkpoint failure").with_preferred_app(Some("next".into())),
+    );
+
+    assert!(result.is_err());
+    assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.launch_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.abort_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(read_active_auth_json().unwrap().tokens, old_auth.tokens);
+    assert_eq!(
+        load_accounts().unwrap().active_account_id.as_deref(),
+        Some("old@example.com:old")
+    );
+}

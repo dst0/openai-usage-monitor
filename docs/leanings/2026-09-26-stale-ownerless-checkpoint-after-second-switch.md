@@ -1,0 +1,25 @@
+# 2026-09-26 — Stale ownerless checkpoint after a later account switch
+
+- **Status:** Partial
+- **Task/context:** Repair deferred recovery after repeated ChatGPT account switches, including tasks later resumed by the user.
+- **Unexpected observation or failure:** A task could remain in the ownerless recovery journal after another turn began. A subsequent switch kept the earlier account binding and rollout offset, so recovery could not dispatch under the current Desktop session. A manually resumed task could also stay in the retry list.
+- **Evidence:** The journal writer preserved an existing `awaiting_owner` record for the same task ID without examining events after its checkpoint. Eligibility pruning accepted an active rollout without checking whether a new turn had already produced agent work after that checkpoint. Focused regression fixtures reproduce both cases without using private task data. A later regression fixture showed that pruning on start and agent work alone discarded a still-queued follow-up. A duplicate-ID manifest could also carry two different account bindings for one task, and a fixed total-byte evidence cutoff could leave a long-running resumed turn eligible for retry.
+- **Approaches tried:**
+  - **Attempt:** Preserve every earlier ownerless checkpoint across switches.
+    - **Outcome:** Did not work.
+    - **Why:** A later start for the same task made the old account and offset stale.
+  - **Attempt:** Treat a `task_started` event alone as proof that a retry is finished.
+    - **Outcome:** Rejected.
+    - **Why:** The turn might start without doing agent work; such a retry must remain eligible.
+  - **Attempt:** Replace an old checkpoint whenever metadata is appended.
+    - **Outcome:** Rejected.
+    - **Why:** Metadata does not establish a new turn or invalidate the original retry.
+  - **Attempt:** Prune after post-checkpoint start and substantive work without checking the queue.
+    - **Outcome:** Did not work.
+    - **Why:** A queued follow-up can still require owner-routed recovery after that work.
+- **Root cause:** The journal merged new targets by ID while retaining older ownerless entries, and pruning considered only current rollout state. Neither operation distinguished a new post-checkpoint turn from metadata or the older interrupted turn.
+- **Resolution:** Inspect post-checkpoint evidence through a captured rollout-length snapshot with fixed-size buffers and bounded line storage. A new turn start supersedes an older same-task ownerless checkpoint on a later restart, clearing its prior account binding and recording a fresh offset. A post-checkpoint start with substantive, error-free agent work retires an old retry only when no queued follow-up remains. Reject duplicate task IDs in the recovery manifest on read and write. Account switching treats failure of the second, post-shutdown checkpoint as a stop before credential rotation and relaunches the previous Desktop account; `cxi restart` relaunches the previous Desktop state on the same failure.
+- **Verification:** Regression fixtures cover metadata-only append, new turn recapture, start-only retention, substantive manual work pruning, queued follow-up retention after new agent work, duplicate manifest IDs, a long post-checkpoint interval, snapshot-bounded reading, and the distribution post-shutdown checkpoint failure path. The queued-follow-up regression failed before its fix and passed afterward. The full Rust `cargo test` passed (226 unit tests plus integration suites), and the Swift test suite passed with the macOS 26.5 SDK workaround. Installed-app recovery across an unattended cold-task mount remains unverified.
+- **Prevention/follow-up:** Keep automatic switching disabled until the installed app demonstrates a cold task acquiring an owner, a visible banner, one owner-routed dispatch, and substantive post-checkpoint work. Recheck the exact live Desktop account and process identity before every deferred send. Do not infer task mounting from a successful deep-link launch.
+- **Reusable learning:** A recovery journal is valid only relative to its checkpoint, account binding, and outstanding queue; require post-checkpoint work and an empty queue before retiring a retry.
+- **References:** `codex-switcher/src/recovery/restart_checkpoint_service.rs`, `codex-switcher/src/recovery/observer.rs`, `codex-switcher/src/recovery/observer.test.rs`, `codex-switcher/src/recovery/manifest_store.rs`, `codex-switcher/src/recovery/manifest_store.test.rs`, `codex-switcher/src/distribution/distribution.test.rs`, `CODEX.md`, `AGENTS.md`.

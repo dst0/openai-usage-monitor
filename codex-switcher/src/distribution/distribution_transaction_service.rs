@@ -122,7 +122,31 @@ impl DistributionTransactionService {
                 );
                 return Err(format!("Could not stop Codex Desktop gracefully: {e}"));
             }
-            let _ = recovery::save_pending(&running_threads);
+            if let Err(error) = recovery::save_pending(&running_threads) {
+                self.lifecycle.abort_recovery();
+                let relaunch = self.lifecycle.launch_app();
+                let _ = DistributionJournal::clear(&home);
+                return Err(match relaunch {
+                    Ok(pids) if pids.len() == 1 => match self
+                        .lifecycle
+                        .verify_desktop_stable(&pids, false)
+                    {
+                        Ok(()) => format!(
+                            "Post-shutdown recovery checkpoint failed: {error}; previous Desktop account relaunched"
+                        ),
+                        Err(stability) => format!(
+                            "Post-shutdown recovery checkpoint failed: {error}; previous Desktop stability failed: {stability}"
+                        ),
+                    },
+                    Ok(pids) => format!(
+                        "Post-shutdown recovery checkpoint failed: {error}; previous Desktop relaunch produced {} main processes",
+                        pids.len()
+                    ),
+                    Err(relaunch_error) => format!(
+                        "Post-shutdown recovery checkpoint failed: {error}; previous Desktop relaunch failed: {relaunch_error}"
+                    ),
+                });
+            }
             journal.update_phase(&home, "auth_commit_app")?;
             self.logger.log_action(
                 op_id,

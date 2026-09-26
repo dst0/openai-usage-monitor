@@ -1,5 +1,6 @@
 use super::app_lifecycle::AppLifecycle;
 use super::window_capture_mode::WindowCaptureMode;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -14,6 +15,7 @@ pub struct MockAppLifecycle {
     pub abort_calls: AtomicUsize,
     pub require_window_on_stability: Mutex<Option<bool>>,
     pub stop_error: Mutex<Option<String>>,
+    pub corrupt_manifest_after_stop: Mutex<Option<PathBuf>>,
     pub recovery_error: Mutex<Option<String>>,
     pub launch_error: Mutex<Option<String>>,
     pub capture_error: Mutex<Option<String>>,
@@ -45,6 +47,7 @@ impl MockAppLifecycle {
             abort_calls: AtomicUsize::new(0),
             require_window_on_stability: Mutex::new(None),
             stop_error: Mutex::new(None),
+            corrupt_manifest_after_stop: Mutex::new(None),
             recovery_error: Mutex::new(None),
             launch_error: Mutex::new(None),
             capture_error: Mutex::new(None),
@@ -111,6 +114,10 @@ impl AppLifecycle for MockAppLifecycle {
             return Err(error);
         }
         self.running.store(false, Ordering::SeqCst);
+        if let Some(path) = self.corrupt_manifest_after_stop.lock().unwrap().as_ref() {
+            std::fs::write(path, b"invalid recovery manifest")
+                .map_err(|error| error.to_string())?;
+        }
         Ok(())
     }
 
