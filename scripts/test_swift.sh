@@ -136,6 +136,7 @@ echo "👉 Running selected-task probe validation tests..."
 swiftc -parse-as-library \
     -target "$(uname -m)-apple-macosx13.0" \
     -framework AppKit -framework Foundation -framework ApplicationServices \
+    scripts/CodexWindowSafetyChecks.swift \
     scripts/CodexWindowTaskProbeValidation.swift \
     tests/CodexWindowTaskProbeTests.swift \
     -o "${TMP_BIN_DIR}/codex-window-task-probe_test"
