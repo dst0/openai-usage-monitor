@@ -3,6 +3,7 @@ pub mod app_stop_error;
 pub mod automatic_distribution_service;
 pub mod automatic_distribution_source;
 mod cli_auth_file_identity_service;
+mod copy_deeplink_keymap_service;
 pub mod daemon_account_sync_service;
 pub mod daemon_loop_service;
 pub mod daemon_tick_service;
@@ -69,6 +70,8 @@ pub mod window_restore_sanitizer;
 pub mod window_restore_screen;
 pub mod window_restore_service;
 pub mod window_restore_tolerance;
+pub mod window_task_probe_service;
+mod window_task_probe_validation_service;
 
 pub use app_lifecycle::AppLifecycle;
 pub use app_stop_error::AppStopError;
@@ -110,6 +113,7 @@ pub use window_restore_report::RestoreReport;
 pub use window_restore_screen::ScreenIdentity;
 pub use window_restore_service::WindowRestoreService;
 pub use window_restore_tolerance::RestoreTolerance;
+pub use window_task_probe_service::WindowTaskProbeService;
 
 #[cfg(test)]
 pub mod test_account_spec;

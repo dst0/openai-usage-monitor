@@ -37,8 +37,20 @@ func argument(_ name: String) -> String? {
   return CommandLine.arguments[index + 1]
 }
 
+/// Set by the task probe immediately before its first focus request, so any
+/// later failure, including one raised by a shared helper, tells the caller
+/// that windows may have been focused and the clipboard replaced. The helper
+/// is single-threaded.
+final class VisibleChangeMarker: @unchecked Sendable {
+  static let shared = VisibleChangeMarker()
+  var started = false
+}
+
+/// Appended to a failure raised after the probe's first focus request.
+let afterFocusSuffix = " after-focus"
+
 func fail(_ message: String) -> Never {
-  fputs("\(message)\n", stderr)
+  fputs("\(message)\(VisibleChangeMarker.shared.started ? afterFocusSuffix : "")\n", stderr)
   exit(1)
 }
 
@@ -300,6 +312,10 @@ struct CodexWindowRestoreMain {
     case "count-standard-windows":
       let process = expectedProcess()
       let data = try! JSONEncoder().encode(countStandardWindows(process))
+      FileHandle.standardOutput.write(data)
+    case "probe-selected-tasks":
+      let process = expectedProcess()
+      let data = try! JSONEncoder().encode(probeSelectedTasks(process))
       FileHandle.standardOutput.write(data)
     case "set-position":
       let (process, window) = verifyAndWindow()

@@ -8,4 +8,14 @@ pub(super) enum WindowAction {
     Save,
     /// Restore saved window position and size to active Codex app
     Restore,
+    /// Explicit diagnostic: focus each Desktop window and copy its selected chat link
+    ProbeTasks {
+        /// Allow the probe to foreground ChatGPT and replace the clipboard
+        #[arg(long)]
+        allow_focus_and_clipboard: bool,
+    },
 }
+
+#[cfg(test)]
+#[path = "window_action.test.rs"]
+mod tests;

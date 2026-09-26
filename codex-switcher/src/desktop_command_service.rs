@@ -1,5 +1,6 @@
+use crate::distribution::{SystemWindowRestoreBackend, WindowTaskProbeService};
 use crate::window_action::WindowAction;
-use crate::{recovery, switcher};
+use crate::{recovery, storage, switcher};
 
 pub(super) struct DesktopCommandService;
 
@@ -51,6 +52,28 @@ impl DesktopCommandService {
                 println!("✅ Window bounds restore dispatched for PID {}", pids[0]);
                 Ok(())
             }
+            WindowAction::ProbeTasks {
+                allow_focus_and_clipboard,
+            } => {
+                let count = WindowTaskProbeService::run(
+                    allow_focus_and_clipboard,
+                    || {
+                        WindowTaskProbeService::desktop_codex_home(
+                            storage::codex_home(),
+                            WindowTaskProbeService::account_home(),
+                        )
+                    },
+                    recovery::operation_lock,
+                    switcher::current_codex_app_pids_checked,
+                    SystemWindowRestoreBackend::new,
+                )?;
+                println!("{}", WindowTaskProbeService::summary(count));
+                Ok(())
+            }
         }
     }
 }
+
+#[cfg(test)]
+#[path = "desktop_command_service.test.rs"]
+mod tests;
