@@ -71,6 +71,8 @@ fn every_workflow_meets_ci_baseline() {
             found.extend(required_checks::required_check_violations(
                 &text, &contexts, branch,
             ));
+        } else {
+            found.extend(required_checks::reused_context_violations(&text, &contexts));
         }
         violations.extend(found.into_iter().map(|v| format!("{name}: {v}")));
     }

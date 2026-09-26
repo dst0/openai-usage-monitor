@@ -2,7 +2,10 @@
 //! direct properties with their line numbers, and each step's direct
 //! properties. Deeper lines belong to a property's value.
 
-use crate::yaml_lines::{entry, indent, is_content, key_column, nested, top_level_index};
+use crate::yaml_lines::{
+    direct_members, entry, indent, is_content, is_list_item, key_column, nested, raw_value,
+    top_level_index,
+};
 
 #[derive(Debug, PartialEq)]
 pub struct Job {
@@ -18,6 +21,14 @@ impl Job {
             .iter()
             .find(|(k, _, _)| k == key)
             .map(|(_, v, _)| v.as_str())
+    }
+
+    /// Line index of the direct property `key`.
+    pub fn prop_line(&self, key: &str) -> Option<usize> {
+        self.props
+            .iter()
+            .find(|(k, _, _)| k == key)
+            .map(|&(_, _, line)| line)
     }
 }
 
@@ -70,4 +81,23 @@ pub fn step_properties(lines: &[&str], at: usize) -> Option<Vec<usize>> {
     let siblings = (start + 1..end)
         .filter(|&i| is_content(lines[i]) && indent(lines[i]) == column && !is_list_item(i));
     Some(std::iter::once(start).chain(siblings).collect())
+}
+
+/// Direct property lines of each step of `job`. `None` when `steps:` is not a
+/// block list whose items are block-mapping steps.
+pub fn job_steps(lines: &[&str], job: &Job) -> Option<Vec<Vec<usize>>> {
+    let Some(at) = job.prop_line("steps") else {
+        return Some(Vec::new());
+    };
+    if raw_value(lines[at]) != Some("") {
+        return None;
+    }
+    direct_members(lines, at)
+        .into_iter()
+        .map(|marker| {
+            is_list_item(lines[marker])
+                .then(|| step_properties(lines, marker))
+                .flatten()
+        })
+        .collect()
 }

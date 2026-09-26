@@ -5,7 +5,7 @@
 //! alone is not enough: `on: push` has none and never runs for a PR.
 
 use crate::yaml_lines::{block_after, direct_members, entry, raw_value, top_level_index};
-use crate::yaml_values::{list_value, scalar_item};
+use crate::yaml_values::{list_value, names};
 
 /// Trigger filters that can keep a required check from reporting on a PR.
 const TRIGGER_FILTERS: [&str; 3] = ["paths", "paths-ignore", "branches-ignore"];
@@ -36,7 +36,7 @@ pub fn pull_request_trigger_violations(text: &str, protected_branch: &str) -> Ve
         out.extend(event_mapping_violations(&lines, &events, protected_branch));
         return out;
     }
-    match event_list(&lines, on) {
+    match names(&lines, on) {
         Some(names) if names.contains(&"pull_request") => {}
         Some(_) => out.push(MISSING.to_string()),
         None => out.push(
@@ -45,16 +45,6 @@ pub fn pull_request_trigger_violations(text: &str, protected_branch: &str) -> Ve
         ),
     }
     out
-}
-
-/// Events of an `on:` written as one name, a one-line list, or a block list.
-fn event_list<'a>(lines: &[&'a str], on: usize) -> Option<Vec<&'a str>> {
-    let value = raw_value(lines[on])?;
-    if value.is_empty() || value.starts_with('[') {
-        list_value(lines, on)
-    } else {
-        scalar_item(value).map(|event| vec![event])
-    }
 }
 
 /// `on:` as a block mapping of events: exactly one `pull_request`, empty or

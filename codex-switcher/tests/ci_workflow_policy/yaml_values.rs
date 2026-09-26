@@ -52,6 +52,17 @@ pub fn list_value<'a>(lines: &[&'a str], at: usize) -> Option<Vec<&'a str>> {
         .collect()
 }
 
+/// Names under the key on `lines[at]` written as one scalar, a one-line list,
+/// or a block list, as `on:` and `needs:` allow.
+pub fn names<'a>(lines: &[&'a str], at: usize) -> Option<Vec<&'a str>> {
+    let value = raw_value(lines[at])?;
+    if value.is_empty() || value.starts_with('[') {
+        list_value(lines, at)
+    } else {
+        scalar_item(value).map(|name| vec![name])
+    }
+}
+
 #[cfg(test)]
 #[path = "yaml_values.test.rs"]
 mod tests;
