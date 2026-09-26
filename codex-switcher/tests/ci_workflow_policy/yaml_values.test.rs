@@ -24,6 +24,9 @@ fn scalar_items_are_plain_names_or_fully_quoted() {
         "{}",
         "[main]",
         "a,b",
+        // Escapes can spell `!main` without a leading `!`.
+        "\"\\x21main\"",
+        "\"\\u0021main\"",
     ] {
         assert_eq!(scalar_item(text), None, "{text:?}");
     }

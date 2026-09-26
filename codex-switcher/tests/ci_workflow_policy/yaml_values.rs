@@ -6,14 +6,17 @@ use crate::yaml_lines::{block_after, indent, raw_value};
 
 /// A fully quoted scalar's contents, or a plain scalar of name characters
 /// (letters, digits, `-_./*`). `None` for tags, aliases, flow syntax,
-/// embedded quotes, or anything else that is not a single name.
+/// embedded quotes, double-quoted escapes, or anything else that is not a
+/// single name.
 pub fn scalar_item(text: &str) -> Option<&str> {
     let t = text.trim();
     let first = *t.as_bytes().first()?;
     if first == b'"' || first == b'\'' {
         let quote = first as char;
         let inner = t[1..].strip_suffix(quote)?;
-        return (!inner.is_empty() && !inner.contains(quote)).then_some(inner);
+        // A double-quoted escape could spell another name, such as `!main`.
+        let escaped = quote == '"' && inner.contains('\\');
+        return (!inner.is_empty() && !inner.contains(quote) && !escaped).then_some(inner);
     }
     let plain = (first.is_ascii_alphanumeric() || first == b'_')
         && t.bytes()

@@ -68,6 +68,15 @@ fn filters_that_can_skip_pull_requests_are_rejected() {
             "on:\n  pull_request:\n    branches: main\n",
             "must list `main`",
         ),
+        // Regression (critic t01, t02): escapes spelling `!main`.
+        (
+            "on:\n  pull_request:\n    branches: [ main, \"\\x21main\" ]\n",
+            "must list `main`",
+        ),
+        (
+            "on:\n  pull_request:\n    branches:\n      - main\n      - \"\\u0021main\"\n",
+            "must list `main`",
+        ),
         (
             "on:\n  pull_request:\n    branches: [ 'main,dev' ]\n",
             "must list `main`",

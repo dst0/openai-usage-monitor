@@ -1,11 +1,18 @@
 //! Lines whose meaning the line reader in `yaml_lines.rs` cannot see. A quoted
 //! scalar or flow collection left open at the end of a line turns the lines
-//! after it into text, a `<<` merge key copies keys from another node, and an
-//! explicit `?` key hides its key from `entry`. libyaml-based parsers accept
-//! all three, so the reader would see keys a workflow does not have, or miss
-//! keys it does. The policy rejects such lines instead of misreading them.
+//! after it into text, a `<<` merge key copies keys from another node, an
+//! explicit `?` key hides its key from `entry`, an anchor, alias, or tag
+//! changes what a key or value is, a double-quoted escape spells a different
+//! name (`"u\x73es"` is `uses`), and a lone carriage return, NEL, U+2028, or
+//! U+2029 is a line break to libyaml but not to `str::lines`. libyaml-based
+//! parsers accept all of these, so the reader would see keys a workflow does
+//! not have, or miss keys it does. The policy rejects such lines instead of
+//! misreading them.
 
 use crate::yaml_lines::{indent, is_content, key_column};
+
+/// Characters libyaml treats as line breaks but `str::lines` does not.
+const FOREIGN_LINE_BREAKS: [char; 4] = ['\r', '\u{85}', '\u{2028}', '\u{2029}'];
 
 pub fn unreadable_line_violations(text: &str) -> Vec<String> {
     unreadable_lines(text)
@@ -13,18 +20,25 @@ pub fn unreadable_line_violations(text: &str) -> Vec<String> {
         .map(|n| {
             format!(
                 "line {n}: YAML the policy scan cannot read; keep quoted and flow values \
-                 on one line (or use a `|` block scalar) and avoid `?` and `<<` keys"
+                 on one line (or use a `|` block scalar), use `\\n` line endings, and avoid \
+                 `?` and `<<` keys, anchors, aliases, tags, and double-quoted escapes"
             )
         })
         .collect()
 }
 
-/// 1-based numbers of content lines outside block scalars that open a node
-/// continuing past the line, or use an explicit or merge key.
+/// 1-based numbers of lines with a foreign line break anywhere, and of
+/// content lines outside block scalars that open a node continuing past the
+/// line, use an explicit or merge key, carry an anchor, alias, or tag, or
+/// hold a double-quoted escape in a key or value.
 pub fn unreadable_lines(text: &str) -> Vec<usize> {
     let mut out = Vec::new();
     let mut block_scalar_base = None;
     for (i, line) in text.lines().enumerate() {
+        if line.contains(FOREIGN_LINE_BREAKS) {
+            out.push(i + 1);
+            continue;
+        }
         if !is_content(line) || block_scalar_base.is_some_and(|base| indent(line) > base) {
             continue;
         }
@@ -34,17 +48,61 @@ pub fn unreadable_lines(text: &str) -> Vec<usize> {
             Some(value) => (key_column(line), value.trim_start()),
             None => (indent(line), node),
         };
-        if is_block_scalar_header(value) {
-            block_scalar_base = Some(base);
-        } else if node == "?"
+        let mut unreadable = node == "?"
             || node.starts_with("? ")
             || node.starts_with("<<")
-            || stays_open(value)
-        {
+            || [node, value]
+                .iter()
+                .any(|s| has_node_property(s) || has_escape(s));
+        if is_block_scalar_header(without_node_properties(value)) {
+            block_scalar_base = Some(base);
+        } else {
+            unreadable |= stays_open(value);
+        }
+        if unreadable {
             out.push(i + 1);
         }
     }
     out
+}
+
+/// Whether `s` starts with an anchor (`&`), alias (`*`), or tag (`!`).
+fn has_node_property(s: &str) -> bool {
+    s.starts_with(['&', '*', '!'])
+}
+
+/// Whether `s` starts with a double-quoted scalar holding an escape that can
+/// spell another character, such as `\x65` for `e` or `\/` for `/`. `\"` and
+/// `\\` only yield characters no key or compared name contains, and are
+/// common in JSON-valued inputs.
+fn has_escape(s: &str) -> bool {
+    let Some(end) = s.starts_with('"').then(|| quoted_end(s)).flatten() else {
+        return false;
+    };
+    let inner = &s.as_bytes()[1..end - 1];
+    let mut i = 0;
+    while i < inner.len() {
+        if inner[i] == b'\\' {
+            if !matches!(inner.get(i + 1), Some(b'"' | b'\\')) {
+                return true;
+            }
+            i += 1;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// `value` after any leading anchors and tags, so an anchored block scalar
+/// header is still recognised and its content skipped.
+fn without_node_properties(value: &str) -> &str {
+    let mut v = value;
+    while v.starts_with(['&', '!']) {
+        v = v
+            .split_once([' ', '\t'])
+            .map_or("", |(_, rest)| rest.trim_start());
+    }
+    v
 }
 
 /// The line without indentation and `- ` list markers.
