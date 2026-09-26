@@ -265,27 +265,34 @@ reopen a specific task in a specific new window. This guard applies even when
 `preserve_window_bounds_on_restart=false`; that setting controls geometry only.
 An explicit diagnostic, `cxi window probe-tasks --allow-focus-and-clipboard`,
 tests whether the installed Desktop exposes a one-to-one mapping through Copy
-deeplink. It is evidence gathering only: it foregrounds each window, replaces
-the clipboard with the final link, and neither persists task IDs nor
-authorizes restart. Before any visible change it holds the switch/recovery
-operation lock for its whole run, refuses a customized ChatGPT keymap, and
-requires exactly one ChatGPT process, Accessibility and event-posting access,
-and no minimized window. ChatGPT 26.924.20706 binds its hidden `copyDeeplink`
-command to Cmd+Opt+L by default and reads overrides from
-`$CODEX_HOME/keybindings.json`; an override could move that shortcut to
-another command, so only an absent, blank, or `[]` keymap is accepted. The
-Desktop copies the link of `BrowserWindow.getFocusedWindow()` and otherwise
-falls back to another window, so the helper sends the shortcut only to the
-verified ChatGPT PID, reads keyboard focus live from Accessibility before and
-after each copy, and requires one clipboard write that stays unchanged while
-it reads the link. It also rejects ambiguous AX/WindowServer frame matches,
-process/window drift, and duplicate or invalid task links. It returns no task
-IDs and prints only a count or a fixed failure code; one competing write of a
-valid task link still cannot be attributed, and clipboard history tools may
-keep each copied link. A successful probe does not prove targeted navigation
-into each replacement window or match IPC owner client IDs to WindowServer
-IDs, so the shutdown guard remains. The probe has not been run against a live
-multiwindow Desktop.
+deeplink. It is evidence gathering only and has not been run against a live
+multiwindow Desktop: it foregrounds each window, lets ChatGPT replace the
+clipboard with each task link, and neither persists task IDs nor authorizes
+restart. Before any visible change it requires the Codex home ChatGPT uses
+(`~/.codex`), holds the switch/recovery operation lock for its whole run, and
+refuses a customized ChatGPT keymap, more than one ChatGPT process, a build
+other than 26.924.20706, a macOS App Shortcut on Cmd+Opt+L, a keyboard layout
+on which that key does not type `l` with Command held, missing Accessibility
+or event-posting access, a pasteboard that would ask before a read (macOS
+15.4 and later), and minimized windows. ChatGPT 26.924.20706 binds its hidden
+`copyDeeplink` command to Cmd+Opt+L by default and reads overrides from
+`$CODEX_HOME/keybindings.json`, re-reading it whenever a window gains focus;
+an override could move that shortcut to another command, so only an absent,
+blank, or `[]` keymap is accepted, and an edit during the run voids the
+result. The Desktop copies the link of `BrowserWindow.getFocusedWindow()` and
+otherwise falls back to its primary window, so the helper sends the shortcut
+only to the verified ChatGPT PID, reads keyboard focus live from
+Accessibility before and after each copy, and requires one clipboard write
+without a concealed or transient marker that stays unchanged while it reads
+the link. It also rejects ambiguous AX/WindowServer frame matches,
+process/window drift, and duplicate or invalid task links. The helper never
+outputs task IDs, and the CLI prints only a count or a fixed failure code,
+noting when a failure came after the first focus change. Each copied link is
+on the system clipboard, where other apps, clipboard history, and Universal
+Clipboard can see it; one competing write of a valid task link still cannot
+be attributed. A successful probe does not prove targeted navigation into
+each replacement window or match IPC owner client IDs to WindowServer IDs, so
+the shutdown guard remains.
 The helper rejects malformed or non-finite WindowServer bounds and rechecks
 the Desktop process birth immediately before each Accessibility geometry write.
 Window title and geometry heuristics alone cannot prove that a window is
