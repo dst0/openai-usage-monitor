@@ -1,5 +1,6 @@
 use super::{read_status_file, sync_settings_to_status_file, write_status_file};
-use crate::distribution::test_helper::{make_account, TestEnv};
+use crate::distribution::test_account_spec::TestAccountSpec;
+use crate::distribution::test_helper::TestEnv;
 use crate::models::StatusFile;
 use crate::storage::{load_accounts, save_accounts};
 
@@ -34,17 +35,14 @@ fn status() -> StatusFile {
 fn stale_status_writers_cannot_reenable_auto_switch_after_registry_disable() {
     let env = TestEnv::new("status_cache_disable_race");
     env.populate(
-        vec![make_account(
-            "main",
-            None,
-            "owner@example.test",
-            "team",
-            100.0,
-            None,
-            0,
-            None,
-            None,
-        )],
+        vec![TestAccountSpec {
+            id: "main",
+            email: "owner@example.test",
+            plan: "team",
+            sprint_pct: 100.0,
+            ..TestAccountSpec::default()
+        }
+        .build()],
         Some("main"),
         None,
     );
@@ -68,17 +66,14 @@ fn stale_status_writers_cannot_reenable_auto_switch_after_registry_disable() {
 fn status_writer_never_follows_a_preexisting_temporary_symlink() {
     let env = TestEnv::new("status_temp_symlink");
     env.populate(
-        vec![make_account(
-            "main",
-            None,
-            "owner@example.test",
-            "team",
-            100.0,
-            None,
-            0,
-            None,
-            None,
-        )],
+        vec![TestAccountSpec {
+            id: "main",
+            email: "owner@example.test",
+            plan: "team",
+            sprint_pct: 100.0,
+            ..TestAccountSpec::default()
+        }
+        .build()],
         Some("main"),
         None,
     );
@@ -107,17 +102,14 @@ fn status_writer_never_follows_a_preexisting_temporary_symlink() {
 fn settings_sync_leaves_a_missing_status_cache_for_the_daemon() {
     let env = TestEnv::new("status_cache_missing");
     env.populate(
-        vec![make_account(
-            "main",
-            None,
-            "owner@example.test",
-            "team",
-            100.0,
-            None,
-            0,
-            None,
-            None,
-        )],
+        vec![TestAccountSpec {
+            id: "main",
+            email: "owner@example.test",
+            plan: "team",
+            sprint_pct: 100.0,
+            ..TestAccountSpec::default()
+        }
+        .build()],
         Some("main"),
         None,
     );

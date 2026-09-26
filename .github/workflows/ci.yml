@@ -56,6 +56,13 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('codex-switcher/rust-toolchain.toml') }}-${{ hashFiles('codex-switcher/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-${{ hashFiles('codex-switcher/rust-toolchain.toml') }}-
 
+      # Lints every target, tests included, with the pinned Clippy against the
+      # committed Cargo.lock. The command and directory are enforced by
+      # codex-switcher/tests/ci_workflow_policy/clippy_gate.rs.
+      - name: Run Clippy on All Targets
+        working-directory: codex-switcher
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
       # --locked fails the run if Cargo.lock is missing or would change,
       # instead of testing a freshly resolved dependency graph.
       - name: Run Rust Unit Tests

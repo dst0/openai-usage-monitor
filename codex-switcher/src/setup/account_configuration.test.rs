@@ -1,22 +1,20 @@
 use super::set_config_preserve_window_bounds_with_hook;
-use crate::distribution::test_helper::{make_account, TestEnv};
+use crate::distribution::test_account_spec::TestAccountSpec;
+use crate::distribution::test_helper::TestEnv;
 use crate::storage::{load_accounts, save_accounts};
 
 #[test]
 fn unrelated_setting_change_keeps_newer_auto_switch_disable_and_credentials() {
     let env = TestEnv::new("config_concurrent_auth_and_disable");
     env.populate(
-        vec![make_account(
-            "main",
-            None,
-            "owner@example.test",
-            "team",
-            100.0,
-            None,
-            0,
-            None,
-            None,
-        )],
+        vec![TestAccountSpec {
+            id: "main",
+            email: "owner@example.test",
+            plan: "team",
+            sprint_pct: 100.0,
+            ..TestAccountSpec::default()
+        }
+        .build()],
         Some("main"),
         None,
     );

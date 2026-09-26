@@ -1,54 +1,8 @@
 use super::monitor_log_lifecycle_lock::MonitorLogLifecycleLock;
-use crate::models::{AccountConfig, AccountsFile, AuthJson, AuthTokens, Settings};
+use crate::models::{AccountConfig, AccountsFile, AuthJson, Settings};
 use crate::storage::test_codex_home::TestCodexHome;
 use crate::storage::{save_accounts, write_active_auth_json};
 use std::path::Path;
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "stable synthetic account fixture shared across tests"
-)]
-pub fn make_account(
-    id: &str,
-    name: Option<&str>,
-    email: &str,
-    plan: &str,
-    sprint_pct: f64,
-    weekly_pct: Option<f64>,
-    credits: u32,
-    reset_after: Option<i64>,
-    error: Option<&str>,
-) -> AccountConfig {
-    AccountConfig {
-        id: id.to_string(),
-        name: name.map(ToString::to_string),
-        email: email.to_string(),
-        plan_type: plan.to_string(),
-        account_id: id.to_string(),
-        tokens: AuthTokens {
-            access_token: format!("tok_{id}"),
-            refresh_token: Some(format!("rt_{id}")),
-            id_token: None,
-            account_id: Some(id.to_string()),
-            extra: Default::default(),
-        },
-        enabled: true,
-        priority: 0,
-        last_primary_percentage: sprint_pct,
-        last_reset_time: None,
-        last_reset_after_seconds: reset_after,
-        last_weekly_percentage: weekly_pct,
-        last_weekly_reset_time: None,
-        last_weekly_reset_after_seconds: None,
-        last_credits: Some(credits),
-        last_error: error.map(ToString::to_string),
-        last_checked: None,
-        plan_multiplier: None,
-        multiplier_is_manual: None,
-        last_multiplier_checked: None,
-        organization_name: None,
-    }
-}
 
 /// A seeded distribution home. It owns the test's `CODEX_HOME` guard, so a
 /// test must not also lock `TEST_CODEX_HOME_MUTEX` or create another guard.

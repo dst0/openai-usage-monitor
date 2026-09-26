@@ -129,19 +129,23 @@ without a reviewed commit. rustup applies the pin whenever cargo runs from insid
 It does not apply to `cargo --manifest-path` run from another directory, or to a
 Rust installed without rustup (the installer warns in that case).
 
-CI installs the pinned toolchain with `rustup toolchain install`, and
+CI installs the pinned toolchain with `rustup toolchain install`, then runs
+`cargo clippy --workspace --all-targets --locked -- -D warnings` (every target,
+tests included) and `cargo test --locked` against the committed `Cargo.lock`.
+
 `codex-switcher/tests/ci_workflow_policy.rs` enforces the policy: it rejects
-floating channels and per-command overrides in workflows, and on GitHub Actions
-it asserts that the tests themselves ran under the pinned release.
+floating channels and per-command overrides in workflows, requires that exact
+Clippy step in a required Rust job, rejects inherited variables, default
+shells, and `GITHUB_ENV`/`GITHUB_PATH` references that could weaken it, and on
+GitHub Actions asserts that the tests themselves ran under the pinned release.
 
 To bump the toolchain:
 
 1. Change `channel` in `codex-switcher/rust-toolchain.toml` to the new exact `X.Y.Z` release.
 2. In `codex-switcher/`, run `rustup toolchain install`, then `cargo test --locked` and
-   `cargo clippy --all-targets --locked -- -D warnings` on both the old and new
-   toolchain; fix every lint the new release adds in the same PR. (The
-   all-targets Clippy gate is not yet clean on `main`, so compare the two runs
-   rather than expecting zero findings.)
+   `cargo clippy --workspace --all-targets --locked -- -D warnings` on the new
+   toolchain; fix every lint the new release adds in the same PR, because the
+   CI Clippy gate fails on any finding.
 3. Open a dedicated `build/` PR and confirm every required check passes on its head SHA.
 
 GitHub Actions in `.github/workflows/` are likewise pinned to full commit SHAs
@@ -158,7 +162,7 @@ crates.io serves that day. Use the same flag locally in `codex-switcher/`:
 
 ```bash
 cargo test --locked
-cargo clippy --all-targets --locked -- -D warnings
+cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
 `cargo fmt` does not resolve dependencies and takes no such flag.

@@ -2,15 +2,17 @@
 //! permissions, actions pinned to full commit SHAs, explicit job timeouts and
 //! concurrency, an exact Rust toolchain, a committed `Cargo.lock` that every
 //! workflow and repository script builds with `--locked`, cache keys that hash
-//! committed files, and required branch-protection checks that always report.
-//! Rule logic lives in `ci_workflow_policy/rules.rs`, with the checkout,
-//! trigger, required-job, locked-cargo, lockfile, and cache-key rules in
-//! `checkout.rs`, `triggers.rs`, `required_checks.rs`, `locked_cargo.rs`,
-//! `lockfile.rs`, and `cache_keys.rs`, and `yaml_limits.rs` rejecting YAML the
-//! line reader (`yaml_lines.rs`, `yaml_values.rs`, `workflow_jobs.rs`) cannot
-//! read. `shell_lines.rs` reads shell command lines for the locked-cargo rule,
-//! and `git_repo.rs` answers what the repository commits; negative cases live
-//! in `fixtures.rs` and in each module's `.test.rs` file.
+//! committed files, an all-targets Clippy gate, and required branch-protection
+//! checks that always report. Rule logic lives in `ci_workflow_policy/rules.rs`,
+//! with the checkout, trigger, required-job, locked-cargo, lockfile, cache-key,
+//! Clippy gate, and inherited-settings rules in `checkout.rs`, `triggers.rs`,
+//! `required_checks.rs`, `locked_cargo.rs`, `lockfile.rs`, `cache_keys.rs`,
+//! `clippy_gate.rs`, and `inherited_settings.rs`, and `yaml_limits.rs`
+//! rejecting YAML the line reader (`yaml_lines.rs`, `yaml_values.rs`,
+//! `workflow_jobs.rs`) cannot read. `shell_lines.rs` reads shell command lines
+//! for the locked-cargo rule, and `git_repo.rs` answers what the repository
+//! commits; negative cases live in `fixtures.rs` and in each module's
+//! `.test.rs` file.
 
 use std::fs;
 use std::path::PathBuf;
@@ -58,6 +60,12 @@ mod cache_keys;
 
 #[path = "ci_workflow_policy/scratch_git_repo.rs"]
 mod scratch_git_repo;
+
+#[path = "ci_workflow_policy/clippy_gate.rs"]
+mod clippy_gate;
+
+#[path = "ci_workflow_policy/inherited_settings.rs"]
+mod inherited_settings;
 
 #[path = "ci_workflow_policy/fixtures.rs"]
 mod fixtures;
@@ -113,6 +121,10 @@ fn every_workflow_meets_ci_baseline() {
             required_workflow_checked = true;
             found.extend(required_checks::required_check_violations(
                 &text, &contexts, branch,
+            ));
+            found.extend(clippy_gate::clippy_gate_violations(&text, &contexts));
+            found.extend(inherited_settings::inherited_setting_violations(
+                &text, &contexts,
             ));
         } else {
             found.extend(required_checks::reused_context_violations(&text, &contexts));

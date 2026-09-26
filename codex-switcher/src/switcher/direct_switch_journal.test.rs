@@ -1,5 +1,6 @@
 use super::{DirectSwitchJournal, DirectSwitchJournalStore};
-use crate::distribution::test_helper::{make_account, TestEnv};
+use crate::distribution::test_account_spec::TestAccountSpec;
+use crate::distribution::test_helper::TestEnv;
 use crate::models::{AccountConfig, AuthJson};
 use crate::storage::{load_accounts, read_active_auth_json, write_active_auth_json};
 use std::os::unix::fs::{symlink, PermissionsExt};
@@ -8,28 +9,22 @@ fn fixture(label: &str) -> (TestEnv, AccountConfig, AuthJson, AuthJson) {
     let env = TestEnv::new(label);
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "team",
-                10.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "team",
+                sprint_pct: 10.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,

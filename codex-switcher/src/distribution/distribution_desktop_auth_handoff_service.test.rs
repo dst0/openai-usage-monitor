@@ -1,5 +1,6 @@
 use super::*;
-use crate::distribution::test_helper::{make_account, TestEnv};
+use crate::distribution::test_account_spec::TestAccountSpec;
+use crate::distribution::test_helper::TestEnv;
 use crate::storage::{
     load_accounts, read_active_auth_json, update_accounts_atomically, write_active_auth_json,
 };
@@ -8,33 +9,26 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 #[test]
 fn shutdown_token_handoff_preserves_concurrent_registry_changes() {
     let env = TestEnv::new("handoff_registry_concurrency");
-    let mut old = make_account(
-        "old",
-        None,
-        "old@example.test",
-        "plus",
-        0.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let mut old = TestAccountSpec {
+        id: "old",
+        email: "old@example.test",
+        plan: "plus",
+        ..TestAccountSpec::default()
+    }
+    .build();
     let claims = URL_SAFE_NO_PAD.encode(r#"{"email":"old@example.test"}"#);
     old.tokens.access_token = format!("header.{claims}.signature");
     env.populate(
         vec![
             old,
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),

@@ -8,7 +8,8 @@ use super::distribution_plan::DistributionPlan;
 use super::distribution_request::DistributionRequest;
 use super::distribution_transaction_service::DistributionTransactionService;
 use super::mock_app_lifecycle::MockAppLifecycle;
-use super::test_helper::{make_account, TestEnv};
+use super::test_account_spec::TestAccountSpec;
+use super::test_helper::TestEnv;
 use super::{AppLifecycle, AppStopError, WindowCaptureMode, WindowProcessIdentity};
 use crate::storage::{load_accounts, read_active_auth_json, write_active_auth_json};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -222,28 +223,21 @@ fn stale_marker_and_registry_cannot_stop_a_different_live_desktop_account() {
     let env = TestEnv::new("stale_marker_vs_live_auth");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -275,28 +269,21 @@ fn concurrent_recovery_lock_preserves_old_in_flight_distribution_journal() {
     let env = TestEnv::new("concurrent_recovery_preserves_journal");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -335,28 +322,21 @@ fn offline_marker_save_failure_rolls_back_shared_auth_and_registry() {
     let env = TestEnv::new("offline_marker_save_failure");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,
@@ -386,28 +366,21 @@ fn late_desktop_writer_blocks_offline_auth_replacement() {
     let env = TestEnv::new("late_writer_offline_switch");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,
@@ -462,28 +435,21 @@ fn writer_appearing_after_prewrite_probe_cannot_report_offline_success() {
     let env = TestEnv::new("writer_after_prewrite_probe");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,
@@ -541,28 +507,21 @@ fn auth_changing_during_postwrite_readback_cannot_report_offline_success() {
     let env = TestEnv::new("auth_changes_during_readback");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,
@@ -622,17 +581,14 @@ fn auth_changing_during_postwrite_readback_cannot_report_offline_success() {
 fn auth_changing_during_running_desktop_commit_is_not_verified() {
     let env = TestEnv::new("auth_changes_during_running_commit");
     env.populate(
-        vec![make_account(
-            "next",
-            None,
-            "next@example.test",
-            "team",
-            90.0,
-            None,
-            0,
-            None,
-            None,
-        )],
+        vec![TestAccountSpec {
+            id: "next",
+            email: "next@example.test",
+            plan: "team",
+            sprint_pct: 90.0,
+            ..TestAccountSpec::default()
+        }
+        .build()],
         Some("next"),
         Some("next"),
     );
@@ -672,28 +628,21 @@ fn post_signal_shutdown_error_retains_recovery_journal() {
     let env = TestEnv::new("post_signal_failure_journal");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -729,33 +678,26 @@ fn post_signal_shutdown_error_retains_recovery_journal() {
 #[test]
 fn same_owner_refresh_before_shutdown_is_preserved_during_switch() {
     let env = TestEnv::new("same_owner_pre_stop_refresh");
-    let mut old = make_account(
-        "old",
-        None,
-        "old@example.test",
-        "plus",
-        0.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let mut old = TestAccountSpec {
+        id: "old",
+        email: "old@example.test",
+        plan: "plus",
+        ..TestAccountSpec::default()
+    }
+    .build();
     let claims = URL_SAFE_NO_PAD.encode(r#"{"email":"old@example.test"}"#);
     old.tokens.access_token = format!("header.{claims}.signature");
     env.populate(
         vec![
             old,
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -786,33 +728,26 @@ fn same_owner_refresh_before_shutdown_is_preserved_during_switch() {
 #[test]
 fn failed_registry_handoff_relaunches_with_identifiable_rotated_auth() {
     let env = TestEnv::new("failed_rotated_registry_handoff");
-    let mut old = make_account(
-        "old",
-        None,
-        "old@example.test",
-        "plus",
-        0.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let mut old = TestAccountSpec {
+        id: "old",
+        email: "old@example.test",
+        plan: "plus",
+        ..TestAccountSpec::default()
+    }
+    .build();
     let claims = URL_SAFE_NO_PAD.encode(r#"{"email":"old@example.test"}"#);
     old.tokens.access_token = format!("header.{claims}.signature");
     env.populate(
         vec![
             old,
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -854,28 +789,21 @@ fn post_stop_checkpoint_error_does_not_launch_with_changed_auth() {
     let env = TestEnv::new("post_stop_checkpoint_auth_race");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -913,17 +841,13 @@ fn post_stop_checkpoint_error_does_not_launch_with_changed_auth() {
 fn target_removed_before_shutdown_never_stops_desktop() {
     let env = TestEnv::new("target_removed_after_shutdown");
     env.populate(
-        vec![make_account(
-            "old",
-            None,
-            "old@example.test",
-            "plus",
-            0.0,
-            None,
-            0,
-            None,
-            None,
-        )],
+        vec![TestAccountSpec {
+            id: "old",
+            email: "old@example.test",
+            plan: "plus",
+            ..TestAccountSpec::default()
+        }
+        .build()],
         Some("old"),
         Some("old"),
     );
@@ -966,28 +890,21 @@ fn failed_target_launch_does_not_leave_target_auth_in_a_stopped_desktop() {
     let env = TestEnv::new("failed_target_launch_rollback");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -1013,28 +930,21 @@ fn desktop_refresh_during_recovery_is_preserved_in_registry() {
     let env = TestEnv::new("desktop_refresh_during_recovery");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -1067,28 +977,21 @@ fn cli_registry_save_error_rolls_back_auth_and_is_reported() {
     let env = TestEnv::new("cli_registry_save_error");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,
@@ -1151,28 +1054,21 @@ fn journal_update_failure_after_stop_relaunches_previous_desktop() {
     let env = TestEnv::new("journal_failure_after_stop");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),

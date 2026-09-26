@@ -156,3 +156,47 @@ fn the_protected_branch_comes_from_the_caller() {
     );
     assert_eq!(violations(&release).len(), 1);
 }
+
+/// Regression (PR #18 critic P0-1, P1-1): libyaml reads a job or step
+/// `if : false`, a job `continue-on-error : true`, and an `if:` value that
+/// continues on a deeper line, none of which this rule's reader sees. The
+/// whole-workflow scan rejects each of those lines.
+#[test]
+fn hidden_skip_conditions_fail_the_workflow_scan() {
+    for (from, to, marker) in [
+        (
+            "    timeout-minutes: 30\n",
+            "    timeout-minutes: 30\n    if : false\n",
+            "if : false",
+        ),
+        (
+            "    timeout-minutes: 30\n",
+            "    timeout-minutes: 30\n    if\t: false\n",
+            "if\t: false",
+        ),
+        (
+            "    timeout-minutes: 30\n",
+            "    timeout-minutes: 30\n    continue-on-error : true\n",
+            "continue-on-error :",
+        ),
+        (
+            TEST_STEP,
+            "      - run: cargo test --locked\n        if : false\n",
+            "if : false",
+        ),
+        (
+            TEST_STEP,
+            "      - run: cargo test --locked\n        if: success()\n          == false\n",
+            "== false",
+        ),
+    ] {
+        let text = with(from, to);
+        let line = 1 + text.lines().position(|l| l.contains(marker)).unwrap();
+        let v = crate::rules::workflow_violations(&text);
+        assert!(
+            v.iter()
+                .any(|m| m.starts_with(&format!("line {line}: ")) && m.contains("cannot read")),
+            "{text}\n{v:?}"
+        );
+    }
+}

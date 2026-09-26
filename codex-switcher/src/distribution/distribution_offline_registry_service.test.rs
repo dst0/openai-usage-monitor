@@ -1,33 +1,27 @@
 use super::*;
-use crate::distribution::test_helper::{make_account, TestEnv};
+use crate::distribution::test_account_spec::TestAccountSpec;
+use crate::distribution::test_helper::TestEnv;
 
 #[test]
 fn commit_preserves_concurrent_settings_and_unrelated_account() {
     let env = TestEnv::new("offline_registry_field_commit");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,
@@ -58,28 +52,21 @@ fn commit_refuses_a_reauthenticated_target() {
     let env = TestEnv::new("offline_registry_target_changed");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,

@@ -1,7 +1,8 @@
 use super::distribution_coordinator::DistributionCoordinator;
 use super::distribution_request::DistributionRequest;
 use super::mock_app_lifecycle::MockAppLifecycle;
-use super::test_helper::{make_account, TestEnv};
+use super::test_account_spec::TestAccountSpec;
+use super::test_helper::TestEnv;
 use crate::storage::{load_accounts, read_active_auth_json};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::Ordering;
@@ -10,28 +11,24 @@ use std::sync::Arc;
 #[test]
 fn malformed_prior_direct_switch_intent_blocks_distribution_without_touching_auth() {
     let env = TestEnv::new("direct_switch_intent_gate");
-    let prior = make_account(
-        "prior",
-        None,
-        "prior@example.com",
-        "pro",
-        5.0,
-        Some(70.0),
-        0,
-        None,
-        None,
-    );
-    let target = make_account(
-        "target",
-        None,
-        "target@example.com",
-        "team",
-        95.0,
-        Some(80.0),
-        0,
-        None,
-        None,
-    );
+    let prior = TestAccountSpec {
+        id: "prior",
+        email: "prior@example.com",
+        plan: "pro",
+        sprint_pct: 5.0,
+        weekly_pct: Some(70.0),
+        ..TestAccountSpec::default()
+    }
+    .build();
+    let target = TestAccountSpec {
+        id: "target",
+        email: "target@example.com",
+        plan: "team",
+        sprint_pct: 95.0,
+        weekly_pct: Some(80.0),
+        ..TestAccountSpec::default()
+    }
+    .build();
     env.populate(vec![prior, target], Some("prior"), Some("prior"));
     let original_auth = read_active_auth_json().unwrap();
     let original_registry = load_accounts().unwrap();

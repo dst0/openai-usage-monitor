@@ -1,5 +1,5 @@
 use super::DesktopExternalBindingService;
-use crate::distribution::test_helper::make_account;
+use crate::distribution::test_account_spec::TestAccountSpec;
 use crate::distribution::{DesktopAppSession, WindowProcessIdentity};
 use crate::models::{AccountsFile, AuthJson, Settings};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};

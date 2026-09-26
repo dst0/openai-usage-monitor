@@ -11,17 +11,14 @@ fn external_relaunch_updates_the_real_marker_from_private_auth_and_registry() {
             .as_nanos()
     ));
     std::fs::create_dir(&home).unwrap();
-    let account = make_account(
-        "account-a",
-        None,
-        "a@example.com",
-        "pro",
-        50.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let account = TestAccountSpec {
+        id: "account-a",
+        email: "a@example.com",
+        plan: "pro",
+        sprint_pct: 50.0,
+        ..TestAccountSpec::default()
+    }
+    .build();
     private_json(
         &home.join("accounts.json"),
         &AccountsFile {
@@ -84,17 +81,14 @@ fn restored_auth_with_backdated_mtime_cannot_impersonate_prelaunch_auth() {
             .as_nanos()
     ));
     std::fs::create_dir(&home).unwrap();
-    let account = make_account(
-        "account-a",
-        None,
-        "a@example.com",
-        "pro",
-        50.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let account = TestAccountSpec {
+        id: "account-a",
+        email: "a@example.com",
+        plan: "pro",
+        sprint_pct: 50.0,
+        ..TestAccountSpec::default()
+    }
+    .build();
     private_json(
         &home.join("accounts.json"),
         &AccountsFile {

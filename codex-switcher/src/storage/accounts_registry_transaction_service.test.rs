@@ -61,17 +61,14 @@ fn active_auth_write_does_not_follow_a_preexisting_temporary_symlink() {
 #[test]
 fn registry_autoheal_cannot_replay_stale_tokens_after_a_concurrent_commit() {
     let env = crate::distribution::test_helper::TestEnv::new("registry_autoheal_race");
-    let original = crate::distribution::test_helper::make_account(
-        "owner",
-        None,
-        "owner@example.test",
-        "team",
-        50.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let original = crate::distribution::test_account_spec::TestAccountSpec {
+        id: "owner",
+        email: "owner@example.test",
+        plan: "team",
+        sprint_pct: 50.0,
+        ..crate::distribution::test_account_spec::TestAccountSpec::default()
+    }
+    .build();
     let duplicated = AccountsFile {
         active_account_id: Some(original.id.clone()),
         settings: Default::default(),
@@ -111,17 +108,14 @@ fn registry_autoimport_cannot_replace_a_concurrent_registry_creation() {
     }))
     .unwrap();
     write_active_auth_json(&auth).unwrap();
-    let newer_account = crate::distribution::test_helper::make_account(
-        "newer",
-        None,
-        "owner@example.test",
-        "team",
-        50.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let newer_account = crate::distribution::test_account_spec::TestAccountSpec {
+        id: "newer",
+        email: "owner@example.test",
+        plan: "team",
+        sprint_pct: 50.0,
+        ..crate::distribution::test_account_spec::TestAccountSpec::default()
+    }
+    .build();
     let mut newer = AccountsFile {
         active_account_id: Some(newer_account.id.clone()),
         settings: Default::default(),

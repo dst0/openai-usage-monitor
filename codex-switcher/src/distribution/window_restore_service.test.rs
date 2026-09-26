@@ -1,37 +1,10 @@
-#[path = "../src/distribution/window_restore_backend.rs"]
-mod window_restore_backend;
-#[path = "../src/distribution/window_restore_capture.rs"]
-mod window_restore_capture;
-#[path = "../src/distribution/window_restore_capture_result.rs"]
-mod window_restore_capture_result;
-#[path = "../src/distribution/window_restore_event.rs"]
-mod window_restore_event;
-#[path = "../src/distribution/window_restore_frame.rs"]
-mod window_restore_frame;
-#[path = "../src/distribution/window_restore_outcome.rs"]
-mod window_restore_outcome;
-#[path = "../src/distribution/window_restore_process_identity.rs"]
-mod window_restore_process_identity;
-#[path = "../src/distribution/window_restore_report.rs"]
-mod window_restore_report;
-#[path = "../src/distribution/window_restore_sanitizer.rs"]
-mod window_restore_sanitizer;
-#[path = "../src/distribution/window_restore_screen.rs"]
-mod window_restore_screen;
-#[path = "../src/distribution/window_restore_service.rs"]
-mod window_restore_service;
-#[path = "../src/distribution/window_restore_tolerance.rs"]
-mod window_restore_tolerance;
-
-use window_restore_backend::WindowRestoreBackend;
-use window_restore_capture::WindowCapture;
-use window_restore_frame::WindowFrame;
-use window_restore_outcome::RestoreOutcome;
-use window_restore_process_identity::ProcessIdentity;
-use window_restore_sanitizer::sanitize_text;
-use window_restore_screen::ScreenIdentity;
-use window_restore_service::WindowRestoreService;
-use window_restore_tolerance::RestoreTolerance;
+use crate::distribution::{
+    window_restore_backend::WindowRestoreBackend, window_restore_capture::WindowCapture,
+    window_restore_frame::WindowFrame, window_restore_outcome::RestoreOutcome,
+    window_restore_process_identity::ProcessIdentity, window_restore_sanitizer::sanitize_text,
+    window_restore_screen::ScreenIdentity, window_restore_service::WindowRestoreService,
+    window_restore_tolerance::RestoreTolerance,
+};
 
 struct MockBackend {
     identity: ProcessIdentity,

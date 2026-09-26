@@ -1,0 +1,27 @@
+# 2026-09-27 — The Clippy gate policy read less of the workflow than libyaml
+
+- **Status:** Resolved
+- **Task/context:** PR #18 added `codex-switcher/tests/ci_workflow_policy/clippy_gate.rs`, a rule requiring the required Rust job in `.github/workflows/ci.yml` to run `cargo clippy --workspace --all-targets --locked -- -D warnings` from `codex-switcher/`. An adversarial test critic replayed edits of the live `ci.yml` through every policy rule.
+- **Unexpected observation or failure:** Every rule passed workflows in which GitHub Actions would run no effective Clippy gate, or would skip a required job:
+  - A deeper line after the gate's plain `run:` value (`          -A clippy::all`) continues that scalar, so the step runs Clippy with every lint allowed. The same shape turned a step `if: success()` into `if: success() == false`.
+  - `-D warnings` followed by U+00A0: `str::trim` removed it for the reader, but libyaml keeps it in the scalar, so Clippy receives `warnings\u{a0}`.
+  - `if : false` or `continue-on-error : true` (a space before the colon) is a key to libyaml but not to `entry`, so job and step conditions were invisible.
+  - A workflow or job `defaults.run.shell: true {0}` turns every `run:` into a no-op.
+  - A workflow or job `env:` exporting `RUSTFLAGS`, `CARGO_ENCODED_RUSTFLAGS`, or similar reaches the gate step, as does a line appended to `$GITHUB_ENV` or `$GITHUB_PATH` by an earlier step.
+- **Evidence:** The critic's probe reported no violation for each case above against the whole rule set. The new regression tests `continued_values_and_unparsed_keys_are_unreadable` and `whitespace_other_than_space_and_tab_is_unreadable` fail against the previous `yaml_limits.rs`, and four of the five `inherited_settings` tests fail against a stubbed rule. The earlier learning's known limit that "a multi-line plain `name:` is read as its first line only" was the same continuation hole.
+- **Approaches tried:**
+  - **Attempt:** Harden only the gate rule, for example by comparing raw step lines.
+    - **Outcome:** Rejected
+    - **Why:** The same continuation and spaced-key shapes hide job `if:` and `continue-on-error` from `required_checks.rs`, so the fix belongs to the workflow-wide reader limits.
+  - **Attempt:** Reject in `yaml_limits.rs` any content line deeper than the previous line's key column after a one-line value, any whitespace other than space and tab, and any key `entry` cannot parse.
+    - **Outcome:** Worked
+    - **Why:** Each is a shape where the reader silently drops text libyaml keeps. The live workflows use none of them, so the rejections cost nothing today.
+  - **Attempt:** Deny a list of known Rust and Cargo variables in inherited `env:`.
+    - **Outcome:** Rejected
+    - **Why:** Cargo and rustc read many variables (`CARGO_TARGET_<triple>_RUSTFLAGS`, `RUSTC_WRAPPER`, `CLIPPY_CONF_DIR`, and future ones); an allowlist of `CARGO_INCREMENTAL` and `CARGO_TERM_COLOR` fails closed.
+- **Root cause:** The rules checked what the line reader extracted, and the reader keeps one line per value, trims Unicode whitespace, and skips lines it cannot parse as keys. The gate rule also checked only the step, not the shell and environment the step inherits.
+- **Resolution:** `yaml_limits.rs` rejects continued values, foreign whitespace, and unparsed keys in every workflow. `inherited_settings.rs` allows only `CARGO_INCREMENTAL` and `CARGO_TERM_COLOR` in workflow-level and required-job `env:`, rejects a `defaults` shell there, and rejects any `GITHUB_ENV` or `GITHUB_PATH` reference in `ci.yml`. A missing gate is reported with each Clippy step that nearly matches and why.
+- **Verification:** `cargo test --test ci_workflow_policy` passes on rustc 1.98.1 with the live `ci.yml` compliant, and a replay of the critic's cases against the updated rules rejects every one.
+- **Prevention/follow-up:** AGENTS.md lists the readable-YAML constraints and the inherited-setting rules. Known limits: the workflow scan does not read repository files Clippy honours, namely `.cargo/config.toml` (`build.rustflags`, `target.<triple>.rustflags`), `Cargo.toml` `[lints]`, `clippy.toml`, crate-level attributes such as `#![allow(clippy::all)]`, and build scripts (`build.rs`); review changes to those for lint weakening. Step-level `env:` or `shell:` on required steps other than the gate, and writes to the runner's file-command files by path instead of through `$GITHUB_ENV`, are not checked. A multi-line plain value, previously read as its first line, is now rejected.
+- **Reusable learning:** A policy rule over a partial reader must reject every input in which the reader would drop text the real parser keeps, and must check the settings the checked step inherits, not only the step itself.
+- **References:** `codex-switcher/tests/ci_workflow_policy/yaml_limits.rs`, `inherited_settings.rs`, `clippy_gate.rs`, and their `.test.rs` files; [2026-09-27-line-based-ci-policy-rules-failed-open.md](2026-09-27-line-based-ci-policy-rules-failed-open.md); [2026-09-26-path-included-integration-test-dead-code.md](2026-09-26-path-included-integration-test-dead-code.md).

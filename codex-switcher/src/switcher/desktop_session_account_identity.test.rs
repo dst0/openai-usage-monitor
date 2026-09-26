@@ -1,6 +1,7 @@
 use super::DesktopSessionBindingService;
 use crate::distribution::mock_app_lifecycle::MockAppLifecycle;
-use crate::distribution::test_helper::{make_account, TestEnv};
+use crate::distribution::test_account_spec::TestAccountSpec;
+use crate::distribution::test_helper::TestEnv;
 use crate::distribution::AppLifecycle;
 use crate::distribution::{DesktopAppSession, WindowProcessIdentity};
 use crate::storage::{load_accounts, read_active_auth_json, save_accounts, write_active_auth_json};
@@ -73,39 +74,30 @@ fn retry_refuses_to_bind_cli_auth_to_a_different_desktop_account() {
     let env = TestEnv::new("retry_cli_marker_reconcile");
     env.populate(
         vec![
-            make_account(
-                "app",
-                None,
-                "app@example.com",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                40.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "new",
-                None,
-                "new@example.com",
-                "pro",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "app",
+                email: "app@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                sprint_pct: 40.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "new",
+                email: "new@example.com",
+                plan: "pro",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("app"),
@@ -153,31 +145,25 @@ fn retry_refuses_to_bind_cli_auth_to_a_different_desktop_account() {
 #[test]
 fn same_email_cannot_relabel_another_accounts_saved_tokens() {
     let env = TestEnv::new("same_email_different_provider");
-    let mut old = make_account(
-        "old",
-        None,
-        "shared@example.test",
-        "plus",
-        40.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let mut old = TestAccountSpec {
+        id: "old",
+        email: "shared@example.test",
+        plan: "plus",
+        sprint_pct: 40.0,
+        ..TestAccountSpec::default()
+    }
+    .build();
     let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .encode(r#"{"email":"shared@example.test"}"#);
     old.tokens.access_token = format!("synthetic.{claims}.signature");
-    let new = make_account(
-        "new",
-        None,
-        "shared@example.test",
-        "team",
-        80.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let new = TestAccountSpec {
+        id: "new",
+        email: "shared@example.test",
+        plan: "team",
+        sprint_pct: 80.0,
+        ..TestAccountSpec::default()
+    }
+    .build();
     env.populate(vec![old, new], Some("old"), Some("old"));
     let mut registry = load_accounts().unwrap();
     let mut auth = read_active_auth_json().unwrap();
@@ -192,28 +178,22 @@ fn direct_relaunch_restoring_previous_auth_blocks_recovery_dispatch() {
     let env = TestEnv::new("direct_relaunch_previous_auth");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                40.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                sprint_pct: 40.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -259,28 +239,22 @@ fn auth_change_after_initial_binding_check_blocks_recovery_dispatch() {
     let env = TestEnv::new("direct_banner_auth_change");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                40.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                sprint_pct: 40.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),

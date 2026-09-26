@@ -51,17 +51,14 @@ fn non_private_or_linked_auth_never_provides_desktop_identity() {
             .as_nanos()
     ));
     std::fs::create_dir(&home).unwrap();
-    let account = make_account(
-        "account-a",
-        None,
-        "a@example.com",
-        "pro",
-        50.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let account = TestAccountSpec {
+        id: "account-a",
+        email: "a@example.com",
+        plan: "pro",
+        sprint_pct: 50.0,
+        ..TestAccountSpec::default()
+    }
+    .build();
     private_json(
         &home.join("accounts.json"),
         &AccountsFile {
@@ -105,17 +102,14 @@ fn conflicting_jwt_email_cannot_rebind_app_even_when_tokens_match_registry() {
             .as_nanos()
     ));
     std::fs::create_dir(&home).unwrap();
-    let mut account = make_account(
-        "account-a",
-        None,
-        "a@example.com",
-        "pro",
-        50.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let mut account = TestAccountSpec {
+        id: "account-a",
+        email: "a@example.com",
+        plan: "pro",
+        sprint_pct: 50.0,
+        ..TestAccountSpec::default()
+    }
+    .build();
     let payload = URL_SAFE_NO_PAD.encode(r#"{"email":"other@example.com"}"#);
     account.tokens.access_token = format!("header.{payload}.signature");
     private_json(

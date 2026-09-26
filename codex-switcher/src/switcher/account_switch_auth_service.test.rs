@@ -1,5 +1,5 @@
 use super::AccountSwitchAuthService;
-use crate::distribution::test_helper::make_account;
+use crate::distribution::test_account_spec::TestAccountSpec;
 use crate::models::{AuthJson, AuthTokens};
 use crate::storage::{
     compare_and_write_active_auth_json_for_switch, load_accounts, read_active_auth_json,
@@ -32,17 +32,14 @@ fn target_auth_drops_prior_api_key_and_account_bound_token_extensions() {
         .unwrap()
         .extra
         .insert("prior_only".into(), serde_json::json!(true));
-    let target = make_account(
-        "next",
-        None,
-        "next@example.test",
-        "team",
-        90.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let target = TestAccountSpec {
+        id: "next",
+        email: "next@example.test",
+        plan: "team",
+        sprint_pct: 90.0,
+        ..TestAccountSpec::default()
+    }
+    .build();
 
     let committed = AccountSwitchAuthService::prepare_replacement(&previous, &target);
 
@@ -57,28 +54,22 @@ fn stale_target_rotation_before_auth_write_preserves_prior_auth() {
     let env = crate::distribution::test_helper::TestEnv::new("switch_stale_post_stop_target");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "team",
-                10.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "team",
+                sprint_pct: 10.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,
@@ -108,28 +99,22 @@ fn prewrite_failure_relaunches_only_with_exact_prior_auth_and_registry() {
     let env = crate::distribution::test_helper::TestEnv::new("switch_prewrite_relaunch_guard");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "team",
-                10.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "team",
+                sprint_pct: 10.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,
@@ -179,28 +164,22 @@ fn failed_commit_clears_verified_prior_intent_before_desktop_relaunch() {
     let env = crate::distribution::test_helper::TestEnv::new("switch_commit_rollback_order");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "team",
-                10.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "team",
+                sprint_pct: 10.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,
@@ -271,28 +250,22 @@ fn failed_commit_never_relaunches_if_rollback_or_readback_is_uncertain() {
         let env = crate::distribution::test_helper::TestEnv::new(mode);
         env.populate(
             vec![
-                make_account(
-                    "old",
-                    None,
-                    "old@example.test",
-                    "team",
-                    10.0,
-                    None,
-                    0,
-                    None,
-                    None,
-                ),
-                make_account(
-                    "next",
-                    None,
-                    "next@example.test",
-                    "team",
-                    80.0,
-                    None,
-                    0,
-                    None,
-                    None,
-                ),
+                TestAccountSpec {
+                    id: "old",
+                    email: "old@example.test",
+                    plan: "team",
+                    sprint_pct: 10.0,
+                    ..TestAccountSpec::default()
+                }
+                .build(),
+                TestAccountSpec {
+                    id: "next",
+                    email: "next@example.test",
+                    plan: "team",
+                    sprint_pct: 80.0,
+                    ..TestAccountSpec::default()
+                }
+                .build(),
             ],
             Some("old"),
             None,

@@ -1,23 +1,21 @@
 use super::*;
 use crate::distribution::mock_app_lifecycle::MockAppLifecycle;
-use crate::distribution::test_helper::{make_account, TestEnv};
+use crate::distribution::test_account_spec::TestAccountSpec;
+use crate::distribution::test_helper::TestEnv;
 use base64::Engine;
 
 #[test]
 fn previous_desktop_relaunch_persists_same_account_token_rotation() {
     let env = TestEnv::new("previous_relaunch_token_rotation");
     env.populate(
-        vec![make_account(
-            "old",
-            None,
-            "old@example.test",
-            "plus",
-            50.0,
-            None,
-            0,
-            None,
-            None,
-        )],
+        vec![TestAccountSpec {
+            id: "old",
+            email: "old@example.test",
+            plan: "plus",
+            sprint_pct: 50.0,
+            ..TestAccountSpec::default()
+        }
+        .build()],
         Some("old"),
         Some("old"),
     );
@@ -56,28 +54,21 @@ fn post_relaunch_commit_preserves_concurrent_registry_change() {
     let env = TestEnv::new("relaunch_registry_concurrency");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("next"),
         Some("next"),
@@ -132,17 +123,14 @@ fn post_relaunch_commit_preserves_concurrent_registry_change() {
 fn post_relaunch_commit_rejects_unknown_auth_change_after_registry_write() {
     let env = TestEnv::new("relaunch_auth_extension_change");
     env.populate(
-        vec![make_account(
-            "next",
-            None,
-            "next@example.test",
-            "team",
-            90.0,
-            None,
-            0,
-            None,
-            None,
-        )],
+        vec![TestAccountSpec {
+            id: "next",
+            email: "next@example.test",
+            plan: "team",
+            sprint_pct: 90.0,
+            ..TestAccountSpec::default()
+        }
+        .build()],
         Some("next"),
         Some("next"),
     );
@@ -183,17 +171,13 @@ fn post_relaunch_commit_rejects_unknown_auth_change_after_registry_write() {
 fn unknown_auth_field_change_blocks_readback_and_rollback() {
     let env = TestEnv::new("unknown_auth_change");
     env.populate(
-        vec![make_account(
-            "old",
-            None,
-            "old@example.test",
-            "plus",
-            0.0,
-            None,
-            0,
-            None,
-            None,
-        )],
+        vec![TestAccountSpec {
+            id: "old",
+            email: "old@example.test",
+            plan: "plus",
+            ..TestAccountSpec::default()
+        }
+        .build()],
         Some("old"),
         None,
     );
@@ -223,28 +207,21 @@ fn desktop_switch_does_not_carry_previous_api_key_to_next_account() {
     let env = TestEnv::new("desktop_switch_previous_api_key");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,
@@ -275,28 +252,21 @@ fn desktop_switch_rejects_concurrent_auth_replacement() {
     let env = TestEnv::new("desktop_switch_concurrent_auth");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,
@@ -324,17 +294,13 @@ fn desktop_switch_rejects_concurrent_auth_replacement() {
 fn rollback_rejects_concurrent_auth_replacement() {
     let env = TestEnv::new("desktop_rollback_concurrent_auth");
     env.populate(
-        vec![make_account(
-            "old",
-            None,
-            "old@example.test",
-            "plus",
-            0.0,
-            None,
-            0,
-            None,
-            None,
-        )],
+        vec![TestAccountSpec {
+            id: "old",
+            email: "old@example.test",
+            plan: "plus",
+            ..TestAccountSpec::default()
+        }
+        .build()],
         Some("old"),
         None,
     );

@@ -1,5 +1,6 @@
 use super::AccountSwitchCommitService;
-use crate::distribution::test_helper::{make_account, TestEnv};
+use crate::distribution::test_account_spec::TestAccountSpec;
+use crate::distribution::test_helper::TestEnv;
 use crate::storage::{
     load_accounts, read_active_auth_json, update_accounts_atomically, write_active_auth_json,
 };
@@ -8,28 +9,23 @@ fn fixture(label: &str) -> TestEnv {
     let env = TestEnv::new(label);
     env.populate(
         vec![
-            make_account(
-                "old",
-                Some("old"),
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                Some("next"),
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                name: Some("old"),
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                name: Some("next"),
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,
@@ -234,17 +230,14 @@ fn direct_switch_commit_rejects_interleaved_active_account_change() {
         initial.active_account_id.as_deref(),
         || {
             update_accounts_atomically(|latest| {
-                let third = make_account(
-                    "third",
-                    None,
-                    "third@example.test",
-                    "plus",
-                    100.0,
-                    None,
-                    0,
-                    None,
-                    None,
-                );
+                let third = TestAccountSpec {
+                    id: "third",
+                    email: "third@example.test",
+                    plan: "plus",
+                    sprint_pct: 100.0,
+                    ..TestAccountSpec::default()
+                }
+                .build();
                 latest.active_account_id = Some(third.id.clone());
                 latest.accounts.push(third);
                 Ok(())

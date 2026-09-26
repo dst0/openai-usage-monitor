@@ -4,7 +4,7 @@ use super::distribution_executor::DistributionExecutor;
 use super::distribution_outcome::{DistributionOutcome, DistributionStatus};
 use super::distribution_request::DistributionRequest;
 use super::distribution_trigger::DistributionTrigger;
-use super::test_helper::make_account;
+use super::test_account_spec::TestAccountSpec;
 use crate::models::{AccountsFile, Settings};
 use std::sync::Mutex;
 
@@ -62,28 +62,26 @@ fn accounts(active_percent: f64) -> AccountsFile {
         active_account_id: Some("active".into()),
         settings,
         accounts: vec![
-            make_account(
-                "active",
-                Some("Active"),
-                "active@example.com",
-                "plus",
-                active_percent,
-                Some(100.0),
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "candidate",
-                Some("Candidate"),
-                "candidate@example.com",
-                "team",
-                100.0,
-                Some(100.0),
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "active",
+                name: Some("Active"),
+                email: "active@example.com",
+                plan: "plus",
+                sprint_pct: active_percent,
+                weekly_pct: Some(100.0),
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "candidate",
+                name: Some("Candidate"),
+                email: "candidate@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                weekly_pct: Some(100.0),
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
     }
 }

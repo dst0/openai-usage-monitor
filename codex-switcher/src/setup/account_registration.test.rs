@@ -1,5 +1,6 @@
 use super::{add_account_from_tokens_with, remove_account_with_hook, save_current_as};
-use crate::distribution::test_helper::{make_account, TestEnv};
+use crate::distribution::test_account_spec::TestAccountSpec;
+use crate::distribution::test_helper::TestEnv;
 use crate::models::{AccountsFile, AuthJson};
 use crate::storage::{load_accounts, save_accounts, write_active_auth_json};
 
@@ -8,28 +9,22 @@ fn account_removal_keeps_concurrent_account_and_fresh_credentials() {
     let env = TestEnv::new("remove_concurrent_account");
     env.populate(
         vec![
-            make_account(
-                "first",
-                None,
-                "first@example.test",
-                "team",
-                100.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "second",
-                None,
-                "second@example.test",
-                "team",
-                100.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "first",
+                email: "first@example.test",
+                plan: "team",
+                sprint_pct: 100.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "second",
+                email: "second@example.test",
+                plan: "team",
+                sprint_pct: 100.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("second"),
         None,
@@ -37,17 +32,16 @@ fn account_removal_keeps_concurrent_account_and_fresh_credentials() {
 
     remove_account_with_hook("first", || {
         let mut newer = load_accounts()?;
-        newer.accounts.push(make_account(
-            "third",
-            None,
-            "third@example.test",
-            "team",
-            100.0,
-            None,
-            0,
-            None,
-            None,
-        ));
+        newer.accounts.push(
+            TestAccountSpec {
+                id: "third",
+                email: "third@example.test",
+                plan: "team",
+                sprint_pct: 100.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+        );
         newer.accounts[1].tokens.refresh_token = Some("fresh-refresh".into());
         newer.settings.auto_switch_enabled = false;
         save_accounts(&newer)
@@ -79,32 +73,26 @@ fn account_removal_keeps_concurrent_account_and_fresh_credentials() {
 fn account_addition_merges_into_newer_registry_without_replaying_stale_settings() {
     let env = TestEnv::new("add_concurrent_registry_change");
     env.populate(
-        vec![make_account(
-            "existing",
-            None,
-            "existing@example.test",
-            "team",
-            100.0,
-            None,
-            0,
-            None,
-            None,
-        )],
+        vec![TestAccountSpec {
+            id: "existing",
+            email: "existing@example.test",
+            plan: "team",
+            sprint_pct: 100.0,
+            ..TestAccountSpec::default()
+        }
+        .build()],
         Some("existing"),
         None,
     );
     let mut stale = load_accounts().unwrap();
-    let added_tokens = make_account(
-        "added",
-        None,
-        "added@example.test",
-        "team",
-        100.0,
-        None,
-        0,
-        None,
-        None,
-    )
+    let added_tokens = TestAccountSpec {
+        id: "added",
+        email: "added@example.test",
+        plan: "team",
+        sprint_pct: 100.0,
+        ..TestAccountSpec::default()
+    }
+    .build()
     .tokens;
 
     add_account_from_tokens_with(
@@ -115,17 +103,16 @@ fn account_addition_merges_into_newer_registry_without_replaying_stale_settings(
         |_| {},
         || {
             let mut newer = load_accounts()?;
-            newer.accounts.push(make_account(
-                "concurrent",
-                None,
-                "concurrent@example.test",
-                "team",
-                100.0,
-                None,
-                0,
-                None,
-                None,
-            ));
+            newer.accounts.push(
+                TestAccountSpec {
+                    id: "concurrent",
+                    email: "concurrent@example.test",
+                    plan: "team",
+                    sprint_pct: 100.0,
+                    ..TestAccountSpec::default()
+                }
+                .build(),
+            );
             newer.accounts[0].tokens.refresh_token = Some("newer-refresh".into());
             newer.settings.auto_switch_enabled = false;
             save_accounts(&newer)
@@ -155,17 +142,14 @@ fn account_addition_merges_into_newer_registry_without_replaying_stale_settings(
 fn first_account_creates_missing_registry_without_a_stale_snapshot_write() {
     let env = TestEnv::new("first_account_atomic_initialize");
     let mut snapshot = AccountsFile::default();
-    let tokens = make_account(
-        "first",
-        None,
-        "first@example.test",
-        "team",
-        100.0,
-        None,
-        0,
-        None,
-        None,
-    )
+    let tokens = TestAccountSpec {
+        id: "first",
+        email: "first@example.test",
+        plan: "team",
+        sprint_pct: 100.0,
+        ..TestAccountSpec::default()
+    }
+    .build()
     .tokens;
     add_account_from_tokens_with(&mut snapshot, "first", tokens, false, |_| {}, || Ok(())).unwrap();
     let saved = load_accounts().unwrap();
@@ -182,17 +166,14 @@ fn save_current_refuses_to_replace_an_unreadable_registry() {
         auth_mode: Some("chatgpt".into()),
         openai_api_key: None,
         tokens: Some(
-            make_account(
-                "current",
-                None,
-                "current@example.test",
-                "team",
-                100.0,
-                None,
-                0,
-                None,
-                None,
-            )
+            TestAccountSpec {
+                id: "current",
+                email: "current@example.test",
+                plan: "team",
+                sprint_pct: 100.0,
+                ..TestAccountSpec::default()
+            }
+            .build()
             .tokens,
         ),
         last_refresh: None,

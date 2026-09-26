@@ -22,6 +22,7 @@ Every pull request must fulfill these conditions before being reviewed by the ma
 
 - [ ] **Tests pass locally**:
   - `cd codex-switcher && cargo test --locked` (Rust CLI test suite against the committed `Cargo.lock`)
+  - `cd codex-switcher && cargo clippy --workspace --all-targets --locked -- -D warnings` (the Clippy gate CI runs on every target)
   - `./scripts/test_swift.sh` (Swift Menu Bar test suite)
 - [ ] **Security & Privacy**:
   - No access tokens, refresh tokens, API keys, or private paths are committed.

@@ -5,7 +5,8 @@ use super::distribution_outcome::DistributionStatus;
 use super::distribution_request::DistributionRequest;
 use super::distribution_transaction_service::DistributionTransactionService;
 use super::mock_app_lifecycle::MockAppLifecycle;
-use super::test_helper::{make_account, TestEnv};
+use super::test_account_spec::TestAccountSpec;
+use super::test_helper::TestEnv;
 use crate::storage::{load_accounts, read_active_auth_json, save_accounts, write_active_auth_json};
 use base64::Engine;
 use std::sync::atomic::Ordering;
@@ -16,28 +17,22 @@ fn closed_desktop_distribution_uses_one_shared_target_without_relaunch() {
     let env = TestEnv::new("cli_only_registry_write_failure");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                50.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "plus",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                sprint_pct: 50.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "plus",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,
@@ -80,39 +75,30 @@ fn mismatched_existing_app_cli_binding_blocks_before_shutdown() {
     let env = TestEnv::new("checkpoint_cli_restore_failure");
     env.populate(
         vec![
-            make_account(
-                "app",
-                None,
-                "app@example.com",
-                "plus",
-                50.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "cli",
-                None,
-                "cli@example.com",
-                "plus",
-                50.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "plus",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "app",
+                email: "app@example.com",
+                plan: "plus",
+                sprint_pct: 50.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "cli",
+                email: "cli@example.com",
+                plan: "plus",
+                sprint_pct: 50.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "plus",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("cli"),
         Some("app"),
@@ -144,39 +130,30 @@ fn stale_cli_plan_cannot_overwrite_a_switch_completed_before_operation_lock() {
     let env = TestEnv::new("stale_cli_plan");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                50.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "plus",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "other",
-                None,
-                "other@example.com",
-                "plus",
-                70.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                sprint_pct: 50.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "plus",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "other",
+                email: "other@example.com",
+                plan: "plus",
+                sprint_pct: 70.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -244,28 +221,22 @@ fn distribution_rejects_cli_auth_that_disagrees_with_registry() {
     let env = TestEnv::new("cli_auth_mismatch");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                50.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "plus",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                sprint_pct: 50.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "plus",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -300,28 +271,22 @@ fn offline_switch_preserves_previous_accounts_rotated_refresh_token() {
     let env = TestEnv::new("offline_previous_token_rotation");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                50.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                sprint_pct: 50.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,
@@ -359,28 +324,22 @@ fn journal_replacement_after_shutdown_relaunches_previous_desktop() {
     let env = TestEnv::new("journal_failure_after_stop");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                50.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "plus",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                sprint_pct: 50.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "plus",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -428,39 +387,30 @@ fn explicit_split_targets_preserve_existing_desktop_state() {
     let env = TestEnv::new("distinct_post_stop_recovery");
     env.populate(
         vec![
-            make_account(
-                "app",
-                None,
-                "app@example.com",
-                "plus",
-                50.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "cli",
-                None,
-                "cli@example.com",
-                "plus",
-                50.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "plus",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "app",
+                email: "app@example.com",
+                plan: "plus",
+                sprint_pct: 50.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "cli",
+                email: "cli@example.com",
+                plan: "plus",
+                sprint_pct: 50.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "plus",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("cli"),
         Some("cli"),
@@ -505,28 +455,22 @@ fn changed_auth_after_stop_blocks_previous_relaunch_and_recovery() {
     let env = TestEnv::new("app_auth_staging_failure");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                50.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "plus",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                sprint_pct: 50.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "plus",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -571,28 +515,22 @@ fn journal_replaced_during_recovery_reports_partial_without_second_restart() {
     let env = TestEnv::new("cli_journal_failure_after_relaunch");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "team",
-                80.0,
-                None,
-                1,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "team",
+                sprint_pct: 80.0,
+                credits: 1,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),

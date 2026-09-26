@@ -48,28 +48,22 @@ fn queued_marker_write_refuses_dispatch_after_shared_auth_changes() {
 
 fn assert_owner_wait_rejects_account_change(with_queue: bool, change_after_marker: bool) {
     let env = crate::distribution::test_helper::TestEnv::new("owner_wait_auth_change");
-    let first = crate::distribution::test_helper::make_account(
-        "account-a",
-        None,
-        "first@example.test",
-        "plus",
-        20.0,
-        None,
-        0,
-        None,
-        None,
-    );
-    let second = crate::distribution::test_helper::make_account(
-        "account-b",
-        None,
-        "second@example.test",
-        "plus",
-        20.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let first = crate::distribution::test_account_spec::TestAccountSpec {
+        id: "account-a",
+        email: "first@example.test",
+        plan: "plus",
+        sprint_pct: 20.0,
+        ..crate::distribution::test_account_spec::TestAccountSpec::default()
+    }
+    .build();
+    let second = crate::distribution::test_account_spec::TestAccountSpec {
+        id: "account-b",
+        email: "second@example.test",
+        plan: "plus",
+        sprint_pct: 20.0,
+        ..crate::distribution::test_account_spec::TestAccountSpec::default()
+    }
+    .build();
     env.populate(vec![first, second], Some("account-a"), Some("account-a"));
     let accounts = crate::storage::load_accounts().unwrap();
     let start_account = super::manifest_store::current_account_binding().unwrap();

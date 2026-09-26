@@ -5,7 +5,8 @@ use super::distribution_journal::DistributionJournal;
 use super::distribution_outcome::DistributionStatus;
 use super::distribution_request::DistributionRequest;
 use super::mock_app_lifecycle::MockAppLifecycle;
-use super::test_helper::{make_account, TestEnv};
+use super::test_account_spec::TestAccountSpec;
+use super::test_helper::TestEnv;
 use super::window_capture_mode::WindowCaptureMode;
 use crate::models::{AccountsFile, Settings};
 use crate::storage::{load_accounts, read_active_auth_json, save_accounts};
@@ -19,61 +20,62 @@ fn test_candidate_skip_reasons() {
     let env = TestEnv::new("skip_reasons");
 
     let accounts = vec![
-        make_account(
-            "acc_depleted",
-            Some("Depleted Acc"),
-            "depleted@example.com",
-            "pro",
-            0.0,
-            Some(100.0),
-            0,
-            Some(3600),
-            None,
-        ),
-        make_account(
-            "acc_weekly_zero",
-            Some("Weekly Zero"),
-            "weekly@example.com",
-            "team",
-            80.0,
-            Some(0.0),
-            0,
-            Some(3600),
-            None,
-        ),
-        make_account(
-            "acc_error",
-            Some("Error Acc"),
-            "error@example.com",
-            "team",
-            90.0,
-            Some(50.0),
-            1,
-            Some(3600),
-            Some("HTTP 429 rate limit exceeded"),
-        ),
-        make_account(
-            "acc_healthy_team",
-            Some("Healthy Team"),
-            "team@example.com",
-            "team",
-            95.0,
-            Some(80.0),
-            2,
-            Some(1800),
-            None,
-        ),
-        make_account(
-            "acc_healthy_pro",
-            Some("Healthy Pro"),
-            "pro@example.com",
-            "pro",
-            85.0,
-            Some(70.0),
-            0,
-            Some(7200),
-            None,
-        ),
+        TestAccountSpec {
+            id: "acc_depleted",
+            name: Some("Depleted Acc"),
+            email: "depleted@example.com",
+            plan: "pro",
+            weekly_pct: Some(100.0),
+            reset_after: Some(3600),
+            ..TestAccountSpec::default()
+        }
+        .build(),
+        TestAccountSpec {
+            id: "acc_weekly_zero",
+            name: Some("Weekly Zero"),
+            email: "weekly@example.com",
+            plan: "team",
+            sprint_pct: 80.0,
+            weekly_pct: Some(0.0),
+            reset_after: Some(3600),
+            ..TestAccountSpec::default()
+        }
+        .build(),
+        TestAccountSpec {
+            id: "acc_error",
+            name: Some("Error Acc"),
+            email: "error@example.com",
+            plan: "team",
+            sprint_pct: 90.0,
+            weekly_pct: Some(50.0),
+            credits: 1,
+            reset_after: Some(3600),
+            error: Some("HTTP 429 rate limit exceeded"),
+        }
+        .build(),
+        TestAccountSpec {
+            id: "acc_healthy_team",
+            name: Some("Healthy Team"),
+            email: "team@example.com",
+            plan: "team",
+            sprint_pct: 95.0,
+            weekly_pct: Some(80.0),
+            credits: 2,
+            reset_after: Some(1800),
+            ..TestAccountSpec::default()
+        }
+        .build(),
+        TestAccountSpec {
+            id: "acc_healthy_pro",
+            name: Some("Healthy Pro"),
+            email: "pro@example.com",
+            plan: "pro",
+            sprint_pct: 85.0,
+            weekly_pct: Some(70.0),
+            reset_after: Some(7200),
+            ..TestAccountSpec::default()
+        }
+        .build(),
     ];
 
     env.populate(accounts.clone(), Some("acc_depleted"), Some("acc_depleted"));
@@ -142,39 +144,31 @@ fn test_candidate_skip_reasons() {
 
 #[test]
 fn test_coordinator_decision_preserves_strategy_and_business_only_filters() {
-    let active = make_account(
-        "active",
-        None,
-        "active@example.com",
-        "plus",
-        0.0,
-        None,
-        0,
-        None,
-        None,
-    );
-    let soon = make_account(
-        "soon",
-        None,
-        "soon@example.com",
-        "team",
-        70.0,
-        None,
-        0,
-        Some(60),
-        None,
-    );
-    let high = make_account(
-        "high",
-        None,
-        "high@example.com",
-        "pro",
-        100.0,
-        None,
-        0,
-        Some(3600),
-        None,
-    );
+    let active = TestAccountSpec {
+        id: "active",
+        email: "active@example.com",
+        plan: "plus",
+        ..TestAccountSpec::default()
+    }
+    .build();
+    let soon = TestAccountSpec {
+        id: "soon",
+        email: "soon@example.com",
+        plan: "team",
+        sprint_pct: 70.0,
+        reset_after: Some(60),
+        ..TestAccountSpec::default()
+    }
+    .build();
+    let high = TestAccountSpec {
+        id: "high",
+        email: "high@example.com",
+        plan: "pro",
+        sprint_pct: 100.0,
+        reset_after: Some(3600),
+        ..TestAccountSpec::default()
+    }
+    .build();
     let service = DistributionDecisionService::new();
     let request = DistributionRequest::auto("quota_exhausted");
 
@@ -226,39 +220,29 @@ fn automatic_running_desktop_plan_keeps_app_and_cli_on_one_account() {
         active_account_id: Some("old".into()),
         settings: Settings::default(),
         accounts: vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "business",
-                None,
-                "business@example.com",
-                "team",
-                100.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "other",
-                None,
-                "other@example.com",
-                "pro",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "business",
+                email: "business@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "other",
+                email: "other@example.com",
+                plan: "pro",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
     };
     let plan = DistributionDecisionService::new().evaluate(
@@ -280,39 +264,29 @@ fn automatic_offline_plan_keeps_next_desktop_launch_on_cli_account() {
         active_account_id: Some("old".into()),
         settings: Settings::default(),
         accounts: vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "business",
-                None,
-                "business@example.com",
-                "team",
-                100.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "other",
-                None,
-                "other@example.com",
-                "pro",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "business",
+                email: "business@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "other",
+                email: "other@example.com",
+                plan: "pro",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
     };
     let plan = DistributionDecisionService::new().evaluate(
@@ -332,28 +306,29 @@ fn test_stale_snapshot_already_optimal() {
     let env = TestEnv::new("already_optimal");
 
     let accounts = vec![
-        make_account(
-            "acc_team",
-            Some("Team"),
-            "team@example.com",
-            "team",
-            90.0,
-            Some(80.0),
-            2,
-            Some(1800),
-            None,
-        ),
-        make_account(
-            "acc_pro",
-            Some("Pro"),
-            "pro@example.com",
-            "pro",
-            80.0,
-            Some(70.0),
-            0,
-            Some(3600),
-            None,
-        ),
+        TestAccountSpec {
+            id: "acc_team",
+            name: Some("Team"),
+            email: "team@example.com",
+            plan: "team",
+            sprint_pct: 90.0,
+            weekly_pct: Some(80.0),
+            credits: 2,
+            reset_after: Some(1800),
+            ..TestAccountSpec::default()
+        }
+        .build(),
+        TestAccountSpec {
+            id: "acc_pro",
+            name: Some("Pro"),
+            email: "pro@example.com",
+            plan: "pro",
+            sprint_pct: 80.0,
+            weekly_pct: Some(70.0),
+            reset_after: Some(3600),
+            ..TestAccountSpec::default()
+        }
+        .build(),
     ];
 
     // A running Desktop and CLI share auth.json; both already use the best account.
@@ -380,28 +355,24 @@ fn test_duplicate_overlapping_automatic_operations() {
     let env = TestEnv::new("in_flight");
 
     let accounts = vec![
-        make_account(
-            "acc_old",
-            Some("Old"),
-            "old@example.com",
-            "plus",
-            0.0,
-            None,
-            0,
-            None,
-            None,
-        ),
-        make_account(
-            "acc_new",
-            Some("New"),
-            "new@example.com",
-            "team",
-            100.0,
-            None,
-            1,
-            None,
-            None,
-        ),
+        TestAccountSpec {
+            id: "acc_old",
+            name: Some("Old"),
+            email: "old@example.com",
+            plan: "plus",
+            ..TestAccountSpec::default()
+        }
+        .build(),
+        TestAccountSpec {
+            id: "acc_new",
+            name: Some("New"),
+            email: "new@example.com",
+            plan: "team",
+            sprint_pct: 100.0,
+            credits: 1,
+            ..TestAccountSpec::default()
+        }
+        .build(),
     ];
     env.populate(accounts, Some("acc_old"), Some("acc_old"));
 
@@ -436,28 +407,23 @@ fn test_transaction_failure_logs_sanitized_correlated_outcome() {
     let env = TestEnv::new("failed_outcome");
     env.populate(
         vec![
-            make_account(
-                "old",
-                Some("Old"),
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "new",
-                Some("New"),
-                "new@example.com",
-                "team",
-                100.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                name: Some("Old"),
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "new",
+                name: Some("New"),
+                email: "new@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -492,28 +458,21 @@ fn test_invalid_journal_and_cooldown_fail_closed_with_outcomes() {
     let env = TestEnv::new("invalid_coordination_state");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "new",
-                None,
-                "new@example.com",
-                "team",
-                100.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "new",
+                email: "new@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -546,28 +505,24 @@ fn test_trigger_reason_correlation_and_operation_id_continuity() {
     let env = TestEnv::new("correlation");
 
     let accounts = vec![
-        make_account(
-            "acc_old",
-            Some("Old"),
-            "old@example.com",
-            "plus",
-            0.0,
-            None,
-            0,
-            None,
-            None,
-        ),
-        make_account(
-            "acc_new",
-            Some("New"),
-            "new@example.com",
-            "team",
-            100.0,
-            None,
-            1,
-            None,
-            None,
-        ),
+        TestAccountSpec {
+            id: "acc_old",
+            name: Some("Old"),
+            email: "old@example.com",
+            plan: "plus",
+            ..TestAccountSpec::default()
+        }
+        .build(),
+        TestAccountSpec {
+            id: "acc_new",
+            name: Some("New"),
+            email: "new@example.com",
+            plan: "team",
+            sprint_pct: 100.0,
+            credits: 1,
+            ..TestAccountSpec::default()
+        }
+        .build(),
     ];
     env.populate(accounts, Some("acc_old"), Some("acc_old"));
 
@@ -605,17 +560,16 @@ fn test_logging_redaction_and_privacy() {
     let env = TestEnv::new("redaction");
 
     let secret_email = "sensitive.executive@confidential-corp.com";
-    let accounts = vec![make_account(
-        "acc_secret",
-        Some("Executive"),
-        secret_email,
-        "business",
-        100.0,
-        None,
-        5,
-        None,
-        None,
-    )];
+    let accounts = vec![TestAccountSpec {
+        id: "acc_secret",
+        name: Some("Executive"),
+        email: secret_email,
+        plan: "business",
+        sprint_pct: 100.0,
+        credits: 5,
+        ..TestAccountSpec::default()
+    }
+    .build()];
     env.populate(accounts, Some("acc_secret"), Some("acc_secret"));
 
     let mock = Arc::new(MockAppLifecycle::new(false));
@@ -681,28 +635,24 @@ fn test_partial_account_switch_terminal_and_cooldown() {
     let env = TestEnv::new("partial_terminal");
 
     let accounts = vec![
-        make_account(
-            "acc_old",
-            Some("Old"),
-            "old@example.com",
-            "plus",
-            0.0,
-            None,
-            0,
-            None,
-            None,
-        ),
-        make_account(
-            "acc_target",
-            Some("Target"),
-            "target@example.com",
-            "team",
-            90.0,
-            None,
-            1,
-            None,
-            None,
-        ),
+        TestAccountSpec {
+            id: "acc_old",
+            name: Some("Old"),
+            email: "old@example.com",
+            plan: "plus",
+            ..TestAccountSpec::default()
+        }
+        .build(),
+        TestAccountSpec {
+            id: "acc_target",
+            name: Some("Target"),
+            email: "target@example.com",
+            plan: "team",
+            sprint_pct: 90.0,
+            credits: 1,
+            ..TestAccountSpec::default()
+        }
+        .build(),
     ];
     env.populate(accounts, Some("acc_old"), Some("acc_old"));
 
@@ -751,28 +701,21 @@ fn recovery_sees_new_desktop_account_marker_before_dispatch() {
     let env = TestEnv::new("marker_before_recovery");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -802,28 +745,22 @@ fn failed_desktop_launch_cannot_claim_the_target_account_for_deferred_recovery()
     let env = TestEnv::new("failed_launch_no_session_claim");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "target",
-                None,
-                "target@example.com",
-                "team",
-                90.0,
-                None,
-                1,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "target",
+                email: "target@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                credits: 1,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -859,28 +796,22 @@ fn replaced_desktop_process_cannot_claim_the_target_account() {
     let env = TestEnv::new("replaced_process_no_session_claim");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "target",
-                None,
-                "target@example.com",
-                "team",
-                90.0,
-                None,
-                1,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "target",
+                email: "target@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                credits: 1,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -910,39 +841,33 @@ fn test_at_most_one_desktop_restart() {
     let env = TestEnv::new("at_most_one_restart");
 
     let accounts = vec![
-        make_account(
-            "acc_old",
-            Some("Old"),
-            "old@example.com",
-            "plus",
-            0.0,
-            None,
-            0,
-            None,
-            None,
-        ),
-        make_account(
-            "acc_team",
-            Some("Team"),
-            "team@example.com",
-            "team",
-            100.0,
-            None,
-            2,
-            None,
-            None,
-        ),
-        make_account(
-            "acc_pro",
-            Some("Pro"),
-            "pro@example.com",
-            "pro",
-            90.0,
-            None,
-            0,
-            None,
-            None,
-        ),
+        TestAccountSpec {
+            id: "acc_old",
+            name: Some("Old"),
+            email: "old@example.com",
+            plan: "plus",
+            ..TestAccountSpec::default()
+        }
+        .build(),
+        TestAccountSpec {
+            id: "acc_team",
+            name: Some("Team"),
+            email: "team@example.com",
+            plan: "team",
+            sprint_pct: 100.0,
+            credits: 2,
+            ..TestAccountSpec::default()
+        }
+        .build(),
+        TestAccountSpec {
+            id: "acc_pro",
+            name: Some("Pro"),
+            email: "pro@example.com",
+            plan: "pro",
+            sprint_pct: 90.0,
+            ..TestAccountSpec::default()
+        }
+        .build(),
     ];
     env.populate(accounts, Some("acc_old"), Some("acc_old"));
 
@@ -1033,28 +958,22 @@ fn running_desktop_rejects_cli_only_split_before_journal_or_auth_change() {
     let env = TestEnv::new("running_desktop_cli_split");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                50.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "pro",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                sprint_pct: 50.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "pro",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -1092,39 +1011,29 @@ fn running_desktop_rejects_distinct_app_and_cli_targets_before_stop() {
     let env = TestEnv::new("running_desktop_distinct_targets");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "app",
-                None,
-                "app@example.com",
-                "team",
-                100.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "cli",
-                None,
-                "cli@example.com",
-                "pro",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "app",
+                email: "app@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "cli",
+                email: "cli@example.com",
+                plan: "pro",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -1161,28 +1070,21 @@ fn desktop_rotated_refresh_token_is_saved_before_replacing_auth() {
     let env = TestEnv::new("desktop_refresh_before_switch");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -1227,17 +1129,13 @@ fn stale_journal_after_shutdown_or_auth_commit_cannot_be_discarded_automatically
     ] {
         let env = TestEnv::new("stale_auth_commit_journal");
         env.populate(
-            vec![make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            )],
+            vec![TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build()],
             Some("old"),
             Some("old"),
         );
@@ -1278,17 +1176,16 @@ fn stale_journal_after_shutdown_or_auth_commit_cannot_be_discarded_automatically
 fn stale_journal_cleanup_rebinds_offline_target_without_a_live_process() {
     let env = TestEnv::new("stale_journal");
 
-    let accounts = vec![make_account(
-        "acc_team",
-        Some("Team"),
-        "team@example.com",
-        "team",
-        90.0,
-        None,
-        2,
-        None,
-        None,
-    )];
+    let accounts = vec![TestAccountSpec {
+        id: "acc_team",
+        name: Some("Team"),
+        email: "team@example.com",
+        plan: "team",
+        sprint_pct: 90.0,
+        credits: 2,
+        ..TestAccountSpec::default()
+    }
+    .build()];
     env.populate(accounts, Some("acc_team"), Some("acc_team"));
 
     // Simulate an abandoned journal with a dead PID (PID 9999999 is dead)
@@ -1336,28 +1233,24 @@ fn test_window_restore_failure_is_a_distribution_recovery_failure() {
     let env = TestEnv::new("window_restore_failure");
     env.populate(
         vec![
-            make_account(
-                "acc_old",
-                Some("Old"),
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "acc_target",
-                Some("Target"),
-                "target@example.com",
-                "team",
-                100.0,
-                None,
-                1,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "acc_old",
+                name: Some("Old"),
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "acc_target",
+                name: Some("Target"),
+                email: "target@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                credits: 1,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("acc_old"),
         Some("acc_old"),
@@ -1385,28 +1278,22 @@ fn windowless_desktop_still_switches_and_recovers_without_geometry_restore() {
     let env = TestEnv::new("windowless_switch");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "team",
-                100.0,
-                None,
-                1,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                credits: 1,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -1438,28 +1325,22 @@ fn window_access_failure_prevents_auth_change_and_restart() {
     let env = TestEnv::new("window_access_failure");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "team",
-                100.0,
-                None,
-                1,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                credits: 1,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -1483,28 +1364,22 @@ fn disabled_window_preservation_skips_geometry_but_checks_window_inventory() {
     let env = TestEnv::new("window_access_disabled_preservation");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "team",
-                100.0,
-                None,
-                1,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                credits: 1,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -1542,28 +1417,22 @@ fn banner_rebind_failure_does_not_block_desktop_recovery() {
     let env = TestEnv::new("banner_rebind_failure");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "team",
-                100.0,
-                None,
-                1,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                credits: 1,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -1591,28 +1460,22 @@ fn disabled_preservation_process_inspection_failure_blocks_auth_change() {
     let env = TestEnv::new("windowless_process_mismatch");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "team",
-                100.0,
-                None,
-                1,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                credits: 1,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -1641,28 +1504,22 @@ fn failed_shutdown_clears_recovery_state_before_a_retry() {
     let env = TestEnv::new("shutdown_failure_cleanup");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "team",
-                100.0,
-                None,
-                1,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                credits: 1,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -1693,28 +1550,22 @@ fn failed_post_shutdown_checkpoint_keeps_old_auth_and_relaunches_desktop() {
     let env = TestEnv::new("post_shutdown_checkpoint_failure");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.com",
-                "team",
-                100.0,
-                None,
-                1,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                credits: 1,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),

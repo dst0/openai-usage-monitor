@@ -6,7 +6,8 @@ use super::distribution_plan::DistributionPlan;
 use super::distribution_recovery_preflight_service::DistributionRecoveryPreflightService;
 use super::distribution_request::DistributionRequest;
 use super::mock_app_lifecycle::MockAppLifecycle;
-use super::test_helper::{make_account, TestEnv};
+use super::test_account_spec::TestAccountSpec;
+use super::test_helper::TestEnv;
 use crate::storage::{load_accounts, read_active_auth_json};
 use serde_json::{json, Value};
 use std::{
@@ -170,28 +171,21 @@ fn rollback_failure_fixture(
     let env = TestEnv::new(label);
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -388,28 +382,21 @@ fn failed_recovery_preflight_keeps_desktop_running_and_restores_prior_checkpoint
     let env = TestEnv::new("recovery_preflight_before_stop");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.test",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "next",
-                None,
-                "next@example.test",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),

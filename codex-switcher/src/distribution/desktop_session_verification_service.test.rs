@@ -2,23 +2,21 @@ use super::DesktopSessionVerificationService;
 use crate::distribution::desktop_app_session::DesktopAppSession;
 use crate::distribution::desktop_external_binding_service::DesktopExternalBindingService;
 use crate::distribution::mock_app_lifecycle::MockAppLifecycle;
-use crate::distribution::test_helper::{make_account, TestEnv};
+use crate::distribution::test_account_spec::TestAccountSpec;
+use crate::distribution::test_helper::TestEnv;
 use crate::storage::{read_active_auth_json, write_active_auth_json};
 
 #[test]
 fn cli_binding_preserves_inferred_app_provenance_and_rejects_replaced_auth() {
     let env = TestEnv::new("inferred_binding_provenance");
-    let account = make_account(
-        "active",
-        None,
-        "active@example.com",
-        "plus",
-        50.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let account = TestAccountSpec {
+        id: "active",
+        email: "active@example.com",
+        plan: "plus",
+        sprint_pct: 50.0,
+        ..TestAccountSpec::default()
+    }
+    .build();
     env.populate(vec![account.clone()], Some("active"), Some("active"));
     let marker_path = env.home().join("desktop-app-session.json");
     let mut marker = DesktopAppSession::load(&marker_path).unwrap();

@@ -3,7 +3,8 @@ use crate::auto_reset::fake_weekly_reset_environment::FakeWeeklyResetEnvironment
 use crate::auto_reset::reset_journal::ResetJournal;
 use crate::auto_reset::weekly_reset_policy::episode_key;
 use crate::auto_reset::AutoResetReport;
-use crate::distribution::test_helper::{make_account, TestEnv};
+use crate::distribution::test_account_spec::TestAccountSpec;
+use crate::distribution::test_helper::TestEnv;
 use crate::models::{AccountConfig, AccountsFile, AuthJson, Settings};
 use crate::storage::{update_accounts_atomically, write_active_auth_json};
 use std::path::PathBuf;
@@ -120,17 +121,15 @@ pub(super) fn settings() -> Settings {
 }
 
 pub(super) fn snapshot() -> AccountConfig {
-    let mut account = make_account(
-        ACCOUNT_ID,
-        None,
-        "user@example.invalid",
-        "team",
-        0.0,
-        Some(0.0),
-        1,
-        None,
-        None,
-    );
+    let mut account = TestAccountSpec {
+        id: ACCOUNT_ID,
+        email: "user@example.invalid",
+        plan: "team",
+        weekly_pct: Some(0.0),
+        credits: 1,
+        ..TestAccountSpec::default()
+    }
+    .build();
     account.account_id = "account-id".into();
     account.tokens.account_id = Some("account-id".into());
     account.last_weekly_reset_time = Some("2026-01-08T00:00:00Z".into());

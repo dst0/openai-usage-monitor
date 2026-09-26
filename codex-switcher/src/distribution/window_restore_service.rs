@@ -261,3 +261,7 @@ impl WindowRestoreService {
         report
     }
 }
+
+#[cfg(test)]
+#[path = "window_restore_service.test.rs"]
+mod tests;

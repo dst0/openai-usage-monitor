@@ -12,6 +12,7 @@ use super::{
     },
     stored_manifest::StoredManifest,
 };
+use crate::distribution::test_account_spec::TestAccountSpec;
 use crate::storage::test_codex_home::TestCodexHome;
 use std::{path::PathBuf, process::Command};
 
@@ -62,28 +63,22 @@ fn no_op_line_of_length(length: usize) -> Vec<u8> {
 #[test]
 fn restart_recovery_binds_to_committed_auth_before_cli_registry_updates() {
     let env = crate::distribution::test_helper::TestEnv::new("recovery_auth_transition");
-    let old = crate::distribution::test_helper::make_account(
-        "old",
-        None,
-        "old@example.com",
-        "plus",
-        0.0,
-        None,
-        0,
-        None,
-        None,
-    );
-    let target = crate::distribution::test_helper::make_account(
-        "target",
-        None,
-        "target@example.com",
-        "team",
-        90.0,
-        None,
-        1,
-        None,
-        None,
-    );
+    let old = TestAccountSpec {
+        id: "old",
+        email: "old@example.com",
+        plan: "plus",
+        ..TestAccountSpec::default()
+    }
+    .build();
+    let target = TestAccountSpec {
+        id: "target",
+        email: "target@example.com",
+        plan: "team",
+        sprint_pct: 90.0,
+        credits: 1,
+        ..TestAccountSpec::default()
+    }
+    .build();
     env.populate(vec![old, target.clone()], Some("old"), Some("old"));
     let mut auth = crate::storage::read_active_auth_json().unwrap();
     auth.tokens = Some(target.tokens);
@@ -105,17 +100,14 @@ fn restart_recovery_binds_to_committed_auth_before_cli_registry_updates() {
 fn conflicting_token_emails_do_not_bind_a_recovery_account() {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     let env = crate::distribution::test_helper::TestEnv::new("recovery_conflicting_email");
-    let target = crate::distribution::test_helper::make_account(
-        "target",
-        None,
-        "target@example.com",
-        "team",
-        90.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let target = TestAccountSpec {
+        id: "target",
+        email: "target@example.com",
+        plan: "team",
+        sprint_pct: 90.0,
+        ..TestAccountSpec::default()
+    }
+    .build();
     env.populate(vec![target.clone()], Some("target"), Some("target"));
     let mut auth = crate::storage::read_active_auth_json().unwrap();
     let tokens = auth.tokens.as_mut().unwrap();

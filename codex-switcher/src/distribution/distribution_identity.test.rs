@@ -2,7 +2,8 @@ use super::distribution_coordinator::DistributionCoordinator;
 use super::distribution_outcome::DistributionStatus;
 use super::distribution_request::DistributionRequest;
 use super::mock_app_lifecycle::MockAppLifecycle;
-use super::test_helper::{make_account, TestEnv};
+use super::test_account_spec::TestAccountSpec;
+use super::test_helper::TestEnv;
 use crate::storage::{load_accounts, read_active_auth_json, write_active_auth_json};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -12,39 +13,29 @@ fn desktop_account_is_bound_before_recovery_waits() {
     let env = TestEnv::new("desktop_marker_before_recovery");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "target",
-                None,
-                "target@example.com",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "cli",
-                None,
-                "cli@example.com",
-                "pro",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "target",
+                email: "target@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "cli",
+                email: "cli@example.com",
+                plan: "pro",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -99,28 +90,21 @@ fn stale_desktop_marker_cannot_drive_automatic_distribution() {
     let env = TestEnv::new("stale_desktop_marker_distribution");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "target",
-                None,
-                "target@example.com",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "target",
+                email: "target@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -152,28 +136,22 @@ fn explicit_app_restart_rejects_stale_desktop_marker_before_shutdown() {
     let env = TestEnv::new("explicit_stale_marker_repair");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                60.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "target",
-                None,
-                "target@example.com",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                sprint_pct: 60.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "target",
+                email: "target@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -225,28 +203,21 @@ fn cli_only_distribution_rejects_split_auth_without_mutation() {
     let env = TestEnv::new("cli_only_depleted_app");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "target",
-                None,
-                "target@example.com",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "target",
+                email: "target@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -284,28 +255,21 @@ fn automatic_cli_rotation_without_restart_rejects_split_auth() {
     let env = TestEnv::new("auto_cli_only");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "target",
-                None,
-                "target@example.com",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "target",
+                email: "target@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -339,39 +303,29 @@ fn stopped_desktop_distribution_keeps_app_marker_unbound() {
     let env = TestEnv::new("stopped_desktop_no_app_claim");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "app",
-                None,
-                "app@example.com",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "cli",
-                None,
-                "cli@example.com",
-                "pro",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "app",
+                email: "app@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "cli",
+                email: "cli@example.com",
+                plan: "pro",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         None,
@@ -415,39 +369,29 @@ fn changed_desktop_auth_after_relaunch_blocks_recovery() {
     let env = TestEnv::new("cli_registry_rollback_after_relaunch");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "app",
-                None,
-                "app@example.com",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "cli",
-                None,
-                "cli@example.com",
-                "pro",
-                80.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "app",
+                email: "app@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "cli",
+                email: "cli@example.com",
+                plan: "pro",
+                sprint_pct: 80.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -483,28 +427,22 @@ fn app_retarget_without_restart_cannot_write_an_unbound_marker() {
     let env = TestEnv::new("no_restart_app_retarget");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                60.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "target",
-                None,
-                "target@example.com",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                sprint_pct: 60.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "target",
+                email: "target@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -531,28 +469,21 @@ fn unknown_cli_target_is_rejected_before_desktop_shutdown() {
     let env = TestEnv::new("invalid_cli_preflight");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "app",
-                None,
-                "app@example.com",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "app",
+                email: "app@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -585,28 +516,21 @@ fn desktop_identity_change_before_transaction_prevents_auth_mutation() {
     let env = TestEnv::new("desktop_changed_before_lock");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "target",
-                None,
-                "target@example.com",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "target",
+                email: "target@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -628,28 +552,21 @@ fn failed_desktop_marker_save_prevents_recovery_dispatch() {
     let env = TestEnv::new("marker_save_failure_no_dispatch");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "target",
-                None,
-                "target@example.com",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "target",
+                email: "target@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),
@@ -678,28 +595,22 @@ fn cli_binding_reconciliation_rejects_a_different_desktop_account() {
     let env = TestEnv::new("cli_binding_must_match_app");
     env.populate(
         vec![
-            make_account(
-                "old",
-                None,
-                "old@example.com",
-                "plus",
-                60.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "target",
-                None,
-                "target@example.com",
-                "team",
-                90.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.com",
+                plan: "plus",
+                sprint_pct: 60.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "target",
+                email: "target@example.com",
+                plan: "team",
+                sprint_pct: 90.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
         Some("old"),
         Some("old"),

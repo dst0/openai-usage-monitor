@@ -1,6 +1,7 @@
 use super::manual_reset_attempt_store::ManualResetAttemptStore;
 use super::reset_account_transaction_with;
-use crate::distribution::test_helper::{make_account, TestEnv};
+use crate::distribution::test_account_spec::TestAccountSpec;
+use crate::distribution::test_helper::TestEnv;
 use crate::quota::ResetCreditConsumeOutcome;
 use crate::storage::{load_accounts, update_accounts_atomically};
 use std::cell::Cell;
@@ -9,17 +10,15 @@ use std::os::unix::fs::PermissionsExt;
 fn setup() -> TestEnv {
     let env = TestEnv::new("account_reset_commit_race");
     env.populate(
-        vec![make_account(
-            "main",
-            None,
-            "owner@example.test",
-            "team",
-            0.0,
-            Some(0.0),
-            2,
-            None,
-            None,
-        )],
+        vec![TestAccountSpec {
+            id: "main",
+            email: "owner@example.test",
+            plan: "team",
+            weekly_pct: Some(0.0),
+            credits: 2,
+            ..TestAccountSpec::default()
+        }
+        .build()],
         Some("main"),
         None,
     );
@@ -146,17 +145,14 @@ fn applied_reset_preserves_concurrent_unrelated_registry_changes() {
                 fresh.accounts[0].name = Some("renamed".into());
                 fresh.accounts.insert(
                     0,
-                    make_account(
-                        "added",
-                        None,
-                        "added@example.test",
-                        "pro",
-                        100.0,
-                        None,
-                        0,
-                        None,
-                        None,
-                    ),
+                    TestAccountSpec {
+                        id: "added",
+                        email: "added@example.test",
+                        plan: "pro",
+                        sprint_pct: 100.0,
+                        ..TestAccountSpec::default()
+                    }
+                    .build(),
                 );
                 Ok(())
             })

@@ -5,7 +5,8 @@ use super::{
 use crate::distribution::distribution_executor::DistributionExecutor;
 use crate::distribution::distribution_outcome::{DistributionOutcome, DistributionStatus};
 use crate::distribution::distribution_request::DistributionRequest;
-use crate::distribution::test_helper::{make_account, TestEnv};
+use crate::distribution::test_account_spec::TestAccountSpec;
+use crate::distribution::test_helper::TestEnv;
 use crate::models::{AccountsFile, Settings};
 use crate::storage::test_codex_home::TestCodexHome;
 use crate::storage::{read_active_auth_json, write_active_auth_json};
@@ -60,28 +61,21 @@ fn depleted_accounts(enabled: bool) -> AccountsFile {
         active_account_id: Some("active".to_string()),
         settings,
         accounts: vec![
-            make_account(
-                "active",
-                None,
-                "active@example.com",
-                "plus",
-                0.0,
-                None,
-                0,
-                None,
-                None,
-            ),
-            make_account(
-                "reserve",
-                None,
-                "reserve@example.com",
-                "team",
-                100.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "active",
+                email: "active@example.com",
+                plan: "plus",
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "reserve",
+                email: "reserve@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
     }
 }
@@ -221,17 +215,14 @@ fn status_does_not_attribute_cli_quota_without_verified_auth_file() {
 #[test]
 fn cli_status_file_identity_requires_matching_live_auth_tokens() {
     let env = TestEnv::new("cli_status_identity");
-    let account = make_account(
-        "active",
-        None,
-        "active@example.com",
-        "plus",
-        45.0,
-        None,
-        0,
-        None,
-        None,
-    );
+    let account = TestAccountSpec {
+        id: "active",
+        email: "active@example.com",
+        plan: "plus",
+        sprint_pct: 45.0,
+        ..TestAccountSpec::default()
+    }
+    .build();
     env.populate(vec![account.clone()], Some("active"), None);
     let binding = CliAuthFileIdentityService::verified_id(&account);
     assert!(binding.is_some());
