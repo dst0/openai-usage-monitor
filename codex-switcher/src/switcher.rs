@@ -59,6 +59,7 @@ pub use recovery_command_service::{
 };
 pub use switch_outcome::SwitchOutcome;
 pub use switch_trigger::SwitchTrigger;
+pub(crate) use thread_detection_service::quota_failure_timestamp;
 pub use thread_detection_service::{
     detect_in_progress_threads, detect_quota_blocked_user_threads_since,
     detect_recent_quota_blocked_user_threads,

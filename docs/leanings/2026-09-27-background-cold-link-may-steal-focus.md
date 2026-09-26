@@ -1,0 +1,19 @@
+# 2026-09-27 — Background cold-task links may bring ChatGPT to the foreground
+
+- **Status:** Partial
+- **Task/context:** Recheck the historical URL → Desktop IPC owner → IPC resume flow for a cold user task without mouse or keyboard focus takeover. This follows [the earlier deep-link observation](2026-09-24-cold-desktop-deep-link-did-not-mount-task.md).
+- **Unexpected observation or failure:** Historical sanitized logs show successful URL-to-owner-to-IPC recovery, but current URL delivery is inconsistent. In one quota-task A/B check, `open -g -a` left the task ownerless for over 15 seconds and a pinned native LaunchServices call mounted it. A later native call on an ownerless task returned success while owner discovery still failed at the immediate check and the frontmost app changed from Antigravity to ChatGPT. An ordinary `open -g -a` call also moved focus from Antigravity to ChatGPT while mounting another task.
+- **Evidence:** Read-only owner discovery before and after each navigation separated URL acceptance from a mounted owner. A read-only frontmost-process check captured the focus change. The installed official `com.openai.codex` build 26.924.20706 (11431) handles normal `codex://threads/<id>` deep links by ensuring the primary window is visible before navigating to the route. Its declared Desktop IPC methods include owner discovery and follower requests; no thread-mount navigation method was evident. No task content, account identity, or credential is recorded here.
+- **Approaches tried:**
+  - **Attempt:** Keep the ordinary URL → owner discovery → IPC flow.
+    - **Outcome:** It still mounted some cold tasks and the historical recovery logs show subsequent IPC recovery. It is not reliably focus-preserving or guaranteed to mount every cold task in this build.
+    - **Why:** `open` success reports URL delivery, while the Desktop decides whether to navigate and show its window.
+  - **Attempt:** Add native LaunchServices delivery pinned to `/Applications/ChatGPT.app` with a nonactivation flag.
+    - **Outcome:** Rejected after one positive owner-mount A/B result and one later focus-stealing, ownerless result.
+    - **Why:** The native route did not guarantee mounting or prevent the Desktop from bringing its own window forward. This proposed fallback was removed before publication.
+- **Root cause:** The current Desktop deep-link handler requests a visible primary window for an ordinary task route; OS-level background flags do not control that in-app behavior. The cause of occasional accepted-but-ownerless navigation remains unconfirmed.
+- **Resolution:** Retain the existing owner-gated URL → IPC flow and its pre-dispatch safety checks. Do not publish the native fallback. Leave automatic switching disabled because focus-safe cold mounting, a complete quota-interrupted recovery turn after account switch, and exact selected-task restoration across multiple windows remain unproven.
+- **Verification:** Installed-app A/B observations confirmed both a successful mount and a failed/focus-stealing native attempt; an ordinary background URL also stole focus. The installed bundle code independently explains the focus observation. No recovery turn or account switch was dispatched by these checks.
+- **Prevention/follow-up:** Seek a supported Desktop-owned background mount/navigation contract. Verify focus, IPC owner, exact recovered turn, substantive post-checkpoint work, and multiwindow selected-task restoration in the installed app before enabling automatic switching.
+- **Reusable learning:** A background URL flag is only a request to macOS; when the target app's handler shows its window, verify actual focus and owner state before treating the route as suitable for unattended recovery.
+- **References:** `README.md`, `CODEX.md`, `AGENTS.md`, `codex-switcher/src/recovery/desktop_ipc.rs`, installed `/Applications/ChatGPT.app/Contents/Resources/app.asar` (code-only inspection).
