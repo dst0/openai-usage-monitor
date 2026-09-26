@@ -60,7 +60,7 @@ impl DesktopCommandService {
                     || {
                         WindowTaskProbeService::desktop_codex_home(
                             storage::codex_home(),
-                            dirs::home_dir(),
+                            WindowTaskProbeService::account_home(),
                         )
                     },
                     recovery::operation_lock,

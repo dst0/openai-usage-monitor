@@ -152,6 +152,14 @@ fn only_the_codex_home_chatgpt_uses_is_accepted() {
 }
 
 #[test]
+fn the_account_home_comes_from_the_user_database() {
+    // Read-only lookup of this test user's passwd entry; not Desktop state.
+    let home = WindowTaskProbeService::account_home().expect("the test user has a home");
+    assert!(home.is_absolute(), "{}", home.display());
+    assert!(home.is_dir(), "{}", home.display());
+}
+
+#[test]
 fn a_running_switch_or_recovery_blocks_the_probe() {
     let fixture = ProbeFixture::new("busy");
     let result = WindowTaskProbeService::run(
@@ -289,12 +297,27 @@ fn helper_failures_are_named_without_echoing_helper_output() {
         .unwrap_err()
         .ends_with("the clipboard may now hold a copied task link"));
     assert_eq!(
+        fixture.run("printf 'WINDOW_MINIMIZED\\n' >&2; exit 1"),
+        Err("Task probe failed: WINDOW_MINIMIZED".into())
+    );
+    // Anything the helper did not name may have followed a focus change.
+    assert_eq!(
         fixture.run(&format!("printf '{TASK_LINK}\\n' >&2; exit 1")),
-        Err("Codex window restore helper rejected the request".into())
+        Err(format!(
+            "Codex window restore helper rejected the request; {POSSIBLE_VISIBLE_CHANGE}"
+        ))
     );
     assert_eq!(
         fixture.run(&success_body(&format!(",\"task_ids\":[\"{TASK_LINK}\"]"))),
-        Err("Task probe returned unexpected fields".into())
+        Err(format!(
+            "Task probe returned unexpected fields; {POSSIBLE_VISIBLE_CHANGE}"
+        ))
+    );
+    assert_eq!(
+        fixture.run("kill -9 $$"),
+        Err(format!(
+            "Codex window restore helper rejected the request; {POSSIBLE_VISIBLE_CHANGE}"
+        ))
     );
 }
 
@@ -304,6 +327,8 @@ fn a_changed_process_identity_is_rejected() {
     let changed = success_body("").replace(BIRTH, "1726789012:000008");
     assert_eq!(
         fixture.run(&changed),
-        Err("Task probe process identity changed".into())
+        Err(format!(
+            "Task probe process identity changed; {POSSIBLE_VISIBLE_CHANGE}"
+        ))
     );
 }

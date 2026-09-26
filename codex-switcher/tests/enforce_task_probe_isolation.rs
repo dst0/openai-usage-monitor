@@ -75,15 +75,18 @@ const RULES: [(&str, &[&str]); 9] = [
         ],
     ),
 ];
-/// Directories that hold build output, history, or prose rather than code.
+/// Directories that hold build output, history, other worktrees, or prose
+/// rather than code. Skill instructions are installed for agents, so their
+/// Markdown is scanned; other Markdown is documentation.
 const SKIPPED_DIRECTORIES: [&str; 6] = [
     ".git",
-    ".claude",
+    ".claude/worktrees",
     "target",
     "node_modules",
     ".build",
     "docs",
 ];
+const SCANNED_MARKDOWN_ROOT: &str = "skills/";
 const THIS_FILE: &str = "codex-switcher/tests/enforce_task_probe_isolation.rs";
 
 #[test]
@@ -130,18 +133,32 @@ fn only_the_explicit_cli_command_reaches_the_task_probe() {
     );
 }
 
+/// Regular files only: symbolic links are not followed, so a link to a
+/// live directory cannot pull untracked state into the scan.
 fn files(root: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         for entry in fs::read_dir(dir).unwrap() {
-            let path = entry.unwrap().path();
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let relative = path
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
-            if path.is_dir() {
-                if !SKIPPED_DIRECTORIES.contains(&name.as_str()) {
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                let skipped = SKIPPED_DIRECTORIES
+                    .iter()
+                    .any(|skipped| *skipped == name || *skipped == relative);
+                if !skipped {
                     stack.push(path);
                 }
-            } else if !name.ends_with(".md") {
+            } else if kind.is_file()
+                && (!name.ends_with(".md") || relative.starts_with(SCANNED_MARKDOWN_ROOT))
+            {
                 found.push(path);
             }
         }

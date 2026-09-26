@@ -131,36 +131,50 @@ const SHARED_HELPER_CODES: [&str; 4] = [
     "WINDOW_INVENTORY_MISMATCH",
 ];
 
-/// Quoted codes after `marker` on non-comment lines of a helper source.
-fn swift_codes(source: &str, marker: &str) -> BTreeSet<String> {
+/// Codes passed as `fail("CODE")` on non-comment lines of a helper source.
+fn failed_codes(source: &str) -> BTreeSet<String> {
     source
         .lines()
         .filter(|line| !line.trim_start().starts_with("//"))
-        .flat_map(|line| line.split(marker).skip(1))
+        .flat_map(|line| line.split("fail(\"").skip(1))
         .map(|rest| rest.split('"').next().unwrap().to_string())
         .collect()
+}
+
+/// Raw values of `case name = "CODE"` lines, the probe's failure enum.
+fn enum_codes(source: &str) -> BTreeSet<String> {
+    source
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("case "))
+        .filter_map(|line| line.split(" = \"").nth(1))
+        .map(|rest| rest.split('"').next().unwrap().to_string())
+        .collect()
+}
+
+fn helper_source(name: &str) -> String {
+    let scripts = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts");
+    std::fs::read_to_string(scripts.join(name)).unwrap()
 }
 
 /// Every failure the probe can print must be nameable, and the list must not
 /// name a code the helper can no longer print.
 #[test]
 fn failure_codes_match_the_native_helper() {
-    let scripts = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts");
-    let read = |name: &str| std::fs::read_to_string(scripts.join(name)).unwrap();
-    let core = read("CodexWindowTaskProbeCore.swift");
-    let helper = read("codex-window-restore.swift");
-    let mut probe = swift_codes(&core, " = \"");
-    probe.extend(swift_codes(&read("CodexWindowTaskProbe.swift"), "fail(\""));
+    let core = helper_source("CodexWindowTaskProbeCore.swift");
+    let helper = helper_source("codex-window-restore.swift");
+    let mut probe = enum_codes(&core);
+    probe.extend(failed_codes(&helper_source("CodexWindowTaskProbe.swift")));
     probe.extend(SHARED_HELPER_CODES.iter().map(|code| code.to_string()));
     let known: BTreeSet<String> = FAILURE_CODES.iter().map(|code| code.to_string()).collect();
     assert!(probe.len() >= 20, "probe failure scan found {probe:?}");
     let unnamed: Vec<_> = probe.difference(&known).collect();
     assert!(unnamed.is_empty(), "unnamed: {unnamed:?}");
+    let helper_shared = failed_codes(&helper);
     let mut emitted = probe.clone();
-    emitted.extend(swift_codes(&helper, "fail(\""));
+    emitted.extend(helper_shared.iter().cloned());
     let stale: Vec<_> = known.difference(&emitted).collect();
     assert!(stale.is_empty(), "stale: {stale:?}");
-    let helper_shared = swift_codes(&helper, "fail(\"");
     assert!(SHARED_HELPER_CODES
         .iter()
         .all(|code| helper_shared.contains(*code)));
@@ -170,4 +184,18 @@ fn failure_codes_match_the_native_helper() {
         )),
         "the helper's window limit differs from MAX_PROBED_WINDOWS"
     );
+}
+
+/// The helper appends the suffix once the probe has begun visible changes;
+/// the Rust parser must expect exactly that text, and the probe must set it.
+#[test]
+fn after_focus_marker_matches_the_native_helper() {
+    let suffix = std::str::from_utf8(AFTER_FOCUS_SUFFIX).unwrap();
+    let helper = helper_source("codex-window-restore.swift");
+    assert!(helper.contains(&format!("let afterFocusSuffix = \"{suffix}\"\n")));
+    assert!(helper.contains("VisibleChangeMarker.shared.started ? afterFocusSuffix : \"\""));
+    assert!(helper_source("CodexWindowTaskProbe.swift")
+        .contains("func beginVisibleChanges() { VisibleChangeMarker.shared.started = true }"));
+    assert!(helper_source("CodexWindowTaskProbeCore.swift")
+        .contains("    system.beginVisibleChanges()\n"));
 }
