@@ -60,7 +60,7 @@ impl AppLifecycle for SystemAppLifecycle {
         }
         let mut backend = SystemWindowRestoreBackend::new()?;
         WindowProcessValidationService::confirm(&mut backend, &expected)?;
-        switcher::stop_codex_app_gracefully()
+        switcher::stop_codex_app_gracefully(&expected)
     }
 
     fn launch_app(&self) -> Result<Vec<u32>, String> {

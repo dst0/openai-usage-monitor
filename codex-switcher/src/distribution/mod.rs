@@ -1,13 +1,16 @@
 pub mod app_lifecycle;
 pub mod automatic_distribution_service;
 pub mod automatic_distribution_source;
+mod cli_auth_file_identity_service;
 pub mod daemon_account_sync_service;
 pub mod daemon_loop_service;
 pub mod daemon_tick_service;
 pub mod desktop_app_session;
+pub(crate) mod desktop_session_verification_service;
 pub mod distribution_account_commit_service;
 pub mod distribution_audit_logger;
 pub mod distribution_candidate;
+mod distribution_cli_commit_service;
 pub mod distribution_coordinator;
 pub mod distribution_decision_service;
 mod distribution_desktop_relaunch_service;
@@ -15,8 +18,10 @@ pub mod distribution_executor;
 pub mod distribution_journal;
 pub mod distribution_outcome;
 pub mod distribution_plan;
+mod distribution_post_stop_recovery_service;
 pub mod distribution_recovery_audit_service;
 pub mod distribution_request;
+mod distribution_state_preflight_service;
 pub mod distribution_transaction_service;
 pub mod distribution_trigger;
 pub mod historical_log_redaction_service;
@@ -96,6 +101,14 @@ pub mod test_helper;
 #[cfg(test)]
 #[path = "distribution.test.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "distribution_identity.test.rs"]
+mod identity_tests;
+
+#[cfg(test)]
+#[path = "distribution_transaction_safety.test.rs"]
+mod transaction_safety_tests;
 
 #[cfg(test)]
 #[path = "automatic_distribution_service.test.rs"]

@@ -1,4 +1,6 @@
+use super::account_switch_noop_service::AccountSwitchNoopService;
 use super::codex_availability_service::CodexAvailabilityService;
+use super::desktop_session_binding_service::DesktopSessionBindingService;
 use super::*;
 use crate::distribution::LogRedactionService;
 use crate::models::AuthJson;
@@ -48,32 +50,14 @@ pub fn switch_to_account(
         ));
     }
 
-    // Redundant switch guard: if target account is already active, return Ok(()) immediately.
-    let active_id = accounts_file.active_account_id.as_deref();
-    let is_already_active = active_id
-        .map(|id| id.eq_ignore_ascii_case(&target_account.id))
-        .unwrap_or(false)
-        || accounts_file
-            .accounts
-            .iter()
-            .find(|a| Some(a.id.as_str()) == active_id)
-            .map(|a| a.id.eq_ignore_ascii_case(&target_account.id))
-            .unwrap_or(false)
-        || (target_account.tokens.refresh_token.is_some()
-            && accounts_file
-                .accounts
-                .iter()
-                .find(|a| Some(a.id.as_str()) == active_id)
-                .and_then(|a| a.tokens.refresh_token.as_ref())
-                == target_account.tokens.refresh_token.as_ref());
-
-    if is_already_active {
-        return Ok(SwitchOutcome {
-            recovery_error: None,
-        });
+    if let Some(outcome) =
+        AccountSwitchNoopService::resolve(&accounts_file, &target_account, restart_app)?
+    {
+        return Ok(outcome);
     }
 
     let app_was_running = restart_app && is_codex_app_running();
+    let desktop_running_without_restart = !restart_app && is_codex_app_running();
     if app_was_running
         && std::env::var_os("CODEX_RESTART_WORKER").is_some()
         && crate::recovery::restart_cancellation_requested()
@@ -109,13 +93,14 @@ pub fn switch_to_account(
     let previous_account_id = accounts_file
         .active_account_id
         .as_deref()
-        .unwrap_or("unknown");
+        .unwrap_or("unknown")
+        .to_string();
     crate::logger::log(
         "INFO",
         trigger.as_category(),
         &format!(
             "Starting account switch previous_ref={} target_ref={} target_email_ref={} [running_threads={}]",
-            LogRedactionService::sanitize_field("account_id", previous_account_id),
+            LogRedactionService::sanitize_field("account_id", &previous_account_id),
             LogRedactionService::sanitize_field("account_id", &target_account.id),
             LogRedactionService::sanitize_field("email", &target_account.email),
             running_threads.len()
@@ -158,7 +143,12 @@ pub fn switch_to_account(
     // Never force-kill it: if it cannot flush and exit, leave auth untouched.
     if app_was_running {
         crate::recovery::save_pending(&running_threads)?;
-        stop_codex_app_gracefully()?;
+        stop_codex_app_gracefully(
+            recovery_banner
+                .as_ref()
+                .expect("running app must have a recovery banner")
+                .expected_process(),
+        )?;
         // The first journal makes the target list durable before shutdown. The
         // second checkpoint is the verification boundary: it excludes work and
         // abort records flushed by the old Desktop from post-restart proof.
@@ -181,15 +171,17 @@ pub fn switch_to_account(
     accounts_file.active_account_id = Some(target_account.id.clone());
     if let Err(error) = save_accounts(&accounts_file) {
         let restore_result = write_active_auth_json(&previous_auth);
-        if app_was_running {
-            let _ = launch_codex_app();
-        }
-        return match restore_result {
-            Ok(()) => Err(error),
-            Err(restore_error) => Err(format!(
+        let failure = match restore_result {
+            Ok(()) => error,
+            Err(restore_error) => format!(
                 "Failed to update account state ({error}); restoring the previous authentication also failed ({restore_error})"
-            )),
+            ),
         };
+        return Err(if app_was_running {
+            CodexAvailabilityService::relaunch_previous_state(failure)
+        } else {
+            failure
+        });
     }
 
     // 5. Relaunch the desktop first, then dispatch through its own queue/UI.
@@ -198,27 +190,33 @@ pub fn switch_to_account(
     let recovery_error = if app_was_running {
         match launch_codex_app() {
             Ok(launched_pids) => {
-                let restore_result = if launched_pids.len() != 1 {
+                let recovery_result = if launched_pids.len() != 1 {
                     Err(format!(
                         "Codex relaunch must produce exactly one main process, got {launched_pids:?}"
                     ))
                 } else {
-                    recovery_banner
-                        .as_ref()
-                        .expect("running app must have a recovery banner")
-                        .restore_after_relaunch(
-                            launched_pids[0],
-                            recovery_operation_id.as_deref().unwrap_or("account_switch"),
-                            "account_switch",
-                        )
-                };
-                let recovery_result = restore_result.and_then(|()| {
-                    crate::recovery::recover_threads_with_banner(
-                        &running_threads,
-                        crate::recovery::RecoveryMode::CapturedRestart,
-                        recovery_banner.as_mut().unwrap(),
+                    DesktopSessionBindingService::bind_then_recover(
+                        &crate::storage::codex_home(),
+                        &target_account.id,
+                        launched_pids[0],
+                        |bound_process| {
+                            recovery_banner
+                                .as_ref()
+                                .expect("running app must have a recovery banner")
+                                .restore_after_relaunch(
+                                    launched_pids[0],
+                                    recovery_operation_id.as_deref().unwrap_or("account_switch"),
+                                    "account_switch",
+                                )?;
+                            crate::recovery::recover_threads_with_banner(
+                                &running_threads,
+                                crate::recovery::RecoveryMode::CapturedRestart,
+                                recovery_banner.as_mut().unwrap(),
+                            )?;
+                            DesktopSessionBindingService::confirm_after_recovery(bound_process)
+                        },
                     )
-                });
+                };
                 drop(recovery_banner.take());
                 let stability_result = crate::recovery::verify_desktop_stable(&launched_pids, true);
                 match (recovery_result, stability_result) {
@@ -236,6 +234,12 @@ pub fn switch_to_account(
                 Some(CodexAvailabilityService::keep_after_failure(error))
             }
         }
+    } else if desktop_running_without_restart {
+        DesktopSessionBindingService::reconcile_current_cli_binding(
+            &crate::storage::codex_home(),
+            &target_account.id,
+        )
+        .err()
     } else {
         None
     };

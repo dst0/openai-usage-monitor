@@ -122,6 +122,28 @@ and malformed helper output block dispatch and retain the original checkpoint.
 Automatic switching stays disabled until a
 quota-interrupted cold task completes end-to-end recovery in the installed app.
 
+The Menu Bar's APP quota comes from `desktop-app-session.json` only when its
+saved account is bound to the exact live ChatGPT PID and process birth time.
+An absent, malformed, or previous-process marker makes a running APP display
+`—`. Rust writes a CLI quota identity only when live authentication matches
+the selected account, and the Swift reader checks the exact `auth.json` file
+identity before displaying it. An unknown or replaced CLI auth file displays
+`—` instead of using the first cached account or top-level quota. Distribution, direct
+`cxi switch`, and `cxi restart` bind the new Desktop process before recovery.
+CLI-only changes update the marker's expected CLI account after committing
+CLI auth and registry; a failed marker write never authorizes recovery IPC.
+Distribution rechecks the registry and active CLI authentication after taking
+the operation lock. During a Desktop relaunch the marker's CLI field follows
+the account temporarily staged for Desktop; the final CLI commit updates it.
+If a required journal or authentication write fails after shutdown, the
+switcher attempts to relaunch the previous Desktop session and restore CLI auth.
+A failed second checkpoint relaunches and binds the previous APP account without
+dispatching recovery requests. A CLI-only commit that rolls back returns an
+error, not a successful distribution status.
+An in-process logout or login that keeps the same ChatGPT PID cannot be
+identified from process identity alone. Until Desktop exposes an authoritative
+current-account read, treat that case as requiring a verified restart.
+
 On this host the Command Line Tools Swift compiler and default macOS 27.0 SDK
 have mismatched build versions. Until the tools are repaired, use
 `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` and a writable
@@ -131,7 +153,8 @@ built app signature and running process after installation.
 ## Runtime Paths & Files
 - `~/.codex/auth.json`: Active authentication tokens used by Codex CLI and `ChatGPT.app` (0600 permissions).
 - `~/.codex/accounts.json`: Configured accounts database, multipliers, and cached quota metrics (0600 permissions).
-- `~/.codex/usage-status.json`: Real-time quota snapshot consumed by the macOS Menu Bar app.
+- `~/.codex/usage-status.json`: Real-time quota snapshot with a CLI auth-file identity; the macOS Menu Bar app rejects CLI quota attribution after `auth.json` changes.
+- `~/.codex/desktop-app-session.json`: Private exact-process APP account marker and expected CLI account; stale or unbound records are not authority.
 - `~/.codex/ipc/` and `~/.codex/app-server-daemon/`: Official Codex Desktop IPC and app-server runtime state (preserved by the Monitor uninstaller).
 - `~/.codex/thread-writer-locks/`: Active flock files held by Codex worker threads.
 - `~/.codex/state_5.sqlite`: Thread metadata database used by the thread detection engine.

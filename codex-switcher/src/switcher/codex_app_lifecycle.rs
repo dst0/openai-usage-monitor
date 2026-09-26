@@ -1,3 +1,6 @@
+use crate::distribution::{
+    SystemWindowRestoreBackend, WindowProcessIdentity, WindowProcessValidationService,
+};
 use std::process::Command;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -42,23 +45,28 @@ pub fn is_codex_app_running() -> bool {
     !codex_app_pids().is_empty()
 }
 
-fn signal_codex_app(signal: &str) {
-    let pids = codex_app_pids();
-    if pids.is_empty() {
-        return;
+fn validate_stop_target_with(
+    expected: &WindowProcessIdentity,
+    pids: impl FnOnce() -> Vec<u32>,
+    inspect: impl FnOnce(u32) -> Result<WindowProcessIdentity, String>,
+) -> Result<(), String> {
+    if pids() != [expected.pid] || inspect(expected.pid)? != *expected {
+        return Err("Desktop process identity changed before shutdown".into());
     }
-
-    let _ = Command::new("/bin/kill")
-        .arg(signal)
-        .args(pids.iter().map(u32::to_string))
-        .status();
+    Ok(())
 }
 
-pub(crate) fn stop_codex_app_gracefully() -> Result<(), String> {
+pub(crate) fn stop_codex_app_gracefully(expected: &WindowProcessIdentity) -> Result<(), String> {
     // 1. Send SIGTERM to ChatGPT main process.
     // Chromium catches SIGTERM to flush SQLite databases, cookies, and WAL logs cleanly,
     // while completely bypassing the interactive GUI beforeunload ("Leave site?") prompt.
-    signal_codex_app("-TERM");
+    validate_stop_target_with(expected, codex_app_pids, |pid| {
+        let mut backend = SystemWindowRestoreBackend::new()?;
+        WindowProcessValidationService::inspect(&mut backend, pid)
+    })?;
+    if unsafe { libc::kill(expected.pid as i32, libc::SIGTERM) } != 0 {
+        return Err("Could not signal the verified Desktop process".into());
+    }
 
     // 2. Wait up to 3 seconds for graceful process exit
     let exited = wait_for_app_exit_with(
@@ -80,6 +88,10 @@ pub(crate) fn stop_codex_app_gracefully() -> Result<(), String> {
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "codex_app_lifecycle.test.rs"]
+mod tests;
 
 pub(crate) fn launch_codex_app() -> Result<Vec<u32>, String> {
     let existing = codex_app_pids();

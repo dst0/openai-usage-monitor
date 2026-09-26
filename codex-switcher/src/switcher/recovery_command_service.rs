@@ -1,6 +1,7 @@
 use super::account_switch_service::prioritize_primary_if_user;
 use super::codex_app_lifecycle::{codex_app_pids, CODEX_APP_EXECUTABLE};
 use super::codex_availability_service::CodexAvailabilityService;
+use super::desktop_session_binding_service::DesktopSessionBindingService;
 use super::*;
 use chrono::Utc;
 use std::process::Command;
@@ -185,6 +186,7 @@ pub fn restart_and_recover(
     }
     let _operation = crate::recovery::operation_lock()?;
     crate::recovery::arm_automation_cooldown()?;
+    let cli_account_id = DesktopSessionBindingService::verified_cli_account_id()?;
     if !is_codex_app_running() {
         return Err("Codex is not running".into());
     }
@@ -208,7 +210,7 @@ pub fn restart_and_recover(
         crate::recovery::preflight_desktop_dispatch()?;
     }
     crate::recovery::save_pending(&targets)?;
-    stop_codex_app_gracefully()?;
+    stop_codex_app_gracefully(banner.expected_process())?;
     // Re-checkpoint only after the old process has fully exited, so recovery
     // cannot be falsely verified by work flushed during shutdown.
     if let Err(error) = crate::recovery::save_pending(&targets) {
@@ -228,15 +230,27 @@ pub fn restart_and_recover(
             "Codex relaunch must produce exactly one main process, got {launched_pids:?}"
         ))
     } else {
-        banner
-            .restore_after_relaunch(launched_pids[0], &operation_id, "captured_restart")
-            .and_then(|()| {
+        DesktopSessionBindingService::bind_then_recover(
+            &crate::storage::codex_home(),
+            &cli_account_id,
+            launched_pids[0],
+            |bound_process| {
+                if DesktopSessionBindingService::verified_cli_account_id()? != cli_account_id {
+                    return Err("CLI account changed during Desktop restart".into());
+                }
+                banner.restore_after_relaunch(
+                    launched_pids[0],
+                    &operation_id,
+                    "captured_restart",
+                )?;
                 crate::recovery::recover_threads_with_banner(
                     &targets,
                     crate::recovery::RecoveryMode::CapturedRestart,
                     &mut banner,
-                )
-            })
+                )?;
+                DesktopSessionBindingService::confirm_after_recovery(bound_process)
+            },
+        )
     };
     drop(banner);
     let stability_result = crate::recovery::verify_desktop_stable(&launched_pids, true);

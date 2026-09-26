@@ -24,6 +24,8 @@ swiftc -parse-as-library \
     Sources/QuotaModels.swift \
     Sources/StatusBarStyle.swift \
     Sources/CodexClient.swift \
+    Sources/CodexDesktopProcessIdentity.swift \
+    Sources/CodexRecoveryProcessIdentity.swift \
     Sources/AutoLaunchManager.swift \
     Sources/SingleInstanceGuard.swift \
     Sources/MenuIconButton.swift \
@@ -38,6 +40,7 @@ swiftc -parse-as-library \
     Sources/AccountSectionCardView+Tracking.swift \
     Sources/AppDelegate.swift \
     Sources/AppDelegate+FileWatchers.swift \
+    Sources/AppDelegate+DesktopLifecycle.swift \
     Sources/StatusBarBracketRenderer.swift \
     Sources/AppDelegate+StatusBar.swift \
     Sources/AppDelegate+StatusBarOverloads.swift \
@@ -83,6 +86,8 @@ swiftc -parse-as-library \
     Sources/Localization.swift \
     Sources/QuotaModels.swift \
     Sources/CodexClient.swift \
+    Sources/CodexDesktopProcessIdentity.swift \
+    Sources/CodexRecoveryProcessIdentity.swift \
     tests/CodexClientIdentityTests.swift \
     -o "${TMP_BIN_DIR}/codex-client-identity_test"
 "${TMP_BIN_DIR}/codex-client-identity_test"
