@@ -1,0 +1,28 @@
+# 2026-09-27 — A synthesized Desktop shortcut needs keymap, delivery, and focus proof
+
+- **Status:** Partial
+- **Task/context:** Reviewing and finishing the Codex-authored `cxi window probe-tasks --allow-focus-and-clipboard` diagnostic (`scripts/CodexWindowTaskProbe.swift`) before publication. The probe focuses each ChatGPT window and synthesizes Copy deeplink to learn whether every window exposes a distinct selected task.
+- **Unexpected observation or failure:** The prototype treated Cmd+Opt+L as if it were a function call. It posted the keystroke at the HID event tap, trusted `NSWorkspace.frontmostApplication` after one fixed 80 ms sleep, and assumed the shortcut always meant Copy deeplink. It also read the clipboard text after reading the change count, so a write between those two reads could be accepted.
+- **Evidence:** Read-only inspection of the bundled main-process JavaScript of installed ChatGPT 26.924.20706 (no process launched, no window touched): the `copyDeeplink` command has `defaultKeybindings` `CmdOrCtrl+Alt+L` and is a hidden menu item (`visible: false`, `acceleratorWorksWhenHidden: true`). Its click handler sends `copy-deeplink` to `BrowserWindow.getFocusedWindow()` and falls back to another window when none is focused. The renderer copies `codex://threads/<id>` only when a conversation is selected. Keybinding overrides are read from `join(CODEX_HOME ?? ~/.codex, "keybindings.json")`, a JSON array of `{command, key}`, and assigning an accelerator to one command removes it from the command that held it. The probe was not run live in this work.
+- **Approaches tried:**
+  - **Attempt:** Post the shortcut at the HID tap after a focus check.
+    - **Outcome:** Did not work.
+    - **Why:** Rejected on review: a focus change between the check and the post sends Cmd+Opt+L to whichever app is frontmost, which may give it an unrelated meaning.
+  - **Attempt:** Use `NSWorkspace.frontmostApplication` as the focus witness inside the helper.
+    - **Outcome:** Did not work.
+    - **Why:** Rejected on review: that property is refreshed by workspace notifications, which a command-line helper without a run loop never processes, so it can stay stale. Not reproduced live, because running the probe was out of bounds.
+  - **Attempt:** Press the Copy deeplink menu item through Accessibility instead of sending a keystroke.
+    - **Outcome:** Did not work.
+    - **Why:** The menu item is hidden, so it is absent from the Accessibility menu tree.
+  - **Attempt:** Parse `keybindings.json` and allow overrides that do not touch Copy deeplink or Cmd+Opt+L.
+    - **Outcome:** Did not work.
+    - **Why:** Rejected: accelerator spelling equivalence and default-removal rules are Desktop internals, and a mistake would run a different command, such as archiving a task, in every window.
+  - **Attempt:** Refuse any keymap override; post the event only to the verified PID; read focus live from Accessibility (system-wide focused application plus the application's focused window), polled for up to 1 s before and rechecked after each copy; refuse minimized windows and missing Accessibility or event-posting access before any visible change; require one clipboard write whose change count is unchanged across the text read; hold the switch/recovery operation lock for the whole run.
+    - **Outcome:** Partial.
+    - **Why:** Each check is covered by hermetic tests, but live delivery is unproven: macOS cooperative activation, pid-targeted delivery to Electron accelerators, and Chromium's pasteboard write count have not been observed on the installed Desktop.
+- **Root cause:** A keystroke's meaning comes from the user's keymap and the application's focused-window fallback, and its recipient comes from HID focus at delivery time. None of those were proven by the prototype.
+- **Resolution:** `CopyDeeplinkKeymapService` refuses any keymap other than absent, blank, or `[]`. `WindowTaskProbeService` checks the opt-in flag, the operation lock, the keymap, and a single ChatGPT process before it resolves the helper. The helper posts only to the PID, polls Accessibility focus, rejects minimized windows, and validates the clipboard with a confirming change count. The CLI names fixed failure codes and never echoes other helper output.
+- **Verification:** Rust unit tests for the service ordering (no step runs before the earlier checks pass, and the lock is held until the helper answers), keymap acceptance and refusal, response and failure-code validation, a Swift/Rust failure-code drift check, and CLI parsing, all with temporary fake helpers and homes; `tests/enforce_task_probe_isolation.rs`; Swift tests for link validation and one-to-one frame mapping; the helper compiles. Mutating the lock binding, the keymap check, the response field check, the opt-in argument, the confirming change count, or the mapping claim check makes a test fail.
+- **Prevention/follow-up:** The owner should run the probe once on a two-window Desktop with a default keymap and record the result in a new linked learning. Re-inspect the default binding after a ChatGPT update before trusting the probe on another build.
+- **Reusable learning:** A synthesized shortcut is attributable only when its binding, its recipient process, and the focused target are each proven at delivery time; otherwise refuse before any visible change.
+- **References:** `scripts/CodexWindowTaskProbe.swift`, `scripts/CodexWindowTaskProbeValidation.swift`, `tests/CodexWindowTaskProbeTests.swift`, `codex-switcher/src/distribution/window_task_probe_service.rs`, `codex-switcher/src/distribution/copy_deeplink_keymap_service.rs`, `codex-switcher/tests/enforce_task_probe_isolation.rs`, `2026-09-27-multiwindow-task-mapping-needs-active-probe.md`.
