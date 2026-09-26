@@ -30,8 +30,16 @@ extension AppDelegate {
   public static func resolveStatusBarSessions(
     from snapshot: MultiAccountSnapshot, isScreenActive: Bool = true
   ) -> (appSession: StatusBarSessionValues?, cliSession: StatusBarSessionValues) {
-    let appSession = (snapshot.isAppRunning ? snapshot.appAccount : nil).map {
-      makeSessionValues(fiveHourPercentage: $0.fiveHourPercentage, weeklyPercentage: $0.weeklyPercentage, planMultiplier: $0.planMultiplier, isScreenActive: isScreenActive)
+    let appSession: StatusBarSessionValues?
+    if !snapshot.isAppRunning {
+      appSession = nil
+    } else if let app = snapshot.appAccount {
+      appSession = makeSessionValues(
+        fiveHourPercentage: app.fiveHourPercentage, weeklyPercentage: app.weeklyPercentage,
+        planMultiplier: app.planMultiplier, isScreenActive: isScreenActive)
+    } else {
+      appSession = (fiveHPct: "—", fiveHColor: .secondaryLabelColor,
+        weeklyPct: "—", weeklyColor: .secondaryLabelColor)
     }
     let cli = resolveCliAccount(from: snapshot)
     let cliSession = cli.map {

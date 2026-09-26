@@ -16,12 +16,16 @@ pub struct MockAppLifecycle {
     pub require_window_on_stability: Mutex<Option<bool>>,
     pub stop_error: Mutex<Option<String>>,
     pub corrupt_manifest_after_stop: Mutex<Option<PathBuf>>,
+    pub stop_observer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     pub recovery_error: Mutex<Option<String>>,
+    pub recovery_observer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     pub launch_error: Mutex<Option<String>>,
     pub capture_error: Mutex<Option<String>>,
     pub process_inspection_error: Mutex<Option<String>>,
+    pub process_inspection_error_after: Mutex<Option<(usize, String)>>,
     pub process_inspection_calls: AtomicUsize,
     pub change_process_birth_after_first_inspection: AtomicBool,
+    pub change_process_birth_after_launch: AtomicBool,
     pub capture_mode: Mutex<WindowCaptureMode>,
     pub restore_error: Mutex<Option<String>>,
     pub rebind_error: Mutex<Option<String>>,
@@ -48,12 +52,16 @@ impl MockAppLifecycle {
             require_window_on_stability: Mutex::new(None),
             stop_error: Mutex::new(None),
             corrupt_manifest_after_stop: Mutex::new(None),
+            stop_observer: Mutex::new(None),
             recovery_error: Mutex::new(None),
+            recovery_observer: Mutex::new(None),
             launch_error: Mutex::new(None),
             capture_error: Mutex::new(None),
             process_inspection_error: Mutex::new(None),
+            process_inspection_error_after: Mutex::new(None),
             process_inspection_calls: AtomicUsize::new(0),
             change_process_birth_after_first_inspection: AtomicBool::new(false),
+            change_process_birth_after_launch: AtomicBool::new(false),
             capture_mode: Mutex::new(WindowCaptureMode::Captured),
             restore_error: Mutex::new(None),
             rebind_error: Mutex::new(None),
@@ -65,8 +73,16 @@ impl MockAppLifecycle {
         *self.recovery_error.lock().unwrap() = Some(err.into());
     }
 
+    pub fn observe_recovery(&self, observer: impl FnOnce() + Send + 'static) {
+        *self.recovery_observer.lock().unwrap() = Some(Box::new(observer));
+    }
+
     pub fn set_stop_error(&self, err: impl Into<String>) {
         *self.stop_error.lock().unwrap() = Some(err.into());
+    }
+
+    pub fn observe_stop(&self, observer: impl FnOnce() + Send + 'static) {
+        *self.stop_observer.lock().unwrap() = Some(Box::new(observer));
     }
 
     pub fn set_launch_error(&self, err: impl Into<String>) {
@@ -81,8 +97,17 @@ impl MockAppLifecycle {
         *self.process_inspection_error.lock().unwrap() = Some(err.into());
     }
 
+    pub fn set_process_inspection_error_after(&self, count: usize, err: impl Into<String>) {
+        *self.process_inspection_error_after.lock().unwrap() = Some((count, err.into()));
+    }
+
     pub fn change_process_birth_after_first_inspection(&self) {
         self.change_process_birth_after_first_inspection
+            .store(true, Ordering::SeqCst);
+    }
+
+    pub fn change_process_birth_after_launch(&self) {
+        self.change_process_birth_after_launch
             .store(true, Ordering::SeqCst);
     }
 
@@ -118,6 +143,9 @@ impl AppLifecycle for MockAppLifecycle {
             std::fs::write(path, b"invalid recovery manifest")
                 .map_err(|error| error.to_string())?;
         }
+        if let Some(observer) = self.stop_observer.lock().unwrap().take() {
+            observer();
+        }
         Ok(())
     }
 
@@ -127,6 +155,14 @@ impl AppLifecycle for MockAppLifecycle {
             return Err(err.clone());
         }
         self.running.store(true, Ordering::SeqCst);
+        self.process_inspection_calls.store(0, Ordering::SeqCst);
+        if self
+            .change_process_birth_after_launch
+            .load(Ordering::SeqCst)
+        {
+            self.change_process_birth_after_first_inspection
+                .store(true, Ordering::SeqCst);
+        }
         Ok(vec![9999])
     }
 
@@ -137,10 +173,15 @@ impl AppLifecycle for MockAppLifecycle {
         if !self.running.load(Ordering::SeqCst) || pid != 9999 {
             return Err("Desktop process is absent".into());
         }
+        let inspected = self.process_inspection_calls.fetch_add(1, Ordering::SeqCst);
         if let Some(error) = self.process_inspection_error.lock().unwrap().clone() {
             return Err(error);
         }
-        let inspected = self.process_inspection_calls.fetch_add(1, Ordering::SeqCst);
+        if let Some((after, error)) = self.process_inspection_error_after.lock().unwrap().clone() {
+            if inspected >= after {
+                return Err(error);
+            }
+        }
         let birth = if inspected > 0
             && self
                 .change_process_birth_after_first_inspection
@@ -148,7 +189,7 @@ impl AppLifecycle for MockAppLifecycle {
         {
             "other-birth"
         } else {
-            "test-birth"
+            "123:456789"
         };
         super::window_restore_process_identity::ProcessIdentity::new(pid, birth)
     }
@@ -161,9 +202,7 @@ impl AppLifecycle for MockAppLifecycle {
         preserve_window_bounds: bool,
     ) -> Result<WindowCaptureMode, String> {
         if !preserve_window_bounds {
-            if let Some(error) = self.process_inspection_error.lock().unwrap().clone() {
-                return Err(error);
-            }
+            self.inspect_process(9999)?;
             return Ok(WindowCaptureMode::Skipped);
         }
         self.capture_calls.fetch_add(1, Ordering::SeqCst);
@@ -200,6 +239,14 @@ impl AppLifecycle for MockAppLifecycle {
 
     fn recover_threads(&self, _targets: &[String]) -> Result<(), String> {
         self.recovery_calls.fetch_add(1, Ordering::SeqCst);
+        let observer = self
+            .recovery_observer
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+        if let Some(observer) = observer {
+            observer();
+        }
         if let Some(ref err) = *self.recovery_error.lock().unwrap() {
             return Err(err.clone());
         }

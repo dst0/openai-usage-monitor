@@ -2155,6 +2155,7 @@ struct AppDelegateTestRunner {
         resetTime: nil,
         resetAfterSeconds: 3600,
         credits: 0,
+        isAppRunning: false,
         planMultiplier: 1.0,
         accounts: [],
         cliAccount: nil
@@ -2192,6 +2193,34 @@ struct AppDelegateTestRunner {
       assertTrue(!closedAppAttr.string.contains("APP "), "Attributed string must not display APP session when app is closed")
       assertTrue(closedAppAttr.string.contains("CLI "), "Attributed string must display CLI session when app is closed")
 
+      // A running Desktop with an unverified or previous-process marker must not show a false 0%.
+      let unknownAppSnapshot = MultiAccountSnapshot(
+        timestamp: Date(), activeAccountId: accCli.id, activeEmail: accCli.email,
+        activePlan: accCli.planType, fiveHourPercentage: 90, weeklyPercentage: 85,
+        resetTime: nil, resetAfterSeconds: 3600, credits: 0,
+        isAppRunning: true, accounts: [accCli, accApp], appAccount: nil, cliAccount: accCli)
+      let unknownSessions = AppDelegate.resolveStatusBarSessions(from: unknownAppSnapshot)
+      assertEqual(unknownSessions.appSession?.fiveHPct, "—", "Unknown APP quota must be explicit")
+      assertEqual(unknownSessions.cliSession.fiveHPct, "90%", "CLI quota must stay independent")
+
+      let app1160 = AccountQuota(
+        id: "app-1160", email: "app@example.com", planType: "pro", isCurrentActive: false,
+        fiveHourPercentage: 1160, weeklyPercentage: 1160, resetTime: nil,
+        resetAfterSeconds: 3600, credits: 0, planMultiplier: 20)
+      let cliZero = AccountQuota(
+        id: "cli-zero", email: "cli@example.com", planType: "plus", isCurrentActive: true,
+        fiveHourPercentage: 0, weeklyPercentage: 33, resetTime: nil,
+        resetAfterSeconds: 3600, credits: 0)
+      let splitSnapshot = MultiAccountSnapshot(
+        timestamp: Date(), activeAccountId: cliZero.id, activeEmail: cliZero.email,
+        activePlan: cliZero.planType, fiveHourPercentage: 0, weeklyPercentage: 33,
+        resetTime: nil, resetAfterSeconds: 3600, credits: 0,
+        isAppRunning: true, accounts: [app1160, cliZero], appAccount: app1160,
+        cliAccount: cliZero)
+      let splitSessions = AppDelegate.resolveStatusBarSessions(from: splitSnapshot)
+      assertEqual(splitSessions.appSession?.fiveHPct, "1160%", "APP must show its 20x quota")
+      assertEqual(splitSessions.cliSession.fiveHPct, "0%", "CLI must show its separate exhausted quota")
+
       // Subtest 6: updateStatusBar execution with image and tooltip routing
       let appDelegateTest = AppDelegate()
       appDelegateTest.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -2203,6 +2232,44 @@ struct AppDelegateTestRunner {
 
       print("  ✅ Status Bar CLI Account Resolution & Quota Decoupling verified")
     }
+
+    // A marker created after startup, then atomically replaced, must refresh
+    // the menu without waiting for the quota-status file to change.
+    let watcherHome = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "codex-desktop-watcher-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: watcherHome, withIntermediateDirectories: true)
+    let previousCodexHome = ProcessInfo.processInfo.environment["CODEX_HOME"]
+    setenv("CODEX_HOME", watcherHome.path, 1)
+    let watcher = AppDelegate()
+    var markerRefreshes = 0
+    watcher.desktopSessionSnapshotRefreshOverride = { markerRefreshes += 1 }
+    watcher.startDesktopSessionFileWatcher()
+    let marker = watcherHome.appendingPathComponent("desktop-app-session.json")
+    let firstTemp = watcherHome.appendingPathComponent("first.tmp")
+    try! Data("first".utf8).write(to: firstTemp)
+    assertEqual(rename(firstTemp.path, marker.path), 0, "first marker rename must succeed")
+    let firstDeadline = Date().addingTimeInterval(2)
+    while markerRefreshes < 1 && Date() < firstDeadline {
+      RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+    }
+    assertTrue(markerRefreshes >= 1, "new marker must trigger an immediate menu refresh")
+    let firstCount = markerRefreshes
+    let secondTemp = watcherHome.appendingPathComponent("second.tmp")
+    try! Data("second".utf8).write(to: secondTemp)
+    assertEqual(rename(secondTemp.path, marker.path), 0, "replacement marker rename must succeed")
+    let secondDeadline = Date().addingTimeInterval(2)
+    while markerRefreshes <= firstCount && Date() < secondDeadline {
+      RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+    }
+    assertTrue(markerRefreshes > firstCount, "replacement marker must refresh the menu")
+    watcher.stopDesktopSessionFileWatcher()
+    watcher.desktopSessionSnapshotRefreshOverride = nil
+    if let previousCodexHome { setenv("CODEX_HOME", previousCodexHome, 1) } else { unsetenv("CODEX_HOME") }
+    try! FileManager.default.removeItem(at: watcherHome)
+    assertTrue(AppDelegate.isOfficialDesktopExecutable(
+      "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"), "official Desktop event must refresh")
+    assertTrue(!AppDelegate.isOfficialDesktopExecutable(
+      "/Applications/Other.app/Contents/MacOS/ChatGPT"), "foreign app event must be ignored")
 
     // 5. 300-Line Limit & Single Entity Invariant Verification
     let sourceFilesToCheck = [
@@ -2218,6 +2285,7 @@ struct AppDelegateTestRunner {
       "Sources/AccountSectionCardView+Tracking.swift",
       "Sources/AppDelegate.swift",
       "Sources/AppDelegate+FileWatchers.swift",
+      "Sources/AppDelegate+DesktopLifecycle.swift",
       "Sources/StatusBarBracketRenderer.swift",
       "Sources/AppDelegate+StatusBar.swift",
       "Sources/AppDelegate+StatusBarOverloads.swift",

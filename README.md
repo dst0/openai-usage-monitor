@@ -37,6 +37,7 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
 5. **Desktop Application Switching (`ChatGPT.app`)**:
    - The desktop app (`/Applications/ChatGPT.app`, bundle ID `com.openai.codex`) shares the `~/.codex/auth.json` credentials.
    - With `restart_app_on_switch: true`, the tool gracefully restarts the desktop app under the selected account. Eligible tasks are resumed only after Desktop mounts their owners and the recovery checks pass; a switch can therefore finish with partial recovery.
+   - The Monitor binds the displayed APP account to the exact relaunched process before waiting for task recovery.
    - Multiple Desktop windows cannot yet be restored to their exact selected tasks after a restart. Keep automatic switching disabled until this recovery path is verified.
    - If Desktop has no eligible standard window before a restart, automatic switching can continue without window geometry restore. If there are recovery targets, owner-routed IPC waits for a visible banner after owner mounting; a missing window then defers the target with its original checkpoint. Accessibility failures, malformed geometry, and process identity mismatches still stop a preservation-enabled switch before credentials change.
 
@@ -51,6 +52,7 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
 7. **Native macOS Menu Bar App (`Codex Monitor.app`)**:
    - Official Codex icon in the status bar with composite `NSImage` rendering to bypass AppKit vibrancy on inactive displays.
    - Dual-session live display: `APP 97% | CLI 97% (↻ 4h 45m)` with contrast shadows and red anti-washout glow.
+   - APP and CLI percentages resolve independently. A running Desktop with no marker for its exact PID and birth identity displays `APP —` until a verified binding is written; it never borrows the CLI account or an old Desktop's quota. Distribution rechecks the CLI registry and authentication under its operation lock. CLI-only switches retain the APP binding and update its expected CLI binding after commit. Marker and Desktop lifecycle events refresh the menu without waiting for the next quota poll.
    - Distinctive 3D shield badges `[ 🛡️ ] 🛡️ 🛡️` with a 3-tier visual gauge (Top = 5h sprint, Center = 7-day pool, Bottom = reset credits strip) and 0.6pt crisp dark outer rim.
    - Rich dropdown menu:
      - **Block 1**: 🖥️ Codex Desktop App (`ChatGPT.app`) — active account, status `[ACTIVE IN APP]`, sprint and weekly progress bars, credit balance.
@@ -522,6 +524,7 @@ The Monitor stores its account registry, status cache, and recovery journals in
 
 - `~/.codex/accounts.json` — Stored multi-account credentials and cached quotas (strict `0600` permissions); removed only with `--purge-data`.
 - `~/.codex/usage-status.json` — Real-time quota snapshot consumed by the macOS Menu Bar app; removed by the normal uninstall.
+- `~/.codex/desktop-app-session.json` — Private APP account binding to the exact Desktop PID and birth identity, plus expected CLI account; an unbound or previous-process record is not display or recovery authority.
 - `~/.codex/monitor.lock`, `daemon.lock`, `codex.lock` — Monitor coordination locks; removed when not held.
 - `~/.codex/auto-reset-state.json`, `desktop-recovery.json`, `desktop-recovery.lock`, `desktop-automation-cooldown` — Private recovery/reset state removed by uninstall.
 - `~/.codex/recovery-runs/`, `account-switcher-daemon.log`, and `account-switcher-daemon.err` — private Monitor recovery records and daemon logs; new output is redacted at write time and exact pre-existing Monitor log files are redacted during installation before writers restart; removed by uninstall.

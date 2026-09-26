@@ -697,10 +697,12 @@ fn failed_desktop_launch_cannot_claim_the_target_account_for_deferred_recovery()
     let original = std::fs::read(env.home().join("desktop-app-session.json")).unwrap();
     let mock = Arc::new(MockAppLifecycle::new(true));
     mock.set_launch_error("launch failed");
-    let outcome = DistributionCoordinator::with_lifecycle(mock)
+    let outcome = DistributionCoordinator::with_lifecycle(mock.clone())
         .execute(DistributionRequest::auto("quota_exhausted"))
         .unwrap();
     assert_eq!(outcome.status, DistributionStatus::PartialSuccess);
+    assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.launch_calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         std::fs::read(env.home().join("desktop-app-session.json")).unwrap(),
         original,
@@ -744,7 +746,7 @@ fn replaced_desktop_process_cannot_claim_the_target_account() {
     );
     let original = std::fs::read(env.home().join("desktop-app-session.json")).unwrap();
     let mock = Arc::new(MockAppLifecycle::new(true));
-    mock.change_process_birth_after_first_inspection();
+    mock.change_process_birth_after_launch();
     let outcome = DistributionCoordinator::with_lifecycle(mock)
         .execute(DistributionRequest::auto("quota_exhausted"))
         .unwrap();
@@ -1238,7 +1240,7 @@ fn disabled_preservation_process_inspection_failure_blocks_auth_change() {
     save_accounts(&accounts).unwrap();
 
     let mock = Arc::new(MockAppLifecycle::new(true));
-    mock.set_process_inspection_error("PROCESS_IDENTITY_REJECTED");
+    mock.set_process_inspection_error_after(2, "PROCESS_IDENTITY_REJECTED");
     let result = DistributionCoordinator::with_lifecycle(mock.clone())
         .execute(DistributionRequest::auto("quota_exhausted"));
 

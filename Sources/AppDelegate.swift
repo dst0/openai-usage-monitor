@@ -15,11 +15,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
   internal var fileWatcherSource: DispatchSourceFileSystemObject?
   internal var fileWatcherFD: Int32 = -1
+  internal var desktopSessionWatcherSource: DispatchSourceFileSystemObject?
+  internal var desktopSessionWatcherFD: Int32 = -1
   internal var authWatcherSource: DispatchSourceFileSystemObject?
   internal var authWatcherFD: Int32 = -1
 
   internal var statusUpdateWorkItem: DispatchWorkItem?
   internal var statusRestartWorkItem: DispatchWorkItem?
+  internal var desktopSessionUpdateWorkItem: DispatchWorkItem?
+  internal var desktopSessionRestartWorkItem: DispatchWorkItem?
+  internal var desktopSessionSnapshotRefreshOverride: (() -> Void)?
+  internal var desktopLifecycleObservers: [NSObjectProtocol] = []
   internal var authRefreshWorkItem: DispatchWorkItem?
   internal var authRestartWorkItem: DispatchWorkItem?
   internal var appDeactivateObserver: NSObjectProtocol?
@@ -92,6 +98,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     setupScreenObservers()
     setupAppDeactivationObserver()
     startStatusFileWatcher()
+    startDesktopSessionFileWatcher()
+    startDesktopLifecycleObservers()
     startAuthFileWatcher()
     refreshCLIVersion()
 
@@ -121,6 +129,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     removeAppDeactivationObserver()
     singleGuard.release()
     stopStatusFileWatcher()
+    stopDesktopSessionFileWatcher()
+    stopDesktopLifecycleObservers()
     stopAuthFileWatcher()
     refreshTimer?.invalidate()
   }

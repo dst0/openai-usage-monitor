@@ -92,7 +92,36 @@ impl TestEnv {
         }
 
         if let Some(app_id) = active_app {
-            let session = super::desktop_app_session::DesktopAppSession::new(app_id);
+            let canonical_app_id = accounts_file
+                .accounts
+                .iter()
+                .find(|account| account.id == app_id)
+                .map(|account| {
+                    crate::setup::build_predictable_account_id(&account.email, &account.account_id)
+                })
+                .unwrap_or_else(|| app_id.to_string());
+            let canonical_cli_id = active_cli
+                .and_then(|cli_id| {
+                    accounts_file
+                        .accounts
+                        .iter()
+                        .find(|account| account.id == cli_id)
+                        .map(|account| {
+                            crate::setup::build_predictable_account_id(
+                                &account.email,
+                                &account.account_id,
+                            )
+                        })
+                })
+                .unwrap_or_else(|| canonical_app_id.clone());
+            let process =
+                super::window_restore_process_identity::ProcessIdentity::new(9999, "123:456789")
+                    .unwrap();
+            let session = super::desktop_app_session::DesktopAppSession::bound(
+                canonical_app_id,
+                canonical_cli_id,
+                process,
+            );
             let _ = session.save(&self.dir.join("desktop-app-session.json"));
         }
     }
