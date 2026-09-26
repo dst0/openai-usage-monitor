@@ -24,6 +24,8 @@ mod queue_snapshot;
 mod recovery_banner;
 mod recovery_banner_status;
 mod recovery_checkpoint;
+mod recovery_dispatch_checkpoint_service;
+mod recovery_dispatch_identity_guard;
 mod recovery_error_sanitizer;
 mod recovery_manifest_snapshot;
 mod recovery_mode;

@@ -1,8 +1,8 @@
 use super::{
     manifest_store::{
         current_account_binding, finalize_target, load_manifest, load_ownerless_pending,
-        load_pending, mark_dispatch_attempt_for_account, prune_ineligible_targets_with,
-        validate_target_account_binding, write_manifest,
+        load_pending, mark_dispatch_attempt_for_account, mark_dispatch_attempt_with_writer,
+        prune_ineligible_targets_with, validate_target_account_binding, write_manifest,
     },
     pending_target::PendingTarget,
     recovery_mode::RecoveryMode,
@@ -13,6 +13,37 @@ use super::{
     stored_manifest::StoredManifest,
 };
 use std::{path::PathBuf, process::Command};
+
+#[test]
+fn marker_write_failure_after_rename_restores_exact_checkpoint_before_ipc() {
+    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let env = crate::distribution::test_helper::TestEnv::new("marker_post_rename_error");
+    let original = PendingTarget {
+        id: "01a098c2-0fae-74d2-a80c-45d89e910e79".into(),
+        offset: Some(42),
+        awaiting_owner: false,
+        captured_restart: true,
+        owner_account_id: None,
+    };
+    write_manifest(std::slice::from_ref(&original)).unwrap();
+    let error = mark_dispatch_attempt_with_writer(
+        &original.id,
+        RecoveryMode::CapturedRestart,
+        || Ok(()),
+        |remaining| {
+            write_manifest(remaining)?;
+            Err("synthetic directory sync error after rename".into())
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("synthetic directory sync error"));
+    assert_eq!(load_manifest().unwrap(), vec![original]);
+    drop(env);
+    std::env::remove_var("CODEX_HOME");
+    drop(guard);
+}
 
 fn write_ignored_records(writer: &mut impl std::io::Write, minimum_bytes: usize) {
     let record = format!(

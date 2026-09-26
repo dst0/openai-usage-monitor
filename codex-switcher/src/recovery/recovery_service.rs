@@ -6,8 +6,10 @@ use super::{
         finalize_target, load_manifest, prune_ineligible_targets, recovery_account_binding,
         write_manifest,
     },
+    pending_target::PendingTarget,
     recovery_banner::RecoveryBanner,
     recovery_checkpoint::checkpoint_targets,
+    recovery_dispatch_identity_guard::RecoveryDispatchIdentityGuard,
     recovery_mode::RecoveryMode,
     recovery_target::{
         prepare_target, record_target_state_with_budget, RecoveryTarget,
@@ -35,11 +37,21 @@ pub(crate) fn recover_threads_with_banner(
     banner: &mut RecoveryBanner,
 ) -> Result<(), String> {
     let home = storage::codex_home();
+    let identity = RecoveryDispatchIdentityGuard::capture(banner, mode)?;
     let mut pending_manifest = load_manifest()?;
-    let binding = recovery_account_binding(matches!(
+    let deferred = matches!(
         mode,
         RecoveryMode::DeferredOwned | RecoveryMode::DeferredCaptured
-    ));
+    );
+    let binding = if deferred {
+        let bound = recovery_account_binding(true);
+        if bound.as_deref() != Some(identity.account_id()) {
+            return Err("Could not verify the deferred Desktop account before recovery".into());
+        }
+        bound
+    } else {
+        Some(identity.account_id().to_owned())
+    };
     let (previous_pending, claimed) =
         checkpoint_targets(&home, &mut pending_manifest, ids, mode, binding.as_deref())?;
     write_manifest(&pending_manifest)?;
@@ -105,6 +117,7 @@ pub(crate) fn recover_threads_with_banner(
                         mode,
                         &mut scan_budget,
                         before_send,
+                        || identity.verify(),
                     ) {
                         mark_dispatch_failure(target, &error);
                     }
@@ -195,13 +208,11 @@ pub(crate) fn recover_threads_with_banner(
         } else if target.completed {
             banner.record_status(&target.id, BannerSessionStatus::Completed);
         }
-        finalize_target(
+        finalize_recovery_target(
             &mut pending_manifest,
-            &target.id,
-            target.owner_unavailable,
-            target.dispatched,
+            target,
             binding.as_deref(),
-            target.account_mismatch || claimed.contains(&target.id),
+            claimed.contains(&target.id),
         );
     }
     for id in &preparation_failures {
@@ -250,6 +261,22 @@ pub(crate) fn recover_threads_with_banner(
             failures.join(", ")
         ))
     }
+}
+
+pub(super) fn finalize_recovery_target(
+    manifest: &mut Vec<PendingTarget>,
+    target: &RecoveryTarget,
+    binding: Option<&str>,
+    explicitly_claimed: bool,
+) {
+    finalize_target(
+        manifest,
+        &target.id,
+        target.owner_unavailable || target.account_mismatch,
+        target.dispatched,
+        binding,
+        explicitly_claimed,
+    );
 }
 
 pub(super) fn mark_pre_dispatch_channel_failure(target: &mut RecoveryTarget, error: &str) {

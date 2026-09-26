@@ -10,9 +10,22 @@ impl DesktopAccountBindingService {
     /// launched. Accept only the managed Desktop session for this exact live
     /// ChatGPT process; an absent or stale session cannot authorize dispatch.
     pub(super) fn verified(cli_account_id: Option<&str>) -> Option<String> {
+        Self::verified_session(cli_account_id).map(|(account_id, _)| account_id)
+    }
+
+    pub(super) fn verified_process(
+        cli_account_id: Option<&str>,
+    ) -> Option<crate::distribution::WindowProcessIdentity> {
+        let (account_id, process) = Self::verified_session(cli_account_id)?;
+        (Some(account_id.as_str()) == cli_account_id).then_some(process)
+    }
+
+    fn verified_session(
+        cli_account_id: Option<&str>,
+    ) -> Option<(String, crate::distribution::WindowProcessIdentity)> {
         let mut backend = SystemWindowRestoreBackend::new().ok()?;
         let accounts = storage::load_accounts().ok()?;
-        verified_with(
+        verified_session_with(
             cli_account_id,
             switcher::current_codex_app_pids,
             |pid| WindowProcessValidationService::inspect(&mut backend, pid).ok(),
@@ -28,13 +41,25 @@ impl DesktopAccountBindingService {
     }
 }
 
+#[cfg(test)]
 fn verified_with(
+    cli_account_id: Option<&str>,
+    pids: impl FnMut() -> Vec<u32>,
+    inspect: impl FnMut(u32) -> Option<crate::distribution::WindowProcessIdentity>,
+    session: impl FnOnce() -> Option<DesktopAppSession>,
+    known_account: impl FnOnce(&str) -> bool,
+) -> Option<String> {
+    verified_session_with(cli_account_id, pids, inspect, session, known_account)
+        .map(|(account_id, _)| account_id)
+}
+
+fn verified_session_with(
     cli_account_id: Option<&str>,
     mut pids: impl FnMut() -> Vec<u32>,
     mut inspect: impl FnMut(u32) -> Option<crate::distribution::WindowProcessIdentity>,
     session: impl FnOnce() -> Option<DesktopAppSession>,
     known_account: impl FnOnce(&str) -> bool,
-) -> Option<String> {
+) -> Option<(String, crate::distribution::WindowProcessIdentity)> {
     let before_pids = pids();
     if before_pids.len() != 1 {
         return None;
@@ -51,7 +76,7 @@ fn verified_with(
     if before != after || pids() != before_pids {
         return None;
     }
-    Some(session.account_id)
+    Some((session.account_id, before))
 }
 
 fn session_matches_binding(

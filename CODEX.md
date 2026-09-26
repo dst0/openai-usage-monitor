@@ -205,6 +205,17 @@ changed identity resets or rejects the cursor;
 account and Desktop-owner checks remain fresh on every probe. Ordinary thread
 detection excludes ownerless entries from `load_pending()` because the deferred
 worker owns those retries.
+All foreground recovery modes pin the verified active auth account and exact
+ChatGPT PID and birth identity when recovery begins. They recheck both after an
+owner wait, before and after consuming the checkpoint, immediately before
+owner-routed IPC. A pre-send mismatch restores the original checkpoint with
+readback and blocks both queued and turn-start dispatch. Finalization keeps an
+explicitly claimed deferred target's original offset and owner binding. A
+previously unbound target keeps its offset but becomes bound to the account
+that started recovery, so the changed account cannot retry it unattended. A
+hidden captured-restart banner can bind the
+relaunched process only when the exact live Desktop session marker matches;
+other modes reject a process change during the wait.
 There is no persistent banner while Desktop has not mounted the task. Unattended mounting
 after an account switch remains unverified on the current Desktop build. If the daemon is not
 running, inspect the affected task and use

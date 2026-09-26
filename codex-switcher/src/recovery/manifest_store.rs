@@ -109,13 +109,68 @@ pub(super) fn validate_target_account_binding(
 
 /// Remove the retry intent durably before an owner-routed request can be sent.
 /// A crash after this point has an unknown outcome and must not redispatch.
-pub(super) fn mark_dispatch_attempt(id: &str, mode: RecoveryMode) -> Result<(), DispatchMarkError> {
-    let deferred = load_manifest()
-        .map_err(DispatchMarkError::Other)?
-        .iter()
-        .any(|target| target.id == id && target.awaiting_owner);
+pub(super) fn mark_dispatch_attempt(
+    id: &str,
+    mode: RecoveryMode,
+    verify_identity: impl FnOnce() -> Result<(), DispatchMarkError>,
+) -> Result<PendingTarget, DispatchMarkError> {
+    mark_dispatch_attempt_with_writer(id, mode, verify_identity, write_manifest)
+}
+
+pub(super) fn mark_dispatch_attempt_with_writer(
+    id: &str,
+    mode: RecoveryMode,
+    verify_identity: impl FnOnce() -> Result<(), DispatchMarkError>,
+    write_targets: impl FnOnce(&[PendingTarget]) -> Result<(), String>,
+) -> Result<PendingTarget, DispatchMarkError> {
+    let mut targets = load_manifest().map_err(DispatchMarkError::Other)?;
+    let Some(target) = targets.iter().find(|target| target.id == id) else {
+        return Err(DispatchMarkError::Other(
+            "Recovery checkpoint disappeared before IPC dispatch".into(),
+        ));
+    };
+    let deferred = target.awaiting_owner;
     let binding = recovery_account_binding(deferred);
-    mark_dispatch_attempt_for_account(id, binding.as_deref(), mode)
+    if deferred
+        && mode != RecoveryMode::ExplicitTarget
+        && (binding.is_none() || target.owner_account_id.as_deref() != binding.as_deref())
+    {
+        return Err(DispatchMarkError::AccountChanged);
+    }
+    let original = target.clone();
+    // Owner discovery and banner startup can take longer than a manual account
+    // switch. Verify the operation's starting auth and Desktop process after
+    // all other checks, immediately before consuming the durable checkpoint.
+    verify_identity()?;
+    targets.retain(|target| target.id != id);
+    if let Err(error) = write_targets(&targets) {
+        // Directory sync can fail after the rename consumed the marker. No IPC
+        // has been sent, so restore the exact checkpoint before returning.
+        if let Err(restore) = restore_undispatched_target(&original) {
+            return Err(DispatchMarkError::Other(format!(
+                "Recovery marker failed: {error}; original checkpoint restoration failed: {restore}"
+            )));
+        }
+        return Err(DispatchMarkError::Other(error));
+    }
+    Ok(original)
+}
+
+pub(super) fn restore_undispatched_target(original: &PendingTarget) -> Result<(), String> {
+    let mut targets = load_manifest()?;
+    match targets.iter().find(|target| target.id == original.id) {
+        Some(existing) if existing != original => {
+            return Err("Recovery checkpoint changed before pre-send restoration".into())
+        }
+        Some(_) => return Ok(()),
+        None => targets.push(original.clone()),
+    }
+    write_manifest(&targets)?;
+    if load_manifest()?.iter().any(|target| target == original) {
+        Ok(())
+    } else {
+        Err("Recovery checkpoint restoration readback failed".into())
+    }
 }
 
 pub(super) fn recovery_account_binding(deferred: bool) -> Option<String> {
@@ -134,6 +189,7 @@ pub(super) fn recovery_account_binding(deferred: bool) -> Option<String> {
     )
 }
 
+#[cfg(test)]
 pub(super) fn mark_dispatch_attempt_for_account(
     id: &str,
     binding: Option<&str>,

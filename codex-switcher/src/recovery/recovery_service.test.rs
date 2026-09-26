@@ -1,13 +1,86 @@
 use super::{
-    manifest_store::finalize_target,
+    manifest_store::{
+        finalize_target, load_manifest, prune_ineligible_targets_with, write_manifest,
+    },
     observer::Observer,
     pending_target::PendingTarget,
-    recovery_service::{mark_dispatch_failure, mark_pre_dispatch_channel_failure},
+    recovery_checkpoint::checkpoint_targets_with,
+    recovery_mode::RecoveryMode,
+    recovery_service::{
+        finalize_recovery_target, mark_dispatch_failure, mark_pre_dispatch_channel_failure,
+    },
     recovery_target::{record_target_state_at, RecoveryTarget},
 };
 use crate::switcher::ThreadRolloutState;
 use crate::{distribution::WindowProcessIdentity, recovery::RecoveryBanner};
 use std::{io::Write, time::Instant};
+
+#[test]
+fn failed_explicit_claim_keeps_older_owner_binding_through_manifest_finalize() {
+    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let env = crate::distribution::test_helper::TestEnv::new("explicit_claim_finalize");
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let original = PendingTarget {
+        id: id.into(),
+        offset: Some(42),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("original-account".into()),
+    };
+    write_manifest(std::slice::from_ref(&original)).unwrap();
+    let mut manifest = load_manifest().unwrap();
+    let (view, claimed) = checkpoint_targets_with(
+        &mut manifest,
+        &[id.into()],
+        RecoveryMode::ExplicitTarget,
+        Some("operation-account"),
+        |_| Some(84),
+    )
+    .unwrap();
+    assert_eq!(view[0].offset, Some(84));
+    assert!(!view[0].awaiting_owner);
+    assert_eq!(manifest[0], original);
+    write_manifest(&manifest).unwrap();
+
+    let rollout = env.home().join("rollout.jsonl");
+    std::fs::write(&rollout, b"checkpoint\n").unwrap();
+    let target = RecoveryTarget {
+        id: id.into(),
+        state: ThreadRolloutState::InterruptedByQuota,
+        writer_locked: false,
+        observer: Observer::checkpoint(rollout).unwrap(),
+        scan_complete: true,
+        existing_queue: 0,
+        mounted_by_recovery: false,
+        owner_unavailable: false,
+        account_mismatch: true,
+        dispatched: false,
+        completed: false,
+        failure: Some("Active Desktop account changed".into()),
+        deadline: Instant::now(),
+        execution_deadline_set: false,
+        expected_turn_id: None,
+        proof_observed_at: None,
+    };
+    finalize_recovery_target(
+        &mut manifest,
+        &target,
+        Some("operation-account"),
+        claimed.contains(&id.to_string()),
+    );
+    prune_ineligible_targets_with(env.home(), &mut manifest, |_| {
+        Ok(Some(chrono::Utc::now().timestamp()))
+    })
+    .unwrap();
+    write_manifest(&manifest).unwrap();
+    assert_eq!(load_manifest().unwrap(), vec![original]);
+
+    drop(env);
+    std::env::remove_var("CODEX_HOME");
+    drop(guard);
+}
 
 #[test]
 fn foreground_recovery_scans_large_checkpoint_in_bounded_steps_before_claiming_proof() {

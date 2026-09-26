@@ -27,6 +27,185 @@ use std::{
 };
 
 #[test]
+fn explicit_owner_wait_refuses_dispatch_after_shared_auth_changes() {
+    assert_owner_wait_rejects_account_change(false, false);
+}
+
+#[test]
+fn queued_owner_wait_refuses_dispatch_after_shared_auth_changes() {
+    assert_owner_wait_rejects_account_change(true, false);
+}
+
+#[test]
+fn explicit_marker_write_refuses_dispatch_after_shared_auth_changes() {
+    assert_owner_wait_rejects_account_change(false, true);
+}
+
+#[test]
+fn queued_marker_write_refuses_dispatch_after_shared_auth_changes() {
+    assert_owner_wait_rejects_account_change(true, true);
+}
+
+fn assert_owner_wait_rejects_account_change(with_queue: bool, change_after_marker: bool) {
+    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let env = crate::distribution::test_helper::TestEnv::new("owner_wait_auth_change");
+    let first = crate::distribution::test_helper::make_account(
+        "account-a",
+        None,
+        "first@example.test",
+        "plus",
+        20.0,
+        None,
+        0,
+        None,
+        None,
+    );
+    let second = crate::distribution::test_helper::make_account(
+        "account-b",
+        None,
+        "second@example.test",
+        "plus",
+        20.0,
+        None,
+        0,
+        None,
+        None,
+    );
+    env.populate(vec![first, second], Some("account-a"), Some("account-a"));
+    let accounts = crate::storage::load_accounts().unwrap();
+    let start_account = super::manifest_store::current_account_binding().unwrap();
+    let next_account = accounts
+        .accounts
+        .iter()
+        .find(|account| account.id != start_account)
+        .unwrap();
+    let mut next_auth = crate::storage::read_active_auth_json().unwrap();
+    next_auth.tokens = Some(next_account.tokens.clone());
+    let next_account_id = next_account.id.clone();
+
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let mut candidate = target(env.home(), id);
+    OpenOptions::new()
+        .append(true)
+        .open(&candidate.observer.path)
+        .unwrap()
+        .write_all(b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"error\":{\"code\":\"usage_limit_exceeded\"}}}\n")
+        .unwrap();
+    candidate.observer = Observer::checkpoint(candidate.observer.path.clone()).unwrap();
+    candidate.state = ThreadRolloutState::InterruptedByQuota;
+    make_rollout_discoverable(env.home(), &mut candidate);
+    let original = PendingTarget {
+        id: id.into(),
+        offset: Some(candidate.observer.offset),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some(start_account.clone()),
+    };
+    super::manifest_store::write_manifest(std::slice::from_ref(&original)).unwrap();
+    if with_queue {
+        let queue = env.home().join("queue_1.sqlite");
+        let sql = format!(
+            r#"CREATE TABLE queued_thread_revisions (thread_id TEXT, revision INTEGER);
+               CREATE TABLE queued_items (thread_id TEXT, queue_order INTEGER, payload_json TEXT);
+               INSERT INTO queued_items VALUES ('{id}', 1, '{{"id":"queued-one"}}');"#
+        );
+        assert!(Command::new("/usr/bin/sqlite3")
+            .arg(&queue)
+            .arg(sql)
+            .status()
+            .unwrap()
+            .success());
+    }
+    let (client_stream, mut router_stream) = UnixStream::pair().unwrap();
+    router_stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let router_auth = next_auth.clone();
+    let router = thread::spawn(move || {
+        let owner_request = read_ipc_frame(&mut router_stream).unwrap();
+        assert_eq!(owner_request["method"], "thread-owner-discovery");
+        if !change_after_marker {
+            crate::storage::write_active_auth_json(&router_auth).unwrap();
+        }
+        write_ipc_frame(
+            &mut router_stream,
+            &serde_json::json!({
+                "type": "response",
+                "requestId": owner_request["requestId"],
+                "resultType": "success",
+                "method": "thread-owner-discovery",
+                "handledByClientId": "window-one",
+                "result": { "supportsUntrustedAppInput": true }
+            }),
+        )
+        .unwrap();
+        let Ok(next_request) = read_ipc_frame(&mut router_stream) else {
+            return None;
+        };
+        let method = next_request["method"].as_str().map(str::to_owned);
+        let result = if method.as_deref() == Some("thread-follower-set-queued-follow-ups-state") {
+            serde_json::json!({"ok": true})
+        } else {
+            serde_json::json!({"result": {"turn": {"id": id}}})
+        };
+        write_ipc_frame(
+            &mut router_stream,
+            &serde_json::json!({
+                "type": "response",
+                "requestId": next_request["requestId"],
+                "resultType": "success",
+                "method": method,
+                "handledByClientId": "window-one",
+                "result": result
+            }),
+        )
+        .unwrap();
+        method
+    });
+    let mut desktop = DesktopIpc::for_test(client_stream);
+    let mut budget = super::recovery_target::FOREGROUND_SCAN_BUDGET_BYTES;
+    let identity_checks = std::cell::Cell::new(0);
+    let result = dispatch_if_needed(
+        env.home(),
+        &mut desktop,
+        &mut candidate,
+        RecoveryMode::ExplicitTarget,
+        &mut budget,
+        || Ok(()),
+        || {
+            let matched = super::manifest_store::current_account_binding().as_deref()
+                == Some(start_account.as_str());
+            if matched && change_after_marker && identity_checks.get() == 0 {
+                identity_checks.set(1);
+                crate::storage::write_active_auth_json(&next_auth).unwrap();
+            }
+            matched
+                .then_some(())
+                .ok_or(super::dispatch_mark_error::DispatchMarkError::AccountChanged)
+        },
+    );
+    drop(desktop);
+    let method = router.join().unwrap();
+    let observed_account = super::manifest_store::current_account_binding();
+    let retained = super::manifest_store::load_manifest().unwrap();
+    let safe = observed_account.as_deref() == Some(next_account_id.as_str())
+        && result.is_err()
+        && method.is_none()
+        && !candidate.dispatched
+        && retained == vec![original];
+    drop(env);
+    std::env::remove_var("CODEX_HOME");
+    drop(guard);
+    assert!(
+        safe,
+        "owner wait crossed an account change: result={result:?}, method={method:?}, dispatched={}, retained={retained:?}, observed_account={observed_account:?}",
+        candidate.dispatched,
+    );
+}
+
+#[test]
 fn already_unpaused_queue_sends_one_owner_routed_wake_before_consuming_checkpoint() {
     let guard = crate::setup::TEST_CODEX_HOME_MUTEX
         .lock()
@@ -108,6 +287,7 @@ fn already_unpaused_queue_sends_one_owner_routed_wake_before_consuming_checkpoin
         &mut candidate,
         RecoveryMode::DiscoveredOnly,
         &mut budget,
+        || Ok(()),
         || Ok(()),
     );
     let routed = router.join().unwrap();
@@ -227,6 +407,7 @@ fn assert_ineligible_queued_turn_never_contacts_owner(
         &mut candidate,
         mode,
         &mut budget,
+        || Ok(()),
         || Ok(()),
     );
     let methods = router.join().unwrap();

@@ -4,11 +4,11 @@ use super::{
     desktop_ipc::DesktopIpc,
     dispatch_mark_error::DispatchMarkError,
     ipc_call_error::IpcCallError,
-    manifest_store::mark_dispatch_attempt,
     queue_snapshot::{
         pending_count, prepare_interrupted_queue, queue_revision, queued_messages,
         validate_queue_snapshot_revision,
     },
+    recovery_dispatch_checkpoint_service::RecoveryDispatchCheckpointService,
     recovery_mode::RecoveryMode,
     recovery_target::{record_target_state_with_budget, RecoveryTarget, RECOVERY_DISPATCH_TIMEOUT},
 };
@@ -51,17 +51,6 @@ pub(super) fn handle_owner_resolution(
             target.owner_unavailable = true;
             Err(error.to_string())
         }
-    }
-}
-
-fn mark_target_dispatch(target: &mut RecoveryTarget, mode: RecoveryMode) -> Result<(), String> {
-    match mark_dispatch_attempt(&target.id, mode) {
-        Ok(()) => Ok(()),
-        Err(DispatchMarkError::AccountChanged) => {
-            target.account_mismatch = true;
-            Err(DispatchMarkError::AccountChanged.to_string())
-        }
-        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -181,6 +170,7 @@ pub(super) fn dispatch_if_needed(
     mode: RecoveryMode,
     scan_budget: &mut u64,
     mut before_send: impl FnMut() -> Result<(), String>,
+    mut verify_identity: impl FnMut() -> Result<(), DispatchMarkError>,
 ) -> Result<(), String> {
     if target.completed || target.failure.is_some() || target.observer.evidence.started {
         return Ok(());
@@ -223,7 +213,7 @@ pub(super) fn dispatch_if_needed(
         )? {
             return Ok(());
         }
-        mark_target_dispatch(target, mode)?;
+        RecoveryDispatchCheckpointService::mark_and_confirm(target, mode, &mut verify_identity)?;
         // Mark before IPC. A disconnect after forwarding has an unknown
         // outcome, so this operation must not retry the queue update.
         target.dispatched = true;
@@ -275,7 +265,7 @@ pub(super) fn dispatch_if_needed(
     )? {
         return Ok(());
     }
-    mark_target_dispatch(target, mode)?;
+    RecoveryDispatchCheckpointService::mark_and_confirm(target, mode, &mut verify_identity)?;
     // Mark before the call. A timeout is an unknown outcome, so this operation
     // must never retry and risk starting the interrupted turn twice.
     target.dispatched = true;
