@@ -1,5 +1,6 @@
 use super::automatic_distribution_service::AutomaticDistributionService;
 use super::automatic_distribution_source::AutomaticDistributionSource;
+use super::cli_auth_file_identity_service::CliAuthFileIdentityService;
 use super::daemon_account_sync_service::DaemonAccountSyncService;
 use super::distribution_coordinator::DistributionCoordinator;
 use super::distribution_executor::DistributionExecutor;
@@ -36,11 +37,18 @@ impl DaemonTickService {
         let _ = save_accounts(&fresh);
         accounts_file.settings = fresh.settings;
 
-        let active = accounts_file
+        let registry_active = accounts_file
             .accounts
             .iter()
             .find(|account| account.id == current_active_id);
-        let mut status = build_status(&accounts_file, active, &current_active_id);
+        let cli_auth_file_id = registry_active.and_then(CliAuthFileIdentityService::verified_id);
+        let active = registry_active.filter(|_| cli_auth_file_id.is_some());
+        let mut status = build_status(
+            &accounts_file,
+            registry_active,
+            &current_active_id,
+            cli_auth_file_id,
+        );
         write_status_file(&status)?;
 
         if auto_switch {
@@ -127,11 +135,14 @@ fn build_status(
     accounts_file: &AccountsFile,
     active: Option<&crate::models::AccountConfig>,
     current_active_id: &str,
+    cli_auth_file_id: Option<String>,
 ) -> StatusFile {
+    let active = active.filter(|_| cli_auth_file_id.is_some());
     let auto_reset_status = crate::auto_reset::status_for_active(&accounts_file.settings, active);
     StatusFile {
         timestamp: Utc::now().to_rfc3339(),
-        active_account_id: Some(current_active_id.to_string()),
+        active_account_id: active.map(|_| current_active_id.to_string()),
+        cli_auth_file_id,
         active_email: active.map(|account| account.email.clone()),
         active_plan: active.map(|account| account.plan_type.clone()),
         five_hour_percentage: active
@@ -160,7 +171,9 @@ fn build_status(
         accounts: accounts_file
             .accounts
             .iter()
-            .map(|account| account_status_entry(account, account.id == current_active_id))
+            .map(|account| {
+                account_status_entry(account, active.is_some() && account.id == current_active_id)
+            })
             .collect(),
     }
 }

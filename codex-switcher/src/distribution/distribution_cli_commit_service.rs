@@ -95,10 +95,7 @@ impl<'a> DistributionCliCommitService<'a> {
         };
         journal.update_phase(self.home, "auth_commit_cli")?;
         let target = DistributionAccountCommitService::find_account(accounts, target_id)?;
-        if let Err(error) = DistributionAccountCommitService::commit_cli_account(accounts, &target)
-        {
-            return Ok(Some(error));
-        }
+        DistributionAccountCommitService::commit_cli_account(accounts, &target)?;
         self.logger.log_action(
             op_id,
             "AUTH_COMMIT_CLI",

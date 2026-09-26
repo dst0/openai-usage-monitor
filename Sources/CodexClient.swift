@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 public final class CodexClient: @unchecked Sendable {
   internal typealias DistributionRunner = ([String]) -> Bool
@@ -53,6 +54,15 @@ public final class CodexClient: @unchecked Sendable {
 
   public static var statusFileURL: URL {
     return codexHome.appendingPathComponent("usage-status.json")
+  }
+
+  private static func currentCliAuthFileID() -> String? {
+    let path = codexHome.appendingPathComponent("auth.json").path
+    var info = stat()
+    guard path.withCString({ lstat($0, &info) == 0 }),
+      info.st_mode & S_IFMT == S_IFREG
+    else { return nil }
+    return "\(info.st_dev):\(info.st_ino):\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec):\(info.st_size)"
   }
 
   public static var desktopAppSessionURL: URL {
@@ -291,9 +301,11 @@ public final class CodexClient: @unchecked Sendable {
     let tsStr = json["timestamp"] as? String ?? ""
     let timestamp = Self.parseDate(tsStr) ?? Date()
 
-    let activeId = json["active_account_id"] as? String
-    let activeEmail = json["active_email"] as? String
-    let activePlan = json["active_plan"] as? String
+    let cachedCliAuthFileID = json["cli_auth_file_id"] as? String
+    let activeId = cachedCliAuthFileID != nil && cachedCliAuthFileID == Self.currentCliAuthFileID()
+      ? json["active_account_id"] as? String : nil
+    let activeEmail = activeId == nil ? nil : json["active_email"] as? String
+    let activePlan = activeId == nil ? nil : json["active_plan"] as? String
     let fiveHour = json["five_hour_percentage"] as? Double ?? 100.0
     let weekly = json["weekly_percentage"] as? Double
     let weeklyResetTimeStr = json["weekly_reset_time"] as? String
@@ -360,10 +372,13 @@ public final class CodexClient: @unchecked Sendable {
     let appRunning = isCodexAppRunning()
     let activeModel = getActiveModelName()
 
-    let cliAcc = accountsList.first(where: {
-      $0.id.caseInsensitiveCompare(activeId ?? "") == .orderedSame
-        || $0.email.caseInsensitiveCompare(activeId ?? "") == .orderedSame
-    }) ?? accountsList.first(where: { $0.isCurrentActive }) ?? accountsList.first
+    let cliAcc = activeId.flatMap { id -> AccountQuota? in
+      guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+      return accountsList.first(where: {
+        $0.id.caseInsensitiveCompare(id) == .orderedSame
+          || $0.email.caseInsensitiveCompare(id) == .orderedSame
+      })
+    }
 
     let appAcc = Self.resolveAppAccount(
       isAppRunning: appRunning,

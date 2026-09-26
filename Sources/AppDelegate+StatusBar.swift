@@ -1,13 +1,12 @@
 import AppKit
 import Foundation
-
 extension AppDelegate {
   // MARK: - Status Bar Display Construction
 
   public typealias StatusBarSessionValues = (fiveHPct: String, fiveHColor: NSColor, weeklyPct: String, weeklyColor: NSColor)
 
   public static func resolveCliAccount(from snapshot: MultiAccountSnapshot) -> AccountQuota? {
-    snapshot.cliAccount ?? snapshot.accounts.first(where: { $0.isCurrentActive })
+    snapshot.cliAccount
   }
 
   public static func makeSessionValues(
@@ -44,10 +43,10 @@ extension AppDelegate {
     let cli = resolveCliAccount(from: snapshot)
     let cliSession = cli.map {
       makeSessionValues(fiveHourPercentage: $0.fiveHourPercentage, weeklyPercentage: $0.weeklyPercentage, planMultiplier: $0.planMultiplier, isScreenActive: isScreenActive)
-    } ?? makeSessionValues(fiveHourPercentage: snapshot.fiveHourPercentage, weeklyPercentage: snapshot.weeklyPercentage, planMultiplier: snapshot.planMultiplier, isScreenActive: isScreenActive)
+    } ?? (fiveHPct: "—", fiveHColor: .secondaryLabelColor,
+      weeklyPct: "—", weeklyColor: .secondaryLabelColor)
     return (appSession, cliSession)
   }
-
   public static func buildStatusBarAttributedString(
     snapshot: MultiAccountSnapshot, icon: NSImage? = nil, isScreenActive: Bool = true, useQuotaIcons: Bool = true, stackPercentages: Bool = true
   ) -> NSAttributedString {
@@ -55,7 +54,9 @@ extension AppDelegate {
     return buildStatusBarAttributedString(
       icon: icon, appSession: sessions.appSession, cliSession: sessions.cliSession, accounts: snapshot.accounts,
       isScreenActive: isScreenActive, useQuotaIcons: useQuotaIcons, stackPercentages: stackPercentages,
-      appAccountId: snapshot.isAppRunning ? snapshot.appAccount?.id : nil, cliAccountId: resolveCliAccount(from: snapshot)?.id
+      appAccountId: snapshot.isAppRunning ? snapshot.appAccount?.id : nil,
+      cliAccountId: resolveCliAccount(from: snapshot)?.id,
+      requireVerifiedIdentity: true
     )
   }
 
@@ -103,7 +104,8 @@ extension AppDelegate {
     useQuotaIcons: Bool = true,
     stackPercentages: Bool = true,
     appAccountId: String? = nil,
-    cliAccountId: String? = nil
+    cliAccountId: String? = nil,
+    requireVerifiedIdentity: Bool = false
   ) -> NSAttributedString {
     let attributed = NSMutableAttributedString()
     if let icon = icon {
@@ -185,8 +187,9 @@ extension AppDelegate {
     }
 
     let defaultCli = accounts.first(where: { $0.isCurrentActive })?.id ?? accounts.first?.id
-    let rawCliId = (appAccountId != nil || cliAccountId != nil) ? cliAccountId : defaultCli
-    let rawAppId = (appAccountId != nil || cliAccountId != nil) ? appAccountId : ((appSession != nil) ? defaultCli : nil)
+    let hasExplicitIdentity = requireVerifiedIdentity || appAccountId != nil || cliAccountId != nil
+    let rawCliId = hasExplicitIdentity ? cliAccountId : defaultCli
+    let rawAppId = hasExplicitIdentity ? appAccountId : ((appSession != nil) ? defaultCli : nil)
 
     func resolveId(_ id: String?) -> String? {
       guard let id = id else { return nil }
@@ -200,7 +203,7 @@ extension AppDelegate {
     let effectiveAppId = resolveId(rawAppId)
 
     if accounts.isEmpty {
-      let mode: BracketSelectionMode = (appAccountId != nil || cliAccountId != nil)
+      let mode: BracketSelectionMode = hasExplicitIdentity
         ? ((appAccountId != nil && cliAccountId != nil) ? .both : (appAccountId != nil ? .app : .cli))
         : .cli
 

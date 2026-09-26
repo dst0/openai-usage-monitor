@@ -2,6 +2,7 @@ use super::app_lifecycle::AppLifecycle;
 use super::desktop_app_session::DesktopAppSession;
 use super::distribution_plan::DistributionPlan;
 use super::distribution_request::DistributionRequest;
+use super::window_restore_process_identity::ProcessIdentity;
 use crate::models::AccountsFile;
 use std::path::Path;
 
@@ -31,6 +32,25 @@ impl<'a> DesktopSessionVerificationService<'a> {
             return Err("Running Desktop account session does not match the live process".into());
         }
         Ok(session)
+    }
+
+    pub(super) fn bind_relaunched_process(
+        &self,
+        app_account_id: &str,
+        cli_account_id: &str,
+        pid: u32,
+    ) -> Result<ProcessIdentity, String> {
+        let before = self.lifecycle.inspect_process(pid)?;
+        let process = self.lifecycle.inspect_process(pid)?;
+        if process != before {
+            return Err("Desktop process identity changed before session binding".into());
+        }
+        DesktopAppSession::bound(app_account_id, cli_account_id, process.clone())
+            .save(&self.home.join("desktop-app-session.json"))?;
+        if self.lifecycle.inspect_process(pid)? != process {
+            return Err("Desktop process identity changed after session binding".into());
+        }
+        Ok(process)
     }
 
     pub(super) fn resolve_current_app_account(

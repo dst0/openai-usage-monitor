@@ -41,6 +41,60 @@ struct CodexClientIdentityTests {
     require(snapshot.cliAccount?.id == cli.id, "CLI identity must remain available")
     require(snapshot.appAccount == nil, "missing App identity must not fall back to CLI")
 
+    let previousHome = getenv("CODEX_HOME").map { String(cString: $0) }
+    let testHome = FileManager.default.temporaryDirectory
+      .appendingPathComponent("codex-cli-identity-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(at: testHome, withIntermediateDirectories: true)
+    defer {
+      if let previousHome {
+        setenv("CODEX_HOME", previousHome, 1)
+      } else {
+        unsetenv("CODEX_HOME")
+      }
+      try? FileManager.default.removeItem(at: testHome)
+    }
+    setenv("CODEX_HOME", testHome.path, 1)
+    let staleCliCache: [String: Any] = [
+      "active_account_id": "missing-account",
+      "five_hour_percentage": 0.0,
+      "accounts": [[
+        "id": cli.id, "email": cli.email, "plan_type": cli.planType,
+        "five_hour_percentage": cli.fiveHourPercentage, "is_active": true,
+      ]],
+    ]
+    let staleCliData = try! JSONSerialization.data(withJSONObject: staleCliCache)
+    try! staleCliData.write(to: testHome.appendingPathComponent("usage-status.json"))
+    let staleCliSnapshot = CodexClient().loadCachedSnapshot()
+    require(staleCliSnapshot != nil, "the synthetic status cache must load")
+    require(staleCliSnapshot?.cliAccount == nil, "unknown CLI identity must not borrow a cached account")
+
+    var oldCliCache: [String: Any] = [
+      "active_account_id": cli.id,
+      "cli_auth_file_id": "stale-auth-file",
+      "five_hour_percentage": cli.fiveHourPercentage,
+      "accounts": [[
+        "id": cli.id, "email": cli.email, "plan_type": cli.planType,
+        "five_hour_percentage": cli.fiveHourPercentage, "is_active": true,
+      ]],
+    ]
+    try! JSONSerialization.data(withJSONObject: oldCliCache)
+      .write(to: testHome.appendingPathComponent("usage-status.json"))
+    try! Data("{}".utf8).write(to: testHome.appendingPathComponent("auth.json"))
+    require(CodexClient().loadCachedSnapshot()?.cliAccount == nil,
+      "a cache bound to an older auth file must not display its CLI quota")
+    var authInfo = stat()
+    let authPath = testHome.appendingPathComponent("auth.json").path
+    require(authPath.withCString({ lstat($0, &authInfo) == 0 }), "synthetic auth must exist")
+    oldCliCache["cli_auth_file_id"] =
+      "\(authInfo.st_dev):\(authInfo.st_ino):\(authInfo.st_mtimespec.tv_sec):\(authInfo.st_mtimespec.tv_nsec):\(authInfo.st_size)"
+    try! JSONSerialization.data(withJSONObject: oldCliCache)
+      .write(to: testHome.appendingPathComponent("usage-status.json"))
+    require(CodexClient().loadCachedSnapshot()?.cliAccount?.id == cli.id,
+      "a cache bound to the current auth file must display the verified CLI quota")
+    try! Data("{ }".utf8).write(to: testHome.appendingPathComponent("auth.json"), options: .atomic)
+    require(CodexClient().loadCachedSnapshot()?.cliAccount == nil,
+      "replacing auth after caching must invalidate the CLI quota")
+
     let now = Date()
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

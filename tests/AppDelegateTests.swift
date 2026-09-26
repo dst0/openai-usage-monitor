@@ -514,6 +514,9 @@ struct AppDelegateTestRunner {
       resetTime: nil, resetAfterSeconds: nil, credits: 0,
       accounts: [personalAccount, bizAccount], appAccount: personalAccount
     )
+    assertEqual(
+      AppDelegate.resolveStatusBarSessions(from: missingCliSnapshot).cliSession.fiveHPct,
+      "—", "Unknown CLI identity must not display another account's quota")
     let missingCliIdentityClient = CodexClient(
       distributionRunner: { arguments in
         delegateIdentityLock.lock()
@@ -2144,7 +2147,7 @@ struct AppDelegateTestRunner {
       assertEqual(fallbackActiveSessions.cliSession.fiveHPct, "45%", "CLI session must fall back to active account 5h percentage")
       assertEqual(fallbackActiveSessions.cliSession.weeklyPct, "55%", "CLI session must fall back to active account weekly percentage")
 
-      // Subtest 4: Use top-level snapshot values only when no CLI account exists
+      // Subtest 4: Top-level quota without a verified CLI account is unknown
       let topLevelOnlySnapshot = MultiAccountSnapshot(
         timestamp: Date(),
         activeAccountId: nil,
@@ -2161,8 +2164,8 @@ struct AppDelegateTestRunner {
         cliAccount: nil
       )
       let topLevelSessions = AppDelegate.resolveStatusBarSessions(from: topLevelOnlySnapshot, isScreenActive: true)
-      assertEqual(topLevelSessions.cliSession.fiveHPct, "12%", "CLI session must use top-level 5h when no CLI account exists")
-      assertEqual(topLevelSessions.cliSession.weeklyPct, "24%", "CLI session must use top-level weekly when no CLI account exists")
+      assertEqual(topLevelSessions.cliSession.fiveHPct, "—", "Unknown CLI session must not use top-level 5h")
+      assertEqual(topLevelSessions.cliSession.weeklyPct, "—", "Unknown CLI session must not use top-level weekly")
       assertTrue(topLevelSessions.appSession == nil, "APP session must be nil when no app account exists")
 
       // Subtest 5: APP must still use snapshot.appAccount only while the app is running
@@ -2262,6 +2265,17 @@ struct AppDelegateTestRunner {
       RunLoop.main.run(until: Date().addingTimeInterval(0.02))
     }
     assertTrue(markerRefreshes > firstCount, "replacement marker must refresh the menu")
+    let authFile = watcherHome.appendingPathComponent("auth.json")
+    try! Data("{}".utf8).write(to: authFile)
+    watcher.startAuthFileWatcher()
+    let beforeAuthChange = markerRefreshes
+    let authTemp = watcherHome.appendingPathComponent("auth.tmp")
+    try! Data("{ }".utf8).write(to: authTemp)
+    assertEqual(rename(authTemp.path, authFile.path), 0, "auth replacement must succeed")
+    waitUntil("auth replacement must re-evaluate the displayed identity before quota polling") {
+      markerRefreshes > beforeAuthChange
+    }
+    watcher.stopAuthFileWatcher()
     watcher.stopDesktopSessionFileWatcher()
     watcher.desktopSessionSnapshotRefreshOverride = nil
     if let previousCodexHome { setenv("CODEX_HOME", previousCodexHome, 1) } else { unsetenv("CODEX_HOME") }

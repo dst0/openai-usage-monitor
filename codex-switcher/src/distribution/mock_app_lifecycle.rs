@@ -17,6 +17,7 @@ pub struct MockAppLifecycle {
     pub stop_error: Mutex<Option<String>>,
     pub corrupt_manifest_after_stop: Mutex<Option<PathBuf>>,
     pub stop_observer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    pub launch_observer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     pub recovery_error: Mutex<Option<String>>,
     pub recovery_observer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     pub launch_error: Mutex<Option<String>>,
@@ -53,6 +54,7 @@ impl MockAppLifecycle {
             stop_error: Mutex::new(None),
             corrupt_manifest_after_stop: Mutex::new(None),
             stop_observer: Mutex::new(None),
+            launch_observer: Mutex::new(None),
             recovery_error: Mutex::new(None),
             recovery_observer: Mutex::new(None),
             launch_error: Mutex::new(None),
@@ -83,6 +85,10 @@ impl MockAppLifecycle {
 
     pub fn observe_stop(&self, observer: impl FnOnce() + Send + 'static) {
         *self.stop_observer.lock().unwrap() = Some(Box::new(observer));
+    }
+
+    pub fn observe_launch(&self, observer: impl FnOnce() + Send + 'static) {
+        *self.launch_observer.lock().unwrap() = Some(Box::new(observer));
     }
 
     pub fn set_launch_error(&self, err: impl Into<String>) {
@@ -155,6 +161,9 @@ impl AppLifecycle for MockAppLifecycle {
             return Err(err.clone());
         }
         self.running.store(true, Ordering::SeqCst);
+        if let Some(observer) = self.launch_observer.lock().unwrap().take() {
+            observer();
+        }
         self.process_inspection_calls.store(0, Ordering::SeqCst);
         if self
             .change_process_birth_after_launch

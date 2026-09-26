@@ -141,28 +141,21 @@ impl DistributionTransactionService {
             }
             if let Err(error) = recovery::save_pending(&running_threads) {
                 self.lifecycle.abort_recovery();
-                let relaunch = self.lifecycle.launch_app();
-                let _ = DistributionJournal::clear(&home);
-                return Err(match relaunch {
-                    Ok(pids) if pids.len() == 1 => match self
-                        .lifecycle
-                        .verify_desktop_stable(&pids, false)
-                    {
-                        Ok(()) => format!(
-                            "Post-shutdown recovery checkpoint failed: {error}; previous Desktop account relaunched"
-                        ),
-                        Err(stability) => format!(
-                            "Post-shutdown recovery checkpoint failed: {error}; previous Desktop stability failed: {stability}"
-                        ),
-                    },
-                    Ok(pids) => format!(
-                        "Post-shutdown recovery checkpoint failed: {error}; previous Desktop relaunch produced {} main processes",
-                        pids.len()
-                    ),
-                    Err(relaunch_error) => format!(
-                        "Post-shutdown recovery checkpoint failed: {error}; previous Desktop relaunch failed: {relaunch_error}"
-                    ),
-                });
+                let mut recovered_error = DistributionPostStopRecoveryService::new(
+                    self.lifecycle.as_ref(),
+                    &self.logger,
+                    &home,
+                    &accounts_file,
+                    plan,
+                    original_cli_auth
+                        .as_ref()
+                        .ok_or("Original CLI auth is missing")?,
+                )
+                .relaunch_without_dispatch(error);
+                if let Err(clear_error) = DistributionJournal::clear(&home) {
+                    recovered_error.push_str(&format!("; journal cleanup failed: {clear_error}"));
+                }
+                return Err(recovered_error);
             }
             let post_stop_write = (|| -> Result<(), String> {
                 journal.update_phase(&home, "auth_commit_app")?;
@@ -229,10 +222,19 @@ impl DistributionTransactionService {
                 recovery_error.get_or_insert(error);
             }
         } else {
-            if let Some(error) =
+            let cli_result =
                 DistributionCliCommitService::new(self.lifecycle.as_ref(), &self.logger, &home)
-                    .without_restart(&mut accounts_file, plan, &mut journal, op_id, request)?
-            {
+                    .without_restart(&mut accounts_file, plan, &mut journal, op_id, request);
+            let cli_result = match cli_result {
+                Ok(result) => result,
+                Err(mut error) => {
+                    if let Err(clear_error) = DistributionJournal::clear(&home) {
+                        error.push_str(&format!("; journal cleanup failed: {clear_error}"));
+                    }
+                    return Err(error);
+                }
+            };
+            if let Some(error) = cli_result {
                 recovery_error.get_or_insert(error);
             }
         }

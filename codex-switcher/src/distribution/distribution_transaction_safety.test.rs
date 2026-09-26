@@ -11,6 +11,150 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 #[test]
+fn cli_only_registry_write_failure_is_not_reported_as_distributed() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("cli_only_registry_write_failure");
+    env.populate(
+        vec![
+            make_account(
+                "old",
+                None,
+                "old@example.com",
+                "plus",
+                50.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+            make_account(
+                "next",
+                None,
+                "next@example.com",
+                "plus",
+                80.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+        ],
+        Some("old"),
+        None,
+    );
+    let temp_path = env
+        .home()
+        .join(format!("accounts.{}.tmp.json", std::process::id()));
+    std::fs::create_dir(&temp_path).unwrap();
+    let mock = Arc::new(MockAppLifecycle::new(false));
+    let result = DistributionCoordinator::with_lifecycle(mock.clone()).execute(
+        DistributionRequest::user("switch cli")
+            .with_preferred_cli(Some("next".into()))
+            .with_allow_restart(false),
+    );
+    assert!(result.is_err(), "a rolled-back CLI-only commit must fail");
+    assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        load_accounts().unwrap().active_account_id.as_deref(),
+        Some("old@example.com:old")
+    );
+    assert_eq!(
+        read_active_auth_json()
+            .unwrap()
+            .tokens
+            .unwrap()
+            .account_id
+            .as_deref(),
+        Some("old")
+    );
+    assert!(!env.home().join("distribution-journal.json").exists());
+}
+
+#[test]
+fn failed_cli_restore_keeps_checkpoint_relaunch_binding_on_staged_app_auth() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("checkpoint_cli_restore_failure");
+    env.populate(
+        vec![
+            make_account(
+                "app",
+                None,
+                "app@example.com",
+                "plus",
+                50.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+            make_account(
+                "cli",
+                None,
+                "cli@example.com",
+                "plus",
+                50.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+            make_account(
+                "next",
+                None,
+                "next@example.com",
+                "plus",
+                80.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+        ],
+        Some("cli"),
+        Some("app"),
+    );
+    let mock = Arc::new(MockAppLifecycle::new(true));
+    mock.set_capture_mode(super::window_capture_mode::WindowCaptureMode::Absent);
+    *mock.corrupt_manifest_after_stop.lock().unwrap() =
+        Some(env.home().join("desktop-recovery.json"));
+    let home = env.home().to_path_buf();
+    mock.observe_launch(move || {
+        std::fs::create_dir(home.join(format!("auth.{}.tmp.json", std::process::id()))).unwrap();
+    });
+    let result = DistributionCoordinator::with_lifecycle(mock.clone()).execute(
+        DistributionRequest::user("checkpoint failure").with_preferred_app(Some("next".into())),
+    );
+    assert!(result.is_err());
+    assert!(result
+        .err()
+        .unwrap()
+        .contains("Original CLI authentication could not be restored"));
+    assert_eq!(mock.launch_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        read_active_auth_json()
+            .unwrap()
+            .tokens
+            .unwrap()
+            .account_id
+            .as_deref(),
+        Some("app")
+    );
+    let marker = super::desktop_app_session::DesktopAppSession::load(
+        &env.home().join("desktop-app-session.json"),
+    )
+    .unwrap();
+    assert_eq!(marker.account_id, "app@example.com:app");
+    assert_eq!(
+        marker.cli_account_id.as_deref(),
+        Some("app@example.com:app")
+    );
+}
+
+#[test]
 fn stale_cli_plan_cannot_overwrite_a_switch_completed_before_operation_lock() {
     let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
         .lock()

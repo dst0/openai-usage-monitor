@@ -1,6 +1,7 @@
 pub mod app_lifecycle;
 pub mod automatic_distribution_service;
 pub mod automatic_distribution_source;
+mod cli_auth_file_identity_service;
 pub mod daemon_account_sync_service;
 pub mod daemon_loop_service;
 pub mod daemon_tick_service;

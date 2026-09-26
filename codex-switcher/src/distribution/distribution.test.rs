@@ -1348,6 +1348,16 @@ fn failed_post_shutdown_checkpoint_keeps_old_auth_and_relaunches_desktop() {
     mock.set_capture_mode(WindowCaptureMode::Absent);
     *mock.corrupt_manifest_after_stop.lock().unwrap() =
         Some(env.home().join("desktop-recovery.json"));
+    let marker_path = env.home().join("desktop-app-session.json");
+    mock.observe_stop(move || {
+        let mut session =
+            super::desktop_app_session::DesktopAppSession::load(&marker_path).unwrap();
+        session.process = Some(
+            super::window_restore_process_identity::ProcessIdentity::new(9999, "122:456789")
+                .unwrap(),
+        );
+        session.save(&marker_path).unwrap();
+    });
     let result = DistributionCoordinator::with_lifecycle(mock.clone()).execute(
         DistributionRequest::user("checkpoint failure").with_preferred_app(Some("next".into())),
     );
@@ -1357,6 +1367,16 @@ fn failed_post_shutdown_checkpoint_keeps_old_auth_and_relaunches_desktop() {
     assert_eq!(mock.launch_calls.load(Ordering::SeqCst), 1);
     assert_eq!(mock.abort_calls.load(Ordering::SeqCst), 1);
     assert_eq!(read_active_auth_json().unwrap().tokens, old_auth.tokens);
+    let session = super::desktop_app_session::DesktopAppSession::load(
+        &env.home().join("desktop-app-session.json"),
+    )
+    .unwrap();
+    assert_eq!(session.account_id, "old@example.com:old");
+    assert_eq!(
+        session.cli_account_id.as_deref(),
+        Some("old@example.com:old")
+    );
+    assert_eq!(session.process.unwrap().birth_id, "123:456789");
     assert_eq!(
         load_accounts().unwrap().active_account_id.as_deref(),
         Some("old@example.com:old")

@@ -1,5 +1,6 @@
 use super::{
-    app_lifecycle::AppLifecycle, desktop_app_session::DesktopAppSession,
+    app_lifecycle::AppLifecycle,
+    desktop_session_verification_service::DesktopSessionVerificationService,
     distribution_audit_logger::DistributionAuditLogger,
     distribution_recovery_audit_service::DistributionRecoveryAuditService,
     distribution_request::DistributionRequest, log_redaction_service::LogRedactionService,
@@ -54,30 +55,15 @@ impl<'a> DistributionDesktopRelaunchService<'a> {
             );
         }
         let pid = new_pids[0];
-        let before = match self.lifecycle.inspect_process(pid) {
-            Ok(identity) => identity,
+        let process = match DesktopSessionVerificationService::new(self.lifecycle, home)
+            .bind_relaunched_process(app_account_id, app_account_id, pid)
+        {
+            Ok(process) => process,
             Err(error) => {
                 self.lifecycle.abort_recovery();
                 return (true, Some(error));
             }
         };
-        let process = match self.lifecycle.inspect_process(pid) {
-            Ok(after) if after == before => after,
-            _ => {
-                self.lifecycle.abort_recovery();
-                return (
-                    true,
-                    Some("Desktop process identity changed before session binding".into()),
-                );
-            }
-        };
-        let path = home.join("desktop-app-session.json");
-        if let Err(error) =
-            DesktopAppSession::bound(app_account_id, app_account_id, process.clone()).save(&path)
-        {
-            self.lifecycle.abort_recovery();
-            return (true, Some(error));
-        }
         self.logger.log_action(
             operation_id,
             "DESKTOP_SESSION",

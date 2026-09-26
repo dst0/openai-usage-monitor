@@ -153,6 +153,8 @@ extension AppDelegate {
       guard let self = self else { return }
       let flags = source.data
 
+      self.refreshDesktopSessionSnapshot()
+
       self.authRefreshWorkItem?.cancel()
       let refreshItem = DispatchWorkItem { [weak self] in
         self?.refreshNow()
