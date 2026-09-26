@@ -75,6 +75,8 @@ impl SystemWindowRestoreBackend {
         Ok(capture)
     }
     pub fn new() -> Result<Self, String> {
+        #[cfg(test)]
+        crate::test_live_system::forbid("installed window-restore helper");
         let mut candidates = Vec::new();
         if let Some(path) = std::env::var_os("CODEX_WINDOW_RESTORE_HELPER") {
             candidates.push(PathBuf::from(path));

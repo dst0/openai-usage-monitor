@@ -3,7 +3,7 @@ use super::{
     desktop_ipc::DesktopIpc,
     foreground_checkpoint_service::ForegroundCheckpointService,
     manifest_store::{
-        finalize_target, load_manifest, prune_ineligible_targets, recovery_account_binding,
+        deferred_account_binding, finalize_target, load_manifest, prune_ineligible_targets,
         write_manifest,
     },
     pending_target::PendingTarget,
@@ -44,7 +44,7 @@ pub(crate) fn recover_threads_with_banner(
         RecoveryMode::DeferredOwned | RecoveryMode::DeferredCaptured
     );
     let binding = if deferred {
-        let bound = recovery_account_binding(true);
+        let bound = deferred_account_binding();
         if bound.as_deref() != Some(identity.account_id()) {
             return Err("Could not verify the deferred Desktop account before recovery".into());
         }
@@ -117,7 +117,7 @@ pub(crate) fn recover_threads_with_banner(
                         mode,
                         &mut scan_budget,
                         before_send,
-                        || identity.verify(),
+                        &mut identity.dispatch_checks(),
                     ) {
                         mark_dispatch_failure(target, &error);
                     }

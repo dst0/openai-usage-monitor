@@ -1,10 +1,10 @@
 use super::{
     ipc_call_error::IpcCallError,
     ipc_protocol::{
-        ipc_response_wait, parse_owner_info, read_ipc_frame, recovery_turn_start_request,
-        validate_start_response, write_ipc_frame,
+        ipc_response_wait, parse_owner_info, recovery_turn_start_request, validate_start_response,
+        write_ipc_frame,
     },
-    ipc_read_error::IpcReadError,
+    ipc_response_reader::IpcResponseReader,
     owner_info::OwnerInfo,
     owner_link_retry_schedule::{self, OwnerLinkRetry},
     ownerless_link_mount,
@@ -117,50 +117,7 @@ impl DesktopIpc {
             request["targetClientId"] = Value::String(target.to_string());
         }
         write_ipc_frame(&mut self.stream, &request).map_err(IpcCallError::Other)?;
-        loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err(IpcCallError::Other(format!(
-                    "Codex IPC request {method} timed out"
-                )));
-            }
-            self.stream
-                .set_read_timeout(Some(remaining))
-                .map_err(|error| IpcCallError::Other(error.to_string()))?;
-            let response = match read_ipc_frame(&mut self.stream) {
-                Ok(response) => response,
-                Err(IpcReadError::Io(error))
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    return Err(IpcCallError::Other(format!(
-                        "Codex IPC request {method} timed out"
-                    )));
-                }
-                Err(error) => return Err(IpcCallError::Other(error.to_string())),
-            };
-            if response["type"].as_str() != Some("response")
-                || response["requestId"].as_str() != Some(&request_id)
-            {
-                continue;
-            }
-            if response["resultType"].as_str() == Some("error") {
-                let error = response["error"].as_str().unwrap_or("unknown error");
-                return Err(if error == "no-client-found" {
-                    IpcCallError::NoClientFound
-                } else {
-                    IpcCallError::Other(format!("Codex IPC rejected {method}: {error}"))
-                });
-            }
-            if response["resultType"].as_str() != Some("success") {
-                return Err(IpcCallError::Other(format!(
-                    "Codex IPC returned an invalid response for {method}"
-                )));
-            }
-            return Ok(response);
-        }
+        IpcResponseReader::await_reply(&mut self.stream, method, &request_id, deadline)
     }
 
     pub(super) fn discover_owner_info_once(

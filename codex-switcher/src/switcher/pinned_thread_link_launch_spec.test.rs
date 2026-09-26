@@ -19,3 +19,12 @@ fn only_changed_process_identity_is_a_fatal_navigation_error() {
         "Pinned ChatGPT task navigation failed (OSStatus -10814)"
     ));
 }
+
+#[test]
+fn unit_tests_cannot_send_a_pinned_task_link() {
+    // An invalid ID: with the tripwire removed this returns a validation
+    // error before any LaunchServices, bundle, or process access.
+    crate::test_live_system::assert_forbidden("pinned ChatGPT task link (LaunchServices)", || {
+        super::retry("not-a-thread")
+    });
+}

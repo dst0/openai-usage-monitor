@@ -8,12 +8,14 @@ mod checkpoint_scan_registry;
 mod deferred_recovery_service;
 mod desktop_account_binding_service;
 mod desktop_ipc;
+mod dispatch_identity_checks;
 mod dispatch_mark_error;
 mod evidence;
 mod foreground_checkpoint_service;
 mod ipc_call_error;
 mod ipc_protocol;
 mod ipc_read_error;
+mod ipc_response_reader;
 mod ipc_socket;
 mod manifest_prune_service;
 mod manifest_store;
@@ -39,6 +41,8 @@ mod restart_checkpoint_service;
 mod running_desktop_banner;
 mod stored_manifest;
 mod target_dispatch;
+#[cfg(test)]
+mod test_desktop_router;
 mod thread_identity;
 mod thread_index_service;
 mod window_capture;
@@ -82,6 +86,9 @@ mod checkpoint_scan_registry_tests;
 #[cfg(test)]
 #[path = "recovery/deferred_recovery.test.rs"]
 mod deferred_recovery_tests;
+#[cfg(test)]
+#[path = "recovery/dispatch_marker_binding.test.rs"]
+mod dispatch_marker_binding_tests;
 #[cfg(test)]
 #[path = "recovery/evidence.test.rs"]
 mod evidence_tests;

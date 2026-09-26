@@ -1,6 +1,7 @@
 use super::account_switch_auth_service::AccountSwitchAuthService;
 use super::account_switch_commit_service::AccountSwitchCommitService;
 use super::account_switch_noop_service::AccountSwitchNoopService;
+use super::account_switch_preflight_service::AccountSwitchPreflightService;
 use super::account_target_resolver::resolve_account_with_sync;
 use super::codex_availability_service::CodexAvailabilityService;
 use super::desktop_session_binding_service::DesktopSessionBindingService;
@@ -15,6 +16,26 @@ pub fn switch_to_account(
     notify: bool,
     trigger: SwitchTrigger,
 ) -> Result<SwitchOutcome, String> {
+    switch_to_account_with(
+        account_id,
+        restart_app,
+        notify,
+        trigger,
+        is_codex_app_running_checked,
+        is_shared_auth_active_checked,
+    )
+}
+
+/// Injects only the preflight process probes. Work after a passing preflight
+/// still reads the live process table, which test builds refuse.
+pub(super) fn switch_to_account_with(
+    account_id: &str,
+    restart_app: bool,
+    notify: bool,
+    trigger: SwitchTrigger,
+    desktop_running: impl FnOnce() -> Result<bool, String>,
+    shared_auth_active: impl FnOnce() -> Result<bool, String>,
+) -> Result<SwitchOutcome, String> {
     let _operation = crate::recovery::operation_lock()?;
     reconcile_pending_direct_switch()?;
     let mut accounts_file = load_accounts()?;
@@ -24,24 +45,12 @@ pub fn switch_to_account(
         account_id,
         ActiveAuthRegistrySyncService::sync_from_disk,
     )?;
-    let desktop_running = is_codex_app_running_checked()?;
-    if is_shared_auth_active_checked()? && !desktop_running {
-        return Err(
-            "A bundled Desktop credential writer is running without its main process".into(),
-        );
-    }
-    if target_account.needs_relogin() {
-        let relogin_hint = target_account.name.as_deref().unwrap_or(&target_account.id);
-        return Err(format!(
-            "Account '{}' ({}) requires re-login before switching. Please run 'cxi relogin \"{}\"' first.",
-            target_account.display_name(),
-            target_account.email,
-            relogin_hint
-        ));
-    }
-    if desktop_running && auth_before_stop.is_none() {
-        return Err("Running Desktop has no readable authentication".into());
-    }
+    let desktop_running = AccountSwitchPreflightService::check(
+        &target_account,
+        auth_before_stop.as_ref(),
+        desktop_running,
+        shared_auth_active,
+    )?;
     if let Some(outcome) = AccountSwitchNoopService::resolve(
         &accounts_file,
         &target_account,

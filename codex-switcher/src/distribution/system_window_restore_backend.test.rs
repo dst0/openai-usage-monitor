@@ -256,3 +256,14 @@ fn running_desktop_recovery_uses_windowserver_and_continues_without_visible_wind
     );
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn unit_tests_cannot_resolve_the_installed_window_helper() {
+    // Resolution checks ~/.local/bin, and every caller then runs the helper
+    // against the live ChatGPT process. Tests construct a backend around a
+    // temporary fake helper, as above, or inject the caller's dependency.
+    crate::test_live_system::assert_forbidden(
+        "installed window-restore helper",
+        SystemWindowRestoreBackend::new,
+    );
+}

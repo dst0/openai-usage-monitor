@@ -1,23 +1,7 @@
-use super::{choose_recovery_account_binding, session_matches_binding, verified_with};
+use super::{session_matches_binding, verified_with};
 use crate::distribution::{DesktopAppSession, WindowProcessIdentity};
 use chrono::{Duration, Utc};
 use std::cell::Cell;
-
-#[test]
-fn deferred_binding_selector_uses_desktop_id_after_verification() {
-    assert_eq!(
-        choose_recovery_account_binding(Some("cli-account"), Some("desktop-account"), true),
-        Some("desktop-account".to_string())
-    );
-    assert_eq!(
-        choose_recovery_account_binding(Some("cli-account"), None, true),
-        None
-    );
-    assert_eq!(
-        choose_recovery_account_binding(Some("cli-account"), Some("desktop-account"), false),
-        Some("cli-account".to_string())
-    );
-}
 
 #[test]
 fn stale_or_invalid_desktop_session_cannot_bind_a_new_process() {

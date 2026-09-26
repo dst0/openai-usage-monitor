@@ -484,10 +484,31 @@ fn test_switch_to_account_rejects_relogin_needed() {
     })
     .unwrap();
 
-    let err = switch_to_account("user@example.com:uuid-1", false, false, SwitchTrigger::User)
+    let auth_before = std::fs::read(crate::storage::auth_json_path()).unwrap();
+    let registry_before = crate::storage::load_accounts().unwrap();
+    // Fake process probes: the live process table must never decide a test.
+    for desktop_running in [false, true] {
+        let err = switch_to_account_with(
+            "user@example.com:uuid-1",
+            false,
+            false,
+            SwitchTrigger::User,
+            || Ok(desktop_running),
+            || Ok(desktop_running),
+        )
         .unwrap_err();
-    assert!(err.contains("requires re-login"), "{err}");
-    assert!(err.contains("cxi relogin"));
+        assert!(err.contains("requires re-login"), "{err}");
+        assert!(err.contains("cxi relogin"));
+    }
+    assert_eq!(
+        std::fs::read(crate::storage::auth_json_path()).unwrap(),
+        auth_before
+    );
+    assert_eq!(
+        crate::storage::load_accounts().unwrap().active_account_id,
+        registry_before.active_account_id
+    );
+    assert!(!_home.path().join("direct-switch-journal.json").exists());
 }
 
 #[test]
@@ -570,4 +591,17 @@ fn test_append_eligible_pending_rejects_stale_and_completed_tasks() {
     );
 
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn unit_tests_cannot_read_the_live_process_table() {
+    // Every Desktop process probe funnels through one `/bin/ps` reader.
+    let seam = "process table (/bin/ps)";
+    crate::test_live_system::assert_forbidden(seam, is_codex_app_running_checked);
+    crate::test_live_system::assert_forbidden(seam, is_shared_auth_active_checked);
+    crate::test_live_system::assert_forbidden(seam, current_codex_app_pids);
+    crate::test_live_system::assert_forbidden(
+        seam,
+        super::codex_process_probe::desktop_process_rows_checked,
+    );
 }

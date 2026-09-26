@@ -34,3 +34,15 @@ fn pinned_retry_rejects_invalid_id_before_any_desktop_access() {
         "Invalid thread ID for ChatGPT navigation"
     );
 }
+
+#[test]
+fn unit_tests_cannot_open_chatgpt_task_links() {
+    // An IPC fake that answers `no-client-found` leads recovery here. The
+    // tripwire precedes validation, so a removed tripwire fails this test on
+    // the invalid ID instead of launching ChatGPT.
+    let seam = "ChatGPT task link (/usr/bin/open)";
+    crate::test_live_system::assert_forbidden(seam, || super::open_thread_in_codex("not-a-thread"));
+    crate::test_live_system::assert_forbidden(seam, || {
+        super::retry_thread_link_in_background("not-a-thread")
+    });
+}

@@ -1,5 +1,4 @@
 use super::{
-    desktop_ipc::DesktopIpc,
     desktop_ipc::IPC_DISCOVERY_TIMEOUT,
     ipc_protocol::{
         ipc_response_wait, parse_owner_info, read_ipc_frame, recovery_turn_start_request,
@@ -7,10 +6,11 @@ use super::{
     },
     recovery_mode::RecoveryMode,
     target_dispatch::{should_dispatch, should_resume_queued},
+    test_desktop_router::TestDesktopRouter,
 };
 use crate::switcher::ThreadRolloutState::*;
 use serde_json::Value;
-use std::{io::Write, os::unix::net::UnixStream, thread, time::Duration};
+use std::{io::Write, os::unix::net::UnixStream, time::Duration};
 
 #[test]
 fn desktop_ipc_dispatches_only_eligible_work() {
@@ -192,47 +192,21 @@ fn owner_and_start_responses_are_bound_to_the_expected_owner() {
 fn separate_task_windows_route_each_turn_to_its_discovered_owner() {
     let first = "01a09c25-9480-7dc2-87fd-79c507f91fcb";
     let second = "01a09c25-a442-78c0-9263-73ae757030e8";
-    let (client_stream, mut router_stream) = UnixStream::pair().unwrap();
-    let router = thread::spawn(move || {
-        let mut requests = Vec::new();
-        for _ in 0..4 {
-            let request = read_ipc_frame(&mut router_stream).unwrap();
-            let method = request["method"].as_str().unwrap().to_string();
-            let id = request["params"]["conversationId"]
-                .as_str()
-                .unwrap()
-                .to_string();
-            let owner = if id == first {
-                "window-one"
-            } else {
-                "window-two"
-            };
-            requests.push((
-                method.clone(),
-                id,
-                request["targetClientId"].as_str().map(str::to_string),
-            ));
-            let result = if method == "thread-owner-discovery" {
-                serde_json::json!({"supportsUntrustedAppInput": true})
-            } else {
-                serde_json::json!({"result": {"turn": {"id": first}}})
-            };
-            write_ipc_frame(
-                &mut router_stream,
-                &serde_json::json!({
-                    "type": "response",
-                    "requestId": request["requestId"],
-                    "resultType": "success",
-                    "method": method,
-                    "handledByClientId": owner,
-                    "result": result
-                }),
-            )
-            .unwrap();
-        }
-        requests
+    // The router stays connected until the client hangs up. Closing right
+    // after the last reply would race the client re-arming its read timeout.
+    let (mut client, router) = TestDesktopRouter::start(move |request| {
+        let owner = if request["params"]["conversationId"] == first {
+            "window-one"
+        } else {
+            "window-two"
+        };
+        let result = if request["method"] == "thread-owner-discovery" {
+            serde_json::json!({"supportsUntrustedAppInput": true})
+        } else {
+            serde_json::json!({"result": {"turn": {"id": first}}})
+        };
+        TestDesktopRouter::success(request, owner, result)
     });
-    let mut client = DesktopIpc::for_test(client_stream);
     let first_owner = client.discover_owner_info_once(first).unwrap().client_id;
     let second_owner = client.discover_owner_info_once(second).unwrap().client_id;
     assert_ne!(first_owner, second_owner);
@@ -240,7 +214,21 @@ fn separate_task_windows_route_each_turn_to_its_discovered_owner() {
     client
         .resume_interrupted_turn(second, &second_owner)
         .unwrap();
-    let requests = router.join().unwrap();
+    let requests: Vec<(String, String, Option<String>)> = router
+        .finish(client)
+        .iter()
+        .map(|request| {
+            (
+                request["method"].as_str().unwrap().to_string(),
+                request["params"]["conversationId"]
+                    .as_str()
+                    .unwrap()
+                    .to_string(),
+                request["targetClientId"].as_str().map(str::to_string),
+            )
+        })
+        .collect();
+    assert_eq!(requests.len(), 4, "{requests:?}");
     assert_eq!(
         requests[0],
         ("thread-owner-discovery".into(), first.into(), None)

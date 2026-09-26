@@ -139,6 +139,13 @@ fn launch_pinned_link(thread_id: &str) -> Result<(), String> {
 }
 
 pub(super) fn retry(thread_id: &str) -> Result<(), String> {
+    #[cfg(test)]
+    crate::test_live_system::forbid("pinned ChatGPT task link (LaunchServices)");
+    // Callers validate too; this keeps an invalid ID away from LaunchServices
+    // and makes the tripwire's guard test inert if the tripwire is removed.
+    if !super::thread_identity::is_valid_thread_id(thread_id) {
+        return Err("Invalid thread ID for ChatGPT navigation".into());
+    }
     let metadata =
         std::fs::symlink_metadata(APP_PATH).map_err(|_| "The pinned ChatGPT app is unavailable")?;
     if !metadata.file_type().is_dir() || Path::new(APP_PATH).is_symlink() {

@@ -1,7 +1,6 @@
 use super::{
-    desktop_ipc::DesktopIpc,
+    dispatch_identity_checks::DispatchIdentityChecks,
     ipc_call_error::IpcCallError,
-    ipc_protocol::{read_ipc_frame, write_ipc_frame},
     manifest_store::finalize_target,
     observer::Observer,
     pending_target::PendingTarget,
@@ -12,6 +11,7 @@ use super::{
         dispatch_if_needed, handle_owner_resolution, revalidate_after_banner_gate,
         revalidate_after_owner, revalidate_after_owner_with_budget,
     },
+    test_desktop_router::TestDesktopRouter,
 };
 use crate::{
     distribution::WindowProcessIdentity, recovery::RecoveryBanner, switcher::ThreadRolloutState,
@@ -19,7 +19,6 @@ use crate::{
 use std::{
     fs::OpenOptions,
     io::Write,
-    os::unix::net::UnixStream,
     path::Path,
     process::Command,
     thread,
@@ -109,53 +108,27 @@ fn assert_owner_wait_rejects_account_change(with_queue: bool, change_after_marke
             .unwrap()
             .success());
     }
-    let (client_stream, mut router_stream) = UnixStream::pair().unwrap();
-    router_stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .unwrap();
     let router_auth = next_auth.clone();
-    let router = thread::spawn(move || {
-        let owner_request = read_ipc_frame(&mut router_stream).unwrap();
-        assert_eq!(owner_request["method"], "thread-owner-discovery");
+    // Owner discovery is the only expected request. Any later request is
+    // recorded rather than lost to a router timeout, so a dispatch that
+    // crosses the account change fails this test however slowly it happens.
+    let (mut desktop, router) = TestDesktopRouter::start(move |request| {
+        if request["method"] != "thread-owner-discovery" {
+            return TestDesktopRouter::success(
+                request,
+                "window-one",
+                serde_json::json!({"ok": true, "result": {"turn": {"id": id}}}),
+            );
+        }
         if !change_after_marker {
             crate::storage::write_active_auth_json(&router_auth).unwrap();
         }
-        write_ipc_frame(
-            &mut router_stream,
-            &serde_json::json!({
-                "type": "response",
-                "requestId": owner_request["requestId"],
-                "resultType": "success",
-                "method": "thread-owner-discovery",
-                "handledByClientId": "window-one",
-                "result": { "supportsUntrustedAppInput": true }
-            }),
+        TestDesktopRouter::success(
+            request,
+            "window-one",
+            serde_json::json!({ "supportsUntrustedAppInput": true }),
         )
-        .unwrap();
-        let Ok(next_request) = read_ipc_frame(&mut router_stream) else {
-            return None;
-        };
-        let method = next_request["method"].as_str().map(str::to_owned);
-        let result = if method.as_deref() == Some("thread-follower-set-queued-follow-ups-state") {
-            serde_json::json!({"ok": true})
-        } else {
-            serde_json::json!({"result": {"turn": {"id": id}}})
-        };
-        write_ipc_frame(
-            &mut router_stream,
-            &serde_json::json!({
-                "type": "response",
-                "requestId": next_request["requestId"],
-                "resultType": "success",
-                "method": method,
-                "handledByClientId": "window-one",
-                "result": result
-            }),
-        )
-        .unwrap();
-        method
     });
-    let mut desktop = DesktopIpc::for_test(client_stream);
     let mut budget = super::recovery_target::FOREGROUND_SCAN_BUDGET_BYTES;
     let identity_checks = std::cell::Cell::new(0);
     let result = dispatch_if_needed(
@@ -165,37 +138,52 @@ fn assert_owner_wait_rejects_account_change(with_queue: bool, change_after_marke
         RecoveryMode::ExplicitTarget,
         &mut budget,
         || Ok(()),
-        || {
-            let matched = super::manifest_store::current_account_binding().as_deref()
-                == Some(start_account.as_str());
-            if matched && change_after_marker && identity_checks.get() == 0 {
-                identity_checks.set(1);
-                crate::storage::write_active_auth_json(&next_auth).unwrap();
-            }
-            matched
-                .then_some(())
-                .ok_or(super::dispatch_mark_error::DispatchMarkError::AccountChanged)
-        },
+        &mut DispatchIdentityChecks::new(
+            || {
+                let matched = super::manifest_store::current_account_binding().as_deref()
+                    == Some(start_account.as_str());
+                if matched && change_after_marker && identity_checks.get() == 0 {
+                    identity_checks.set(1);
+                    crate::storage::write_active_auth_json(&next_auth).unwrap();
+                }
+                matched
+                    .then_some(())
+                    .ok_or(super::dispatch_mark_error::DispatchMarkError::AccountChanged)
+            },
+            // The explicit request claimed this deferred target, so its
+            // Desktop binding is irrelevant and must not be resolved: in
+            // production that runs the installed helper on live ChatGPT.
+            unconsulted_deferred_binding,
+        ),
     );
-    drop(desktop);
-    let method = router.join().unwrap();
+    let requests = router.finish(desktop);
+    let methods = request_methods(&requests);
     let observed_account = super::manifest_store::current_account_binding();
     let retained = super::manifest_store::load_manifest().unwrap();
     let safe = observed_account.as_deref() == Some(next_account_id.as_str())
         && result.is_err()
-        && method.is_none()
+        && methods == ["thread-owner-discovery"]
         && !candidate.dispatched
         && retained == vec![original];
     drop(env);
     assert!(
         safe,
-        "owner wait crossed an account change: result={result:?}, method={method:?}, dispatched={}, retained={retained:?}, observed_account={observed_account:?}",
+        "owner wait crossed an account change: result={result:?}, methods={methods:?}, dispatched={}, retained={retained:?}, observed_account={observed_account:?}",
         candidate.dispatched,
     );
 }
 
 #[test]
 fn already_unpaused_queue_sends_one_owner_routed_wake_before_consuming_checkpoint() {
+    assert_unpaused_queue_wake(Duration::ZERO);
+}
+
+#[test]
+fn unpaused_queue_wake_survives_a_slow_banner_gate() {
+    assert_unpaused_queue_wake(Duration::from_millis(750));
+}
+
+fn assert_unpaused_queue_wake(gate_delay: Duration) {
     let env = crate::distribution::test_helper::TestEnv::new("queue_owner_wake");
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let mut candidate = target(env.home(), id);
@@ -228,65 +216,181 @@ fn already_unpaused_queue_sends_one_owner_routed_wake_before_consuming_checkpoin
         owner_account_id: None,
     }])
     .unwrap();
-    let (client_stream, mut router_stream) = UnixStream::pair().unwrap();
-    router_stream
-        .set_read_timeout(Some(Duration::from_millis(500)))
-        .unwrap();
-    let router = thread::spawn(move || {
-        let owner_request = read_ipc_frame(&mut router_stream).ok()?;
-        write_ipc_frame(
-            &mut router_stream,
-            &serde_json::json!({
-                "type": "response",
-                "requestId": owner_request["requestId"],
-                "resultType": "success",
-                "method": "thread-owner-discovery",
-                "handledByClientId": "window-one",
-                "result": { "supportsUntrustedAppInput": true }
-            }),
-        )
-        .ok()?;
-        let wake_request = read_ipc_frame(&mut router_stream).ok()?;
-        let routed = wake_request["method"] == "thread-follower-set-queued-follow-ups-state"
-            && wake_request["targetClientId"] == "window-one"
-            && wake_request["params"]["state"][id][0]
-                == serde_json::json!({"id":"queued-one","context":{"keep":true}});
-        write_ipc_frame(
-            &mut router_stream,
-            &serde_json::json!({
-                "type": "response",
-                "requestId": wake_request["requestId"],
-                "resultType": "success",
-                "method": "thread-follower-set-queued-follow-ups-state",
-                "handledByClientId": "window-one",
-                "result": { "ok": true }
-            }),
-        )
-        .ok()?;
-        Some(routed)
+    // The router stays connected until the client hangs up, so the banner
+    // gate may take as long as it does in production (panel startup can take
+    // seconds) without the router giving up and turning the wake into EPIPE.
+    let (mut desktop, router) = TestDesktopRouter::start(|request| {
+        let result = if request["method"] == "thread-owner-discovery" {
+            serde_json::json!({ "supportsUntrustedAppInput": true })
+        } else {
+            serde_json::json!({ "ok": true })
+        };
+        TestDesktopRouter::success(request, "window-one", result)
     });
-    let mut desktop = DesktopIpc::for_test(client_stream);
     let mut budget = super::recovery_target::FOREGROUND_SCAN_BUDGET_BYTES;
+    let mut gate_delay = Some(gate_delay);
     let result = dispatch_if_needed(
         env.home(),
         &mut desktop,
         &mut candidate,
         RecoveryMode::DiscoveredOnly,
         &mut budget,
-        || Ok(()),
-        || Ok(()),
+        || {
+            // Only the first banner check is slow; it sits between owner
+            // discovery and the wake, where the old 500 ms router gave up.
+            thread::sleep(gate_delay.take().unwrap_or_default());
+            Ok(())
+        },
+        &mut DispatchIdentityChecks::new(|| Ok(()), unconsulted_deferred_binding),
     );
-    let routed = router.join().unwrap();
+    let requests = router.finish(desktop);
+    let methods = request_methods(&requests);
+    let routed = requests.get(1).is_some_and(|wake| {
+        wake["targetClientId"] == "window-one"
+            && wake["params"]["state"][id][0]
+                == serde_json::json!({"id":"queued-one","context":{"keep":true}})
+    });
     let consumed = super::manifest_store::load_manifest().unwrap().is_empty();
-    let passed = result.is_ok() && routed == Some(true) && candidate.dispatched && consumed;
+    let passed = result.is_ok()
+        && methods
+            == [
+                "thread-owner-discovery",
+                "thread-follower-set-queued-follow-ups-state",
+            ]
+        && routed
+        && candidate.dispatched
+        && consumed;
     drop(env);
     assert!(
         passed,
-        "unpaused queue did not complete an owner-routed IPC wake: result_ok={}, error={:?}, routed={routed:?}, dispatched={}, consumed={consumed}",
+        "unpaused queue did not complete one owner-routed IPC wake: result_ok={}, error={:?}, methods={methods:?}, routed={routed}, dispatched={}, consumed={consumed}",
         result.is_ok(),
         result.as_ref().err(),
         candidate.dispatched
     );
+}
+
+#[test]
+fn deferred_dispatch_refuses_a_checkpoint_bound_to_another_desktop_account() {
+    for binding in [Some("account-b"), None] {
+        let outcome = dispatch_deferred_target_under(binding);
+        assert!(
+            outcome.error.as_deref()
+                == Some("Active Desktop account or process changed before recovery dispatch")
+                && outcome.account_mismatch
+                && !outcome.dispatched
+                && outcome.checkpoint_retained
+                && outcome.methods == ["thread-owner-discovery"]
+                && outcome.binding_reads == 1
+                && outcome.identity_checks == 0,
+            "binding={binding:?}: {outcome:?}"
+        );
+    }
+}
+
+#[test]
+fn deferred_dispatch_consumes_the_checkpoint_for_its_bound_desktop_account() {
+    let outcome = dispatch_deferred_target_under(Some("account-a"));
+    assert!(
+        outcome.error.is_none()
+            && !outcome.account_mismatch
+            && outcome.dispatched
+            && !outcome.checkpoint_retained
+            && outcome.methods == ["thread-owner-discovery", "thread-follower-start-turn"]
+            && outcome.binding_reads == 1
+            && outcome.identity_checks == 2,
+        "{outcome:?}"
+    );
+}
+
+#[derive(Debug)]
+struct DeferredDispatchOutcome {
+    error: Option<String>,
+    account_mismatch: bool,
+    dispatched: bool,
+    checkpoint_retained: bool,
+    methods: Vec<String>,
+    binding_reads: usize,
+    identity_checks: usize,
+}
+
+/// Dispatches a quota-interrupted target that `account-a` deferred, while the
+/// injected Desktop session resolves to `binding`.
+fn dispatch_deferred_target_under(binding: Option<&str>) -> DeferredDispatchOutcome {
+    let env = crate::distribution::test_helper::TestEnv::new("deferred_dispatch_binding");
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let mut candidate = target(env.home(), id);
+    OpenOptions::new()
+        .append(true)
+        .open(&candidate.observer.path)
+        .unwrap()
+        .write_all(b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"error\":{\"code\":\"usage_limit_exceeded\"}}}\n")
+        .unwrap();
+    candidate.observer = Observer::checkpoint(candidate.observer.path.clone()).unwrap();
+    candidate.state = ThreadRolloutState::InterruptedByQuota;
+    make_rollout_discoverable(env.home(), &mut candidate);
+    let original = PendingTarget {
+        id: id.into(),
+        offset: Some(candidate.observer.offset),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("account-a".into()),
+    };
+    super::manifest_store::write_manifest(std::slice::from_ref(&original)).unwrap();
+    let (mut desktop, router) = TestDesktopRouter::start(move |request| {
+        let result = if request["method"] == "thread-owner-discovery" {
+            serde_json::json!({ "supportsUntrustedAppInput": true })
+        } else {
+            serde_json::json!({ "result": { "turn": { "id": id } } })
+        };
+        TestDesktopRouter::success(request, "window-one", result)
+    });
+    let (binding_reads, identity_checks) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
+    let mut budget = super::recovery_target::FOREGROUND_SCAN_BUDGET_BYTES;
+    let result = dispatch_if_needed(
+        env.home(),
+        &mut desktop,
+        &mut candidate,
+        RecoveryMode::DeferredCaptured,
+        &mut budget,
+        || Ok(()),
+        &mut DispatchIdentityChecks::new(
+            || {
+                identity_checks.set(identity_checks.get() + 1);
+                Ok(())
+            },
+            || {
+                binding_reads.set(binding_reads.get() + 1);
+                binding.map(str::to_owned)
+            },
+        ),
+    );
+    let methods = request_methods(&router.finish(desktop))
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    let checkpoint_retained = super::manifest_store::load_manifest().unwrap() == vec![original];
+    drop(env);
+    DeferredDispatchOutcome {
+        error: result.err(),
+        account_mismatch: candidate.account_mismatch,
+        dispatched: candidate.dispatched,
+        checkpoint_retained,
+        methods,
+        binding_reads: binding_reads.get(),
+        identity_checks: identity_checks.get(),
+    }
+}
+
+fn unconsulted_deferred_binding() -> Option<String> {
+    panic!("this dispatch must not resolve a deferred Desktop account binding")
+}
+
+fn request_methods(requests: &[serde_json::Value]) -> Vec<&str> {
+    requests
+        .iter()
+        .map(|request| request["method"].as_str().unwrap_or("<missing>"))
+        .collect()
 }
 
 #[test]
@@ -354,33 +458,15 @@ fn assert_ineligible_queued_turn_never_contacts_owner(
         owner_account_id: None,
     }])
     .unwrap();
-    let (client_stream, mut router_stream) = UnixStream::pair().unwrap();
-    router_stream
-        .set_read_timeout(Some(Duration::from_millis(500)))
-        .unwrap();
-    let router = thread::spawn(move || {
-        let mut methods = Vec::new();
-        for _ in 0..2 {
-            let Ok(request) = read_ipc_frame(&mut router_stream) else {
-                break;
-            };
-            let method = request["method"].as_str().unwrap_or("unknown").to_owned();
-            methods.push(method.clone());
-            let response = serde_json::json!({
-                "type": "response",
-                "requestId": request["requestId"],
-                "resultType": "success",
-                "method": method,
-                "handledByClientId": "window-one",
-                "result": { "supportsUntrustedAppInput": true, "ok": true }
-            });
-            if write_ipc_frame(&mut router_stream, &response).is_err() {
-                break;
-            }
-        }
-        methods
+    // No request is expected; the client's hang-up, not a timeout, ends the
+    // router, so even a late owner request would be recorded.
+    let (mut desktop, router) = TestDesktopRouter::start(|request| {
+        TestDesktopRouter::success(
+            request,
+            "window-one",
+            serde_json::json!({ "supportsUntrustedAppInput": true, "ok": true }),
+        )
     });
-    let mut desktop = DesktopIpc::for_test(client_stream);
     let mut budget = super::recovery_target::FOREGROUND_SCAN_BUDGET_BYTES;
     let result = dispatch_if_needed(
         env.home(),
@@ -389,9 +475,10 @@ fn assert_ineligible_queued_turn_never_contacts_owner(
         mode,
         &mut budget,
         || Ok(()),
-        || Ok(()),
+        &mut DispatchIdentityChecks::new(|| Ok(()), unconsulted_deferred_binding),
     );
-    let methods = router.join().unwrap();
+    let requests = router.finish(desktop);
+    let methods = request_methods(&requests);
     let saved = super::manifest_store::load_manifest().unwrap();
     let retained =
         saved.len() == 1 && saved[0].id == id && saved[0].offset == Some(candidate.observer.offset);

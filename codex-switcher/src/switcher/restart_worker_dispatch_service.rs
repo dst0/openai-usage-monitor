@@ -1,4 +1,5 @@
 use super::codex_app_lifecycle::CODEX_APP_EXECUTABLE;
+use super::codex_process_probe::desktop_process_rows_checked;
 use super::thread_identity::clean_thread_id;
 use chrono::Utc;
 use std::process::Command;
@@ -13,15 +14,11 @@ impl RestartWorkerDispatchService {
         if std::env::var_os("CODEX_RESTART_WORKER").is_some() {
             return Ok(false);
         }
-        let output = Command::new("/bin/ps")
-            .args(["-axo", "pid=,ppid=,comm="])
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !output.status.success() {
-            return Err("Cannot verify restart worker ancestry".into());
-        }
-        if !Self::has_codex_ancestor(&String::from_utf8_lossy(&output.stdout), std::process::id())?
-        {
+        // The shared process-table reader is the one test builds refuse, and
+        // it fails closed on output it cannot decode.
+        let rows = desktop_process_rows_checked()
+            .map_err(|_| "Cannot verify restart worker ancestry".to_string())?;
+        if !Self::has_codex_ancestor(&rows, std::process::id())? {
             return Ok(false);
         }
         let home = crate::storage::codex_home();

@@ -33,3 +33,11 @@ fn settings_preserve_window_bounds_defaults_to_true() {
     let parsed_disabled: crate::models::Settings = serde_json::from_str(json_disabled).unwrap();
     assert!(!parsed_disabled.preserve_window_bounds_on_restart);
 }
+
+#[test]
+fn unit_tests_cannot_resolve_the_installed_ui_resume_helper() {
+    crate::test_live_system::assert_forbidden(
+        "installed codex-ui-resume helper",
+        super::window_capture::helper_candidates,
+    );
+}
