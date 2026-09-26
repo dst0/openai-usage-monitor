@@ -21,6 +21,7 @@ pub(super) struct CachedCheckpointScan {
     checkpoint_prefix: Vec<u8>,
     observed_length: u64,
     modified: Option<SystemTime>,
+    changed_at: (i64, i64),
     boundary: Vec<u8>,
     #[cfg(test)]
     pub(super) scanned_bytes: u64,
@@ -41,6 +42,7 @@ impl CachedCheckpointScan {
             checkpoint_prefix,
             observed_length: checkpoint,
             modified: metadata.modified().ok(),
+            changed_at: (metadata.ctime(), metadata.ctime_nsec()),
             boundary: Vec::new(),
             #[cfg(test)]
             scanned_bytes: 0,
@@ -54,9 +56,16 @@ impl CachedCheckpointScan {
         {
             return false;
         }
-        if metadata.len() == self.observed_length && metadata.modified().ok() != self.modified {
+        if metadata.len() == self.observed_length
+            && (metadata.modified().ok() != self.modified
+                || (metadata.ctime(), metadata.ctime_nsec()) != self.changed_at)
+        {
             return false;
         }
+        // Codex's RolloutRecorder opens session JSONL with append(true). The
+        // inode, checkpoint prefix and cursor boundary catch replacement and
+        // ordinary in-place rewrites; an arbitrary writer preserving both
+        // sampled regions is outside that trusted append-only contract.
         let prefix_end = self.checkpoint_offset + self.checkpoint_prefix.len() as u64;
         Self::read_sample(&self.observer.path, self.checkpoint_offset, prefix_end)
             .is_ok_and(|bytes| bytes == self.checkpoint_prefix)
@@ -104,6 +113,7 @@ impl CachedCheckpointScan {
 
     pub(super) fn update_identity(&mut self, metadata: &Metadata) {
         self.modified = metadata.modified().ok();
+        self.changed_at = (metadata.ctime(), metadata.ctime_nsec());
     }
 
     fn read_boundary(path: &PathBuf, cursor: u64) -> Result<Vec<u8>, String> {

@@ -124,6 +124,14 @@ FAKE_CODEX_HOME="$(cd "${FAKE_HOME}/.codex" && /bin/pwd -P)"
 /usr/bin/printf 'unknown recovery\n' > "${FAKE_HOME}/.codex/recovery-runs/nested/unknown-state.bin"
 /usr/bin/printf 'auth sentinel\n' > "${FAKE_HOME}/.codex/auth.json"
 /usr/bin/printf 'accounts sentinel\n' > "${FAKE_HOME}/.codex/accounts.json"
+/usr/bin/printf 'manual reset sentinel\n' > "${FAKE_HOME}/.codex/manual-reset-state.json"
+/usr/bin/printf 'desktop session sentinel\n' > "${FAKE_HOME}/.codex/desktop-app-session.json"
+/usr/bin/printf 'distribution journal sentinel\n' > "${FAKE_HOME}/.codex/distribution-journal.json"
+/usr/bin/printf 'direct switch journal sentinel\n' > "${FAKE_HOME}/.codex/direct-switch-journal.json"
+/usr/bin/printf 'distribution staging sentinel\n' > "${FAKE_HOME}/.codex/distribution-journal.123.0123456789abcdef.tmp"
+/usr/bin/printf 'direct staging sentinel\n' > "${FAKE_HOME}/.codex/direct-switch-journal.123.0123456789abcdef.tmp"
+/usr/bin/printf 'desktop staging sentinel\n' > "${FAKE_HOME}/.codex/desktop-app-session.123.0123456789abcdef0123456789abcdef.tmp"
+/usr/bin/printf 'foreign staging sentinel\n' > "${FAKE_HOME}/.codex/distribution-journal.abc.0123456789abcdef.tmp"
 /usr/bin/printf 'sqlite sentinel\n' > "${FAKE_HOME}/.codex/state_5.sqlite"
 /usr/bin/printf 'wal sentinel\n' > "${FAKE_HOME}/.codex/state_5.sqlite-wal"
 /usr/bin/printf 'shm sentinel\n' > "${FAKE_HOME}/.codex/state_5.sqlite-shm"
@@ -134,6 +142,13 @@ FAKE_CODEX_HOME="$(cd "${FAKE_HOME}/.codex" && /bin/pwd -P)"
 /bin/chmod 600 \
     "${FAKE_HOME}/.codex/auth.json" \
     "${FAKE_HOME}/.codex/accounts.json" \
+    "${FAKE_HOME}/.codex/manual-reset-state.json" \
+    "${FAKE_HOME}/.codex/desktop-app-session.json" \
+    "${FAKE_HOME}/.codex/distribution-journal.json" \
+    "${FAKE_HOME}/.codex/direct-switch-journal.json" \
+    "${FAKE_HOME}/.codex/distribution-journal.123.0123456789abcdef.tmp" \
+    "${FAKE_HOME}/.codex/direct-switch-journal.123.0123456789abcdef.tmp" \
+    "${FAKE_HOME}/.codex/desktop-app-session.123.0123456789abcdef0123456789abcdef.tmp" \
     "${FAKE_HOME}/.codex/state_5.sqlite" \
     "${FAKE_HOME}/.codex/state_5.sqlite-wal" \
     "${FAKE_HOME}/.codex/state_5.sqlite-shm"
@@ -170,6 +185,15 @@ HOME="${FAKE_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/account-switcher-daemon.log" "${DRY_RUN_OUTPUT}" >/dev/null
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/account-switcher-daemon.err" "${DRY_RUN_OUTPUT}" >/dev/null
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/recovery-runs" "${DRY_RUN_OUTPUT}" >/dev/null
+/usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/manual-reset-state.json" "${DRY_RUN_OUTPUT}" >/dev/null
+/usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/desktop-app-session.json" "${DRY_RUN_OUTPUT}" >/dev/null
+/usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/distribution-journal.json" "${DRY_RUN_OUTPUT}" >/dev/null
+/usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/direct-switch-journal.json" "${DRY_RUN_OUTPUT}" >/dev/null
+/usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/distribution-journal.123.0123456789abcdef.tmp" "${DRY_RUN_OUTPUT}" >/dev/null
+/usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/direct-switch-journal.123.0123456789abcdef.tmp" "${DRY_RUN_OUTPUT}" >/dev/null
+/usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/desktop-app-session.123.0123456789abcdef0123456789abcdef.tmp" "${DRY_RUN_OUTPUT}" >/dev/null
+/usr/bin/grep -F 'distribution-journal.abc.0123456789abcdef.tmp' "${DRY_RUN_OUTPUT}" >/dev/null &&
+    fail 'dry-run listed a foreign staging file'
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/auth.temporary.tmp.json" "${DRY_RUN_OUTPUT}" >/dev/null
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/.redact-1-1.tmp" "${DRY_RUN_OUTPUT}" >/dev/null
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/log/.redact-1-2.tmp" "${DRY_RUN_OUTPUT}" >/dev/null
@@ -188,6 +212,14 @@ assert_exists "${FAKE_HOME}/.codex/log/archive/keep-unrelated.txt"
 assert_absent "${FAKE_HOME}/.codex/account-switcher-daemon.log"
 assert_absent "${FAKE_HOME}/.codex/account-switcher-daemon.err"
 assert_absent "${FAKE_HOME}/.codex/recovery-runs"
+assert_absent "${FAKE_HOME}/.codex/manual-reset-state.json"
+assert_absent "${FAKE_HOME}/.codex/desktop-app-session.json"
+assert_absent "${FAKE_HOME}/.codex/distribution-journal.json"
+assert_absent "${FAKE_HOME}/.codex/direct-switch-journal.json"
+assert_absent "${FAKE_HOME}/.codex/distribution-journal.123.0123456789abcdef.tmp"
+assert_absent "${FAKE_HOME}/.codex/direct-switch-journal.123.0123456789abcdef.tmp"
+assert_absent "${FAKE_HOME}/.codex/desktop-app-session.123.0123456789abcdef0123456789abcdef.tmp"
+assert_exists "${FAKE_HOME}/.codex/distribution-journal.abc.0123456789abcdef.tmp"
 assert_absent "${FAKE_HOME}/.codex/auth.temporary.tmp.json"
 assert_absent "${FAKE_HOME}/.codex/.redact-1-1.tmp"
 assert_absent "${FAKE_HOME}/.codex/log/.redact-1-2.tmp"

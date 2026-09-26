@@ -107,8 +107,28 @@ swiftc -parse-as-library \
 swiftc \
     -target "$(uname -m)-apple-macosx13.0" \
     -framework AppKit -framework Foundation -framework ApplicationServices \
+    scripts/CodexWindowAXValueDecoder.swift \
+    scripts/CodexWindowSafetyChecks.swift \
     scripts/codex-window-restore.swift \
     -o "${TMP_BIN_DIR}/codex-window-restore"
+
+echo "👉 Running exact window Accessibility value tests..."
+swiftc -parse-as-library \
+    -target "$(uname -m)-apple-macosx13.0" \
+    -framework AppKit -framework Foundation -framework ApplicationServices \
+    scripts/CodexWindowAXValueDecoder.swift \
+    tests/CodexWindowRestoreAXValueTests.swift \
+    -o "${TMP_BIN_DIR}/codex-window-ax-value_test"
+"${TMP_BIN_DIR}/codex-window-ax-value_test"
+
+echo "👉 Running exact window safety checks..."
+swiftc -parse-as-library \
+    -target "$(uname -m)-apple-macosx13.0" \
+    -framework AppKit -framework Foundation -framework ApplicationServices \
+    scripts/CodexWindowSafetyChecks.swift \
+    tests/CodexWindowSafetyChecksTests.swift \
+    -o "${TMP_BIN_DIR}/codex-window-safety-checks_test"
+"${TMP_BIN_DIR}/codex-window-safety-checks_test"
 
 echo ""
 echo "🎉 ALL SWIFT TEST SUITES PASSED CLEANLY!"

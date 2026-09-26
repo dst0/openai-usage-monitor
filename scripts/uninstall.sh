@@ -148,8 +148,38 @@ ALWAYS_STATE_PATHS=(
     "${CODEX_HOME}/desktop-app-session.json"
     "${CODEX_HOME}/distribution-journal.json"
     "${CODEX_HOME}/desktop-window.json"
+    "${CODEX_HOME}/desktop-app-session.json"
+    "${CODEX_HOME}/distribution-journal.json"
+    "${CODEX_HOME}/direct-switch-journal.json"
     "${CODEX_HOME}/auto-reset-state.json"
+    "${CODEX_HOME}/manual-reset-state.json"
 )
+
+# Interrupted atomic writes can leave private staging files. Match only the
+# exact Monitor-generated names and modes; preserve unrelated files.
+monitor_state_temps() {
+    local path name metadata
+    for path in \
+        "${CODEX_HOME}"/distribution-journal.*.tmp \
+        "${CODEX_HOME}"/direct-switch-journal.*.tmp \
+        "${CODEX_HOME}"/desktop-app-session.*.tmp; do
+        is_present "$path" || continue
+        [ ! -L "$path" ] && [ -f "$path" ] || continue
+        name="${path##*/}"
+        case "$name" in
+            distribution-journal.*)
+                [[ "$name" =~ ^distribution-journal\.[0-9]+\.[0-9a-f]{16}\.tmp$ ]] || continue ;;
+            direct-switch-journal.*)
+                [[ "$name" =~ ^direct-switch-journal\.[0-9]+\.[0-9a-f]{16}\.tmp$ ]] || continue ;;
+            desktop-app-session.*)
+                [[ "$name" =~ ^desktop-app-session\.[0-9]+\.[0-9a-f]{32}\.tmp$ ]] || continue ;;
+            *) continue ;;
+        esac
+        metadata="$(/usr/bin/stat -f '%u:%Lp' "$path" 2>/dev/null || true)"
+        [ "$metadata" = "${CURRENT_UID}:600" ] || continue
+        printf '%s\n' "$path"
+    done
+}
 
 # Exact bundle-specific Library paths only; never remove a broad Library tree.
 ALWAYS_ARTIFACT_PATHS=(
@@ -217,6 +247,7 @@ print_plan() {
     print_plan_path "$APP_SERVICE_PLIST"
     print_plan_path "$INSTALL_LOCK_FILE"
     for path in "${ALWAYS_STATE_PATHS[@]}"; do print_plan_path "$path"; done
+    while IFS= read -r path; do print_plan_path "$path"; done < <(monitor_state_temps)
     print_monitor_log_plan
     for path in "${ALWAYS_ARTIFACT_PATHS[@]}"; do print_plan_path "$path"; done
     if [ "$PURGE_DATA" -eq 0 ]; then
@@ -629,6 +660,7 @@ for path in "${ALWAYS_STATE_PATHS[@]}"; do
         *) remove_path "$path" ;;
     esac
 done
+while IFS= read -r path; do remove_path "$path"; done < <(monitor_state_temps)
 # Clear the preference domains as well as their plist files. This is scoped to
 # the two bundle identifiers owned by this project and does not touch ChatGPT.
 if command -v defaults >/dev/null 2>&1; then

@@ -36,6 +36,7 @@ fn make_test_account(
             refresh_token: refresh_token.map(String::from),
             id_token: None,
             account_id: Some(acc_id.to_string()),
+            extra: Default::default(),
         },
         enabled: true,
         priority: 1,
@@ -299,6 +300,7 @@ fn test_same_email_and_workspace_different_nicknames_always_merge() {
         refresh_token: Some("rt_updated".to_string()),
         id_token: Some(make_test_jwt("dev@enterprise.example.com")),
         account_id: Some("uuid-team".to_string()),
+        extra: Default::default(),
     };
 
     let target_id = add_account_to_accounts_file(&mut file, "dev-account-3", tokens, false);
@@ -359,6 +361,7 @@ fn test_add_account_preserves_active_account() {
         refresh_token: Some("rt_2".to_string()),
         id_token: None,
         account_id: Some("uuid-2".to_string()),
+        extra: Default::default(),
     };
 
     let added_id = add_account_to_accounts_file(&mut file, "secondary", new_tokens, true);
@@ -385,6 +388,7 @@ fn test_add_account_sets_active_when_none_existed() {
         refresh_token: Some("rt_1".to_string()),
         id_token: None,
         account_id: Some("uuid-1".to_string()),
+        extra: Default::default(),
     };
 
     let added_id = add_account_to_accounts_file(&mut file, "first", new_tokens, true);
@@ -415,6 +419,7 @@ fn test_save_current_as_replaces_active_account() {
         refresh_token: Some("rt_2".to_string()),
         id_token: None,
         account_id: Some("uuid-2".to_string()),
+        extra: Default::default(),
     };
 
     let saved_id = add_account_to_accounts_file(&mut file, "new_active", current_tokens, false);
@@ -508,6 +513,7 @@ fn test_apply_relogin_successful_update() {
         refresh_token: Some("new_rt".to_string()),
         id_token: Some(jwt),
         account_id: Some("uuid-1".to_string()),
+        extra: Default::default(),
     };
 
     let res = apply_relogin_to_accounts_file(&mut file, "business", new_tokens);
@@ -559,6 +565,7 @@ fn test_apply_relogin_rejects_email_mismatch() {
         refresh_token: Some("other_rt".to_string()),
         id_token: Some(jwt),
         account_id: Some("uuid-2".to_string()),
+        extra: Default::default(),
     };
 
     let res = apply_relogin_to_accounts_file(&mut file, "business", new_tokens);
@@ -582,7 +589,7 @@ fn test_apply_relogin_rejects_email_mismatch() {
 }
 
 #[test]
-fn test_apply_relogin_syncs_active_auth_json() {
+fn test_apply_relogin_stages_active_tokens_without_touching_auth_json() {
     let _lock = TEST_CODEX_HOME_MUTEX.lock().unwrap();
     let temp_dir =
         std::env::temp_dir().join(format!("codex_relogin_sync_test_{}", std::process::id()));
@@ -597,8 +604,10 @@ fn test_apply_relogin_syncs_active_auth_json() {
             refresh_token: Some("old_active_rt".to_string()),
             id_token: None,
             account_id: Some("uuid-1".to_string()),
+            extra: Default::default(),
         }),
         last_refresh: None,
+        extra: Default::default(),
     };
     crate::storage::write_active_auth_json(&initial_auth).unwrap();
 
@@ -620,19 +629,151 @@ fn test_apply_relogin_syncs_active_auth_json() {
         refresh_token: Some("new_active_rt".to_string()),
         id_token: Some(jwt),
         account_id: Some("uuid-1".to_string()),
+        extra: Default::default(),
     };
 
     let res = apply_relogin_to_accounts_file(&mut file, "active@example.com:uuid-1", new_tokens);
     assert!(res.is_ok());
+    assert_eq!(
+        file.accounts[0].tokens.refresh_token.as_deref(),
+        Some("new_active_rt")
+    );
 
     let active_auth = crate::storage::read_active_auth_json().unwrap();
     assert_eq!(
         active_auth.tokens.unwrap().refresh_token.as_deref(),
-        Some("new_active_rt")
+        Some("old_active_rt")
     );
 
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::env::remove_var("CODEX_HOME");
+}
+
+#[test]
+fn relogin_restart_flag_is_rejected_before_browser_login() {
+    let error = relogin_account("active", true, false).unwrap_err();
+    assert!(error.contains("--restart"));
+}
+
+#[test]
+fn relogin_workspace_mismatch_does_not_mutate_staged_registry() {
+    let mut file = AccountsFile {
+        active_account_id: Some("owner@example.com:workspace-1".into()),
+        settings: Default::default(),
+        accounts: vec![make_test_account(
+            "owner@example.com:workspace-1",
+            "owner@example.com",
+            "workspace-1",
+            Some("old-refresh"),
+            "old-access",
+        )],
+    };
+    let original = file.accounts[0].tokens.clone();
+    let incoming = AuthTokens {
+        access_token: "new-access".into(),
+        refresh_token: Some("new-refresh".into()),
+        id_token: None,
+        account_id: Some("workspace-2".into()),
+        extra: Default::default(),
+    };
+    assert!(
+        apply_relogin_to_accounts_file(&mut file, "owner@example.com:workspace-1", incoming)
+            .unwrap_err()
+            .contains("workspace")
+    );
+    assert_eq!(file.accounts[0].tokens, original);
+    assert_eq!(
+        file.active_account_id.as_deref(),
+        Some("owner@example.com:workspace-1")
+    );
+}
+
+#[test]
+fn relogin_same_workspace_rejects_tokens_without_a_provable_email() {
+    let mut file = AccountsFile {
+        active_account_id: Some("owner@example.com:workspace-1".into()),
+        settings: Default::default(),
+        accounts: vec![make_test_account(
+            "owner@example.com:workspace-1",
+            "owner@example.com",
+            "workspace-1",
+            Some("old-refresh"),
+            "old-access",
+        )],
+    };
+    let original = file.accounts[0].clone();
+    let incoming = AuthTokens {
+        access_token: "opaque-access".into(),
+        refresh_token: Some("other-person-refresh".into()),
+        id_token: Some("malformed-id-token".into()),
+        account_id: Some("workspace-1".into()),
+        extra: Default::default(),
+    };
+    let result = apply_relogin_to_accounts_file(&mut file, &original.id, incoming);
+    assert!(result.unwrap_err().contains("email"));
+    assert_eq!(file.accounts[0].tokens, original.tokens);
+    assert_eq!(file.accounts[0].email, original.email);
+    assert_eq!(
+        file.active_account_id.as_deref(),
+        Some(original.id.as_str())
+    );
+}
+
+#[test]
+fn relogin_existing_workspace_rejects_missing_and_default_incoming_workspace() {
+    for incoming_workspace in [None, Some("default")] {
+        let mut file = AccountsFile {
+            active_account_id: Some("owner@example.com:workspace-1".into()),
+            settings: Default::default(),
+            accounts: vec![make_test_account(
+                "owner@example.com:workspace-1",
+                "owner@example.com",
+                "workspace-1",
+                Some("old-refresh"),
+                "old-access",
+            )],
+        };
+        let original = file.accounts[0].clone();
+        let incoming = AuthTokens {
+            access_token: make_test_jwt("owner@example.com"),
+            refresh_token: Some("new-refresh".into()),
+            id_token: None,
+            account_id: incoming_workspace.map(str::to_string),
+            extra: Default::default(),
+        };
+        let error = apply_relogin_to_accounts_file(&mut file, &original.id, incoming).unwrap_err();
+        assert!(error.contains("workspace"));
+        assert_eq!(file.accounts[0].tokens, original.tokens);
+    }
+}
+
+#[test]
+fn relogin_rejects_conflicting_id_and_access_token_emails() {
+    let mut file = AccountsFile {
+        active_account_id: Some("owner@example.com:workspace-1".into()),
+        settings: Default::default(),
+        accounts: vec![make_test_account(
+            "owner@example.com:workspace-1",
+            "owner@example.com",
+            "workspace-1",
+            Some("old-refresh"),
+            "old-access",
+        )],
+    };
+    let original = file.accounts[0].tokens.clone();
+    let incoming = AuthTokens {
+        access_token: make_test_jwt("another@example.com"),
+        refresh_token: Some("new-refresh".into()),
+        id_token: Some(make_test_jwt("owner@example.com")),
+        account_id: Some("workspace-1".into()),
+        extra: Default::default(),
+    };
+    assert!(
+        apply_relogin_to_accounts_file(&mut file, "owner@example.com:workspace-1", incoming)
+            .unwrap_err()
+            .contains("email")
+    );
+    assert_eq!(file.accounts[0].tokens, original);
 }
 
 #[test]

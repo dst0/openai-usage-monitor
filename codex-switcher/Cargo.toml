@@ -20,4 +20,5 @@ clap = { version = "4.4", features = ["derive"] }
 fs2 = "0.4"
 libc = "0.2"
 getrandom = "0.2"
+ring = "0.17"
 brotli = "9.0.0"

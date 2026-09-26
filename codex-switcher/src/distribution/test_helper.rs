@@ -47,6 +47,7 @@ impl TestEnv {
                     openai_api_key: None,
                     tokens: Some(acc.tokens.clone()),
                     last_refresh: None,
+                    extra: Default::default(),
                 };
                 let _ = write_active_auth_json(&auth);
             }

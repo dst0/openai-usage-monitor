@@ -23,6 +23,7 @@ fn make_acc_with_credits_and_plan(
             refresh_token: None,
             id_token: None,
             account_id: None,
+            extra: Default::default(),
         },
         enabled: true,
         priority: 0,

@@ -100,15 +100,19 @@ fn later_turn_events_override_an_earlier_error() {
         ])),
         ThreadRolloutState::ActiveInProgress
     );
-    // Unrecognized trailing records do not hide the terminal error.
+    // Well-formed unrecognized trailing records do not hide the terminal error.
     assert_eq!(
         inspect_thread_rollout_state_from_lines(&lines(&[
             OUTAGE_401_TASK_COMPLETE,
             r#"{"type":"world_state","payload":{"full":false}}"#,
             r#"{"type":"event_msg","payload":{"type":"some_future_event"}}"#,
-            "{truncated",
         ])),
         ThreadRolloutState::InterruptedByError
+    );
+    // A malformed newer record could have closed or changed the turn.
+    assert_eq!(
+        inspect_thread_rollout_state_from_lines(&lines(&[OUTAGE_401_TASK_COMPLETE, "{truncated"])),
+        ThreadRolloutState::Unknown
     );
 }
 

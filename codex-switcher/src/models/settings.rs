@@ -12,7 +12,7 @@ pub struct Settings {
     pub notify_on_switch: bool,
     #[serde(default = "default_strategy")]
     pub strategy: String,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub auto_switch_enabled: bool,
     #[serde(default)]
     pub auto_switch_business_only: bool,
@@ -34,7 +34,7 @@ impl Default for Settings {
             restart_app_on_switch: false,
             notify_on_switch: true,
             strategy: "reset-first".to_string(),
-            auto_switch_enabled: true,
+            auto_switch_enabled: false,
             auto_switch_business_only: false,
             auto_switch_business_priority: false,
             auto_reset_weekly_enabled: false,
@@ -55,3 +55,7 @@ fn default_strategy() -> String {
 fn default_true() -> bool {
     true
 }
+
+#[cfg(test)]
+#[path = "settings.test.rs"]
+mod tests;

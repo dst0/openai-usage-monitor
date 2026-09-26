@@ -1,5 +1,6 @@
 use crate::models::{AccountsFile, AuthJson};
 use crate::storage;
+use crate::switcher::ActiveAuthRegistrySyncService;
 
 /// Rechecks the decision's inputs after acquiring the shared switch lock.
 pub(super) struct DistributionStatePreflightService;
@@ -26,19 +27,23 @@ impl DistributionStatePreflightService {
             .active_account_id
             .as_deref()
             .ok_or("CLI account identity is unavailable")?;
-        let account = accounts
+        accounts
             .accounts
             .iter()
             .find(|account| account.id == active_id)
             .ok_or("CLI account identity is unknown")?;
-        if auth
-            .tokens
-            .as_ref()
-            .and_then(|tokens| tokens.account_id.as_deref())
-            != Some(account.account_id.as_str())
-        {
+        // Validate full token ownership on a copy: the active auth may have
+        // rotated, but no other saved account may own either live token.
+        let mut verified = accounts.clone();
+        ActiveAuthRegistrySyncService::reconcile(&mut verified, auth)
+            .map_err(|_| "CLI authentication does not match a unique saved account")?;
+        if verified.active_account_id.as_deref() != Some(active_id) {
             return Err("CLI authentication does not match the active account".into());
         }
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "distribution_state_preflight_service.test.rs"]
+mod tests;

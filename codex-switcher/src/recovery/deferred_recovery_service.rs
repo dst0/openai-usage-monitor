@@ -8,6 +8,9 @@ use super::{
     pending_target::PendingTarget,
     recovery_mode::RecoveryMode,
     recovery_service::recover_threads,
+    restart_checkpoint_service::{
+        post_checkpoint_status_with_budget, POST_CHECKPOINT_SCAN_BUDGET_BYTES,
+    },
 };
 use crate::{storage, switcher};
 use std::{
@@ -67,7 +70,9 @@ impl DeferredRecoveryService {
                         "RECOVERY",
                         &format!(
                             "DEFERRED_RECOVERY_PROBE_FAILED reason={}",
-                            super::recovery_service::sanitize_recovery_error(&error)
+                            super::recovery_error_sanitizer::RecoveryErrorSanitizer::sanitize(
+                                &error
+                            )
                         ),
                     );
                 }
@@ -95,12 +100,7 @@ impl DeferredRecoveryService {
             Err(error) => return Err(error),
         };
         let home = storage::codex_home();
-        let mut targets = load_manifest()?;
-        let original_len = targets.len();
-        prune_ineligible_targets(&home, &mut targets)?;
-        if targets.len() != original_len {
-            write_manifest(&targets)?;
-        }
+        let targets = load_manifest()?;
         if !targets.iter().any(|target| target.awaiting_owner) {
             return Ok(());
         }
@@ -108,13 +108,18 @@ impl DeferredRecoveryService {
             return Ok(());
         };
         let mut desktop = DesktopIpc::connect(Duration::from_secs(2))?;
-        let ready = select_ready_targets(&targets, &account_id, |id| {
-            probe_or_retry_navigation(
-                || desktop.discover_owner_info_once(id).map(|_| ()),
-                || switcher::retry_thread_link_in_background(id),
-                retry_navigation,
-            )
-        })?;
+        let ready = select_scanned_ready_targets(
+            &targets,
+            &account_id,
+            |id| {
+                probe_or_retry_navigation(
+                    || desktop.discover_owner_info_once(id).map(|_| ()),
+                    || switcher::retry_thread_link_in_background(id),
+                    retry_navigation,
+                )
+            },
+            |target, budget| Ok(post_checkpoint_status_with_budget(&home, target, budget).is_some()),
+        )?;
         drop(desktop);
         for id in ready {
             // The lock is held throughout. A previous target's recovery may
@@ -126,6 +131,14 @@ impl DeferredRecoveryService {
             }) else {
                 continue;
             };
+            let mut eligible = vec![target.clone()];
+            prune_ineligible_targets(&home, &mut eligible)?;
+            if eligible.is_empty() {
+                let mut manifest = load_manifest()?;
+                manifest.retain(|item| item.id != id);
+                write_manifest(&manifest)?;
+                continue;
+            }
             let mode = if target.captured_restart {
                 RecoveryMode::DeferredCaptured
             } else {
@@ -137,13 +150,37 @@ impl DeferredRecoveryService {
                     "RECOVERY",
                     &format!(
                         "DEFERRED_RECOVERY_UNVERIFIED thread={id} reason={}",
-                        super::recovery_service::sanitize_recovery_error(&error)
+                        super::recovery_error_sanitizer::RecoveryErrorSanitizer::sanitize(&error)
                     ),
                 );
             }
         }
         Ok(())
     }
+}
+
+pub(super) fn select_scanned_ready_targets(
+    targets: &[PendingTarget],
+    account_id: &str,
+    has_owner: impl FnMut(&str) -> Result<bool, String>,
+    mut scan_complete: impl FnMut(&PendingTarget, &mut u64) -> Result<bool, String>,
+) -> Result<Vec<String>, String> {
+    let ready = select_ready_targets(targets, account_id, has_owner)?;
+    if ready.is_empty() {
+        return Ok(ready);
+    }
+    let per_target_budget = POST_CHECKPOINT_SCAN_BUDGET_BYTES / ready.len() as u64;
+    let mut scanned = Vec::new();
+    for id in ready {
+        let Some(target) = targets.iter().find(|target| target.id == id) else {
+            continue;
+        };
+        let mut budget = per_target_budget;
+        if scan_complete(target, &mut budget)? {
+            scanned.push(id);
+        }
+    }
+    Ok(scanned)
 }
 
 pub(super) fn should_retry_navigation(last: Option<Instant>, now: Instant) -> bool {

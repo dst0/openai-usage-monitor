@@ -131,10 +131,24 @@ pub fn detect_account_multiplier(account: &mut AccountConfig) -> f64 {
 }
 
 pub fn fetch_account_usage(account: &mut AccountConfig) -> Result<WhamUsageResponse, String> {
-    let mut tried_refresh = false;
+    fetch_account_usage_at(account, WHAM_USAGE_URL, true)
+}
+
+pub fn fetch_account_usage_read_only(
+    account: &mut AccountConfig,
+) -> Result<WhamUsageResponse, String> {
+    fetch_account_usage_at(account, WHAM_USAGE_URL, false)
+}
+
+fn fetch_account_usage_at(
+    account: &mut AccountConfig,
+    endpoint: &str,
+    allow_token_refresh: bool,
+) -> Result<WhamUsageResponse, String> {
+    let mut tried_refresh = !allow_token_refresh;
 
     loop {
-        let mut req = ureq::get(WHAM_USAGE_URL)
+        let mut req = ureq::get(endpoint)
             .set(
                 "Authorization",
                 &format!("Bearer {}", account.tokens.access_token),
@@ -169,7 +183,10 @@ pub fn fetch_account_usage(account: &mut AccountConfig) -> Result<WhamUsageRespo
     }
 }
 
-pub fn update_account_quota_cache(account: &mut AccountConfig) {
+pub(crate) fn update_account_quota_cache_with_policy(
+    account: &mut AccountConfig,
+    allow_token_refresh: bool,
+) {
     let now_iso = Utc::now().to_rfc3339();
     account.last_checked = Some(now_iso);
 
@@ -186,7 +203,12 @@ pub fn update_account_quota_cache(account: &mut AccountConfig) {
         detect_account_multiplier(account);
     }
 
-    match fetch_account_usage(account) {
+    let usage_result = if allow_token_refresh {
+        fetch_account_usage(account)
+    } else {
+        fetch_account_usage_read_only(account)
+    };
+    match usage_result {
         Ok(usage) => {
             if let Some(email) = usage.email {
                 account.email = email;

@@ -41,6 +41,14 @@ pub(crate) fn maybe_consume_weekly_reset(
     weekly_reset_service::WeeklyResetService::maybe_consume_weekly_reset(settings, active)
 }
 
+/// Prevent a manual reset from minting a second request while an automatic
+/// request for this account route still has an uncertain outcome. A changed
+/// cached window marker is not settlement evidence.
+pub(crate) fn unresolved_auto_reset_for(account: &AccountConfig) -> Result<bool, String> {
+    let journal = reset_journal_store::ResetJournalStore::load()?;
+    Ok(weekly_reset_policy::unresolved_for_route(&journal, account))
+}
+
 #[cfg(test)]
 use reset_journal::ResetJournal;
 #[cfg(test)]

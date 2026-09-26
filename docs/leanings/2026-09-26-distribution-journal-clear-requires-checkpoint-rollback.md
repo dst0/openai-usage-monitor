@@ -1,0 +1,22 @@
+# 2026-09-26 — Distribution journal cleanup must follow checkpoint rollback
+
+- **Status:** Resolved
+- **Task/context:** Account distribution after a recovery checkpoint has been prepared, before ChatGPT Desktop receives a shutdown signal.
+- **Unexpected observation or failure:** A failed checkpoint preparation or a stop rejected before signalling removed the distribution journal even when the previous recovery checkpoint could not be restored.
+- **Evidence:** Two synthetic full-service regressions blocked the checkpoint path and observed a missing distribution journal while Desktop remained running, authentication was unchanged, and rollback reported failure.
+- **Approaches tried:**
+  - **Attempt:** Clear the distribution journal before calling checkpoint rollback.
+    - **Outcome:** Did not work
+    - **Why:** The diagnostic and retry record disappeared despite an unverified checkpoint state.
+  - **Attempt:** Keep every failed distribution journal.
+    - **Outcome:** Rejected
+    - **Why:** A verified rollback should release the journal so a later switch can proceed normally.
+  - **Attempt:** Share a checkpoint rollback helper across preparation, recovery preflight, and before-signal stop failures.
+    - **Outcome:** Worked
+    - **Why:** It clears the journal only after the previous checkpoint is restored and retains it when restoration fails.
+- **Root cause:** Error paths ordered distribution journal cleanup before checking the result of `RecoveryManifestSnapshot::restore()`.
+- **Resolution:** `DistributionCheckpointService` now owns rollback followed by journal cleanup. Checkpoint preparation and before-signal stop failures use this ordering; recovery channel preflight shares the helper.
+- **Verification:** `prepare_rollback_failure_retains_distribution_journal_before_desktop_stop` and `before_signal_stop_rollback_failure_retains_distribution_journal` failed before the fix and passed afterward. Companion tests verify the journal clears after successful restoration. `cargo test --quiet distribution:: --bin codex-mon` passed 140 tests. No live account switch was performed.
+- **Prevention/follow-up:** Keep journal removal after verified checkpoint restoration, and preserve the record on unknown rollback outcomes. Run the full release gates before installation.
+- **Reusable learning:** A transaction journal is cleared only after its rollback boundary succeeds.
+- **References:** `codex-switcher/src/distribution/distribution_checkpoint_service.rs`, `codex-switcher/src/distribution/distribution_desktop_switch_service.test.rs`, `README.md`, `CODEX.md`, `AGENTS.md`.

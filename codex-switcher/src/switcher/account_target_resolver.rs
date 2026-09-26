@@ -1,4 +1,26 @@
-use crate::models::AccountConfig;
+use crate::models::{AccountConfig, AccountsFile, AuthJson};
+
+pub(crate) fn resolve_account_with_sync(
+    accounts: &mut AccountsFile,
+    query: &str,
+    sync: impl FnOnce(&mut AccountsFile) -> Result<Option<AuthJson>, String>,
+) -> Result<(AccountConfig, Option<AuthJson>), String> {
+    let index = resolve_target_account_idx(&accounts.accounts, query)?;
+    let selected_id = accounts.accounts[index].id.clone();
+    let observed = sync(accounts)?;
+    let mut matches = accounts
+        .accounts
+        .iter()
+        .filter(|account| account.id.eq_ignore_ascii_case(&selected_id));
+    let selected = matches
+        .next()
+        .cloned()
+        .ok_or("Selected account disappeared during authentication sync")?;
+    if matches.next().is_some() {
+        return Err("Selected account became ambiguous during authentication sync".into());
+    }
+    Ok((selected, observed))
+}
 
 /// Resolves a user-provided account query to an account index.
 /// Matching order:
@@ -101,3 +123,7 @@ pub fn resolve_target_account_idx(
         query
     ))
 }
+
+#[cfg(test)]
+#[path = "account_target_resolver.test.rs"]
+mod tests;

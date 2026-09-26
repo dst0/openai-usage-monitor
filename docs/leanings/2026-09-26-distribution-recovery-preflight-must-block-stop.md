@@ -1,0 +1,22 @@
+# 2026-09-26 — Distribution discarded recovery IPC preflight failure
+
+- **Status:** Resolved
+- **Task/context:** Guard account distribution when eligible ChatGPT tasks need Desktop-owned IPC recovery after restart.
+- **Unexpected observation or failure:** Distribution could continue to stop Desktop after the recovery channel preflight returned an error.
+- **Evidence:** `DistributionDesktopSwitchService` discarded `preflight_desktop_dispatch()` with `let _`. An isolated regression with a quota-interrupted user task and injected IPC failure failed before the fix because `stop_app()` was called once.
+- **Approaches tried:**
+  - **Attempt:** Continue shutdown and report a later recovery error.
+    - **Outcome:** Rejected
+    - **Why:** Stopping the only task writer when recovery transport is already unavailable risks leaving work stranded.
+  - **Attempt:** Preflight before creating the recovery checkpoint.
+    - **Outcome:** Rejected
+    - **Why:** The longer interval between preflight and shutdown weakens its relevance, and the saved target set would not be covered.
+  - **Attempt:** Preflight immediately after the first checkpoint and roll it back on failure.
+    - **Outcome:** Worked
+    - **Why:** It preserves the previous retry state and blocks shutdown before any credential change.
+- **Root cause:** The preflight result was ignored instead of controlling the shutdown boundary.
+- **Resolution:** A named recovery preflight service now returns a failure before `stop_app()`, aborts recovery, restores the prior checkpoint, and clears the distribution journal only after successful restoration. A failed restoration retains the journal for inspection.
+- **Verification:** `failed_recovery_preflight_keeps_desktop_running_and_restores_prior_checkpoint` failed red with one stop call, then passed with zero stop calls, unchanged auth, the original checkpoint, and no distribution journal. `failed_preflight_retains_distribution_journal_when_checkpoint_rollback_fails` passed. `cargo test --quiet distribution::` passed 136 tests. No live account switch was performed.
+- **Prevention/follow-up:** Keep Desktop IPC preflight as a hard gate for a switch with recovery targets. Run the full Rust and installed-app gates before release.
+- **Reusable learning:** Do not discard the result of a safety preflight immediately before an irreversible process stop.
+- **References:** `codex-switcher/src/distribution/distribution_recovery_preflight_service.rs`, `codex-switcher/src/distribution/distribution_desktop_switch_service.test.rs`, `README.md`, `CODEX.md`.

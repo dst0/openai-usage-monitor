@@ -34,6 +34,7 @@ impl TestAccountSpec<'_> {
                 refresh_token: Some(format!("rt_{id}")),
                 id_token: None,
                 account_id: Some(id.to_string()),
+                extra: Default::default(),
             },
             enabled: true,
             priority: 0,
