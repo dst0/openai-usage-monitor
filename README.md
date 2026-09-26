@@ -116,7 +116,9 @@ The installation script checks and guides you through the prerequisites automati
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
    The build uses the exact toolchain pinned in `codex-switcher/rust-toolchain.toml`;
-   the installer asks rustup to install it before compiling.
+   the installer asks rustup to install it before compiling. It builds the crate
+   versions in the committed `codex-switcher/Cargo.lock` with `--locked` and stops
+   if that lockfile is missing or out of date.
 
 ### 🦀 Rust toolchain policy
 
@@ -135,8 +137,8 @@ it asserts that the tests themselves ran under the pinned release.
 To bump the toolchain:
 
 1. Change `channel` in `codex-switcher/rust-toolchain.toml` to the new exact `X.Y.Z` release.
-2. In `codex-switcher/`, run `rustup toolchain install`, then `cargo test` and
-   `cargo clippy --all-targets -- -D warnings` on both the old and new
+2. In `codex-switcher/`, run `rustup toolchain install`, then `cargo test --locked` and
+   `cargo clippy --all-targets --locked -- -D warnings` on both the old and new
    toolchain; fix every lint the new release adds in the same PR. (The
    all-targets Clippy gate is not yet clean on `main`, so compare the two runs
    rather than expecting zero findings.)
@@ -146,6 +148,42 @@ GitHub Actions in `.github/workflows/` are likewise pinned to full commit SHAs
 with a `# vX.Y.Z` comment. To update one, resolve the release tag to its commit
 (`gh api repos/<owner>/<action>/commits/<tag> --jq .sha`), confirm the tag points
 at that commit, and update both the SHA and the comment.
+
+### 🔒 Dependency lockfile policy
+
+`codex-switcher/Cargo.lock` is committed as a reviewed supply-chain input. The
+installer, the shell tests, and CI build with `--locked`, so cargo fails when the
+lockfile is missing or would change instead of silently resolving whatever
+crates.io serves that day. Use the same flag locally in `codex-switcher/`:
+
+```bash
+cargo test --locked
+cargo clippy --all-targets --locked -- -D warnings
+```
+
+`cargo fmt` does not resolve dependencies and takes no such flag.
+`codex-switcher/tests/ci_workflow_policy.rs` enforces the policy: every cargo
+command in `.github/workflows/` and in tracked `*.sh` scripts passes `--locked`
+(or `--frozen`) before any bare `--`, the lockfile is committed and matched by no
+`.gitignore` rule, every `hashFiles()` cache-key input is a committed file, and
+on GitHub Actions the lockfile still matches `HEAD` when the tests run. The scan
+is conservative: it reads a `$CARGO`-style command word or `$(command -v cargo)`
+as cargo, reports a quote left open at the end of a file, and treats a bare
+lowercase `cargo` word in prose (an `echo` message, a heredoc) as a command, so
+word such messages differently.
+
+To change dependencies:
+
+1. After editing `Cargo.toml`, run `cargo check` once without `--locked`; cargo
+   adds the new entries and keeps existing versions unless a new requirement
+   needs a newer one. To move existing crates, update only what you mean to,
+   such as `cargo update -p <crate>` or
+   `cargo update -p <crate> --precise <version>` (plain `cargo update` moves
+   every crate to its newest compatible release).
+2. Review the `Cargo.lock` diff: new crates, version jumps, and any `source`
+   other than `registry+https://github.com/rust-lang/crates.io-index`.
+3. Run `cargo test --locked`, then commit `Cargo.toml` and `Cargo.lock` together
+   in a dedicated `build/` PR.
 
 ### 🔌 Integration with the Official Codex Desktop App
 
@@ -274,7 +312,7 @@ cxi recovery-preflight
 ```
 
 ### 🤖 What the Installer Does Automatically
-1. **Compiles the Rust CLI (`codex-mon` / `cxi`)** with maximum release optimizations.
+1. **Compiles the Rust CLI (`codex-mon` / `cxi`)** with maximum release optimizations, from the dependency versions pinned in the committed `Cargo.lock` (`cargo build --release --locked`).
 2. **Installs to `~/.local/bin`** and adds an exact shell `$PATH` block to `~/.zshrc` (and an existing `~/.bash_profile`).
 3. **Configures the transparent CLI shim** at `~/.local/bin/codex`.
 4. **Builds the native macOS Menu Bar application** (`Codex Monitor.app`) and installs it into `/Applications` when writable, otherwise `~/Applications` (a system install also creates a `~/Applications` symlink).

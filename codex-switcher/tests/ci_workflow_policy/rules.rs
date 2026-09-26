@@ -2,6 +2,7 @@
 //! violations; an empty vector means the input complies.
 
 use crate::checkout::checkout_credential_violations;
+use crate::locked_cargo::unlocked_cargo_violations;
 use crate::workflow_jobs::jobs;
 use crate::yaml_limits::unreadable_line_violations;
 use crate::yaml_lines::{block_after, entry, indent, is_content, top_level_block};
@@ -242,6 +243,7 @@ pub fn workflow_violations(text: &str) -> Vec<String> {
         concurrency_violations(text),
         floating_toolchain_violations(text),
         masked_failure_violations(text),
+        unlocked_cargo_violations(text),
         unreadable_line_violations(text),
     ]
     .concat()
