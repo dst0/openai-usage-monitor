@@ -1,5 +1,5 @@
 use super::window_restore_process_identity::ProcessIdentity;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -182,6 +182,25 @@ impl DesktopAppSession {
         )
         .and_then(|directory| directory.sync_all())
         .map_err(|_| "Desktop session marker rollback sync failed".to_string())
+    }
+
+    pub fn matches_process_lifetime(&self, birth_id: &str) -> bool {
+        let Some((seconds, micros)) = birth_id.split_once(':') else {
+            return false;
+        };
+        let (Ok(seconds), Ok(micros)) = (seconds.parse::<i64>(), micros.parse::<u32>()) else {
+            return false;
+        };
+        if micros > 999_999 {
+            return false;
+        }
+        let Some(birth) = DateTime::<Utc>::from_timestamp(seconds, micros * 1_000) else {
+            return false;
+        };
+        let Ok(saved) = DateTime::parse_from_rfc3339(&self.updated_at) else {
+            return false;
+        };
+        birth <= saved && saved <= Utc::now()
     }
 }
 

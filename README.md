@@ -42,6 +42,7 @@ The switching and monitoring core is written in **Rust**, paired with a native m
    - With `restart_app_on_switch: true`, the tool gracefully restarts the desktop app under the selected account. Eligible tasks are resumed only after Desktop mounts their owners and the recovery checks pass; a switch can therefore finish with partial recovery.
    - Before any restart, it checks the exact ChatGPT process and WindowServer window inventory. A process with multiple user windows, or an ambiguous inventory, blocks the restart before credentials change until exact window-to-task restoration is available. This applies even when window-bound preservation is disabled.
    - Window inventory cross-checks named WindowServer windows against Accessibility standard-window frames. An unnamed offscreen window is excluded only if its frame is distinct from every standard-window frame; an unexpected or malformed offscreen title blocks shutdown. This preserves the observed single-window Desktop with a detached renderer, but the completeness of Accessibility's window roster is still unproven.
+   - The Monitor binds the displayed APP account to the exact relaunched process before waiting for task recovery.
    - Keep automatic switching disabled until unattended cold-task mounting and exact selected-task restoration across windows are proven on the installed Desktop.
    - If Desktop has no eligible standard window before a restart, automatic switching can continue without window geometry restore. If there are recovery targets, owner-routed IPC waits for a visible banner after owner mounting; a missing window then defers the target with its original checkpoint. Accessibility failures, malformed geometry, and process identity mismatches still stop a preservation-enabled switch before credentials change.
 
@@ -56,6 +57,7 @@ The switching and monitoring core is written in **Rust**, paired with a native m
 7. **Native macOS Menu Bar App (`Codex Monitor.app`)**:
    - Official Codex icon in the status bar with composite `NSImage` rendering to bypass AppKit vibrancy on inactive displays.
    - Dual-session live display: `APP 97% | CLI 97% (↻ 4h 45m)` with contrast shadows and red anti-washout glow.
+   - APP and CLI percentages resolve independently. A running Desktop with no marker for its exact PID and birth identity displays `APP —` until a verified binding is written; it never borrows the CLI account or an old Desktop's quota. The Rust quota cache binds CLI identity to the matching active `auth.json` file identity, and Swift rechecks that identity before displaying a CLI percentage. An unknown or replaced CLI auth file displays `CLI —` instead of borrowing the first cached account or top-level quota. Distribution rechecks the CLI registry and authentication under its operation lock. APP and CLI switches use the same target account; a failed shared-auth or registry commit reports failure. Marker and Desktop lifecycle events refresh the menu without waiting for the next quota poll.
    - Distinctive 3D shield badges `[ 🛡️ ] 🛡️ 🛡️` with a 3-tier visual gauge (Top = 5h sprint, Center = 7-day pool, Bottom = reset credits strip) and 0.6pt crisp dark outer rim.
    - Rich dropdown menu:
      - **Block 1**: 🖥️ Codex Desktop App (`ChatGPT.app`) — active account, status `[ACTIVE IN APP]`, sprint and weekly progress bars, credit balance.
@@ -129,12 +131,20 @@ is refused while Desktop runs. Unattended quota checks never perform an OAuth
 refresh or rewrite the active credential file. Before a restart changes it,
 the switcher verifies the exact Desktop process and its bundled app-server
 writer have stopped, then saves any token Desktop refreshed during shutdown.
+For accounts sharing an email, provider ID and email alone do not establish
+credential ownership. Recovery, distribution, and direct switching reject a
+nonblank access, refresh, or ID token already saved for a different account;
+unique same-account token rotation remains eligible. An offline switch saves
+the previous account's verified token rotation before replacing shared auth.
 Before shutdown, the planned Desktop and CLI account identities must both
 match the uniquely identified live authentication; a stale marker or registry
 cannot authorize stopping Desktop. If saving a shutdown-time token rotation
 fails, the previous Desktop is relaunched only after that live account is
 uniquely verified, and the failed handoff remains journaled. An unreadable
 process inventory or uncertain account identity stops the switch.
+An emergency relaunch binds the previous account to the exact new Desktop
+process and saves any same-account launch-time token rotation before clearing
+its journal; it sends no recovery request for a failed checkpoint.
 Journal inspection and candidate planning hold the same recovery operation
 lock as the commit, so an older in-flight journal cannot be cleared by another
 switch. Offline account changes recheck for a Desktop writer immediately before
@@ -148,6 +158,10 @@ the journal for inspection.
 The switcher also checks process state and auth readback after replacement and
 again after offline registry/marker writes; the relaunched Desktop's registry
 commit requires a final auth readback.
+Immediately before any owner-routed recovery IPC, the switcher verifies that
+live `auth.json`, the exact relaunched Desktop PID and birth identity, and its
+saved session marker still identify the planned account. Any disagreement
+blocks recovery dispatch.
 Shutdown token handoff and post-relaunch registry commit merge into a fresh
 `accounts.json` snapshot under the Monitor lock, preserving concurrent account
 settings. Configuration and registration update only their fields in a fresh
@@ -563,7 +577,7 @@ that IPC request, so an unknown send outcome is not retried automatically.
 The recovery algorithm is:
 
 1. Detect eligible, unarchived non-subagent tasks and atomically journal their IDs before shutdown. Stale manifest IDs and a caller-provided primary task are revalidated against SQLite and can never force an internal subagent into recovery. Duplicate task IDs in the recovery journal fail validation. When recovery targets exist, handshake Desktop IPC before stopping ChatGPT; failure restores the prior checkpoint and leaves Desktop running.
-2. Gracefully stop Desktop, wait for the exact main process to exit, then record a second rollout checkpoint. This excludes old work and shutdown-flush events from recovery proof. A deferred entry for the same task is replaced only after a newer turn has substantive, error-free work and no queued follow-up; unrelated deferred entries keep their account binding. The evidence scan reads a fixed rollout snapshot with bounded memory, including long turns. If the second checkpoint fails, the previous account remains active and Desktop is relaunched without distributing credentials; `cxi restart` also relaunches the previous Desktop state before reporting the error.
+2. Gracefully stop Desktop, wait for the exact main process to exit, then record a second rollout checkpoint. This excludes old work and shutdown-flush events from recovery proof. A deferred entry for the same task is replaced only after a newer turn has substantive, error-free work and no queued follow-up; unrelated deferred entries keep their account binding. The evidence scan reads a fixed rollout snapshot with bounded memory, including long turns. If the second checkpoint fails, previous shared authentication is staged for relaunch and its new process is bound to the same account; recovery requests are not dispatched. `cxi restart` also relaunches the previous Desktop state before reporting the error.
 3. Relaunch Desktop, validate its same-user IPC socket, and resolve the owner of every task. While Desktop is already running, each task is routed to its own owner, including separate windows under one account. A restart with multiple windows is currently blocked before shutdown because their exact selected tasks cannot be reconstructed. Only ownerless cold tasks activate ChatGPT once through a task URL; subsequent URL retries run in the background. Already-owned tasks are never cycled through the UI. A successful URL launch is not proof of mounting: owner discovery remains mandatory before dispatch.
 4. Preserve any queued payloads exactly. Only the exact restart-generated pause reason is removed; user-paused queues are rejected. Otherwise send one `app_update_resume` turn-start request containing the short text `continue`. An uncertain send is never retried.
 5. Bind proof to the exact turn ID returned by Desktop IPC. Require a post-checkpoint `task_started`, substantive agent reasoning/message/tool/web-search work, and then 10 seconds without an abort or error. An acknowledgement, writer lock, navigation, or start alone is not success.
@@ -682,6 +696,7 @@ The Monitor stores its account registry, status cache, and recovery journals in
 
 - `~/.codex/accounts.json` — Stored multi-account credentials and cached quotas (strict `0600` permissions); removed only with `--purge-data`.
 - `~/.codex/usage-status.json` — Real-time quota snapshot consumed by the macOS Menu Bar app; removed by the normal uninstall.
+- `~/.codex/desktop-app-session.json` — Private APP account binding to the exact Desktop PID and birth identity, plus expected CLI account; an unbound or previous-process record is not display or recovery authority.
 - `~/.codex/monitor.lock`, `daemon.lock`, `codex.lock` — Monitor coordination locks; removed when not held.
 - `~/.codex/auto-reset-state.json`, `manual-reset-state.json`, `distribution-journal.json`, `direct-switch-journal.json`, `desktop-recovery.json`, `desktop-recovery.lock`, `desktop-automation-cooldown` — Private switching/recovery/reset state removed by uninstall.
 - `~/.codex/recovery-runs/`, `account-switcher-daemon.log`, and `account-switcher-daemon.err` — private Monitor recovery records and daemon logs; new output is redacted at write time and exact pre-existing Monitor log files are redacted during installation before writers restart; removed by uninstall.

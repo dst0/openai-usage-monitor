@@ -4,6 +4,29 @@ use crate::storage::{self, update_accounts_atomically};
 pub(crate) struct ActiveAuthRegistrySyncService;
 
 impl ActiveAuthRegistrySyncService {
+    /// Persist a stopped Desktop's last same-account refresh before an
+    /// offline switch replaces the shared credential file.
+    pub(crate) fn sync_expected_from_disk(
+        accounts: &mut AccountsFile,
+        expected_id: &str,
+    ) -> Result<AuthJson, String> {
+        let mut observed = None;
+        let fresh = update_accounts_atomically(|registry| {
+            if registry.active_account_id.as_deref() != Some(expected_id) {
+                return Err("Active account changed before authentication sync".into());
+            }
+            let auth = storage::read_active_auth_json()?;
+            Self::reconcile(registry, &auth)?;
+            if registry.active_account_id.as_deref() != Some(expected_id) {
+                return Err("Active authentication changed before offline switch".into());
+            }
+            observed = Some(auth);
+            Ok(())
+        })?;
+        *accounts = fresh;
+        observed.ok_or("Active authentication was not observed".into())
+    }
+
     /// Persist Desktop's latest rotated credentials before replacing auth.json.
     /// A missing auth file is allowed only for an initial CLI setup.
     pub(crate) fn sync_from_disk(accounts: &mut AccountsFile) -> Result<Option<AuthJson>, String> {
@@ -59,6 +82,29 @@ impl ActiveAuthRegistrySyncService {
             .ok_or("Active Desktop account has no unique saved identity")?;
         if matching.next().is_some() {
             return Err("Active Desktop account identity is ambiguous".into());
+        }
+        if accounts
+            .accounts
+            .iter()
+            .enumerate()
+            .any(|(other_index, other)| {
+                other_index != index
+                    && (other.tokens.access_token == tokens.access_token
+                        || tokens
+                            .refresh_token
+                            .as_deref()
+                            .filter(|token| !token.trim().is_empty())
+                            .is_some_and(|token| {
+                                other.tokens.refresh_token.as_deref() == Some(token)
+                            })
+                        || tokens
+                            .id_token
+                            .as_deref()
+                            .filter(|token| !token.trim().is_empty())
+                            .is_some_and(|token| other.tokens.id_token.as_deref() == Some(token)))
+            })
+        {
+            return Err("Active Desktop tokens match a different saved account".into());
         }
         let account = &mut accounts.accounts[index];
         let mut changed = false;

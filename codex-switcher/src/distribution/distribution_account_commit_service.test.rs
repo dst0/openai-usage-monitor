@@ -1,6 +1,58 @@
 use super::*;
 use crate::distribution::mock_app_lifecycle::MockAppLifecycle;
 use crate::distribution::test_helper::{make_account, TestEnv};
+use base64::Engine;
+
+#[test]
+fn previous_desktop_relaunch_persists_same_account_token_rotation() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("previous_relaunch_token_rotation");
+    env.populate(
+        vec![make_account(
+            "old",
+            None,
+            "old@example.test",
+            "plus",
+            50.0,
+            None,
+            0,
+            None,
+            None,
+        )],
+        Some("old"),
+        Some("old"),
+    );
+    let accounts = storage::load_accounts().unwrap();
+    let expected_id = accounts.active_account_id.as_deref().unwrap();
+    let mut rotated = storage::read_active_auth_json().unwrap();
+    let claims =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"email":"old@example.test"}"#);
+    let tokens = rotated.tokens.as_mut().unwrap();
+    tokens.access_token = format!("synthetic.{claims}.signature");
+    tokens.refresh_token = Some("synthetic-rotated-after-relaunch".into());
+    let lifecycle = MockAppLifecycle::new(false);
+    lifecycle.observe_launch(move || storage::write_active_auth_json(&rotated).unwrap());
+
+    DistributionAccountCommitService::relaunch_if_auth_identity_matches(
+        &lifecycle,
+        env.home(),
+        &accounts,
+        expected_id,
+    )
+    .unwrap();
+
+    let auth = storage::read_active_auth_json().unwrap();
+    let saved = storage::load_accounts().unwrap();
+    let account = saved
+        .accounts
+        .iter()
+        .find(|account| account.id == expected_id)
+        .unwrap();
+    assert_eq!(saved.active_account_id.as_deref(), Some(expected_id));
+    assert_eq!(Some(&account.tokens), auth.tokens.as_ref());
+}
 
 #[test]
 fn post_relaunch_commit_preserves_concurrent_registry_change() {
@@ -41,7 +93,7 @@ fn post_relaunch_commit_preserves_concurrent_registry_change() {
     DesktopAppSession::bound(
         target.clone(),
         target.clone(),
-        crate::distribution::WindowProcessIdentity::new(9999, "test-birth").unwrap(),
+        crate::distribution::WindowProcessIdentity::new(9999, "123:456789").unwrap(),
     )
     .save(&env.home().join("desktop-app-session.json"))
     .unwrap();
@@ -108,7 +160,7 @@ fn post_relaunch_commit_rejects_unknown_auth_change_after_registry_write() {
     DesktopAppSession::bound(
         target.clone(),
         target.clone(),
-        crate::distribution::WindowProcessIdentity::new(9999, "test-birth").unwrap(),
+        crate::distribution::WindowProcessIdentity::new(9999, "123:456789").unwrap(),
     )
     .save(&env.home().join("desktop-app-session.json"))
     .unwrap();
@@ -279,7 +331,7 @@ fn desktop_switch_rejects_concurrent_auth_replacement() {
     let result = DistributionAccountCommitService::apply_auth_tokens_with_hook(
         &MockAppLifecycle::new(false),
         &target,
-        || storage::write_active_auth_json(&external).unwrap(),
+        |_| storage::write_active_auth_json(&external),
     );
 
     assert!(result.is_err());

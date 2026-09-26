@@ -921,7 +921,7 @@ fn replaced_desktop_process_cannot_claim_the_target_account() {
     let original = std::fs::read(env.home().join("desktop-app-session.json")).unwrap();
     let original_active_id = load_accounts().unwrap().active_account_id;
     let mock = Arc::new(MockAppLifecycle::new(true));
-    mock.change_process_birth_after_first_inspection();
+    mock.change_process_birth_after_launch();
     let outcome = DistributionCoordinator::with_lifecycle(mock)
         .execute(DistributionRequest::auto("quota_exhausted"))
         .unwrap();
@@ -1323,7 +1323,7 @@ fn stale_journal_after_shutdown_or_auth_commit_cannot_be_discarded_automatically
 }
 
 #[test]
-fn test_stale_journal_cleanup_and_recovery() {
+fn stale_journal_cleanup_rebinds_offline_target_without_a_live_process() {
     let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -1367,7 +1367,14 @@ fn test_stale_journal_cleanup_and_recovery() {
     let req = DistributionRequest::user("manual_check");
     let outcome = coordinator.execute(req).unwrap();
 
-    assert_eq!(outcome.status, DistributionStatus::NoActionNeeded);
+    assert_eq!(outcome.status, DistributionStatus::Success);
+    let marker = super::desktop_app_session::DesktopAppSession::load_checked(
+        &env.home().join("desktop-app-session.json"),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(marker.account_id, "team@example.com:acc_team");
+    assert!(marker.process.is_none());
     // Verify stale journal was cleaned up
     assert!(
         !env.home().join("distribution-journal.json").exists(),
@@ -1684,7 +1691,7 @@ fn disabled_preservation_process_inspection_failure_blocks_auth_change() {
     save_accounts(&accounts).unwrap();
 
     let mock = Arc::new(MockAppLifecycle::new(true));
-    mock.set_process_inspection_error("PROCESS_IDENTITY_REJECTED");
+    mock.set_process_inspection_error_after(2, "PROCESS_IDENTITY_REJECTED");
     let result = DistributionCoordinator::with_lifecycle(mock.clone())
         .execute(DistributionRequest::auto("quota_exhausted"));
 
@@ -1792,6 +1799,16 @@ fn failed_post_shutdown_checkpoint_keeps_old_auth_and_relaunches_desktop() {
     mock.set_capture_mode(WindowCaptureMode::Absent);
     *mock.corrupt_manifest_after_stop.lock().unwrap() =
         Some(env.home().join("desktop-recovery.json"));
+    let marker_path = env.home().join("desktop-app-session.json");
+    mock.observe_stop(move || {
+        let mut session =
+            super::desktop_app_session::DesktopAppSession::load(&marker_path).unwrap();
+        session.process = Some(
+            super::window_restore_process_identity::ProcessIdentity::new(9999, "122:456789")
+                .unwrap(),
+        );
+        session.save(&marker_path).unwrap();
+    });
     let result = DistributionCoordinator::with_lifecycle(mock.clone()).execute(
         DistributionRequest::user("checkpoint failure").with_preferred_app(Some("next".into())),
     );
@@ -1800,6 +1817,16 @@ fn failed_post_shutdown_checkpoint_keeps_old_auth_and_relaunches_desktop() {
     assert_eq!(mock.launch_calls.load(Ordering::SeqCst), 1);
     assert_eq!(mock.abort_calls.load(Ordering::SeqCst), 1);
     assert_eq!(read_active_auth_json().unwrap().tokens, old_auth.tokens);
+    let session = super::desktop_app_session::DesktopAppSession::load(
+        &env.home().join("desktop-app-session.json"),
+    )
+    .unwrap();
+    assert_eq!(session.account_id, "old@example.com:old");
+    assert_eq!(
+        session.cli_account_id.as_deref(),
+        Some("old@example.com:old")
+    );
+    assert_eq!(session.process.unwrap().birth_id, "123:456789");
     assert_eq!(
         load_accounts().unwrap().active_account_id.as_deref(),
         Some("old@example.com:old")

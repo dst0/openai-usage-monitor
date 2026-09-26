@@ -260,7 +260,6 @@ impl DistributionDecisionService {
 
         let app_switch_needed = !app_matches || app_depleted;
         let cli_switch_needed = !cli_matches || cli_depleted;
-
         if !app_switch_needed && !cli_switch_needed && !request.force_restart {
             return DistributionPlan::no_action(
                 current_app_val,

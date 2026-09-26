@@ -2,10 +2,12 @@ pub mod app_lifecycle;
 pub mod app_stop_error;
 pub mod automatic_distribution_service;
 pub mod automatic_distribution_source;
+mod cli_auth_file_identity_service;
 pub mod daemon_account_sync_service;
 pub mod daemon_loop_service;
 pub mod daemon_tick_service;
 pub mod desktop_app_session;
+pub(crate) mod desktop_session_verification_service;
 pub mod distribution_account_commit_service;
 pub mod distribution_audit_logger;
 pub mod distribution_candidate;
@@ -14,6 +16,7 @@ pub mod distribution_coordinator;
 pub mod distribution_decision_service;
 mod distribution_desktop_auth_handoff_service;
 mod distribution_desktop_relaunch_service;
+mod distribution_desktop_rollback_service;
 mod distribution_desktop_switch_outcome;
 mod distribution_desktop_switch_service;
 pub mod distribution_executor;
@@ -27,6 +30,7 @@ pub mod distribution_recovery_audit_service;
 mod distribution_recovery_preflight_service;
 pub mod distribution_request;
 mod distribution_shared_auth_guard;
+mod distribution_state_preflight_service;
 pub mod distribution_transaction_service;
 pub mod distribution_trigger;
 pub mod historical_log_redaction_service;
@@ -37,12 +41,15 @@ pub mod log_redaction_service;
 mod log_redaction_span_service;
 mod log_redaction_structured_parser;
 mod log_redaction_token_service;
+#[cfg(test)]
+#[path = "mock_app_lifecycle.test.rs"]
 pub mod mock_app_lifecycle;
 pub mod monitor_log_cleanup_service;
 mod monitor_log_directory_reader;
 pub mod monitor_log_io_service;
 pub(crate) mod monitor_log_lifecycle_lock;
 mod monitor_log_name_policy;
+mod recovery_audit_context;
 pub mod system_app_lifecycle;
 pub mod system_window_restore_backend;
 mod temporary_log_rewrite;
@@ -84,6 +91,7 @@ pub use distribution_trigger::DistributionTrigger;
 pub use historical_log_redaction_service::HistoricalLogRedactionService;
 pub use log_permissions_service::LogPermissionsService;
 pub use log_redaction_service::LogRedactionService;
+#[cfg(test)]
 pub use mock_app_lifecycle::MockAppLifecycle;
 pub use monitor_log_cleanup_service::MonitorLogCleanupService;
 pub use monitor_log_io_service::MonitorLogIoService;
@@ -124,6 +132,14 @@ mod distribution_desktop_switch_service_tests;
 #[cfg(test)]
 #[path = "distribution_transaction_safety.test.rs"]
 mod distribution_transaction_safety_tests;
+
+#[cfg(test)]
+#[path = "distribution_account_identity_safety.test.rs"]
+mod distribution_account_identity_safety_tests;
+
+#[cfg(test)]
+#[path = "distribution_identity.test.rs"]
+mod identity_tests;
 
 #[cfg(test)]
 #[path = "automatic_distribution_service.test.rs"]

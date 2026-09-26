@@ -166,6 +166,10 @@ pub(crate) fn stop_codex_app_gracefully(
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "codex_app_stop_identity.test.rs"]
+mod stop_identity_tests;
+
 pub(crate) fn launch_codex_app() -> Result<Vec<u32>, String> {
     if is_shared_auth_active_checked()? {
         return Err("A Desktop credential writer is still running before launch".into());

@@ -57,6 +57,20 @@ impl<'a> DistributionOfflineCommitService<'a> {
         accounts: &mut AccountsFile,
         save_marker: impl FnOnce(&DesktopAppSession, &Path) -> Result<(), String>,
     ) -> Result<(), String> {
+        let synced_auth = if plan.cli_switch_needed {
+            DistributionSharedAuthGuard::require_desktop_stopped(self.lifecycle)?;
+            let current_id = plan
+                .current_cli_id
+                .as_deref()
+                .ok_or("Current CLI account identity is unavailable")?;
+            Some(
+                crate::switcher::ActiveAuthRegistrySyncService::sync_expected_from_disk(
+                    accounts, current_id,
+                )?,
+            )
+        } else {
+            None
+        };
         let before_accounts = accounts.clone();
         let marker_path = home.join("desktop-app-session.json");
         let marker_before = if plan.app_switch_needed {
@@ -74,7 +88,13 @@ impl<'a> DistributionOfflineCommitService<'a> {
             journal.update_phase(home, "auth_commit_cli")?;
             let target = DistributionAccountCommitService::find_account(accounts, target_id)?;
             let (previous, committed) =
-                DistributionAccountCommitService::apply_auth_tokens(self.lifecycle, &target)?;
+                DistributionAccountCommitService::apply_auth_tokens_if_current(
+                    self.lifecycle,
+                    &target,
+                    synced_auth
+                        .as_ref()
+                        .ok_or("Prior authentication was not synchronized")?,
+                )?;
             let committed_registry = DistributionOfflineRegistryService::commit(
                 &target,
                 before_accounts.active_account_id.as_deref(),

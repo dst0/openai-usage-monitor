@@ -8,6 +8,17 @@ use std::path::Path;
 pub struct DistributionAccountCommitService;
 
 impl DistributionAccountCommitService {
+    pub fn validate_targets(
+        accounts_file: &AccountsFile,
+        app_target: Option<&str>,
+        cli_target: Option<&str>,
+    ) -> Result<(), String> {
+        for target in [app_target, cli_target].into_iter().flatten() {
+            Self::find_account(accounts_file, target)?;
+        }
+        Ok(())
+    }
+
     pub fn find_account(
         accounts_file: &AccountsFile,
         query: &str,
@@ -20,13 +31,26 @@ impl DistributionAccountCommitService {
         lifecycle: &dyn AppLifecycle,
         account: &AccountConfig,
     ) -> Result<(AuthJson, AuthJson), String> {
-        Self::apply_auth_tokens_with_hook(lifecycle, account, || {})
+        Self::apply_auth_tokens_with_hook(lifecycle, account, |_| Ok(()))
+    }
+
+    pub fn apply_auth_tokens_if_current(
+        lifecycle: &dyn AppLifecycle,
+        account: &AccountConfig,
+        expected: &AuthJson,
+    ) -> Result<(AuthJson, AuthJson), String> {
+        Self::apply_auth_tokens_with_hook(lifecycle, account, |previous| {
+            if previous != expected {
+                return Err("Shared authentication changed after registry sync".into());
+            }
+            Ok(())
+        })
     }
 
     fn apply_auth_tokens_with_hook(
         lifecycle: &dyn AppLifecycle,
         account: &AccountConfig,
-        before_commit: impl FnOnce(),
+        before_commit: impl FnOnce(&AuthJson) -> Result<(), String>,
     ) -> Result<(AuthJson, AuthJson), String> {
         let previous = read_active_auth_json()?;
         if previous.auth_mode.as_deref() != Some("chatgpt") {
@@ -36,7 +60,7 @@ impl DistributionAccountCommitService {
         committed.openai_api_key = None;
         committed.tokens = Some(account.tokens.clone());
         committed.last_refresh = Some(Utc::now().to_rfc3339());
-        before_commit();
+        before_commit(&previous)?;
         // This is the last checked writer boundary before replacing shared
         // auth. Desktop may have appeared while candidates were evaluated.
         if lifecycle.is_app_running()? {
@@ -60,17 +84,13 @@ impl DistributionAccountCommitService {
             return Err("Desktop writer appeared after shared authentication replacement".into());
         }
         let observed = read_active_auth_json()?;
-        if !Self::same_auth(&observed, expected) {
+        if &observed != expected {
             return Err("Shared authentication changed after replacement".into());
         }
         if lifecycle.is_app_running()? {
             return Err("Desktop writer appeared during authentication readback".into());
         }
         Ok(())
-    }
-
-    fn same_auth(left: &AuthJson, right: &AuthJson) -> bool {
-        left == right
     }
 
     pub fn restore_when_desktop_stopped(
@@ -91,7 +111,7 @@ impl DistributionAccountCommitService {
             return Err("Desktop is running; authentication rollback would race its writer".into());
         }
         let current = read_active_auth_json()?;
-        if !Self::same_auth(&current, committed) {
+        if &current != committed {
             return Err("Authentication changed after commit; rollback was not attempted".into());
         }
         before_commit();
@@ -103,22 +123,19 @@ impl DistributionAccountCommitService {
 
     pub fn rollback_and_relaunch_previous(
         lifecycle: &dyn AppLifecycle,
+        home: &Path,
+        accounts: &AccountsFile,
+        expected_previous_id: &str,
         previous: &AuthJson,
         committed: &AuthJson,
     ) -> Result<(), String> {
         Self::restore_when_desktop_stopped(lifecycle, previous, committed)?;
-        let pids = lifecycle.launch_app()?;
-        if pids.len() != 1 {
-            return Err(format!(
-                "Previous Desktop relaunch produced {} main processes",
-                pids.len()
-            ));
-        }
-        lifecycle.verify_desktop_stable(&pids, false)
+        Self::relaunch_if_auth_identity_matches(lifecycle, home, accounts, expected_previous_id)
     }
 
     pub fn relaunch_if_auth_identity_matches(
         lifecycle: &dyn AppLifecycle,
+        home: &Path,
         accounts: &AccountsFile,
         expected_previous_id: &str,
     ) -> Result<(), String> {
@@ -132,7 +149,7 @@ impl DistributionAccountCommitService {
             return Err("Authentication identity changed before previous Desktop relaunch".into());
         }
         let observed = read_active_auth_json()?;
-        if !Self::same_auth(&observed, &current) {
+        if observed != current {
             return Err("Authentication changed during previous Desktop relaunch check".into());
         }
         let pids = lifecycle.launch_app()?;
@@ -142,7 +159,53 @@ impl DistributionAccountCommitService {
                 pids.len()
             ));
         }
-        lifecycle.verify_desktop_stable(&pids, false)
+        lifecycle.verify_desktop_stable(&pids, false)?;
+        let pid = pids[0];
+        let process = lifecycle.inspect_process(pid)?;
+        let path = home.join("desktop-app-session.json");
+        let previous = DesktopAppSession::load_checked(&path)?;
+        let bound =
+            DesktopAppSession::bound(expected_previous_id, expected_previous_id, process.clone());
+        if let Err(error) = bound.save(&path) {
+            let restore =
+                DesktopAppSession::restore_after_failed_save(&path, previous.as_ref(), &bound);
+            return Err(match restore {
+                Ok(()) => error,
+                Err(restore) => {
+                    format!("{error}; previous Desktop marker rollback failed: {restore}")
+                }
+            });
+        }
+        let verification = (|| {
+            if !lifecycle.is_app_running()?
+                || lifecycle.inspect_process(pid)? != process
+                || DesktopAppSession::load_checked(&path)?.as_ref() != Some(&bound)
+            {
+                return Err("Previous Desktop identity changed after relaunch".into());
+            }
+            let mut persisted = accounts.clone();
+            Self::commit_latest_desktop_auth(
+                lifecycle,
+                home,
+                &mut persisted,
+                expected_previous_id,
+            )?;
+            if DesktopAppSession::load_checked(&path)?.as_ref() != Some(&bound) {
+                return Err("Previous Desktop marker changed after account commit".into());
+            }
+            Ok(())
+        })();
+        if let Err(error) = verification {
+            let restore =
+                DesktopAppSession::restore_after_failed_save(&path, previous.as_ref(), &bound);
+            return Err(match restore {
+                Ok(()) => error,
+                Err(restore) => {
+                    format!("{error}; previous Desktop marker rollback failed: {restore}")
+                }
+            });
+        }
+        Ok(())
     }
 
     pub fn commit_latest_desktop_auth(
@@ -211,13 +274,13 @@ impl DistributionAccountCommitService {
         if persisted.active_account_id.as_deref() != Some(expected_target_id)
             || identified.active_account_id.as_deref() != Some(expected_target_id)
             || saved_tokens != latest_auth.tokens.as_ref()
-            || !Self::same_auth(&latest_auth, &committed_auth)
+            || latest_auth != committed_auth
             || !lifecycle.is_app_running()?
             || lifecycle.inspect_process(process.pid)? != *process
         {
             return Err("Relaunched Desktop account commit changed during verification".into());
         }
-        if !Self::same_auth(&storage::read_active_auth_json()?, &latest_auth) {
+        if storage::read_active_auth_json()? != latest_auth {
             return Err("Relaunched Desktop authentication changed during final readback".into());
         }
         *accounts = persisted;

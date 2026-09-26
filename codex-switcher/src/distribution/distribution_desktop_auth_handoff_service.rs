@@ -26,6 +26,21 @@ impl DistributionDesktopAuthHandoffService {
         Ok(())
     }
 
+    /// Desktop may replace the shared auth file during its own launch. Check
+    /// the exact target again immediately before owner-routed recovery.
+    pub(super) fn verify_after_launch(expected_account_id: &str) -> Result<(), String> {
+        let first = storage::read_active_auth_json()?;
+        let mut accounts = storage::load_accounts()?;
+        ActiveAuthRegistrySyncService::reconcile(&mut accounts, &first)?;
+        if accounts.active_account_id.as_deref() != Some(expected_account_id) {
+            return Err("Relaunched Desktop authentication differs from recovery target".into());
+        }
+        if storage::read_active_auth_json()? != first {
+            return Err("Relaunched Desktop authentication changed during recovery check".into());
+        }
+        Ok(())
+    }
+
     pub(super) fn preserve_after_stop(
         accounts: &mut AccountsFile,
         expected_current_app_id: &str,

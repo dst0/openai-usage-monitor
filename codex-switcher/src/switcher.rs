@@ -2,6 +2,8 @@
 mod account_switch_auth_service;
 #[path = "switcher/account_switch_commit_service.rs"]
 mod account_switch_commit_service;
+#[path = "switcher/account_switch_noop_service.rs"]
+mod account_switch_noop_service;
 #[path = "switcher/account_switch_service.rs"]
 mod account_switch_service;
 #[path = "switcher/account_target_resolver.rs"]
@@ -24,6 +26,8 @@ mod direct_switch_journal;
 mod primary_target_selection;
 #[path = "switcher/recovery_command_service.rs"]
 mod recovery_command_service;
+#[path = "switcher/restart_worker_dispatch_service.rs"]
+mod restart_worker_dispatch_service;
 #[path = "switcher/switch_outcome.rs"]
 mod switch_outcome;
 #[path = "switcher/switch_trigger.rs"]

@@ -1,3 +1,4 @@
+use super::desktop_session_binding_service::DesktopSessionBindingService;
 use super::{is_shared_auth_active_checked, launch_codex_app};
 use crate::models::AuthJson;
 use crate::storage::{
@@ -124,7 +125,19 @@ impl CodexAvailabilityService {
             Ok(false) => {}
         }
         match launch_codex_app() {
-            Ok(_) => format!("{error}; Codex was relaunched with the previous account state"),
+            Ok(pids) => {
+                match DesktopSessionBindingService::bind_current_cli_after_emergency_launch(
+                    &crate::storage::codex_home(),
+                    &pids,
+                ) {
+                    Ok(()) => {
+                        format!("{error}; Codex was relaunched with the previous account state")
+                    }
+                    Err(binding) => {
+                        format!("{error}; Codex relaunched but account binding failed: {binding}")
+                    }
+                }
+            }
             Err(relaunch_error) => {
                 format!("{error}; emergency Codex relaunch also failed: {relaunch_error}")
             }
@@ -169,9 +182,17 @@ impl CodexAvailabilityService {
             Ok(false) => {}
         }
         match launch_codex_app() {
-            Ok(pids) => format!(
-                "{error}; Codex was relaunched after the failed automation with pids={pids:?}"
-            ),
+            Ok(pids) => {
+                match DesktopSessionBindingService::bind_current_cli_after_emergency_launch(
+                    &crate::storage::codex_home(),
+                    &pids,
+                ) {
+                    Ok(()) => format!("{error}; Codex was relaunched after the failed automation"),
+                    Err(binding) => {
+                        format!("{error}; Codex relaunched but account binding failed: {binding}")
+                    }
+                }
+            }
             Err(relaunch_error) => {
                 format!("{error}; emergency Codex relaunch also failed: {relaunch_error}")
             }

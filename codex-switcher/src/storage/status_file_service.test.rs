@@ -7,6 +7,7 @@ fn status() -> StatusFile {
     StatusFile {
         timestamp: "synthetic".into(),
         active_account_id: Some("main".into()),
+        cli_auth_file_id: None,
         active_email: None,
         active_plan: None,
         five_hour_percentage: 100.0,

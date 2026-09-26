@@ -4,6 +4,7 @@ use super::distribution_audit_logger::DistributionAuditLogger;
 use super::distribution_checkpoint_service::DistributionCheckpointService;
 use super::distribution_desktop_auth_handoff_service::DistributionDesktopAuthHandoffService;
 use super::distribution_desktop_relaunch_service::DistributionDesktopRelaunchService;
+use super::distribution_desktop_rollback_service::DistributionDesktopRollbackService;
 use super::distribution_desktop_switch_outcome::DistributionDesktopSwitchOutcome;
 use super::distribution_journal::DistributionJournal;
 use super::distribution_plan::DistributionPlan;
@@ -12,7 +13,7 @@ use super::distribution_recovery_preflight_service::DistributionRecoveryPrefligh
 use super::distribution_request::DistributionRequest;
 use super::distribution_shared_auth_guard::DistributionSharedAuthGuard;
 use super::log_redaction_service::LogRedactionService;
-use crate::models::{AccountsFile, AuthJson};
+use crate::models::AccountsFile;
 use crate::{recovery, switcher};
 use std::path::Path;
 
@@ -65,6 +66,11 @@ impl<'a> DistributionDesktopSwitchService<'a> {
             .target_app_id
             .as_deref()
             .ok_or("Target app ID missing")?;
+        let previous_id = plan
+            .current_app_id
+            .as_deref()
+            .ok_or("Current Desktop account identity is unavailable")?;
+        let rollback = DistributionDesktopRollbackService::new(self.lifecycle);
         journal.update_phase(home, "stopping_desktop")?;
         self.logger.log_action(
             operation_id,
@@ -120,7 +126,7 @@ impl<'a> DistributionDesktopSwitchService<'a> {
             });
         }
         if let Err(error) = DistributionCheckpointService::finalize_after_stop(&running_threads) {
-            return Err(self.abort_before_auth_commit(home, accounts, plan, error, false));
+            return Err(rollback.before_auth_commit(home, accounts, plan, error, false));
         }
         let handoff = DistributionSharedAuthGuard::require_desktop_stopped(self.lifecycle)
             .and_then(|_| {
@@ -131,17 +137,17 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 DistributionDesktopAuthHandoffService::preserve_after_stop(accounts, current_id)
             });
         if let Err(error) = handoff {
-            return Err(self.abort_before_auth_commit(home, accounts, plan, error, true));
+            return Err(rollback.before_auth_commit(home, accounts, plan, error, true));
         }
         let target_account =
             match DistributionAccountCommitService::find_account(accounts, target_id) {
                 Ok(account) => account,
                 Err(error) => {
-                    return Err(self.abort_before_auth_commit(home, accounts, plan, error, false))
+                    return Err(rollback.before_auth_commit(home, accounts, plan, error, false))
                 }
             };
         if let Err(error) = journal.update_phase(home, "auth_commit_app") {
-            return Err(self.abort_before_auth_commit(home, accounts, plan, error, false));
+            return Err(rollback.before_auth_commit(home, accounts, plan, error, false));
         }
         self.logger.log_action(
             operation_id,
@@ -160,11 +166,18 @@ impl<'a> DistributionDesktopSwitchService<'a> {
             ) {
                 Ok(snapshot) => snapshot,
                 Err(error) => {
-                    return Err(self.abort_before_auth_commit(home, accounts, plan, error, false))
+                    return Err(rollback.before_auth_commit(home, accounts, plan, error, false))
                 }
             };
         if let Err(error) = journal.update_phase(home, "relaunching_desktop") {
-            return Err(self.abort_after_auth_commit(home, &previous_auth, &committed_auth, error));
+            return Err(rollback.after_auth_commit(
+                home,
+                accounts,
+                previous_id,
+                &previous_auth,
+                &committed_auth,
+                error,
+            ));
         }
         self.logger.log_action(
             operation_id,
@@ -186,6 +199,9 @@ impl<'a> DistributionDesktopSwitchService<'a> {
             let reason = recovery_error.unwrap_or_else(|| "Desktop did not relaunch".into());
             return match DistributionAccountCommitService::rollback_and_relaunch_previous(
                 self.lifecycle,
+                home,
+                accounts,
+                previous_id,
                 &previous_auth,
                 &committed_auth,
             ) {
@@ -226,68 +242,6 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 }),
                 commit_verified: false,
             }),
-        }
-    }
-
-    fn abort_before_auth_commit(
-        &self,
-        home: &Path,
-        accounts: &AccountsFile,
-        plan: &DistributionPlan,
-        error: String,
-        retain_journal: bool,
-    ) -> String {
-        self.lifecycle.abort_recovery();
-        let relaunch = plan
-            .current_app_id
-            .as_deref()
-            .ok_or_else(|| "Previous Desktop identity unavailable".to_string())
-            .and_then(|id| {
-                DistributionAccountCommitService::relaunch_if_auth_identity_matches(
-                    self.lifecycle,
-                    accounts,
-                    id,
-                )
-            });
-        match relaunch {
-            Ok(()) if retain_journal => format!(
-                "Desktop switch aborted: {error}; previous Desktop relaunched; registry handoff remains pending"
-            ),
-            Ok(()) => match DistributionJournal::clear(home) {
-                Ok(()) => format!("Desktop switch aborted: {error}; previous Desktop relaunched"),
-                Err(clear) => {
-                    format!("Desktop switch aborted: {error}; journal cleanup failed: {clear}")
-                }
-            },
-            Err(relaunch) => format!(
-                "Desktop switch aborted: {error}; previous Desktop relaunch unverified: {relaunch}"
-            ),
-        }
-    }
-
-    fn abort_after_auth_commit(
-        &self,
-        home: &Path,
-        previous: &AuthJson,
-        committed: &AuthJson,
-        error: String,
-    ) -> String {
-        self.lifecycle.abort_recovery();
-        let rollback = DistributionAccountCommitService::rollback_and_relaunch_previous(
-            self.lifecycle,
-            previous,
-            committed,
-        );
-        match rollback {
-            Ok(()) => match DistributionJournal::clear(home) {
-                Ok(()) => format!("Desktop switch rolled back: {error}"),
-                Err(clear) => {
-                    format!("Desktop switch rolled back: {error}; journal cleanup failed: {clear}")
-                }
-            },
-            Err(rollback) => {
-                format!("Desktop switch incomplete: {error}; rollback unverified: {rollback}")
-            }
         }
     }
 }

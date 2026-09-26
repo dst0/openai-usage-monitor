@@ -1,5 +1,6 @@
 use super::account_switch_auth_service::AccountSwitchAuthService;
 use super::account_switch_commit_service::AccountSwitchCommitService;
+use super::account_switch_noop_service::AccountSwitchNoopService;
 use super::account_target_resolver::resolve_account_with_sync;
 use super::codex_availability_service::CodexAvailabilityService;
 use super::desktop_session_binding_service::DesktopSessionBindingService;
@@ -41,16 +42,14 @@ pub fn switch_to_account(
     if desktop_running && auth_before_stop.is_none() {
         return Err("Running Desktop has no readable authentication".into());
     }
-    let is_already_active = auth_before_stop.is_some()
-        && accounts_file
-            .active_account_id
-            .as_deref()
-            .is_some_and(|id| id.eq_ignore_ascii_case(&target_account.id));
-
-    if is_already_active {
-        return Ok(SwitchOutcome {
-            recovery_error: None,
-        });
+    if let Some(outcome) = AccountSwitchNoopService::resolve(
+        &accounts_file,
+        &target_account,
+        auth_before_stop.as_ref(),
+        restart_app,
+        desktop_running,
+    )? {
+        return Ok(outcome);
     }
 
     if desktop_running && !restart_app {
@@ -186,34 +185,45 @@ pub fn switch_to_account(
     let recovery_error = if app_was_running {
         match launch_codex_app() {
             Ok(launched_pids) => {
-                let restore_result = if launched_pids.len() != 1 {
+                let recovery_result = if launched_pids.len() != 1 {
                     Err(format!(
                         "Codex relaunch must produce exactly one main process, got {launched_pids:?}"
                     ))
                 } else {
-                    DesktopSessionBindingService::bind_launched(
+                    DesktopSessionBindingService::bind_then_recover(
                         &crate::storage::codex_home(),
                         &target_account.id,
                         launched_pids[0],
+                        |bound_process| {
+                            let restored = recovery_banner
+                                .as_ref()
+                                .expect("running app must have a recovery banner")
+                                .restore_after_relaunch(
+                                    launched_pids[0],
+                                    recovery_operation_id.as_deref().unwrap_or("account_switch"),
+                                    "account_switch",
+                                );
+                            // A relaunch may restore a different account's
+                            // auth. Check after banner work, immediately
+                            // before Desktop owner IPC. The guard removes an
+                            // exact but now false target marker on failure.
+                            let verified =
+                                DesktopSessionBindingService::verify_target_before_recovery(
+                                    &crate::storage::codex_home(),
+                                    &target_account.id,
+                                    bound_process,
+                                );
+                            restored?;
+                            verified?;
+                            crate::recovery::recover_threads_with_banner(
+                                &running_threads,
+                                crate::recovery::RecoveryMode::CapturedRestart,
+                                recovery_banner.as_mut().unwrap(),
+                            )?;
+                            DesktopSessionBindingService::confirm_after_recovery(bound_process)
+                        },
                     )
-                    .and_then(|_| {
-                        recovery_banner
-                            .as_ref()
-                            .expect("running app must have a recovery banner")
-                            .restore_after_relaunch(
-                                launched_pids[0],
-                                recovery_operation_id.as_deref().unwrap_or("account_switch"),
-                                "account_switch",
-                            )
-                    })
                 };
-                let recovery_result = restore_result.and_then(|()| {
-                    crate::recovery::recover_threads_with_banner(
-                        &running_threads,
-                        crate::recovery::RecoveryMode::CapturedRestart,
-                        recovery_banner.as_mut().unwrap(),
-                    )
-                });
                 drop(recovery_banner.take());
                 let stability_result = crate::recovery::verify_desktop_stable(&launched_pids, true);
                 match (recovery_result, stability_result) {

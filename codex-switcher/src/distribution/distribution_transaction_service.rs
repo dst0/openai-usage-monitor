@@ -1,4 +1,6 @@
 use super::app_lifecycle::AppLifecycle;
+use super::desktop_session_verification_service::DesktopSessionVerificationService;
+use super::distribution_account_commit_service::DistributionAccountCommitService;
 use super::distribution_audit_logger::DistributionAuditLogger;
 use super::distribution_desktop_auth_handoff_service::DistributionDesktopAuthHandoffService;
 use super::distribution_desktop_switch_service::DistributionDesktopSwitchService;
@@ -8,6 +10,7 @@ use super::distribution_outcome::{DistributionOutcome, DistributionStatus};
 use super::distribution_plan::DistributionPlan;
 use super::distribution_request::DistributionRequest;
 use super::distribution_shared_auth_guard::DistributionSharedAuthGuard;
+use super::distribution_state_preflight_service::DistributionStatePreflightService;
 use super::system_app_lifecycle::SystemAppLifecycle;
 use crate::models::AccountsFile;
 use crate::recovery;
@@ -66,6 +69,14 @@ impl DistributionTransactionService {
             "Acquired operation lock",
         );
 
+        DistributionStatePreflightService::verify(&accounts_file, plan.current_cli_id.as_deref())?;
+        DesktopSessionVerificationService::new(self.lifecycle.as_ref(), &home)
+            .verify_plan_before_mutation(plan, request)?;
+        DistributionAccountCommitService::validate_targets(
+            &accounts_file,
+            plan.target_app_id.as_deref(),
+            plan.target_cli_id.as_deref(),
+        )?;
         DistributionSharedAuthGuard::before_journal(self.lifecycle.as_ref(), plan)?;
         if plan.restart_required {
             DistributionDesktopAuthHandoffService::verify_before_stop(

@@ -442,7 +442,7 @@ fn late_desktop_writer_blocks_offline_auth_replacement() {
         lifecycle.clone(),
     );
     let plan = DistributionPlan {
-        current_app_id: Some(current.clone()),
+        current_app_id: None,
         current_cli_id: Some(current),
         target_app_id: Some(target.clone()),
         target_cli_id: Some(target),
@@ -520,7 +520,7 @@ fn writer_appearing_after_prewrite_probe_cannot_report_offline_success() {
         lifecycle.clone(),
     );
     let plan = DistributionPlan {
-        current_app_id: Some(current.clone()),
+        current_app_id: None,
         current_cli_id: Some(current),
         target_app_id: Some(target.clone()),
         target_cli_id: Some(target),
@@ -601,7 +601,7 @@ fn auth_changing_during_postwrite_readback_cannot_report_offline_success() {
         Arc::new(lifecycle),
     );
     let plan = DistributionPlan {
-        current_app_id: Some(current.clone()),
+        current_app_id: None,
         current_cli_id: Some(current),
         target_app_id: Some(target.clone()),
         target_cli_id: Some(target),
@@ -659,7 +659,7 @@ fn auth_changing_during_running_desktop_commit_is_not_verified() {
     );
     let mut accounts = load_accounts().unwrap();
     let target = accounts.active_account_id.clone().unwrap();
-    let process = WindowProcessIdentity::new(9999, "test-birth").unwrap();
+    let process = WindowProcessIdentity::new(9999, "123:456789").unwrap();
     DesktopAppSession::bound(target.clone(), target.clone(), process)
         .save(&env.home().join("desktop-app-session.json"))
         .unwrap();
@@ -943,7 +943,7 @@ fn post_stop_checkpoint_error_does_not_launch_with_changed_auth() {
 }
 
 #[test]
-fn target_removed_after_shutdown_relaunches_previous_desktop() {
+fn target_removed_before_shutdown_never_stops_desktop() {
     let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -991,8 +991,8 @@ fn target_removed_after_shutdown_relaunches_previous_desktop() {
             accounts
         )
         .is_err());
-    assert_eq!(lifecycle.stop_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(lifecycle.launch_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(lifecycle.stop_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(lifecycle.launch_calls.load(Ordering::SeqCst), 0);
     assert!(lifecycle.running.load(Ordering::SeqCst));
     assert_eq!(read_active_auth_json().unwrap().tokens, before.tokens);
 }

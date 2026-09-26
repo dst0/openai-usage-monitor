@@ -1,0 +1,22 @@
+# 2026-09-27 — Shared auth rotation during rollback and offline switching
+
+- **Status:** Resolved
+- **Task/context:** Merge the previous Desktop relaunch safeguards from `main` with the branch's single shared-auth account-switch transaction.
+- **Unexpected observation or failure:** A failed post-shutdown checkpoint relaunched Desktop with a marker still bound to the stopped process. A same-account token rotation during that relaunch remained only in `auth.json`; offline switching could likewise replace a rotated old token before saving it in `accounts.json`.
+- **Evidence:** The checkpoint regression failed because the marker birth stayed at the stopped process. Focused rollback and offline tests were red because the saved refresh token remained the old value while live auth had rotated. All cases used synthetic credentials.
+- **Approaches tried:**
+  - **Attempt:** Retain the earlier split APP/CLI rollback implementation.
+    - **Outcome:** Rejected.
+    - **Why:** Desktop and CLI read the same `auth.json`; staging different accounts for them cannot preserve the shared-auth invariant.
+  - **Attempt:** Relaunch the uniquely verified previous account, bind its exact new process, and commit any same-account token rotation before clearing the journal.
+    - **Outcome:** Worked in focused tests.
+    - **Why:** The previous account remains identifiable, the UI marker belongs to the new process, and the saved registry matches live auth.
+  - **Attempt:** Sync the old account after it is already replaced offline.
+    - **Outcome:** Rejected.
+    - **Why:** The previous refresh token would already be unavailable.
+- **Root cause:** Emergency relaunch verified process stability without updating the process-bound marker or persisting a launch-time token refresh. Offline distribution verified the old provider ID but did not save its latest tokens before shared auth replacement.
+- **Resolution:** Rollback relaunch binds the exact new Desktop process and uses a fresh locked registry commit with final live-auth readback. Offline distribution saves the uniquely identified current account's tokens before replacement and requires the later auth write to start from that exact snapshot. Rollback never dispatches task recovery after a failed checkpoint.
+- **Verification:** `failed_post_shutdown_checkpoint_keeps_old_auth_and_relaunches_desktop`, `previous_desktop_relaunch_persists_same_account_token_rotation`, and `offline_switch_preserves_previous_accounts_rotated_refresh_token` each failed before their fixes and passed afterward. The combined tree passed 532 Rust unit tests, all Rust integration and file-limit tests, Clippy with warnings denied, and all Swift suites. A live emergency relaunch was not exercised.
+- **Prevention/follow-up:** Every emergency Desktop launch must bind its exact new process and persist verified same-account token rotation before a journal is cleared. Preserve the old account's latest auth before any offline replacement. This updates the shared-auth approach recorded after [the earlier checkpoint learning](2026-09-26-post-checkpoint-relaunch-lost-app-binding.md).
+- **Reusable learning:** A successful relaunch or auth replacement is incomplete until the process marker and saved credential registry agree with live Desktop auth.
+- **References:** `codex-switcher/src/distribution/distribution_account_commit_service.rs`, `codex-switcher/src/distribution/distribution_desktop_rollback_service.rs`, `codex-switcher/src/distribution/distribution_offline_commit_service.rs`, `codex-switcher/src/distribution/distribution_account_commit_service.test.rs`, `codex-switcher/src/distribution/distribution_account_identity_safety.test.rs`.

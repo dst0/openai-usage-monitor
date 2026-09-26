@@ -125,6 +125,28 @@ fn conflicting_id_and_access_emails_cannot_bind_active_desktop_auth() {
 }
 
 #[test]
+fn blank_optional_tokens_do_not_alias_another_saved_account() {
+    let mut first = account("first", "owner@example.test", "provider-1", "old");
+    let mut second = account("second", "owner@example.test", "provider-2", "other");
+    first.tokens.refresh_token = Some(String::new());
+    first.tokens.id_token = Some(String::new());
+    second.tokens.refresh_token = Some(String::new());
+    second.tokens.id_token = Some(String::new());
+    let mut accounts = AccountsFile {
+        active_account_id: Some("first".into()),
+        settings: Settings::default(),
+        accounts: vec![first, second],
+    };
+    let mut latest = tokens("owner@example.test", "provider-1", "new");
+    latest.refresh_token = Some(String::new());
+    latest.id_token = Some(String::new());
+
+    ActiveAuthRegistrySyncService::reconcile(&mut accounts, &auth(latest.clone())).unwrap();
+    assert_eq!(accounts.accounts[0].tokens, latest);
+    assert_eq!(accounts.active_account_id.as_deref(), Some("first"));
+}
+
+#[test]
 fn latest_desktop_refresh_is_persisted_before_auth_replacement() {
     let _lock = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
     let prior_home = std::env::var_os("CODEX_HOME");

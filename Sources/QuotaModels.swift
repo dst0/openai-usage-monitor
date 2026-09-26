@@ -294,8 +294,9 @@ public struct MultiAccountSnapshot: Sendable {
     self.planMultiplier = max(0.1, planMultiplier)
     self.accounts = accounts
 
-    let primary = cliAccount ?? accounts.first(where: { $0.isCurrentActive }) ?? accounts.first
-    self.cliAccount = primary
+    self.cliAccount = cliAccount ?? activeAccountId.flatMap { id in
+      accounts.first(where: { $0.id.caseInsensitiveCompare(id) == .orderedSame })
+    }
     // Desktop and CLI can legitimately use different accounts. An absent
     // App marker therefore stays unknown until CodexClient verifies it.
     self.appAccount = appAccount

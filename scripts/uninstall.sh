@@ -145,6 +145,8 @@ ALWAYS_STATE_PATHS=(
     "${CODEX_HOME}/desktop-recovery.lock"
     "${CODEX_HOME}/desktop-automation-cooldown"
     "${CODEX_HOME}/desktop-recovery.json"
+    "${CODEX_HOME}/desktop-app-session.json"
+    "${CODEX_HOME}/distribution-journal.json"
     "${CODEX_HOME}/desktop-window.json"
     "${CODEX_HOME}/desktop-app-session.json"
     "${CODEX_HOME}/distribution-journal.json"

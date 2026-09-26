@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 public final class CodexClient: @unchecked Sendable {
   internal typealias DistributionRunner = ([String]) -> Bool
@@ -55,39 +56,58 @@ public final class CodexClient: @unchecked Sendable {
     return codexHome.appendingPathComponent("usage-status.json")
   }
 
+  private static func currentCliAuthFileID() -> String? {
+    let path = codexHome.appendingPathComponent("auth.json").path
+    var info = stat()
+    guard path.withCString({ lstat($0, &info) == 0 }),
+      info.st_mode & S_IFMT == S_IFREG
+    else { return nil }
+    return "\(info.st_dev):\(info.st_ino):\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec):\(info.st_size)"
+  }
+
   public static var desktopAppSessionURL: URL {
     return codexHome.appendingPathComponent("desktop-app-session.json")
   }
 
-  /// A marker older than one monitor day may describe a previous Desktop
-  /// process. It is deliberately rejected until the running app writes a new
-  /// verified marker rather than being guessed from the CLI account.
-  internal static let desktopAppSessionMaxAge: TimeInterval = 24 * 60 * 60
-
   internal static func validatedDesktopAppSessionAccountId(
-    from data: Data, now: Date = Date()
+    from data: Data, currentProcess: CodexDesktopProcessIdentity?, now: Date = Date()
   ) -> String? {
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let currentProcess,
       let rawID = json["account_id"] as? String,
       let updatedAtString = json["updated_at"] as? String,
-      let updatedAt = Self.parseDate(updatedAtString)
+      let updatedAt = Self.parseDate(updatedAtString),
+      let process = json["process"] as? [String: Any],
+      let pid = process["pid"] as? Int,
+      let birthID = process["birth_id"] as? String,
+      pid == Int(currentProcess.pid), birthID == currentProcess.birthID
     else { return nil }
 
     let accountID = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
-    let age = now.timeIntervalSince(updatedAt)
-    // ISO-8601 serialization rounds to milliseconds, so permit a tiny clock
-    // skew between the write and this read while rejecting genuinely future
-    // markers.
+    let birthParts = currentProcess.birthID.split(separator: ":", omittingEmptySubsequences: false)
+    guard birthParts.count == 2,
+      let seconds = TimeInterval(birthParts[0]),
+      let micros = Int(birthParts[1]),
+      (0...999_999).contains(micros)
+    else { return nil }
+    let birth = Date(timeIntervalSince1970: seconds + Double(micros) / 1_000_000)
+    // A Desktop process may stay open for days. Bound the marker to its
+    // process lifetime, rather than a fixed age, and tolerate serialization
+    // rounding at the present-time boundary.
     guard !accountID.isEmpty,
-      age >= -1,
-      age <= Self.desktopAppSessionMaxAge else { return nil }
+      updatedAt >= birth,
+      updatedAt <= now.addingTimeInterval(1) else { return nil }
     return accountID
   }
 
   private static func readDesktopAppSessionAccountId() -> String? {
     let url = Self.desktopAppSessionURL
-    guard let data = try? Data(contentsOf: url) else { return nil }
-    return Self.validatedDesktopAppSessionAccountId(from: data)
+    guard let process = CodexDesktopProcessIdentity.current(),
+      let data = try? Data(contentsOf: url),
+      let accountID = Self.validatedDesktopAppSessionAccountId(from: data, currentProcess: process),
+      CodexDesktopProcessIdentity.current() == process
+    else { return nil }
+    return accountID
   }
 
   public func getDesktopAppAccountId() -> String? {
@@ -108,24 +128,6 @@ public final class CodexClient: @unchecked Sendable {
       $0.id.caseInsensitiveCompare(markerID) == .orderedSame
         || $0.email.caseInsensitiveCompare(markerID) == .orderedSame
     })
-  }
-
-  public func setDesktopAppAccountId(_ id: String?) {
-    if let id = id {
-      UserDefaults.standard.set(id, forKey: "desktop_app_account_id")
-      let payload: [String: Any] = [
-        "account_id": id,
-        "updated_at": ISO8601DateFormatter().string(from: Date()),
-      ]
-      if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted]) {
-        try? data.write(to: Self.desktopAppSessionURL, options: [.atomic])
-        try? FileManager.default.setAttributes(
-          [.posixPermissions: 0o600], ofItemAtPath: Self.desktopAppSessionURL.path)
-      }
-    } else {
-      UserDefaults.standard.removeObject(forKey: "desktop_app_account_id")
-      try? FileManager.default.removeItem(at: Self.desktopAppSessionURL)
-    }
   }
 
   private static var daemonLaunchAgentURL: URL {
@@ -247,19 +249,7 @@ public final class CodexClient: @unchecked Sendable {
   }
 
   public func isCodexAppRunning() -> Bool {
-    let proc = Process()
-    proc.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-    proc.arguments = ["-f", "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"]
-    let pipe = Pipe()
-    proc.standardOutput = pipe
-    do {
-      try proc.run()
-      let data = pipe.fileHandleForReading.readDataToEndOfFile()
-      proc.waitUntilExit()
-      return !data.isEmpty
-    } catch {
-      return false
-    }
+    CodexDesktopProcessIdentity.current() != nil
   }
 
   public func getActiveModelName() -> String? {
@@ -311,9 +301,11 @@ public final class CodexClient: @unchecked Sendable {
     let tsStr = json["timestamp"] as? String ?? ""
     let timestamp = Self.parseDate(tsStr) ?? Date()
 
-    let activeId = json["active_account_id"] as? String
-    let activeEmail = json["active_email"] as? String
-    let activePlan = json["active_plan"] as? String
+    let cachedCliAuthFileID = json["cli_auth_file_id"] as? String
+    let activeId = cachedCliAuthFileID != nil && cachedCliAuthFileID == Self.currentCliAuthFileID()
+      ? json["active_account_id"] as? String : nil
+    let activeEmail = activeId == nil ? nil : json["active_email"] as? String
+    let activePlan = activeId == nil ? nil : json["active_plan"] as? String
     let fiveHour = json["five_hour_percentage"] as? Double ?? 100.0
     let weekly = json["weekly_percentage"] as? Double
     let weeklyResetTimeStr = json["weekly_reset_time"] as? String
@@ -380,10 +372,13 @@ public final class CodexClient: @unchecked Sendable {
     let appRunning = isCodexAppRunning()
     let activeModel = getActiveModelName()
 
-    let cliAcc = accountsList.first(where: {
-      $0.id.caseInsensitiveCompare(activeId ?? "") == .orderedSame
-        || $0.email.caseInsensitiveCompare(activeId ?? "") == .orderedSame
-    }) ?? accountsList.first(where: { $0.isCurrentActive }) ?? accountsList.first
+    let cliAcc = activeId.flatMap { id -> AccountQuota? in
+      guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+      return accountsList.first(where: {
+        $0.id.caseInsensitiveCompare(id) == .orderedSame
+          || $0.email.caseInsensitiveCompare(id) == .orderedSame
+      })
+    }
 
     let appAcc = Self.resolveAppAccount(
       isAppRunning: appRunning,
