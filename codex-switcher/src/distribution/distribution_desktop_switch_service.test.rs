@@ -20,12 +20,25 @@ fn available_recovery_channel() -> Result<(), String> {
     Ok(())
 }
 
+fn write_recent_quota_rollout(path: &Path) {
+    let event = json!({
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "type": "event_msg",
+        "payload": {
+            "type": "task_complete",
+            "turn_id": "t1",
+            "error": {"codex_error_info": "usage_limit_exceeded"}
+        }
+    });
+    std::fs::write(path, format!("{event}\n")).unwrap();
+}
+
 fn add_quota_interrupted_thread(home: &Path) -> String {
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e80";
     let sessions = home.join("sessions");
     std::fs::create_dir_all(&sessions).unwrap();
     let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
-    std::fs::write(&rollout, b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"t1\",\"error\":{\"codex_error_info\":\"usage_limit_exceeded\"}}}\n").unwrap();
+    write_recent_quota_rollout(&rollout);
     let state = home.join("state_5.sqlite");
     let sql = format!(
         "CREATE TABLE threads (id TEXT PRIMARY KEY, archived INTEGER, thread_source TEXT, updated_at INTEGER, rollout_path TEXT); INSERT INTO threads VALUES ('{id}', 0, 'user', {}, '{}');",
@@ -424,7 +437,7 @@ fn failed_recovery_preflight_keeps_desktop_running_and_restores_prior_checkpoint
     let rollout = sessions.join(format!(
         "rollout-2026-09-26T00-00-00-{interrupted_id}.jsonl"
     ));
-    std::fs::write(&rollout, b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"t1\",\"error\":{\"codex_error_info\":\"usage_limit_exceeded\"}}}\n").unwrap();
+    write_recent_quota_rollout(&rollout);
     let state = env.home().join("state_5.sqlite");
     let sql = format!(
         "CREATE TABLE threads (id TEXT PRIMARY KEY, archived INTEGER, thread_source TEXT, updated_at INTEGER, rollout_path TEXT); INSERT INTO threads VALUES ('{interrupted_id}', 0, 'user', {}, '{}');",

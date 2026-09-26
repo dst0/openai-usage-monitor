@@ -2,6 +2,47 @@ use super::*;
 use fs2::FileExt;
 use std::process::Command;
 
+/// SQLite `updated_at` also changes when Desktop merely opens a task. Only
+/// the terminal rollout event can date the quota failure itself.
+pub(crate) fn quota_failure_timestamp(
+    codex_home: &std::path::Path,
+    thread_id: &str,
+) -> Option<i64> {
+    let path = find_thread_rollout_path(codex_home, thread_id)?;
+    let mut lines = super::thread_rollout_inspector::read_rollout_tail_lines(&path, 131072);
+    if super::thread_rollout_inspector::inspect_thread_rollout_state_from_lines(&lines)
+        == ThreadRolloutState::Unknown
+    {
+        lines = super::thread_rollout_inspector::read_rollout_tail_lines(&path, 524288);
+    }
+    if super::thread_rollout_inspector::inspect_thread_rollout_state_from_lines(&lines)
+        != ThreadRolloutState::InterruptedByQuota
+    {
+        return None;
+    }
+    for line in lines.iter().rev() {
+        let event: serde_json::Value = serde_json::from_str(line).ok()?;
+        if event.pointer("/payload/type").and_then(|v| v.as_str()) == Some("task_complete") {
+            let timestamp = event.get("timestamp")?.as_str()?;
+            return chrono::DateTime::parse_from_rfc3339(timestamp)
+                .ok()
+                .map(|value| value.timestamp());
+        }
+    }
+    None
+}
+
+pub(crate) fn recent_quota_failure(
+    codex_home: &std::path::Path,
+    thread_id: &str,
+    now: i64,
+    window_secs: i64,
+) -> bool {
+    quota_failure_timestamp(codex_home, thread_id)
+        .and_then(|failed_at| now.checked_sub(failed_at))
+        .is_some_and(|age| (0..=window_secs).contains(&age))
+}
+
 /// Returns the unix timestamp of the thread's updated_at field from state_5.sqlite.
 pub fn get_thread_updated_at(codex_home: &std::path::Path, thread_id: &str) -> Option<i64> {
     let state_sqlite = codex_home.join("state_5.sqlite");
@@ -29,18 +70,18 @@ pub fn get_thread_updated_at(codex_home: &std::path::Path, thread_id: &str) -> O
 pub fn detect_quota_blocked_user_threads_since(window_secs: i64) -> Vec<String> {
     let codex_home = crate::storage::codex_home();
     let now = chrono::Utc::now().timestamp();
-    get_most_recent_threads(&codex_home, 30)
+    detect_quota_blocked_user_threads_since_at(&codex_home, now, window_secs)
+}
+
+fn detect_quota_blocked_user_threads_since_at(
+    codex_home: &std::path::Path,
+    now: i64,
+    window_secs: i64,
+) -> Vec<String> {
+    get_most_recent_threads(codex_home, 30)
         .into_iter()
-        .filter(|thread_id| is_user_thread(&codex_home, thread_id))
-        .filter(|thread_id| {
-            get_thread_updated_at(&codex_home, thread_id)
-                .map(|updated| (now - updated).abs() <= window_secs)
-                .unwrap_or(false)
-        })
-        .filter(|thread_id| {
-            inspect_thread_rollout_state(&codex_home, thread_id)
-                == ThreadRolloutState::InterruptedByQuota
-        })
+        .filter(|thread_id| is_user_thread(codex_home, thread_id))
+        .filter(|thread_id| recent_quota_failure(codex_home, thread_id, now, window_secs))
         .collect()
 }
 
@@ -109,13 +150,15 @@ pub fn detect_in_progress_threads() -> Vec<String> {
                 ThreadRolloutState::ActiveInProgress => {
                     in_progress.push(thread_id.to_string());
                 }
-                ThreadRolloutState::InterruptedByQuota => {
-                    let is_recent = get_thread_updated_at(&codex_home, thread_id)
-                        .map(|updated| (now - updated).abs() <= RECENT_QUOTA_WINDOW_SECS)
-                        .unwrap_or(true);
-                    if is_recent {
-                        in_progress.push(thread_id.to_string());
-                    }
+                ThreadRolloutState::InterruptedByQuota
+                    if recent_quota_failure(
+                        &codex_home,
+                        thread_id,
+                        now,
+                        RECENT_QUOTA_WINDOW_SECS,
+                    ) =>
+                {
+                    in_progress.push(thread_id.to_string());
                 }
                 _ => {}
             }
@@ -158,19 +201,25 @@ pub(super) fn append_eligible_pending(
         if !is_user_thread(codex_home, &tid) || in_progress.contains(&tid) {
             continue;
         }
-        let is_recent = get_thread_updated_at(codex_home, &tid)
-            .map(|updated| (now - updated).abs() <= RECENT_QUOTA_WINDOW_SECS)
-            .unwrap_or(false);
-        if !is_recent {
-            continue;
-        }
         match inspect_thread_rollout_state(codex_home, &tid) {
-            ThreadRolloutState::ActiveInProgress
-            | ThreadRolloutState::InterruptedByQuota
-            | ThreadRolloutState::TurnAborted => {
-                in_progress.push(tid);
+            ThreadRolloutState::InterruptedByQuota => {
+                if recent_quota_failure(codex_home, &tid, now, RECENT_QUOTA_WINDOW_SECS) {
+                    in_progress.push(tid);
+                }
+            }
+            ThreadRolloutState::ActiveInProgress | ThreadRolloutState::TurnAborted => {
+                let is_recent = get_thread_updated_at(codex_home, &tid)
+                    .and_then(|updated| now.checked_sub(updated))
+                    .is_some_and(|age| (0..=RECENT_QUOTA_WINDOW_SECS).contains(&age));
+                if is_recent {
+                    in_progress.push(tid);
+                }
             }
             _ => {}
         }
     }
 }
+
+#[cfg(test)]
+#[path = "thread_detection_service.test.rs"]
+mod tests;

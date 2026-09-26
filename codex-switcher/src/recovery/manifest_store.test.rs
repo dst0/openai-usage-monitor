@@ -901,7 +901,7 @@ fn failed_new_turn_does_not_retire_deferred_retry_as_verified_work() {
     prune_ineligible_targets_with(&home, &mut targets, |_| {
         Ok(Some(chrono::Utc::now().timestamp()))
     })
-    .unwrap();
+    .unwrap_err();
     assert_eq!(targets.len(), 1);
     std::fs::remove_dir_all(home).unwrap();
 }
@@ -958,7 +958,7 @@ fn incomplete_failed_turn_cannot_retire_ownerless_checkpoint() {
     prune_ineligible_targets_with(&home, &mut pruned, |_| {
         Ok(Some(chrono::Utc::now().timestamp()))
     })
-    .unwrap();
+    .unwrap_err();
     assert_eq!(pruned.len(), 1);
 }
 
@@ -999,7 +999,7 @@ fn oversized_completed_failure_cannot_retire_ownerless_checkpoint() {
     prune_ineligible_targets_with(&home, &mut pruned, |_| {
         Ok(Some(chrono::Utc::now().timestamp()))
     })
-    .unwrap();
+    .unwrap_err();
     assert_eq!(pruned.len(), 1);
 }
 

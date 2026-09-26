@@ -20,14 +20,31 @@ use std::{
 
 const PROBE_INTERVAL: Duration = Duration::from_secs(15);
 const NAVIGATION_RETRY_INTERVAL: Duration = Duration::from_secs(60);
+type NavigationAttempt = Option<(Instant, DeferredNavigationRoute)>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DeferredNavigationRoute {
+    Ordinary,
+    PinnedNative,
+}
+
+impl DeferredNavigationRoute {
+    pub(super) fn after(previous: Option<Self>) -> Self {
+        match previous {
+            Some(Self::Ordinary) => Self::PinnedNative,
+            Some(Self::PinnedNative) | None => Self::Ordinary,
+        }
+    }
+}
 
 /// Watches only targets that failed before an IPC dispatch because Desktop had
 /// no owner. The daemon owns the probe; a short worker keeps quota polling live
 /// while proof of recovered agent work is collected.
 pub(crate) struct DeferredRecoveryService {
-    worker: Option<thread::JoinHandle<()>>,
+    worker: Option<thread::JoinHandle<NavigationAttempt>>,
     last_probe: Option<Instant>,
     last_navigation: Option<Instant>,
+    last_attempt_route: Option<DeferredNavigationRoute>,
 }
 
 impl DeferredRecoveryService {
@@ -36,6 +53,7 @@ impl DeferredRecoveryService {
             worker: None,
             last_probe: None,
             last_navigation: None,
+            last_attempt_route: None,
         }
     }
 
@@ -48,8 +66,15 @@ impl DeferredRecoveryService {
             return;
         }
         if let Some(worker) = self.worker.take() {
-            if worker.join().is_err() {
-                crate::logger::log("ERROR", "RECOVERY", "DEFERRED_RECOVERY_WORKER_PANICKED");
+            match worker.join() {
+                Ok(Some((at, route))) => {
+                    self.last_attempt_route = Some(route);
+                    self.last_navigation = Some(at);
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    crate::logger::log("ERROR", "RECOVERY", "DEFERRED_RECOVERY_WORKER_PANICKED")
+                }
             }
         }
         if self
@@ -60,11 +85,14 @@ impl DeferredRecoveryService {
         }
         self.last_probe = Some(Instant::now());
         let retry_navigation = should_retry_navigation(self.last_navigation, Instant::now());
+        let route = DeferredNavigationRoute::after(self.last_attempt_route);
         match thread::Builder::new()
             .name("codex-deferred-recovery".into())
             .stack_size(512 * 1024)
             .spawn(move || {
-                if let Err(error) = Self::run_once(retry_navigation) {
+                let (result, navigation) =
+                    tracked_probe(|navigation| Self::run_once(retry_navigation, route, navigation));
+                if let Err(error) = result {
                     crate::logger::log(
                         "WARN",
                         "RECOVERY",
@@ -76,12 +104,10 @@ impl DeferredRecoveryService {
                         ),
                     );
                 }
+                navigation
             }) {
             Ok(worker) => {
                 self.worker = Some(worker);
-                if retry_navigation {
-                    self.last_navigation = Some(Instant::now());
-                }
             }
             Err(error) => crate::logger::log(
                 "WARN",
@@ -91,7 +117,11 @@ impl DeferredRecoveryService {
         }
     }
 
-    fn run_once(retry_navigation: bool) -> Result<(), String> {
+    fn run_once(
+        retry_navigation: bool,
+        route: DeferredNavigationRoute,
+        navigation: &mut NavigationAttempt,
+    ) -> Result<(), String> {
         let _operation = match operation_lock() {
             Ok(lock) => lock,
             Err(error) if error == "Another desktop switch/recovery is in progress" => {
@@ -114,7 +144,18 @@ impl DeferredRecoveryService {
             |id| {
                 probe_or_retry_navigation(
                     || desktop.discover_owner_info_once(id).map(|_| ()),
-                    || switcher::retry_thread_link_in_background(id),
+                    || {
+                        let result = match route {
+                            DeferredNavigationRoute::Ordinary => {
+                                switcher::retry_thread_link_in_background(id)
+                            }
+                            DeferredNavigationRoute::PinnedNative => {
+                                switcher::retry_thread_link_natively_in_background(id)
+                            }
+                        };
+                        record_navigation_attempt(navigation, route, Instant::now());
+                        result
+                    },
                     retry_navigation,
                 )
             },
@@ -159,6 +200,24 @@ impl DeferredRecoveryService {
     }
 }
 
+pub(super) fn tracked_probe(
+    work: impl FnOnce(&mut NavigationAttempt) -> Result<(), String>,
+) -> (Result<(), String>, NavigationAttempt) {
+    let mut navigation = None;
+    let result = work(&mut navigation);
+    (result, navigation)
+}
+
+pub(super) fn record_navigation_attempt(
+    first: &mut NavigationAttempt,
+    route: DeferredNavigationRoute,
+    at: Instant,
+) {
+    if first.is_none() {
+        *first = Some((at, route));
+    }
+}
+
 pub(super) fn select_scanned_ready_targets(
     targets: &[PendingTarget],
     account_id: &str,
@@ -196,7 +255,16 @@ pub(super) fn probe_or_retry_navigation(
         Ok(()) => Ok(true),
         Err(IpcCallError::NoClientFound) => {
             if retry_navigation {
-                navigate()?;
+                if let Err(error) = navigate() {
+                    if switcher::is_fatal_thread_navigation_error(&error) {
+                        return Err(error);
+                    }
+                    crate::logger::log(
+                        "WARN",
+                        "RECOVERY",
+                        "DEFERRED_TASK_NAVIGATION_FAILED; owner probe continues",
+                    );
+                }
             }
             Ok(false)
         }

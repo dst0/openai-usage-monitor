@@ -1,4 +1,4 @@
-use super::thread_open_command;
+use super::{retry_thread_link_natively_in_background, thread_open_command};
 
 #[test]
 fn cold_task_open_brings_chatgpt_to_foreground_for_mounting() {
@@ -25,4 +25,12 @@ fn retry_does_not_keep_stealing_focus() {
         .map(|arg| arg.to_string_lossy())
         .collect();
     assert_eq!(args.first().map(|arg| arg.as_ref()), Some("-g"));
+}
+
+#[test]
+fn pinned_retry_rejects_invalid_id_before_any_desktop_access() {
+    assert_eq!(
+        retry_thread_link_natively_in_background("not-a-thread").unwrap_err(),
+        "Invalid thread ID for ChatGPT navigation"
+    );
 }

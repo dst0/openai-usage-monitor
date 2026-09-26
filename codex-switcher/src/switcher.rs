@@ -22,6 +22,12 @@ mod desktop_session_binding_service;
 mod desktop_writer_exit_gate;
 #[path = "switcher/direct_switch_journal.rs"]
 mod direct_switch_journal;
+#[cfg(target_os = "macos")]
+#[path = "switcher/pinned_thread_link_launch_spec.rs"]
+mod pinned_thread_link_launch_spec;
+#[cfg(not(target_os = "macos"))]
+#[path = "switcher/pinned_thread_link_unsupported.rs"]
+mod pinned_thread_link_launch_spec;
 #[path = "switcher/primary_target_selection.rs"]
 mod primary_target_selection;
 #[path = "switcher/recovery_command_service.rs"]
@@ -53,19 +59,23 @@ pub(crate) use codex_app_lifecycle::{
 #[cfg(test)]
 pub(crate) use direct_switch_journal::create_direct_switch_intent_for_test;
 pub(crate) use direct_switch_journal::reconcile_pending_direct_switch;
+pub(crate) use pinned_thread_link_launch_spec::is_identity_change as is_fatal_thread_navigation_error;
 use primary_target_selection::prioritize_primary_if_user;
 pub use recovery_command_service::{
     dispatch_self_restart, restart_and_recover, resume_thread_interactive,
 };
 pub use switch_outcome::SwitchOutcome;
 pub use switch_trigger::SwitchTrigger;
+pub(crate) use thread_detection_service::quota_failure_timestamp;
 pub use thread_detection_service::{
     detect_in_progress_threads, detect_quota_blocked_user_threads_since,
     detect_recent_quota_blocked_user_threads,
 };
-pub(crate) use thread_identity::retry_thread_link_in_background;
 pub use thread_identity::{
     clean_thread_id, get_most_recent_threads, is_user_thread, open_thread_in_codex,
+};
+pub(crate) use thread_identity::{
+    retry_thread_link_in_background, retry_thread_link_natively_in_background,
 };
 pub use thread_rollout_inspector::{
     find_thread_rollout_path, inspect_thread_rollout_state, RECENT_QUOTA_WINDOW_SECS,

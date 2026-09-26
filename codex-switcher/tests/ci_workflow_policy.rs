@@ -1,0 +1,134 @@
+//! Enforces the AGENTS.md CI baseline on the live repository: least-privilege
+//! permissions, actions pinned to full commit SHAs, explicit job timeouts and
+//! concurrency, an exact Rust toolchain, and required branch-protection checks
+//! that always report. Rule logic lives in `ci_workflow_policy/rules.rs`, with
+//! the checkout, trigger, and required-job rules in `checkout.rs`,
+//! `triggers.rs`, and `required_checks.rs`, and `yaml_limits.rs` rejecting
+//! YAML the line reader (`yaml_lines.rs`, `yaml_values.rs`, `workflow_jobs.rs`)
+//! cannot read; negative cases live in `fixtures.rs` and in each module's
+//! `.test.rs` file.
+
+use std::fs;
+use std::path::PathBuf;
+
+#[path = "ci_workflow_policy/yaml_lines.rs"]
+mod yaml_lines;
+
+#[path = "ci_workflow_policy/yaml_limits.rs"]
+mod yaml_limits;
+
+#[path = "ci_workflow_policy/yaml_values.rs"]
+mod yaml_values;
+
+#[path = "ci_workflow_policy/workflow_jobs.rs"]
+mod workflow_jobs;
+
+#[path = "ci_workflow_policy/rules.rs"]
+mod rules;
+
+#[path = "ci_workflow_policy/required_checks.rs"]
+mod required_checks;
+
+#[path = "ci_workflow_policy/checkout.rs"]
+mod checkout;
+
+#[path = "ci_workflow_policy/triggers.rs"]
+mod triggers;
+
+#[path = "ci_workflow_policy/fixtures.rs"]
+mod fixtures;
+
+/// The workflow whose jobs report the branch-protection contexts.
+const REQUIRED_CHECK_WORKFLOW: &str = "ci.yml";
+
+fn repo_file(relative: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(relative)
+}
+
+fn read(relative: &str) -> String {
+    let path = repo_file(relative);
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+}
+
+#[test]
+fn every_workflow_meets_ci_baseline() {
+    let dir = repo_file(".github/workflows");
+    let script = read("scripts/setup-github-protection.sh");
+    let contexts = rules::required_check_contexts(&script);
+    let branch = rules::protected_branch(&script).expect("protection script names one branch");
+    let mut checked = 0;
+    let mut required_workflow_checked = false;
+    let mut violations = Vec::new();
+    for entry in fs::read_dir(&dir).expect("read workflows dir") {
+        let path = entry.expect("dir entry").path();
+        if !matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("yml" | "yaml")
+        ) {
+            continue;
+        }
+        checked += 1;
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let text = fs::read_to_string(&path).expect("read workflow");
+        let mut found = rules::workflow_violations(&text);
+        if name == REQUIRED_CHECK_WORKFLOW {
+            required_workflow_checked = true;
+            found.extend(required_checks::required_check_violations(
+                &text, &contexts, branch,
+            ));
+        } else {
+            found.extend(required_checks::reused_context_violations(&text, &contexts));
+        }
+        violations.extend(found.into_iter().map(|v| format!("{name}: {v}")));
+    }
+    assert!(checked > 0, "no workflows found in {}", dir.display());
+    assert!(
+        required_workflow_checked,
+        "{REQUIRED_CHECK_WORKFLOW} (the workflow reporting the required checks) not found in {}",
+        dir.display()
+    );
+    assert!(
+        violations.is_empty(),
+        "CI baseline violations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn branch_protection_lists_required_contexts() {
+    let script = read("scripts/setup-github-protection.sh");
+    let contexts = rules::required_check_contexts(&script);
+    assert!(
+        !contexts.is_empty() && contexts.iter().all(|c| !c.is_empty()),
+        "{contexts:?}"
+    );
+    assert_eq!(rules::protected_branch(&script), Some("main"));
+}
+
+#[test]
+fn rust_toolchain_is_pinned_with_lint_components() {
+    let violations = rules::toolchain_file_violations(&read("codex-switcher/rust-toolchain.toml"));
+    assert!(violations.is_empty(), "{violations:?}");
+}
+
+/// Format-independent proof that CI compiled this test with the pinned
+/// toolchain: rustup exports `RUSTUP_TOOLCHAIN` to the processes it launches.
+/// It catches bypasses the line scan cannot see, such as running cargo with
+/// `--manifest-path` from outside `codex-switcher/`. Local runs may
+/// deliberately use another toolchain (for example while bumping it).
+#[test]
+fn ci_runs_on_pinned_toolchain() {
+    if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true") {
+        return;
+    }
+    let toolchain_file = read("codex-switcher/rust-toolchain.toml");
+    let channel = rules::toolchain_channel(&toolchain_file);
+    let active = std::env::var("RUSTUP_TOOLCHAIN").unwrap_or_default();
+    assert!(
+        active.starts_with(&format!("{channel}-")),
+        "CI ran with RUSTUP_TOOLCHAIN=`{active}`, expected the pinned `{channel}`"
+    );
+    eprintln!("CI toolchain verified: {active}");
+}

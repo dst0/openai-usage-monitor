@@ -342,6 +342,14 @@ echo "🖥️  Detected macOS (${ARCH}). Starting compilation..."
 # ------------------------------------------------------------------------------
 echo "🦀 [1/4] Building Rust CLI (codex-mon / cxi)..."
 cd "${PROJECT_DIR}/codex-switcher"
+# rust-toolchain.toml pins the exact compiler. Install it up front (rustup >=
+# 1.28) so the build does not depend on rustup's auto-install setting; older
+# rustup releases lack the no-argument form but auto-install on first use.
+if ! command -v rustup >/dev/null 2>&1; then
+    echo "⚠️  rustup not found; building with $(rustc --version 2>/dev/null || echo 'the installed rustc') instead of the pinned toolchain."
+elif ! rustup toolchain install; then
+    echo "⚠️  Could not pre-install the pinned Rust toolchain; relying on rustup auto-install."
+fi
 cargo build --release
 
 echo "📦 Installing CLI to ${LOCAL_BIN}..."
