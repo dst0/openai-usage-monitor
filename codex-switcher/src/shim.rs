@@ -1,3 +1,4 @@
+use crate::codex_binary_path::{resolve_real_codex_bin, resolve_real_codex_bin_avoiding};
 use crate::distribution::{
     AutomaticDistributionService, AutomaticDistributionSource, DistributionCoordinator,
     DistributionExecutor, DistributionOutcome, DistributionStatus,
@@ -8,8 +9,6 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 
-pub const REAL_CODEX_PATH: &str = "/Applications/ChatGPT.app/Contents/Resources/codex";
-
 fn command_uses_account(args: &[String]) -> bool {
     !matches!(
         args.first().map(String::as_str),
@@ -18,6 +17,9 @@ fn command_uses_account(args: &[String]) -> bool {
 }
 
 pub fn run_codex_with_auto_switch(args: &[String]) -> Result<(), String> {
+    // Resolve before automatic distribution: a missing bundled CLI must not
+    // switch accounts and then fail while trying to launch the real command.
+    let real_codex = resolve_real_codex_bin()?;
     if command_uses_account(args) {
         if let Ok(accounts_file) = load_accounts() {
             let coordinator = DistributionCoordinator::new();
@@ -44,10 +46,10 @@ pub fn run_codex_with_auto_switch(args: &[String]) -> Result<(), String> {
         }
     }
 
-    let mut cmd = Command::new(REAL_CODEX_PATH);
+    let mut cmd = Command::new(&real_codex);
     cmd.args(args);
     let err = cmd.exec();
-    Err(format!("Failed to exec {}: {}", REAL_CODEX_PATH, err))
+    Err(format!("Failed to exec {}: {}", real_codex.display(), err))
 }
 
 pub(crate) fn coordinate_wrapper_automatic_distribution_with<E: DistributionExecutor>(
@@ -73,8 +75,20 @@ pub fn install_shim() -> Result<(), String> {
     std::fs::create_dir_all(&local_bin).map_err(|e| e.to_string())?;
 
     let symlink_path = local_bin.join("codex");
+    if symlink_path
+        .symlink_metadata()
+        .is_ok_and(|metadata| !metadata.file_type().is_symlink())
+    {
+        return Err(format!(
+            "Cannot install codex shim over existing non-symlink {}",
+            symlink_path.display()
+        ));
+    }
+    let real_codex = resolve_real_codex_bin_avoiding(Some(&symlink_path)).map_err(|error| {
+        format!("Cannot install codex shim: {error}; preserve existing codex command")
+    })?;
     if symlink_path.exists() || symlink_path.is_symlink() {
-        let _ = std::fs::remove_file(&symlink_path);
+        std::fs::remove_file(&symlink_path).map_err(|error| error.to_string())?;
     }
 
     // Point to our codex-mon binary with alias or wrapper
@@ -88,10 +102,10 @@ pub fn install_shim() -> Result<(), String> {
         })?;
         println!("✅ Installed codex CLI shim at {:?}", symlink_path);
     } else {
-        std::os::unix::fs::symlink(REAL_CODEX_PATH, &symlink_path).map_err(|e| {
+        std::os::unix::fs::symlink(&real_codex, &symlink_path).map_err(|e| {
             format!(
                 "Failed to symlink {:?} to {:?}: {}",
-                REAL_CODEX_PATH, symlink_path, e
+                real_codex, symlink_path, e
             )
         })?;
         println!("✅ Symlinked real codex to {:?}", symlink_path);

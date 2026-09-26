@@ -33,6 +33,12 @@
   patched nor replaced. It may use `/Applications` or `~/Applications` for the
   Monitor bundle and retains remote-install skill sources in
   `~/.local/share/codex-monitor/`.
+- Resolve the official bundled CLI from the current
+  `Contents/Resources/codex-cli/bin/codex` layout or the older
+  `Contents/Resources/codex` layout before distribution or isolated login.
+  For CLI-only setups, a PATH fallback must prove it is not this project's
+  own shim; never select the pathname that shim installation will replace.
+  Fail closed if no real executable exists before account distribution.
 - After same-filesystem staging and strict signature verification, the installer
   must stop the exact Monitor app and daemon, revalidate a Monitor PID's exact
   executable and start time immediately before signalling it, allow any in-flight restart worker
