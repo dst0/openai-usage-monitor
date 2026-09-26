@@ -1,3 +1,4 @@
+import Carbon
 import CoreGraphics
 import Foundation
 
@@ -8,6 +9,10 @@ struct CodexWindowTaskProbeTests {
     copiedLinkRequiresCanonicalTaskURL()
     windowMappingIsOneToOne()
     windowMappingFailsClosedOnAmbiguity()
+    onlyTheInspectedDesktopBuildIsAccepted()
+    appShortcutsOnTheCopyKeyAreRefused()
+    privateOrPromptingPasteboardIsNotRead()
+    copyKeyTypesItsLetterOnlyOnMatchingLayouts()
     print("Selected-task probe validation passed")
   }
 
@@ -90,5 +95,63 @@ struct CodexWindowTaskProbeTests {
     precondition(map([31, 32], [31: left, 32: right], [left]) == nil)
     precondition(map([31], [31: left, 32: right], [left]) == nil)
     precondition(map([31, 31], [31: left], [left, left]) == nil)
+  }
+
+  static func onlyTheInspectedDesktopBuildIsAccepted() {
+    precondition(isVerifiedDesktopBuild(bundleIdentifier: "com.openai.codex", version: "26.924.20706"))
+    for (identifier, version) in [
+      ("com.openai.codex", "26.924.20707"), ("com.openai.codex", "26.924.2070"),
+      ("com.openai.chat", "26.924.20706"), ("com.openai.codex", nil), (nil, "26.924.20706"),
+    ] as [(String?, String?)] {
+      precondition(!isVerifiedDesktopBuild(bundleIdentifier: identifier, version: version))
+    }
+  }
+
+  static func appShortcutsOnTheCopyKeyAreRefused() {
+    precondition(!keyEquivalentsConflictWithCopyShortcut(nil))
+    precondition(!keyEquivalentsConflictWithCopyShortcut([String: Any]()))
+    precondition(!keyEquivalentsConflictWithCopyShortcut(
+      ["Paste and Match Style": "@~$v", "Lock": "@~$L", "Other": "@l", "Option": "~l"]))
+    for conflict in ["@~l", "~@l", "@@~l"] {
+      precondition(keyEquivalentsConflictWithCopyShortcut(["Archive": conflict]), conflict)
+    }
+    // Unreadable settings fail closed.
+    precondition(keyEquivalentsConflictWithCopyShortcut(["Archive": 7]))
+    precondition(keyEquivalentsConflictWithCopyShortcut("@~l"))
+  }
+
+  static func privateOrPromptingPasteboardIsNotRead() {
+    precondition(pasteboardTypesAllowTaskRead(["public.utf8-plain-text"]))
+    precondition(!pasteboardTypesAllowTaskRead([]))
+    precondition(!pasteboardTypesAllowTaskRead(["public.png"]))
+    precondition(!pasteboardTypesAllowTaskRead(
+      ["public.utf8-plain-text", "org.nspasteboard.ConcealedType"]))
+    precondition(!pasteboardTypesAllowTaskRead(
+      ["org.nspasteboard.TransientType", "public.utf8-plain-text"]))
+    // NSPasteboard.AccessBehavior: 0 default (asks), 1 ask, 2 always allow, 3 deny.
+    precondition(pasteboardReadIsSilent(accessBehavior: nil))
+    precondition(pasteboardReadIsSilent(accessBehavior: 2))
+    for behavior in [0, 1, 3, -1] {
+      precondition(!pasteboardReadIsSilent(accessBehavior: behavior))
+    }
+  }
+
+  /// Uses the layouts bundled with macOS, read-only; the current input
+  /// source is never changed.
+  static func copyKeyTypesItsLetterOnlyOnMatchingLayouts() {
+    func layout(_ id: String) -> TISInputSource {
+      let filter = [kTISPropertyInputSourceID as String: id] as CFDictionary
+      guard let list = TISCreateInputSourceList(filter, true)?.takeRetainedValue()
+        as? [TISInputSource], let source = list.first else {
+        fatalError("bundled layout \(id) is missing")
+      }
+      return source
+    }
+    precondition(commandCharacter(forKeyCode: 37, layout: layout("com.apple.keylayout.US")) == "l")
+    precondition(commandCharacter(forKeyCode: 37, layout: layout("com.apple.keylayout.Dvorak")) == "n")
+    precondition(commandCharacter(forKeyCode: 37, layout: layout("com.apple.keylayout.Colemak")) == "i")
+    // Dvorak - QWERTY Command switches to QWERTY while Command is held.
+    precondition(
+      commandCharacter(forKeyCode: 37, layout: layout("com.apple.keylayout.DVORAK-QWERTYCMD")) == "l")
   }
 }

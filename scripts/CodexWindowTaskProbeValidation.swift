@@ -49,3 +49,46 @@ func uniqueWindowFrameMapping(
   }
   return mapping
 }
+
+/// The only Desktop build whose Copy deeplink binding was inspected:
+/// ChatGPT 26.924.20706 binds its hidden `copyDeeplink` command to
+/// CmdOrCtrl+Alt+L by default. Another build may bind that key differently,
+/// so the probe refuses it until its bundle has been re-inspected.
+let verifiedDesktopBundleIdentifier = "com.openai.codex"
+let verifiedDesktopVersion = "26.924.20706"
+
+func isVerifiedDesktopBuild(bundleIdentifier: String?, version: String?) -> Bool {
+  bundleIdentifier == verifiedDesktopBundleIdentifier && version == verifiedDesktopVersion
+}
+
+/// macOS App Shortcuts (`NSUserKeyEquivalents`) can assign Cmd+Opt+L to any
+/// menu item. Returns true when the value is malformed or any entry is
+/// exactly Cmd+Opt+L, written as `@` (Command) and `~` (Option) before `l`.
+func keyEquivalentsConflictWithCopyShortcut(_ value: Any?) -> Bool {
+  guard let value else { return false }
+  guard let equivalents = value as? [String: Any] else { return true }
+  for equivalent in equivalents.values {
+    guard let text = equivalent as? String else { return true }
+    let modifiers = Set(text.prefix { "@~$^".contains($0) })
+    let key = text.drop { "@~$^".contains($0) }
+    if modifiers == ["@", "~"] && key == "l" { return true }
+  }
+  return false
+}
+
+/// Password managers and similar apps mark sensitive or short-lived writes.
+/// Such contents are never read, even to reject them.
+private let privatePasteboardMarkers: Set<String> = [
+  "org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType",
+]
+
+func pasteboardTypesAllowTaskRead(_ types: [String]) -> Bool {
+  types.contains("public.utf8-plain-text") && privatePasteboardMarkers.isDisjoint(with: types)
+}
+
+/// macOS 15.4 and later ask the user before a programmatic pasteboard read
+/// unless the reading app is set to always allow it (behavior 2). The
+/// behavior is nil on systems without the setting, where reads never ask.
+func pasteboardReadIsSilent(accessBehavior: Int?) -> Bool {
+  accessBehavior == nil || accessBehavior == 2
+}

@@ -37,8 +37,13 @@ func argument(_ name: String) -> String? {
   return CommandLine.arguments[index + 1]
 }
 
+/// Set by the task probe immediately before its first focus request, so any
+/// later failure, including one raised by a shared helper, tells the caller
+/// that windows may have been focused and the clipboard replaced.
+var failureFollowsVisibleChange = false
+
 func fail(_ message: String) -> Never {
-  fputs("\(message)\n", stderr)
+  fputs(failureFollowsVisibleChange ? "\(message) after-focus\n" : "\(message)\n", stderr)
   exit(1)
 }
 

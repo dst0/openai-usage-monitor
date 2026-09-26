@@ -3,17 +3,22 @@ use std::collections::HashSet;
 
 /// Same limit the native helper enforces before it focuses any window.
 const MAX_PROBED_WINDOWS: usize = 64;
-/// The complete response contract. Task IDs never leave the native helper, so
-/// any additional field is a protocol violation rather than extra detail.
+/// The complete response contract. The helper never outputs task IDs, so any
+/// additional field is a protocol violation rather than extra detail.
 const RESPONSE_FIELDS: [&str; 3] = ["process", "window_ids", "observed_task_count"];
+const PROCESS_FIELDS: [&str; 2] = ["pid", "birth_id"];
 /// Fixed failure codes the probe path of the native helper may print. They
 /// carry no task, window, or clipboard data, so they are shown verbatim; any
 /// other stderr is replaced by the generic helper error. `COMMAND_REJECTED`
 /// means the installed helper predates the probe.
-const FAILURE_CODES: [&str; 16] = [
+const FAILURE_CODES: [&str; 22] = [
     "COMMAND_REJECTED",
     "EXPLICIT_OPT_IN_REQUIRED",
     "PROBE_ACCESS_DENIED",
+    "PASTEBOARD_ACCESS_NOT_ALLOWED",
+    "DESKTOP_VERSION_UNVERIFIED",
+    "APP_SHORTCUT_CONFLICT",
+    "KEYBOARD_LAYOUT_UNSUPPORTED",
     "PROCESS_IDENTITY_REJECTED",
     "WINDOW_NOT_FOUND",
     "WINDOW_ACCESS_FAILED",
@@ -24,10 +29,14 @@ const FAILURE_CODES: [&str; 16] = [
     "WINDOW_MAPPING_AMBIGUOUS",
     "WINDOW_FOCUS_FAILED",
     "COPY_LINK_EVENT_FAILED",
+    "COPY_LINK_MISSING",
     "COPY_LINK_AMBIGUOUS",
     "TASK_LINK_DUPLICATE",
     "WINDOW_MAPPING_CHANGED",
+    "PROBE_FAILED",
 ];
+/// The helper appends this to a failure raised after its first focus request.
+const AFTER_FOCUS_SUFFIX: &[u8] = b" after-focus";
 
 /// Validates the native diagnostic response without storing or logging task IDs.
 pub(super) struct WindowTaskProbeValidationService;
@@ -44,6 +53,16 @@ impl WindowTaskProbeValidationService {
             || !RESPONSE_FIELDS
                 .iter()
                 .all(|field| fields.contains_key(*field))
+        {
+            return Err("Task probe returned unexpected fields".into());
+        }
+        let process = response["process"]
+            .as_object()
+            .ok_or("Task probe omitted process identity")?;
+        if process.len() != PROCESS_FIELDS.len()
+            || !PROCESS_FIELDS
+                .iter()
+                .all(|field| process.contains_key(*field))
         {
             return Err("Task probe returned unexpected fields".into());
         }
@@ -82,12 +101,24 @@ impl WindowTaskProbeValidationService {
     }
 
     /// Names a known probe failure; `None` leaves the generic helper error.
+    /// A failure after the first focus request says what may have changed.
     pub(super) fn failure(stderr: &[u8]) -> Option<String> {
-        let code = stderr.strip_suffix(b"\n").unwrap_or(stderr);
-        FAILURE_CODES
+        let line = stderr.strip_suffix(b"\n").unwrap_or(stderr);
+        let (code, after_focus) = match line.strip_suffix(AFTER_FOCUS_SUFFIX) {
+            Some(code) => (code, true),
+            None => (line, false),
+        };
+        let known = FAILURE_CODES
             .iter()
-            .find(|known| known.as_bytes() == code)
-            .map(|known| format!("Task probe failed: {known}"))
+            .find(|known| known.as_bytes() == code)?;
+        Some(if after_focus {
+            format!(
+                "Task probe failed: {known} after it began focusing ChatGPT windows; \
+                 the clipboard may now hold a copied task link"
+            )
+        } else {
+            format!("Task probe failed: {known}")
+        })
     }
 }
 
