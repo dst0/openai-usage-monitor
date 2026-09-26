@@ -213,7 +213,9 @@ requires a second scan of the complete, unchanged snapshot. An incomplete or
 malformed or oversized JSONL record anywhere in that interval cannot certify error-free work. Each prune pass
 selects one ownerless task with a valid ID and a SQLite row, rotating per
 `CODEX_HOME`, and does not tail-inspect the others; an invalid or unindexed
-entry never takes that turn. A selected target with a stable terminal non-quota error is dropped
+entry never takes that turn, and a single-target pass (the deferred worker's
+re-prune before recovery) leaves the cursor alone so the next full pass
+continues the rotation. A selected target with a stable terminal non-quota error is dropped
 because unattended recovery cannot dispatch it; malformed or changed tails
 keep the retry. Older deferred intervals are scanned in chunks of at most 16 MiB
 per probe and yield no lifecycle result until the snapshot end is reached. Foreground

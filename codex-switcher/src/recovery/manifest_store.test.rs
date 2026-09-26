@@ -754,18 +754,25 @@ fn ownerless_rotation_is_fair_when_other_homes_are_probed() {
             owner_account_id: Some("owner".into()),
         });
     }
-    let other_id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
-    let other_rollout = other
-        .join("sessions")
-        .join(format!("rollout-2026-09-26T00-00-00-{other_id}.jsonl"));
-    std::fs::write(&other_rollout, b"checkpoint\nmetadata\n").unwrap();
-    let mut other_targets = vec![PendingTarget {
-        id: other_id.into(),
-        offset: Some(11),
-        awaiting_owner: true,
-        captured_restart: true,
-        owner_account_id: Some("owner".into()),
-    }];
+    // Two targets, because a single-target pass leaves every cursor alone
+    // and so could not disturb the primary home's rotation.
+    let mut other_targets = Vec::new();
+    for other_id in [
+        "01a098c2-0fae-74d2-a80c-45d89e910e79",
+        "01a098c2-0fae-74d2-a80c-45d89e910e7a",
+    ] {
+        let other_rollout = other
+            .join("sessions")
+            .join(format!("rollout-2026-09-26T00-00-00-{other_id}.jsonl"));
+        std::fs::write(&other_rollout, b"checkpoint\nmetadata\n").unwrap();
+        other_targets.push(PendingTarget {
+            id: other_id.into(),
+            offset: Some(11),
+            awaiting_owner: true,
+            captured_restart: true,
+            owner_account_id: Some("owner".into()),
+        });
+    }
     for _ in 0..3 {
         prune_ineligible_targets_with(&primary, &mut primary_targets, |_| {
             Ok(Some(chrono::Utc::now().timestamp()))

@@ -29,11 +29,24 @@ fn shrinking_ownerless_set_keeps_selection_in_range() {
     for _ in 0..5 {
         rotation.select(home, 4);
     }
-    // Five passes over four targets leave the cursor at 1; once only one or
-    // two targets remain, the next pick must still name one of them.
+    // Five passes over four targets leave the cursor at 1; once two or three
+    // targets remain, the next picks must still name one of them.
     assert_eq!(rotation.select(home, 2), Some(1));
-    assert_eq!(rotation.select(home, 1), Some(0));
     assert_eq!(rotation.select(home, 3), Some(0));
+    assert_eq!(rotation.select(home, 3), Some(1));
+}
+
+#[test]
+fn single_target_pass_neither_advances_nor_resets_the_cursor() {
+    let rotation = OwnerlessProbeRotation::new(4);
+    let home = Path::new(HOME);
+    let mut picks = Vec::new();
+    for _ in 0..3 {
+        // The deferred worker re-prunes one target before each full pass.
+        assert_eq!(rotation.select(home, 1), Some(0));
+        picks.push(rotation.select(home, 3));
+    }
+    assert_eq!(picks, [Some(0), Some(1), Some(2)]);
 }
 
 #[test]
@@ -56,8 +69,8 @@ fn each_home_keeps_its_own_turn() {
     let mut picks = Vec::new();
     for _ in 0..3 {
         picks.push(rotation.select(primary, 3));
-        rotation.select(other, 1);
-        rotation.select(other, 1);
+        rotation.select(other, 2);
+        rotation.select(other, 2);
     }
     assert_eq!(picks, [Some(0), Some(1), Some(2)]);
 }

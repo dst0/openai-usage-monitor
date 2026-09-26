@@ -398,3 +398,32 @@ fn unselected_ownerless_retry_is_kept_undated_despite_a_stale_row() {
     }
     std::fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn singleton_re_prune_does_not_reset_the_full_journal_rotation() {
+    // The deferred worker re-prunes one target on its own before recovering
+    // it, and recovery then prunes the whole journal. A singleton pass used
+    // to store a cursor of 0, so every full pass selected the first target
+    // and the others were never scanned.
+    let home = rotation_home("singleton-reprune");
+    let fixtures = [1, 2, 3].map(|index| ownerless(&home, index));
+    let journal = fixtures.clone().map(|(target, _)| target);
+    let rollouts = fixtures.each_ref().map(|(_, rollout)| rollout);
+    let rotation = OwnerlessProbeRotation::new(4);
+    let scans = CheckpointScanRegistry::new(4);
+    let service = ManifestPruneService::new(&rotation, &scans);
+    let now = Utc::now().timestamp();
+    for _ in 0..3 {
+        let mut singleton = vec![journal[0].clone()];
+        service
+            .run_with(&home, &mut singleton, |_| Ok(Some(now)))
+            .unwrap();
+        let mut full = journal.to_vec();
+        service
+            .run_with(&home, &mut full, |_| Ok(Some(now)))
+            .unwrap();
+        assert_eq!(full, journal);
+    }
+    assert_eq!(scanned(&scans, &rollouts), [true, true, true]);
+    std::fs::remove_dir_all(home).unwrap();
+}

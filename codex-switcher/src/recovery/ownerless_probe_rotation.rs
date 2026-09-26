@@ -33,13 +33,17 @@ impl OwnerlessProbeRotation {
     }
 
     /// Index of the ownerless target to scan in this pass over `home`. A pass
-    /// without ownerless targets leaves every cursor unchanged, so a
-    /// detection-only pass cannot skip a deferred target's turn. A full
-    /// rotation forgets the least recently selected home, never the home that
-    /// is taking its turn.
+    /// with no ownerless target, or with only one, has nothing to rotate and
+    /// leaves every cursor unchanged: a detection-only pass cannot skip a
+    /// deferred target's turn, and the deferred worker's single-target
+    /// re-prune cannot reset the next full-journal pass to the first target.
+    /// A full rotation forgets the least recently selected home, never the
+    /// home that is taking its turn.
     pub(super) fn select(&self, home: &Path, ownerless_count: usize) -> Option<usize> {
-        if ownerless_count == 0 {
-            return None;
+        match ownerless_count {
+            0 => return None,
+            1 => return Some(0),
+            _ => {}
         }
         let mut cursors = self
             .cursors
