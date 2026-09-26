@@ -57,8 +57,13 @@ impl DesktopCommandService {
             } => {
                 let count = WindowTaskProbeService::run(
                     allow_focus_and_clipboard,
+                    || {
+                        WindowTaskProbeService::desktop_codex_home(
+                            storage::codex_home(),
+                            dirs::home_dir(),
+                        )
+                    },
                     recovery::operation_lock,
-                    storage::codex_home,
                     switcher::current_codex_app_pids_checked,
                     SystemWindowRestoreBackend::new,
                 )?;
@@ -68,3 +73,7 @@ impl DesktopCommandService {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "desktop_command_service.test.rs"]
+mod tests;

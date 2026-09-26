@@ -1,121 +1,147 @@
 //! The window task probe foregrounds ChatGPT windows, synthesizes a
 //! keystroke, and replaces the clipboard. It must remain an explicit CLI
 //! diagnostic: restart, distribution, recovery, the daemon, the Monitor app,
-//! and the install scripts must never reach it. This scan fails when a new
-//! caller appears, so that caller gets a deliberate safety review instead of
-//! silently turning a diagnostic into automation.
+//! launch agents, workflows, and scripts must never reach it. This scan fails
+//! when any file outside the listed ones names the probe, so that a new
+//! caller gets a deliberate safety review instead of silently turning a
+//! diagnostic into automation. It also fails when a listed file stops naming
+//! it, so the list stays exact.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// (pattern, the only files that may contain it). Patterns are compared with
-/// whitespace removed because rustfmt may wrap a call.
-const RUST_RULES: [(&str, &[&str]); 4] = [
+/// (token, the only repository files that may contain it). Tokens are
+/// compared with whitespace removed because rustfmt may wrap a call.
+const RULES: [(&str, &[&str]); 9] = [
     (
-        "probe_selected_tasks(",
+        "probe-selected-tasks",
         &[
-            "distribution/system_window_restore_backend.rs",
-            "distribution/window_task_probe_service.rs",
+            "scripts/codex-window-restore.swift",
+            "codex-switcher/src/distribution/system_window_restore_backend.rs",
+            "codex-switcher/src/distribution/window_task_probe_service.test.rs",
         ],
     ),
     (
-        "\"probe-selected-tasks\"",
-        &["distribution/system_window_restore_backend.rs"],
-    ),
-    (
-        "WindowTaskProbeService::run(",
+        "probe_selected_tasks",
         &[
-            "desktop_command_service.rs",
-            "distribution/window_task_probe_service.test.rs",
+            "codex-switcher/src/distribution/system_window_restore_backend.rs",
+            "codex-switcher/src/distribution/window_task_probe_service.rs",
         ],
     ),
     (
-        "WindowAction::ProbeTasks",
-        &["desktop_command_service.rs", "window_action.test.rs"],
-    ),
-];
-
-const NATIVE_RULES: [(&str, &[&str]); 3] = [
-    (
-        "probeSelectedTasks(",
+        "probeSelectedTasks",
         &[
             "scripts/CodexWindowTaskProbe.swift",
             "scripts/codex-window-restore.swift",
         ],
     ),
     (
-        "\"probe-selected-tasks\"",
-        &["scripts/codex-window-restore.swift"],
+        "WindowTaskProbe(system",
+        &[
+            "scripts/CodexWindowTaskProbe.swift",
+            "tests/CodexWindowTaskProbeCoreTests.swift",
+        ],
     ),
-    ("probe-tasks", &[]),
+    (
+        "SystemWindowTaskProbe(",
+        &["scripts/CodexWindowTaskProbe.swift"],
+    ),
+    (
+        "WindowTaskProbeService::run(",
+        &[
+            "codex-switcher/src/desktop_command_service.rs",
+            "codex-switcher/src/distribution/window_task_probe_service.test.rs",
+        ],
+    ),
+    (
+        "ProbeTasks",
+        &[
+            "codex-switcher/src/window_action.rs",
+            "codex-switcher/src/window_action.test.rs",
+            "codex-switcher/src/desktop_command_service.rs",
+            "codex-switcher/src/desktop_command_service.test.rs",
+        ],
+    ),
+    ("probe-tasks", &["codex-switcher/src/window_action.test.rs"]),
+    (
+        "allow-focus-and-clipboard",
+        &[
+            "scripts/CodexWindowTaskProbe.swift",
+            "codex-switcher/src/distribution/system_window_restore_backend.rs",
+            "codex-switcher/src/distribution/window_task_probe_service.rs",
+            "codex-switcher/src/distribution/window_task_probe_service.test.rs",
+            "codex-switcher/src/window_action.test.rs",
+            "codex-switcher/src/desktop_command_service.test.rs",
+        ],
+    ),
 ];
+/// Directories that hold build output, history, or prose rather than code.
+const SKIPPED_DIRECTORIES: [&str; 6] = [
+    ".git",
+    ".claude",
+    "target",
+    "node_modules",
+    ".build",
+    "docs",
+];
+const THIS_FILE: &str = "codex-switcher/tests/enforce_task_probe_isolation.rs";
 
 #[test]
 fn only_the_explicit_cli_command_reaches_the_task_probe() {
-    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src = crate_root.join("src");
-    let repo = crate_root.join("..");
-    let rust = files(&src, &["rs"]);
-    let native: Vec<PathBuf> = files(&repo.join("Sources"), &["swift", "sh"])
-        .into_iter()
-        .chain(files(&repo.join("scripts"), &["swift", "sh", "js"]))
-        .collect();
-    assert!(rust.len() > 100, "expected to scan the crate");
-    assert!(native.len() > 20, "expected to scan the native sources");
-
-    let mut violations = scan(&rust, &src, &RUST_RULES);
-    violations.extend(scan(&native, &repo, &NATIVE_RULES));
-    assert!(
-        violations.is_empty(),
-        "the window task probe gained a caller; review it as a focus/clipboard side effect:\n{}",
-        violations.join("\n")
-    );
-}
-
-fn scan(files: &[PathBuf], root: &Path, rules: &[(&str, &[&str])]) -> Vec<String> {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let files = files(&repo);
+    assert!(files.len() > 400, "expected to scan the repository");
     let mut violations = Vec::new();
-    let mut seen = vec![false; rules.len()];
-    for path in files {
+    let mut seen: Vec<Vec<String>> = vec![Vec::new(); RULES.len()];
+    for path in &files {
         let relative = path
-            .strip_prefix(root)
+            .strip_prefix(&repo)
             .unwrap()
             .to_string_lossy()
             .into_owned();
-        let compact: String = fs::read_to_string(path)
-            .unwrap()
+        if relative == THIS_FILE {
+            continue;
+        }
+        let compact: String = String::from_utf8_lossy(&fs::read(path).unwrap())
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();
-        for (index, (pattern, allowed)) in rules.iter().enumerate() {
-            if compact.contains(pattern) {
-                seen[index] = true;
+        for (index, (token, allowed)) in RULES.iter().enumerate() {
+            if compact.contains(token) {
+                seen[index].push(relative.clone());
                 if !allowed.contains(&relative.as_str()) {
-                    violations.push(format!("{relative} contains {pattern}"));
+                    violations.push(format!("{relative} names {token}"));
                 }
             }
         }
     }
-    for (index, (pattern, allowed)) in rules.iter().enumerate() {
-        // A rule whose allowed files no longer mention it has gone stale.
-        if !allowed.is_empty() && !seen[index] {
-            violations.push(format!("no file contains {pattern}; update this scan"));
+    for (index, (token, allowed)) in RULES.iter().enumerate() {
+        for file in allowed
+            .iter()
+            .filter(|file| !seen[index].contains(&file.to_string()))
+        {
+            violations.push(format!("{file} no longer names {token}; update this scan"));
         }
     }
-    violations
+    assert!(
+        violations.is_empty(),
+        "the window task probe's callers changed; review any new one as a focus and clipboard side effect:\n{}",
+        violations.join("\n")
+    );
 }
 
-fn files(root: &Path, extensions: &[&str]) -> Vec<PathBuf> {
+fn files(root: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         for entry in fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
             if path.is_dir() {
-                stack.push(path);
-            } else if path
-                .extension()
-                .is_some_and(|ext| extensions.iter().any(|allowed| ext == *allowed))
-            {
+                if !SKIPPED_DIRECTORIES.contains(&name.as_str()) {
+                    stack.push(path);
+                }
+            } else if !name.ends_with(".md") {
                 found.push(path);
             }
         }
