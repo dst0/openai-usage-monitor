@@ -59,26 +59,33 @@ impl<'a> ManifestPruneService<'a> {
         mut inspect: impl FnMut(&Path, &str) -> ThreadRolloutState,
     ) -> Result<(), String> {
         let now = chrono::Utc::now().timestamp();
-        let mut eligible = Vec::new();
-        let mut scan_budget = POST_CHECKPOINT_SCAN_BUDGET_BYTES;
-        let ownerless_count = targets
+        // Invalid IDs and threads missing from SQLite are dropped unexamined,
+        // so they must not hold a rotation index: the cursor would select
+        // them and the pass would scan nothing. Look every row up before
+        // selecting, so a failed lookup also leaves the rotation untouched.
+        let mut indexed = Vec::with_capacity(targets.len());
+        for target in targets.iter() {
+            if !valid_id(&target.id) {
+                continue;
+            }
+            if let Some(updated) = updated_at(&target.id)? {
+                indexed.push((target, updated));
+            }
+        }
+        let ownerless_count = indexed
             .iter()
-            .filter(|target| target.awaiting_owner)
+            .filter(|(target, _)| target.awaiting_owner)
             .count();
         let selected_ownerless = self.rotation.select(home, ownerless_count);
         let mut ownerless_index = 0;
-        for target in targets.iter() {
+        let mut eligible = Vec::new();
+        let mut scan_budget = POST_CHECKPOINT_SCAN_BUDGET_BYTES;
+        for (target, updated) in indexed {
             let selected_for_scan =
                 target.awaiting_owner && selected_ownerless == Some(ownerless_index);
             if target.awaiting_owner {
                 ownerless_index += 1;
             }
-            if !valid_id(&target.id) {
-                continue;
-            }
-            let Some(updated) = updated_at(&target.id)? else {
-                continue;
-            };
             let metadata_recent = now
                 .checked_sub(updated)
                 .is_some_and(|age| (0..=switcher::RECENT_QUOTA_WINDOW_SECS).contains(&age));
