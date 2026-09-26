@@ -1,11 +1,7 @@
 use super::{
-    ownerless_probe_rotation::OwnerlessProbeRotation,
-    pending_target::PendingTarget,
-    queue_snapshot::pending_count,
-    restart_checkpoint_service::{
-        confirmed_checkpoint_status_with_budget, confirmed_snapshot_still_current,
-        post_checkpoint_status_with_budget, POST_CHECKPOINT_SCAN_BUDGET_BYTES,
-    },
+    checkpoint_scan_registry::CheckpointScanRegistry,
+    ownerless_probe_rotation::OwnerlessProbeRotation, pending_target::PendingTarget,
+    queue_snapshot::pending_count, restart_checkpoint_service::POST_CHECKPOINT_SCAN_BUDGET_BYTES,
     thread_identity::valid_id,
 };
 use crate::switcher::{self, ThreadRolloutState};
@@ -15,22 +11,30 @@ use std::{
 };
 
 /// Drops journaled recovery targets that can no longer be resumed. It borrows
-/// the ownerless rotation, so tests can inject an isolated instance.
+/// the per-process probe state (ownerless rotation and checkpoint scans), so
+/// tests can inject isolated instances.
 pub(super) struct ManifestPruneService<'a> {
     rotation: &'a OwnerlessProbeRotation,
+    scans: &'a CheckpointScanRegistry,
 }
 
 impl ManifestPruneService<'static> {
-    /// Production prune passes share one rotation, so each deferred probe
-    /// continues where the previous pass over the same home ended.
+    /// Production prune passes share one rotation and one scan registry, so
+    /// each deferred probe continues where the previous pass ended.
     pub(super) fn shared() -> Self {
-        Self::new(OwnerlessProbeRotation::shared())
+        Self::new(
+            OwnerlessProbeRotation::shared(),
+            CheckpointScanRegistry::shared(),
+        )
     }
 }
 
 impl<'a> ManifestPruneService<'a> {
-    pub(super) fn new(rotation: &'a OwnerlessProbeRotation) -> Self {
-        Self { rotation }
+    pub(super) fn new(
+        rotation: &'a OwnerlessProbeRotation,
+        scans: &'a CheckpointScanRegistry,
+    ) -> Self {
+        Self { rotation, scans }
     }
 
     pub(super) fn run_with(
@@ -105,12 +109,16 @@ impl<'a> ManifestPruneService<'a> {
                     // selected ownerless target and require a stable file.
                     continue;
                 }
-                if post_checkpoint_status_with_budget(home, target, &mut scan_budget)
+                if self
+                    .scans
+                    .post_checkpoint_status_with_budget(home, target, &mut scan_budget)
                     .is_some_and(|(_, verified)| verified)
-                    && confirmed_checkpoint_status_with_budget(home, target, &mut scan_budget)
+                    && self
+                        .scans
+                        .confirmed_checkpoint_status_with_budget(home, target, &mut scan_budget)
                         .is_some_and(|(_, verified)| verified)
                     && pending_count(home, &target.id)? == 0
-                    && confirmed_snapshot_still_current(home, target)
+                    && self.scans.confirmed_snapshot_still_current(home, target)
                 {
                     continue;
                 }

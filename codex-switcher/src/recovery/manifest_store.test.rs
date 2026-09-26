@@ -792,6 +792,7 @@ fn ownerless_rotation_is_fair_when_other_homes_are_probed() {
 #[test]
 fn detection_pass_without_ownerless_targets_keeps_rotation_turn() {
     use super::{
+        checkpoint_scan_registry::CheckpointScanRegistry,
         manifest_prune_service::ManifestPruneService,
         ownerless_probe_rotation::OwnerlessProbeRotation,
     };
@@ -816,12 +817,13 @@ fn detection_pass_without_ownerless_targets_keeps_rotation_turn() {
         });
     }
     let rotation = OwnerlessProbeRotation::new(4);
-    let service = ManifestPruneService::new(&rotation);
+    let scans = CheckpointScanRegistry::new(4);
+    let service = ManifestPruneService::new(&rotation, &scans);
     let now = || Ok(Some(chrono::Utc::now().timestamp()));
     let scanned = |rollouts: &[PathBuf]| -> Vec<bool> {
         rollouts
             .iter()
-            .map(|path| scanned_bytes_for(path, 11).is_some())
+            .map(|path| scans.scanned_bytes_for(path, 11).is_some())
             .collect()
     };
     service.run_with(&home, &mut targets, |_| now()).unwrap();

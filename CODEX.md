@@ -206,7 +206,9 @@ legitimate turns do not lose their retry solely because they exceed a byte
 cutoff. Recovery manifests with duplicate task IDs fail validation on both
 read and write, so two entries cannot claim conflicting account bindings.
 The deferred worker keeps a bounded append cursor as a hint, so ordinary
-probes read newly appended bytes. Replacing or pruning an ownerless retry
+probes read newly appended bytes. The cursor and confirmation caches each hold
+at most 128 entries and, when full, evict the least recently probed one, which
+is normally a task that already left the journal. Replacing or pruning an ownerless retry
 requires a second scan of the complete, unchanged snapshot. An incomplete or
 malformed or oversized JSONL record anywhere in that interval cannot certify error-free work. Each prune pass
 selects one ownerless task, rotating per `CODEX_HOME`, and does not tail-inspect

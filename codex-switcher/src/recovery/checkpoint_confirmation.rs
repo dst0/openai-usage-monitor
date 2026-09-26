@@ -35,14 +35,19 @@ impl CheckpointConfirmation {
             && (metadata.ctime(), metadata.ctime_nsec()) == self.changed_at
     }
 
-    pub(super) fn scan_with_budget(&mut self, budget: &mut u64) -> Option<(bool, bool)> {
+    /// `Ok(None)` means the pinned snapshot is not fully proven yet; `Err`
+    /// means the scan failed and this confirmation must be discarded.
+    pub(super) fn scan_with_budget(
+        &mut self,
+        budget: &mut u64,
+    ) -> Result<Option<(bool, bool)>, String> {
         if let Some(status) = self.complete {
-            return Some(status);
+            return Ok(Some(status));
         }
         let start = self.scan.observer.offset;
         let limit = self.length.min(start.saturating_add(*budget));
         *budget -= limit - start;
-        let status = self.scan.scan_to(limit).ok()?;
+        let status = self.scan.scan_to(limit)?;
         // A writer can have emitted useful work while a later task_complete
         // error is still an incomplete JSONL record. Such a snapshot cannot
         // authorize removal or replacement of the saved retry.
@@ -53,9 +58,9 @@ impl CheckpointConfirmation {
             && !self.scan.observer.saw_malformed
         {
             self.complete = Some(status);
-            Some(status)
+            Ok(Some(status))
         } else {
-            None
+            Ok(None)
         }
     }
 

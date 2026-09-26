@@ -1,55 +1,32 @@
 #[cfg(test)]
 use super::observer::Observer;
 use super::{
-    checkpoint_confirmation::CheckpointConfirmation,
-    checkpoint_scan_cache::CachedCheckpointScan,
+    checkpoint_scan_registry::CheckpointScanRegistry,
     manifest_store::{load_manifest, write_manifest},
     pending_target::PendingTarget,
     queue_snapshot::pending_count,
     thread_identity::valid_id,
 };
 use crate::{storage, switcher};
-use std::{
-    collections::HashMap,
-    os::unix::fs::MetadataExt,
-    path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
-};
+#[cfg(test)]
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
 
-const MAX_CACHED_CHECKPOINTS: usize = 128;
 pub(super) const POST_CHECKPOINT_SCAN_BUDGET_BYTES: u64 = 16 * 1024 * 1024;
-type CacheKey = (PathBuf, u64);
-static SCANS: OnceLock<Mutex<HashMap<CacheKey, CachedCheckpointScan>>> = OnceLock::new();
-static CONFIRMATIONS: OnceLock<Mutex<HashMap<CacheKey, CheckpointConfirmation>>> = OnceLock::new();
 
 #[cfg(test)]
 pub(super) fn scanned_bytes_for(path: &Path, offset: u64) -> Option<u64> {
-    SCANS
-        .get()?
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .get(&(path.to_path_buf(), offset))
-        .map(|scan| scan.scanned_bytes)
+    CheckpointScanRegistry::shared().scanned_bytes_for(path, offset)
 }
 
 #[cfg(test)]
 pub(super) fn cached_partial_capacity_for(path: &Path, offset: u64) -> Option<usize> {
-    SCANS
-        .get()?
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .get(&(path.to_path_buf(), offset))
-        .map(|scan| scan.observer.partial.capacity())
+    CheckpointScanRegistry::shared().cached_partial_capacity_for(path, offset)
 }
 
 #[cfg(test)]
 pub(super) fn confirmation_cursor_for(path: &Path, offset: u64) -> Option<u64> {
-    CONFIRMATIONS
-        .get()?
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .get(&(path.to_path_buf(), offset))
-        .map(CheckpointConfirmation::cursor)
+    CheckpointScanRegistry::shared().confirmation_cursor_for(path, offset)
 }
 
 #[cfg(test)]
@@ -58,135 +35,28 @@ pub(super) fn post_checkpoint_status(home: &Path, target: &PendingTarget) -> Opt
     post_checkpoint_status_with_budget(home, target, &mut budget)
 }
 
+/// See `CheckpointScanRegistry::post_checkpoint_status_with_budget`; this
+/// uses the process-wide registry.
 pub(super) fn post_checkpoint_status_with_budget(
     home: &Path,
     target: &PendingTarget,
     budget: &mut u64,
 ) -> Option<(bool, bool)> {
-    let offset = target.offset?;
-    let path = switcher::find_thread_rollout_path(home, &target.id)?;
-    let metadata = path.metadata().ok()?;
-    if metadata.len() < offset {
-        return None;
-    }
-    let key = (path.clone(), offset);
-    let mut scans = SCANS
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    if scans
-        .get(&key)
-        .is_some_and(|scan| !scan.can_continue(&metadata))
-    {
-        scans.remove(&key);
-    }
-    if !scans.contains_key(&key) {
-        if scans.len() >= MAX_CACHED_CHECKPOINTS {
-            if let Some(evicted) = scans.keys().next().cloned() {
-                scans.remove(&evicted);
-            }
-        }
-        scans.insert(
-            key.clone(),
-            CachedCheckpointScan::new(path.clone(), offset, &metadata)?,
-        );
-    }
-    let scan = scans.get_mut(&key)?;
-    // Bound work while the global recovery operation lock is held. Incomplete
-    // evidence cannot authorize an IPC dispatch; the next probe resumes here.
-    let start = scan.observer.offset;
-    let limit = metadata.len().min(start.saturating_add(*budget));
-    *budget -= limit - start;
-    let status = scan.scan_to(limit).ok();
-    let after = path.metadata().ok();
-    let identity_stable = after.as_ref().is_some_and(|after| {
-        after.dev() == metadata.dev()
-            && after.ino() == metadata.ino()
-            && after.len() >= metadata.len()
-            && (after.len() > metadata.len()
-                || (after.modified().ok() == metadata.modified().ok()
-                    && (after.ctime(), after.ctime_nsec())
-                        == (metadata.ctime(), metadata.ctime_nsec())))
-    });
-    if !identity_stable || status.is_none() {
-        scans.remove(&key);
-        return None;
-    }
-    scan.update_identity(&metadata);
-    if scan.observer.saw_oversized || scan.observer.saw_malformed {
-        None
-    } else if limit == metadata.len() && after.is_some_and(|after| after.len() == metadata.len()) {
-        status
-    } else {
-        None
-    }
+    CheckpointScanRegistry::shared().post_checkpoint_status_with_budget(home, target, budget)
 }
 
-/// Destructive journal changes require lifecycle proof from a fresh scan of
-/// one unchanged rollout snapshot. Cached append evidence only starts this
-/// confirmation; it never authorizes checkpoint replacement or pruning.
+/// See `CheckpointScanRegistry::confirmed_checkpoint_status_with_budget`;
+/// this uses the process-wide registry.
 pub(super) fn confirmed_checkpoint_status_with_budget(
     home: &Path,
     target: &PendingTarget,
     budget: &mut u64,
 ) -> Option<(bool, bool)> {
-    let offset = target.offset?;
-    let path = switcher::find_thread_rollout_path(home, &target.id)?;
-    let metadata = path.metadata().ok()?;
-    if metadata.len() < offset {
-        return None;
-    }
-    let key = (path.clone(), offset);
-    let mut scans = CONFIRMATIONS
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    if scans.get(&key).is_some_and(|scan| !scan.matches(&metadata)) {
-        scans.remove(&key);
-    }
-    if !scans.contains_key(&key) {
-        if scans.len() >= MAX_CACHED_CHECKPOINTS {
-            if let Some(evicted) = scans.keys().next().cloned() {
-                scans.remove(&evicted);
-            }
-        }
-        scans.insert(
-            key.clone(),
-            CheckpointConfirmation::new(path.clone(), offset, &metadata)?,
-        );
-    }
-    let scan = scans.get_mut(&key)?;
-    let status = scan.scan_with_budget(budget);
-    if !path
-        .metadata()
-        .ok()
-        .is_some_and(|after| scan.matches(&after))
-    {
-        scans.remove(&key);
-        return None;
-    }
-    status
+    CheckpointScanRegistry::shared().confirmed_checkpoint_status_with_budget(home, target, budget)
 }
 
 pub(super) fn confirmed_snapshot_still_current(home: &Path, target: &PendingTarget) -> bool {
-    let Some(offset) = target.offset else {
-        return false;
-    };
-    let Some(path) = switcher::find_thread_rollout_path(home, &target.id) else {
-        return false;
-    };
-    let Ok(metadata) = path.metadata() else {
-        return false;
-    };
-    CONFIRMATIONS
-        .get()
-        .and_then(|scans| scans.lock().ok())
-        .and_then(|scans| {
-            scans
-                .get(&(path, offset))
-                .map(|scan| scan.is_complete() && scan.matches(&metadata))
-        })
-        .unwrap_or(false)
+    CheckpointScanRegistry::shared().confirmed_snapshot_still_current(home, target)
 }
 
 #[cfg(test)]

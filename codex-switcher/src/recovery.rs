@@ -4,6 +4,7 @@ mod active_auth_binding_service;
 mod automation_guard;
 mod checkpoint_confirmation;
 mod checkpoint_scan_cache;
+mod checkpoint_scan_registry;
 mod deferred_recovery_service;
 mod desktop_account_binding_service;
 mod desktop_ipc;
@@ -75,6 +76,9 @@ pub(crate) fn preflight_desktop_dispatch() -> Result<(), String> {
 #[cfg(test)]
 #[path = "recovery/automation_guard.test.rs"]
 mod automation_guard_tests;
+#[cfg(test)]
+#[path = "recovery/checkpoint_scan_registry.test.rs"]
+mod checkpoint_scan_registry_tests;
 #[cfg(test)]
 #[path = "recovery/deferred_recovery.test.rs"]
 mod deferred_recovery_tests;
