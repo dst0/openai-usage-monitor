@@ -1,4 +1,4 @@
-use super::{serialize, TestCodexHome};
+use super::{serialize, TestCodexHome, TEST_CODEX_HOME_MUTEX};
 use crate::storage::codex_home;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{mpsc, Mutex};
@@ -75,7 +75,7 @@ fn a_panicking_test_clears_codex_home_and_releases_the_lock() {
     // lock, and a leaked value would show up as the next guard's inheritance.
     let next = TestCodexHome::new("after-panic");
     assert_eq!(next.inherited, None);
-    assert!(!crate::setup::TEST_CODEX_HOME_MUTEX.is_poisoned());
+    assert!(!TEST_CODEX_HOME_MUTEX.is_poisoned());
 }
 
 #[test]

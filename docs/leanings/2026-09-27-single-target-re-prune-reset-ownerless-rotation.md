@@ -1,0 +1,22 @@
+# 2026-09-27 — A single-target re-prune reset the ownerless rotation
+
+- **Status:** Resolved
+- **Task/context:** An adversarial review of the injected ownerless rotation (`codex-switcher/src/recovery/ownerless_probe_rotation.rs`) after rebasing onto main at 93b9c1a. It follows [2026-09-26-process-global-rotation-cursor-flaky-test.md](2026-09-26-process-global-rotation-cursor-flaky-test.md) and [2026-09-26-ownerless-rotation-counted-unselectable-targets.md](2026-09-26-ownerless-rotation-counted-unselectable-targets.md).
+- **Unexpected observation or failure:** The rotation stores `(selected + 1) % count` for a home after every pass. The deferred worker (`deferred_recovery_service.rs`) re-prunes each ready target on its own, a pass with a count of 1, which stored 0. It then calls `recover_threads`, whose full-journal prune (`recovery_service.rs`) therefore always selected index 0. A cold target at index 1 or later was never the selected target in that full pass, so, for example, a stable non-quota error there was not dropped until its window ended. The per-home map on main (#15) had the same behavior.
+- **Evidence:** `singleton_re_prune_does_not_reset_the_full_journal_rotation` replays three worker ticks (a singleton pass, then a full pass over `[A, B, C]`) and saw only A scanned: `[true, false, false]` instead of `[true, true, true]`. The review reproduced the same `a=true b=true c=false` pattern with its own replay.
+- **Approaches tried:**
+  - **Attempt:** Store an ever-increasing cursor instead of `(selected + 1) % count`.
+    - **Outcome:** Rejected.
+    - **Why:** Each tick would advance the cursor twice (singleton and full pass), so with two ownerless targets every full pass would land on the same parity and starve the other target.
+  - **Attempt:** Give the singleton re-prune its own method that bypasses the rotation.
+    - **Outcome:** Rejected.
+    - **Why:** It works, but any other single-target caller would reintroduce the reset, and a pass with one target has nothing to rotate anyway.
+  - **Attempt:** Make `OwnerlessProbeRotation::select` return `Some(0)` for a count of 1 without touching any cursor.
+    - **Outcome:** Worked.
+    - **Why:** A single-target pass has only one choice, so leaving the cursor alone loses nothing, and the next multi-target pass continues where the previous one ended.
+- **Root cause:** The cursor was written by every pass, including passes too small to rotate, so a frequent singleton caller overwrote the state that the full-journal caller depended on.
+- **Resolution:** `select` leaves every cursor unchanged when the count is 0 or 1. Because a single-target pass no longer touches a cursor, main's `ownerless_rotation_is_fair_when_other_homes_are_probed` and `each_home_keeps_its_own_turn` now probe the other home with two targets; with one they could no longer detect a cursor shared across homes.
+- **Verification:** `singleton_re_prune_does_not_reset_the_full_journal_rotation` and `single_target_pass_neither_advances_nor_resets_the_cursor` fail when a single-target pass stores a cursor again. Replacing the per-home lookup with one shared cursor fails `ownerless_rotation_is_fair_when_other_homes_are_probed`, `each_home_keeps_its_own_turn`, and both eviction tests.
+- **Prevention/follow-up:** The AGENTS.md checkpoint-scan-cost contract and the recovery section of CODEX.md say a single-target pass neither advances nor resets the cursor.
+- **Reusable learning:** A round-robin cursor shared by callers with different batch sizes must not be written by a pass that has nothing to choose, or the most frequent small caller decides what the large caller sees.
+- **References:** `codex-switcher/src/recovery/ownerless_probe_rotation.rs`, `codex-switcher/src/recovery/ownerless_probe_rotation.test.rs`, `codex-switcher/src/recovery/manifest_prune_service.test.rs`, `codex-switcher/src/recovery/deferred_recovery_service.rs`, `codex-switcher/src/recovery/recovery_service.rs`.

@@ -6,7 +6,9 @@
 //! Only that guard may lock `TEST_CODEX_HOME_MUTEX`, too. The mutex is not
 //! reentrant, and the guard's nested-use check sees only other guards: a test
 //! that locks it directly and then creates a guard (for example through
-//! `TestEnv`) blocks forever instead of failing.
+//! `TestEnv`) blocks forever instead of failing. The mutex is private to the
+//! guard's module, so the compiler already rejects outside use; this scan
+//! keeps the rule if that visibility is ever widened.
 
 use std::fs;
 use std::path::{Path, PathBuf};

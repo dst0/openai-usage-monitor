@@ -4,6 +4,7 @@ mod active_auth_binding_service;
 mod automation_guard;
 mod checkpoint_confirmation;
 mod checkpoint_scan_cache;
+mod checkpoint_scan_registry;
 mod deferred_recovery_service;
 mod desktop_account_binding_service;
 mod desktop_ipc;
@@ -20,6 +21,7 @@ mod observer;
 mod owner_info;
 mod owner_link_retry_schedule;
 mod ownerless_link_mount;
+mod ownerless_probe_rotation;
 mod pending_manifest;
 mod pending_target;
 mod queue_snapshot;
@@ -75,6 +77,9 @@ pub(crate) fn preflight_desktop_dispatch() -> Result<(), String> {
 #[path = "recovery/automation_guard.test.rs"]
 mod automation_guard_tests;
 #[cfg(test)]
+#[path = "recovery/checkpoint_scan_registry.test.rs"]
+mod checkpoint_scan_registry_tests;
+#[cfg(test)]
 #[path = "recovery/deferred_recovery.test.rs"]
 mod deferred_recovery_tests;
 #[cfg(test)]
@@ -92,6 +97,9 @@ mod manifest_store_tests;
 #[cfg(test)]
 #[path = "recovery/observer.test.rs"]
 mod observer_tests;
+#[cfg(test)]
+#[path = "recovery/ownerless_probe_rotation.test.rs"]
+mod ownerless_probe_rotation_tests;
 #[cfg(test)]
 #[path = "recovery/queue_snapshot.test.rs"]
 mod queue_snapshot_tests;

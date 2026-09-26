@@ -5,6 +5,12 @@ use std::sync::{Mutex, MutexGuard};
 use std::thread::ThreadId;
 
 static NEXT_HOME: AtomicU64 = AtomicU64::new(0);
+/// Serializes every test that points `CODEX_HOME` at a temporary home. It is
+/// private so that `TestCodexHome` is the only way to take it: a test that
+/// locked it directly around a `TestEnv` would deadlock, because the mutex is
+/// not reentrant, and one that unwrapped a poisoned lock would fail every
+/// later test instead of the one that panicked.
+static TEST_CODEX_HOME_MUTEX: Mutex<()> = Mutex::new(());
 /// The home of the guard currently holding `TEST_CODEX_HOME_MUTEX` and the
 /// thread that owns it; `codex_home()` accepts nothing else in test builds.
 static ACTIVE_HOME: Mutex<Option<(PathBuf, ThreadId)>> = Mutex::new(None);
@@ -30,7 +36,7 @@ impl TestCodexHome {
             active_home().is_none_or(|(_, owner)| owner != current),
             "nested TestCodexHome on one thread would deadlock; reuse the existing guard"
         );
-        let serial = serialize(&crate::setup::TEST_CODEX_HOME_MUTEX);
+        let serial = serialize(&TEST_CODEX_HOME_MUTEX);
         let path = std::env::temp_dir().join(format!(
             "codex-test-home-{label}-{}-{}",
             std::process::id(),

@@ -1,32 +1,49 @@
 use super::{
-    pending_target::PendingTarget,
-    queue_snapshot::pending_count,
-    restart_checkpoint_service::{
-        confirmed_checkpoint_status_with_budget, confirmed_snapshot_still_current,
-        post_checkpoint_status_with_budget, POST_CHECKPOINT_SCAN_BUDGET_BYTES,
-    },
+    checkpoint_scan_registry::CheckpointScanRegistry,
+    ownerless_probe_rotation::OwnerlessProbeRotation, pending_target::PendingTarget,
+    queue_snapshot::pending_count, restart_checkpoint_service::POST_CHECKPOINT_SCAN_BUDGET_BYTES,
     thread_identity::valid_id,
 };
 use crate::switcher::{self, ThreadRolloutState};
 use std::{
-    collections::HashMap,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
 };
 
-const MAX_ROTATION_HOMES: usize = 128;
-static NEXT_OWNERLESS_SCAN: OnceLock<Mutex<HashMap<PathBuf, usize>>> = OnceLock::new();
+/// Drops journaled recovery targets that can no longer be resumed. It borrows
+/// the per-process probe state (ownerless rotation and checkpoint scans), so
+/// tests can inject isolated instances.
+pub(super) struct ManifestPruneService<'a> {
+    rotation: &'a OwnerlessProbeRotation,
+    scans: &'a CheckpointScanRegistry,
+}
 
-pub(super) struct ManifestPruneService;
+impl ManifestPruneService<'static> {
+    /// Production prune passes share one rotation and one scan registry, so
+    /// each deferred probe continues where the previous pass ended.
+    pub(super) fn shared() -> Self {
+        Self::new(
+            OwnerlessProbeRotation::shared(),
+            CheckpointScanRegistry::shared(),
+        )
+    }
+}
 
-impl ManifestPruneService {
+impl<'a> ManifestPruneService<'a> {
+    pub(super) fn new(
+        rotation: &'a OwnerlessProbeRotation,
+        scans: &'a CheckpointScanRegistry,
+    ) -> Self {
+        Self { rotation, scans }
+    }
+
     pub(super) fn run_with(
+        &self,
         home: &Path,
         targets: &mut Vec<PendingTarget>,
         updated_at: impl FnMut(&str) -> Result<Option<i64>, String>,
     ) -> Result<(), String> {
-        Self::run_with_inspector(
+        self.run_with_inspector(
             home,
             targets,
             updated_at,
@@ -35,32 +52,40 @@ impl ManifestPruneService {
     }
 
     pub(super) fn run_with_inspector(
+        &self,
         home: &Path,
         targets: &mut Vec<PendingTarget>,
         mut updated_at: impl FnMut(&str) -> Result<Option<i64>, String>,
         mut inspect: impl FnMut(&Path, &str) -> ThreadRolloutState,
     ) -> Result<(), String> {
         let now = chrono::Utc::now().timestamp();
+        // Invalid IDs and threads missing from SQLite are dropped unexamined,
+        // so they must not hold a rotation index: the cursor would select
+        // them and the pass would scan nothing. Look every row up before
+        // selecting, so a failed lookup also leaves the rotation untouched.
+        let mut indexed = Vec::with_capacity(targets.len());
+        for target in targets.iter() {
+            if !valid_id(&target.id) {
+                continue;
+            }
+            if let Some(updated) = updated_at(&target.id)? {
+                indexed.push((target, updated));
+            }
+        }
+        let ownerless_count = indexed
+            .iter()
+            .filter(|(target, _)| target.awaiting_owner)
+            .count();
+        let selected_ownerless = self.rotation.select(home, ownerless_count);
+        let mut ownerless_index = 0;
         let mut eligible = Vec::new();
         let mut scan_budget = POST_CHECKPOINT_SCAN_BUDGET_BYTES;
-        let ownerless_count = targets
-            .iter()
-            .filter(|target| target.awaiting_owner)
-            .count();
-        let selected_ownerless = Self::next_ownerless_for_home(home, ownerless_count);
-        let mut ownerless_index = 0;
-        for target in targets.iter() {
+        for (target, updated) in indexed {
             let selected_for_scan =
                 target.awaiting_owner && selected_ownerless == Some(ownerless_index);
             if target.awaiting_owner {
                 ownerless_index += 1;
             }
-            if !valid_id(&target.id) {
-                continue;
-            }
-            let Some(updated) = updated_at(&target.id)? else {
-                continue;
-            };
             let metadata_recent = now
                 .checked_sub(updated)
                 .is_some_and(|age| (0..=switcher::RECENT_QUOTA_WINDOW_SECS).contains(&age));
@@ -91,12 +116,16 @@ impl ManifestPruneService {
                     // selected ownerless target and require a stable file.
                     continue;
                 }
-                if post_checkpoint_status_with_budget(home, target, &mut scan_budget)
+                if self
+                    .scans
+                    .post_checkpoint_status_with_budget(home, target, &mut scan_budget)
                     .is_some_and(|(_, verified)| verified)
-                    && confirmed_checkpoint_status_with_budget(home, target, &mut scan_budget)
+                    && self
+                        .scans
+                        .confirmed_checkpoint_status_with_budget(home, target, &mut scan_budget)
                         .is_some_and(|(_, verified)| verified)
                     && pending_count(home, &target.id)? == 0
-                    && confirmed_snapshot_still_current(home, target)
+                    && self.scans.confirmed_snapshot_still_current(home, target)
                 {
                     continue;
                 }
@@ -201,25 +230,6 @@ impl ManifestPruneService {
             && before.modified().ok() == after.modified().ok()
             && (before.ctime(), before.ctime_nsec()) == (after.ctime(), after.ctime_nsec())
             && switcher::find_thread_rollout_path(home, id).as_deref() == Some(path)
-    }
-
-    fn next_ownerless_for_home(home: &Path, count: usize) -> Option<usize> {
-        if count == 0 {
-            return None;
-        }
-        let mut cursors = NEXT_OWNERLESS_SCAN
-            .get_or_init(|| Mutex::new(HashMap::new()))
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        if !cursors.contains_key(home) && cursors.len() >= MAX_ROTATION_HOMES {
-            if let Some(evicted) = cursors.keys().next().cloned() {
-                cursors.remove(&evicted);
-            }
-        }
-        let cursor = cursors.entry(home.to_path_buf()).or_default();
-        let selected = *cursor % count;
-        *cursor = (selected + 1) % count;
-        Some(selected)
     }
 }
 

@@ -1,0 +1,19 @@
+# 2026-09-26 — Ownerless scan rotation counted targets it could never select
+
+- **Status:** Resolved
+- **Task/context:** The review of the ownerless-rotation flake fix ([2026-09-26-process-global-rotation-cursor-flaky-test.md](2026-09-26-process-global-rotation-cursor-flaky-test.md)) read the prune pass that picks one ownerless rollout to scan each time the deferred worker probes. The defect was found on main at a8ab321 and was still present in `ManifestPruneService` on main at 93b9c1a, after #19 changed how that pass dates targets.
+- **Unexpected observation or failure:** The prune pass sized the rotation from every target with `awaiting_owner` and gave each one an index before checking its ID or looking it up in SQLite. Targets with an invalid ID or no SQLite row are dropped unexamined, so when the cursor landed on one of them the pass scanned nothing. With `[invalid, unindexed, A, B]`, two passes in four were wasted, and a pass whose ownerless targets were all unselectable still advanced the home's cursor. An `updated_at` lookup error after the selection also consumed a turn.
+- **Evidence:** `invalid_or_unindexed_ownerless_target_does_not_waste_the_scan_turn`, `pass_whose_ownerless_targets_are_all_unselectable_keeps_the_rotation_turn` and `failed_thread_index_lookup_does_not_consume_the_rotation_turn` in `codex-switcher/src/recovery/manifest_prune_service.test.rs` failed on the unfixed pass: nothing was scanned at cursors that named an unselectable target, and the next selection had moved.
+- **Approaches tried:**
+  - **Attempt:** On a8ab321, count only ownerless targets with a valid ID and a recent SQLite `updated_at`.
+    - **Outcome:** Superseded.
+    - **Why:** #19 (b4e7fb9) found that `updated_at` also moves when Desktop merely opens a task, so it dates a selected quota target from its rollout failure time and keeps every unselected retry undated. A recency pre-filter on `updated_at` would drop a recent failure whose row is stale, which #19's `quota_manifest_pruning_uses_failure_time_even_when_sqlite_moves` rejects. A stale target that gets selected is now dated and dropped in that pass, so its turn is not wasted.
+  - **Attempt:** Look up every valid ID first, and size and index the rotation over the ownerless targets that have a SQLite row.
+    - **Outcome:** Worked.
+    - **Why:** Every selectable index now names a target the pass can examine, a pass with no selectable ownerless target leaves the cursor unchanged, and a failed lookup aborts before the rotation moves. Restart targets never take an ownerless index.
+- **Root cause:** The rotation's range and its index assignment used different filters.
+- **Resolution:** `ManifestPruneService::run_with_inspector` collects `(target, updated_at)` for valid, indexed targets before selecting, then iterates only those. `updated_at` is still called once per valid ID, and an error still aborts the pass before anything is pruned.
+- **Verification:** The three tests above fail before the fix and pass after it. `restart_targets_do_not_shift_the_ownerless_rotation` guards the index assignment in a mixed pass. Temporary mutations each fail a test: counting restart targets in the ownerless index, counting unindexed targets in the rotation size, and selecting through the shared rotation instead of the injected one. #19's quota-timestamp and concurrent-append tests still pass.
+- **Prevention/follow-up:** The AGENTS.md checkpoint-scan-cost contract and the recovery section of CODEX.md say the rotation covers valid, SQLite-indexed ownerless targets only.
+- **Reusable learning:** When a rotation or modulus chooses among items, compute its range from the same filtered set that receives the indexes, and do every fallible lookup before moving the cursor.
+- **References:** `codex-switcher/src/recovery/manifest_prune_service.rs`, `codex-switcher/src/recovery/manifest_prune_service.test.rs`, `AGENTS.md`, `CODEX.md`.

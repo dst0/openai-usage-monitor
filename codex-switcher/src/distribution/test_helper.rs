@@ -5,7 +5,7 @@ use crate::storage::{save_accounts, write_active_auth_json};
 use std::path::Path;
 
 /// A seeded distribution home. It owns the test's `CODEX_HOME` guard, so a
-/// test must not also lock `TEST_CODEX_HOME_MUTEX` or create another guard.
+/// test that holds a `TestEnv` must not create another guard.
 pub struct TestEnv {
     home: TestCodexHome,
 }

@@ -2,7 +2,8 @@ use super::{
     manifest_store::{
         current_account_binding, finalize_target, load_manifest, load_ownerless_pending,
         load_pending, mark_dispatch_attempt_for_account, mark_dispatch_attempt_with_writer,
-        prune_ineligible_targets_with, validate_target_account_binding, write_manifest,
+        prune_ineligible_targets, prune_ineligible_targets_with, validate_target_account_binding,
+        write_manifest,
     },
     pending_target::PendingTarget,
     recovery_mode::RecoveryMode,
@@ -731,6 +732,62 @@ fn prune_rotates_one_ownerless_rollout_scan_per_pass() {
 }
 
 #[test]
+fn production_prune_passes_share_one_rotation() {
+    // Reaches the real SQLite lookup and the process-wide rotation and scan
+    // registry through `prune_ineligible_targets` itself. A production entry
+    // point that built its own rotation or registry would select the first
+    // target on every pass.
+    let home = std::env::temp_dir().join(format!(
+        "codex-prune-production-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let now = chrono::Utc::now().timestamp();
+    let mut sql = String::from("CREATE TABLE threads (id TEXT PRIMARY KEY, archived INTEGER, thread_source TEXT, updated_at INTEGER, rollout_path TEXT);");
+    let mut targets = Vec::new();
+    let mut rollouts = Vec::new();
+    for index in 1..=3 {
+        let id = format!("01a098c2-0fae-74d2-a80c-{:012x}", 0xd000 + index);
+        let rollout = sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl"));
+        std::fs::write(
+            &rollout,
+            b"checkpoint\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"t\"}}\n",
+        )
+        .unwrap();
+        sql.push_str(&format!(
+            "INSERT INTO threads VALUES ('{id}', 0, 'user', {now}, '{}');",
+            rollout.display()
+        ));
+        rollouts.push(rollout);
+        targets.push(PendingTarget {
+            id,
+            offset: Some(11),
+            awaiting_owner: true,
+            captured_restart: true,
+            owner_account_id: Some("owner".into()),
+        });
+    }
+    assert!(Command::new("/usr/bin/sqlite3")
+        .arg(home.join("state_5.sqlite"))
+        .arg(sql)
+        .status()
+        .unwrap()
+        .success());
+    for _ in 0..3 {
+        prune_ineligible_targets(&home, &mut targets).unwrap();
+        assert_eq!(targets.len(), 3);
+    }
+    let scanned = rollouts
+        .iter()
+        .map(|path| scanned_bytes_for(path, 11).is_some())
+        .collect::<Vec<_>>();
+    std::fs::remove_dir_all(&home).unwrap();
+    assert_eq!(scanned, [true, true, true]);
+}
+
+#[test]
 fn ownerless_rotation_is_fair_when_other_homes_are_probed() {
     let root = std::env::temp_dir().join(format!("codex-prune-interleave-{}", std::process::id()));
     let primary = root.join("primary");
@@ -754,18 +811,25 @@ fn ownerless_rotation_is_fair_when_other_homes_are_probed() {
             owner_account_id: Some("owner".into()),
         });
     }
-    let other_id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
-    let other_rollout = other
-        .join("sessions")
-        .join(format!("rollout-2026-09-26T00-00-00-{other_id}.jsonl"));
-    std::fs::write(&other_rollout, b"checkpoint\nmetadata\n").unwrap();
-    let mut other_targets = vec![PendingTarget {
-        id: other_id.into(),
-        offset: Some(11),
-        awaiting_owner: true,
-        captured_restart: true,
-        owner_account_id: Some("owner".into()),
-    }];
+    // Two targets, because a single-target pass leaves every cursor alone
+    // and so could not disturb the primary home's rotation.
+    let mut other_targets = Vec::new();
+    for other_id in [
+        "01a098c2-0fae-74d2-a80c-45d89e910e79",
+        "01a098c2-0fae-74d2-a80c-45d89e910e7a",
+    ] {
+        let other_rollout = other
+            .join("sessions")
+            .join(format!("rollout-2026-09-26T00-00-00-{other_id}.jsonl"));
+        std::fs::write(&other_rollout, b"checkpoint\nmetadata\n").unwrap();
+        other_targets.push(PendingTarget {
+            id: other_id.into(),
+            offset: Some(11),
+            awaiting_owner: true,
+            captured_restart: true,
+            owner_account_id: Some("owner".into()),
+        });
+    }
     for _ in 0..3 {
         prune_ineligible_targets_with(&primary, &mut primary_targets, |_| {
             Ok(Some(chrono::Utc::now().timestamp()))
@@ -791,7 +855,11 @@ fn ownerless_rotation_is_fair_when_other_homes_are_probed() {
 
 #[test]
 fn ownerless_prune_inspects_only_the_selected_tail() {
-    use super::manifest_prune_service::ManifestPruneService;
+    use super::{
+        checkpoint_scan_registry::CheckpointScanRegistry,
+        manifest_prune_service::ManifestPruneService,
+        ownerless_probe_rotation::OwnerlessProbeRotation,
+    };
     let home = std::env::temp_dir().join(format!("codex-prune-tail-{}", std::process::id()));
     let sessions = home.join("sessions");
     std::fs::create_dir_all(&sessions).unwrap();
@@ -813,22 +881,25 @@ fn ownerless_prune_inspects_only_the_selected_tail() {
         });
     }
     let mut tail_reads = 0;
-    ManifestPruneService::run_with_inspector(
-        &home,
-        &mut targets,
-        |_| Ok(Some(chrono::Utc::now().timestamp())),
-        |_, _| {
-            tail_reads += 1;
-            crate::switcher::ThreadRolloutState::CleanCompleted
-        },
-    )
-    .unwrap();
+    let rotation = OwnerlessProbeRotation::new(1);
+    let scans = CheckpointScanRegistry::new(4);
+    ManifestPruneService::new(&rotation, &scans)
+        .run_with_inspector(
+            &home,
+            &mut targets,
+            |_| Ok(Some(chrono::Utc::now().timestamp())),
+            |_, _| {
+                tail_reads += 1;
+                crate::switcher::ThreadRolloutState::CleanCompleted
+            },
+        )
+        .unwrap();
     assert_eq!(targets.len(), 3);
     assert_eq!(tail_reads, 1, "ownerless pruning must not read every tail");
     assert_eq!(
         rollouts
             .iter()
-            .filter(|path| scanned_bytes_for(path, 11).unwrap_or(0) > 0)
+            .filter(|path| scans.scanned_bytes_for(path, 11).unwrap_or(0) > 0)
             .count(),
         1,
     );
