@@ -1,6 +1,8 @@
 //! CI baseline rules from AGENTS.md. Each function returns human-readable
 //! violations; an empty vector means the input complies.
 
+use crate::checkout::checkout_credential_violations;
+use crate::triggers::trigger_filter_violations;
 use crate::yaml_lines::{block_after, entry, indent, is_content, jobs, top_level_block};
 
 /// Upper bound for any job's `timeout-minutes`; a larger value is not a guard.
@@ -16,8 +18,6 @@ const TOOLCHAIN_OVERRIDES: [&str; 5] = [
 ];
 /// Job keys that let a required check be skipped, renamed, or pass on failure.
 const REQUIRED_JOB_FORBIDDEN_KEYS: [&str; 3] = ["if", "strategy", "continue-on-error"];
-/// Trigger filters that can keep a required check from reporting on a PR.
-const TRIGGER_FILTERS: [&str; 3] = ["paths", "paths-ignore", "branches-ignore"];
 const MASKED_FAILURES: [&str; 3] = ["|| true", "|| :", "set +e"];
 
 fn is_full_sha(rev: &str) -> bool {
@@ -75,39 +75,6 @@ pub fn action_pin_violations(text: &str) -> Vec<String> {
             ));
         } else if !reference.starts_with("docker://") && !is_release_tag(e.comment) {
             out.push(format!("`{reference}` lacks a `# vX.Y.Z` release comment"));
-        }
-    }
-    out
-}
-
-/// Every `actions/checkout` step must set `persist-credentials: false`.
-pub fn checkout_credential_violations(text: &str) -> Vec<String> {
-    let lines: Vec<&str> = text.lines().collect();
-    let mut out = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        let Some(e) =
-            entry(line).filter(|e| e.key == "uses" && e.value.starts_with("actions/checkout@"))
-        else {
-            continue;
-        };
-        // The step's `- ` marker sits on this line or two columns to the left.
-        let step_indent = if e.list_item {
-            indent(line)
-        } else {
-            indent(line).saturating_sub(2)
-        };
-        let disabled = lines[i + 1..]
-            .iter()
-            .filter(|l| is_content(l))
-            .take_while(|l| indent(l) > step_indent)
-            .any(|l| {
-                entry(l).is_some_and(|e| e.key == "persist-credentials" && e.value == "false")
-            });
-        if !disabled {
-            out.push(format!(
-                "checkout at line {} must set `persist-credentials: false`",
-                i + 1
-            ));
         }
     }
     out
@@ -231,15 +198,7 @@ pub fn required_check_violations(text: &str, contexts: &[String]) -> Vec<String>
             out.push(format!("required job `{}` must not set `{key}`", job.id));
         }
     }
-    let lines: Vec<&str> = text.lines().collect();
-    for line in top_level_block(&lines, "on").unwrap_or_default() {
-        if let Some(e) = entry(line).filter(|e| TRIGGER_FILTERS.contains(&e.key)) {
-            out.push(format!(
-                "trigger filter `{}` can hide required checks",
-                e.key
-            ));
-        }
-    }
+    out.extend(trigger_filter_violations(text));
     out
 }
 

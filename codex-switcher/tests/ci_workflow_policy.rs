@@ -1,8 +1,9 @@
 //! Enforces the AGENTS.md CI baseline on the live repository: least-privilege
 //! permissions, actions pinned to full commit SHAs, explicit job timeouts and
 //! concurrency, an exact Rust toolchain, and required branch-protection checks
-//! that always report. Rule logic lives in `ci_workflow_policy/rules.rs`; its
-//! negative cases live in `ci_workflow_policy/fixtures.rs`.
+//! that always report. Rule logic lives in `ci_workflow_policy/rules.rs`, with
+//! the checkout and trigger rules in `checkout.rs` and `triggers.rs`; negative
+//! cases live in `fixtures.rs` and in each rule's `.test.rs` file.
 
 use std::fs;
 use std::path::PathBuf;
@@ -12,6 +13,12 @@ mod yaml_lines;
 
 #[path = "ci_workflow_policy/rules.rs"]
 mod rules;
+
+#[path = "ci_workflow_policy/checkout.rs"]
+mod checkout;
+
+#[path = "ci_workflow_policy/triggers.rs"]
+mod triggers;
 
 #[path = "ci_workflow_policy/fixtures.rs"]
 mod fixtures;

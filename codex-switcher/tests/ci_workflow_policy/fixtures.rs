@@ -1,10 +1,12 @@
 //! Positive and negative fixtures proving each policy rule rejects the
-//! regression it guards against, independent of the live workflow file.
+//! regression it guards against, independent of the live workflow file. The
+//! compliant workflow and `with` helper are shared with the per-rule test
+//! files next to `checkout.rs` and `triggers.rs`.
 
 use crate::rules::*;
 use crate::yaml_lines::{entry, jobs, Entry, Job};
 
-const SHA: &str = "11d5960a326750d5838078e36cf38b85af677262";
+pub const SHA: &str = "11d5960a326750d5838078e36cf38b85af677262";
 
 const COMPLIANT: &str = r#"name: CI
 on:
@@ -35,11 +37,12 @@ jobs:
         run: cargo clippy
 "#;
 
-fn compliant() -> String {
+pub fn compliant() -> String {
     COMPLIANT.replace("@SHA", &format!("@{SHA}"))
 }
 
-fn with(from: &str, to: &str) -> String {
+/// The compliant workflow with the first `from` replaced by `to`.
+pub fn with(from: &str, to: &str) -> String {
     let base = compliant();
     assert!(base.contains(from), "fixture lacks {from:?}");
     base.replacen(from, to, 1)
@@ -142,23 +145,6 @@ fn docker_actions_require_a_sha256_digest() {
         "      - uses: docker://alpine:3.20\n",
     );
     assert_eq!(action_pin_violations(&bad).len(), 1);
-}
-
-#[test]
-fn checkout_must_not_persist_credentials() {
-    for text in [
-        with("          persist-credentials: false\n", "          fetch-depth: 0\n"),
-        with("          persist-credentials: false\n", "          persist-credentials: true\n"),
-        // The next step's setting must not satisfy this checkout.
-        with("        with:\n          persist-credentials: false\n      - run: cargo test\n", "      - uses: x/y@SHA2 # v1.0.0\n        with:\n          persist-credentials: false\n"),
-    ] {
-        assert_eq!(checkout_credential_violations(&text).len(), 1, "{text}");
-    }
-    let inline = with("      - name: Checkout\n        uses:", "      - uses:");
-    assert_eq!(
-        checkout_credential_violations(&inline),
-        Vec::<String>::new()
-    );
 }
 
 #[test]
