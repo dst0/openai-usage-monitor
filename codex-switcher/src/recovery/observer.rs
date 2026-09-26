@@ -35,10 +35,22 @@ impl Observer {
     }
 
     pub(super) fn poll(&mut self) -> Result<(), String> {
+        self.poll_with_limit(None)
+    }
+
+    pub(super) fn poll_to(&mut self, limit: u64) -> Result<(), String> {
+        self.poll_with_limit(Some(limit))
+    }
+
+    fn poll_with_limit(&mut self, limit: Option<u64>) -> Result<(), String> {
         let mut file = File::open(&self.path).map_err(|e| e.to_string())?;
-        let length = file.metadata().map_err(|e| e.to_string())?.len();
-        if length < self.offset {
+        let current_length = file.metadata().map_err(|e| e.to_string())?.len();
+        if current_length < self.offset || limit.is_some_and(|limit| current_length < limit) {
             return Err("Rollout was truncated during recovery; cannot verify progress".into());
+        }
+        let length = limit.unwrap_or(current_length);
+        if length < self.offset {
+            return Err("Recovery snapshot precedes its checkpoint".into());
         }
         file.seek(SeekFrom::Start(self.offset))
             .map_err(|e| e.to_string())?;
@@ -50,7 +62,9 @@ impl Observer {
             let take = remaining.min(buffer.len() as u64) as usize;
             let n = file.read(&mut buffer[..take]).map_err(|e| e.to_string())?;
             if n == 0 {
-                break;
+                return Err(
+                    "Rollout ended before the recovery snapshot; cannot verify progress".into(),
+                );
             }
             self.offset += n as u64;
             remaining -= n as u64;

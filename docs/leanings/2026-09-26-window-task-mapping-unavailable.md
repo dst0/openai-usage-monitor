@@ -1,0 +1,22 @@
+# 2026-09-26 — Window task mapping unavailable during Desktop restart
+
+- **Status:** Open
+- **Task/context:** Preserve the number of ChatGPT windows and the task selected in each while switching accounts and restarting Desktop.
+- **Unexpected observation or failure:** The Monitor captured one primary window frame even when ChatGPT could have multiple windows. Owner discovery identified a Desktop client for a task but did not identify the corresponding macOS window.
+- **Evidence:** Read-only inspection of the installed ChatGPT build found a per-task owner client ID without a window ID. The live Accessibility window exposed an empty `AXDocument` and no task UUID in a bounded tree; persisted global state contained only one main-window frame. The installed deep-link handler navigates a primary window after `readThread` succeeds, rather than accepting a target window ID. A read-only WindowServer inventory of the current process found one named user window and one hidden unnamed detached window; a two-user-window live restart test was deferred while the recovery operation lock was occupied.
+- **Approaches tried:**
+  - **Attempt:** Use the Desktop owner client ID as a window ID.
+    - **Outcome:** Did not work.
+    - **Why:** The IPC response exposes no verified mapping from client to macOS window.
+  - **Attempt:** Use task deep links for each saved window.
+    - **Outcome:** Rejected.
+    - **Why:** A successful URL launch does not prove that a cold task mounted, and the handler does not target a specified window.
+  - **Attempt:** Infer a task from window title or geometry.
+    - **Outcome:** Rejected.
+    - **Why:** A title is not a unique task ID and geometry cannot prove task selection.
+- **Root cause:** The existing window helper and recovery state model captured one main frame, while the current externally available Desktop interfaces omit the selected task ID and targeted navigation for each window.
+- **Resolution:** Open. A proposed shutdown preflight based on WindowServer title and geometry was removed before publication: an unnamed offscreen 960x720 window can be a hidden renderer, but that shape does not prove another window is not user-owned. The heuristic could permit shutdown of a second user window. Automatic switching remains disabled.
+- **Verification:** Read-only WindowServer inspection found both a named user window and an unnamed offscreen window. A live two-user-window restart and exact per-window task restoration remain unverified.
+- **Prevention/follow-up:** Obtain a stable per-window task-ID source and a targeted create/navigation API, then test two windows with distinct tasks through a real account switch: snapshot both, restore count and selected IDs, and verify each owner before enabling automatic switching.
+- **Reusable learning:** A task owner and a window are different identities; never infer a recoverable window layout from owner count, title, or successful deep-link delivery.
+- **References:** `scripts/codex-window-restore.swift`, `codex-switcher/src/switcher/codex_app_lifecycle.rs`, `README.md`, `CODEX.md`, `AGENTS.md`.

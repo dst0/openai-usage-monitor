@@ -1,0 +1,22 @@
+# 2026-09-26 — Deferred recovery after App/CLI distribution
+
+- **Status:** Partial
+- **Task/context:** Business-priority account distribution relaunched ChatGPT with one account and then selected another account for CLI use.
+- **Unexpected observation or failure:** The recovery banner closed after two bounded owner waits. A task later gained a Desktop owner, but the daemon did not resume it.
+- **Evidence:** Both pre-dispatch checkpoints remained in the private recovery journal. The saved Desktop session matched those checkpoints, while the active CLI account differed. The deferred worker filtered by the CLI account before owner discovery. The first attempt ended with zero verified tasks; a native task navigation subsequently produced an owner for one target. Accepted task URLs, including one with `hostId=local`, did not mount another cold target in the observed Desktop build.
+- **Approaches tried:**
+  - **Attempt:** Treat a successful task URL launch as owner proof.
+    - **Outcome:** Did not work.
+    - **Why:** Desktop IPC still reported `no-client-found`.
+  - **Attempt:** Query `account/read` through the same-user Desktop IPC router.
+    - **Outcome:** Did not work.
+    - **Why:** The router returned `no-client-found` for that method.
+  - **Attempt:** Use the existing managed Desktop session with only its timestamp.
+    - **Outcome:** Rejected.
+    - **Why:** The old transaction could write a target session even after a failed relaunch; the timestamp did not prove which process owned it.
+- **Root cause:** Deferred recovery compared the target account with the active CLI binding even after distribution intentionally separated Desktop and CLI. The old Desktop session record was too weak to safely substitute as an authority. Initial restart recovery could also observe the newly committed auth file before the CLI registry pointer was updated.
+- **Resolution:** A successful relaunch now records the target Desktop account with the exact inspected PID and birth identity and the expected CLI account. The deferred worker and final pre-IPC marker require that bound session. Failed launches and changed process identities cannot claim a new Desktop session. Legacy records stay unbound. Initial recovery resolves the unique identity in the committed auth tokens instead of trusting a temporarily stale active-account pointer.
+- **Verification:** Regression tests first failed for the missing Desktop/CLI binding and stale active-account pointer. Focused binding, process replacement, and failed-launch tests pass. The full Rust suite passed after rebasing onto current `main` (216 unit tests plus integration suites), and the Swift suite passed. Live cold-task auto-mounting and end-to-end resumed work are still unverified.
+- **Prevention/follow-up:** Keep automatic switching off until an installed-app trial demonstrates owner mounting, a visible deferred banner, a single IPC dispatch, and substantive post-checkpoint work. Do not infer mounting from `open` exit status. An in-app account change without process restart needs an authoritative Desktop account read before this binding can be considered robust against that scenario.
+- **Reusable learning:** In split App/CLI sessions, authorize deferred work against a bound live Desktop session, then prove ownership and work independently.
+- **References:** `codex-switcher/src/recovery/desktop_account_binding_service.rs`, `codex-switcher/src/distribution/distribution_desktop_relaunch_service.rs`, `codex-switcher/src/distribution/distribution.test.rs`.

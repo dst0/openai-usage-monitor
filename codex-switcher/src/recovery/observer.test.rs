@@ -36,3 +36,36 @@ fn observer_ignores_old_work_and_handles_partial_and_huge_lines() {
     assert!(observer.evidence.verified(None));
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn observer_snapshot_does_not_chase_later_rollout_writes() {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!("cxi-observer-snapshot-{}", std::process::id()));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&path)
+        .unwrap();
+    let mut observer = Observer::checkpoint(path.clone()).unwrap();
+    file.write_all(&event(
+        "event_msg",
+        serde_json::json!({"type":"task_started"}),
+    ))
+    .unwrap();
+    file.write_all(b"\n").unwrap();
+    let snapshot = file.metadata().unwrap().len();
+    file.write_all(&event(
+        "response_item",
+        serde_json::json!({"type":"reasoning"}),
+    ))
+    .unwrap();
+    file.write_all(b"\n").unwrap();
+
+    observer.poll_to(snapshot).unwrap();
+    assert!(observer.evidence.started);
+    assert!(!observer.evidence.work);
+    observer.poll().unwrap();
+    assert!(observer.evidence.verified(None));
+    std::fs::remove_file(path).unwrap();
+}
