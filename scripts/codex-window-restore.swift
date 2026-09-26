@@ -301,6 +301,10 @@ struct CodexWindowRestoreMain {
       let process = expectedProcess()
       let data = try! JSONEncoder().encode(countStandardWindows(process))
       FileHandle.standardOutput.write(data)
+    case "probe-selected-tasks":
+      let process = expectedProcess()
+      let data = try! JSONEncoder().encode(probeSelectedTasks(process))
+      FileHandle.standardOutput.write(data)
     case "set-position":
       let (process, window) = verifyAndWindow()
       setPosition(process, window)

@@ -263,6 +263,16 @@ restart before credentials change. The current Desktop interfaces do not give
 Monitor a stable mapping from each window to its selected task, nor a way to
 reopen a specific task in a specific new window. This guard applies even when
 `preserve_window_bounds_on_restart=false`; that setting controls geometry only.
+An explicit diagnostic, `cxi window probe-tasks --allow-focus-and-clipboard`,
+tests whether the installed Desktop exposes a one-to-one mapping through Copy
+deeplink. It foregrounds each window and replaces the clipboard with the final
+link; it does not persist task IDs or authorize restart. The native helper
+rejects ambiguous AX/WindowServer frame matches, process/window drift,
+observed unexpected clipboard writes, and duplicate or invalid task links. It
+returns no task IDs, and one competing write of a valid task link cannot be
+attributed. A successful probe still does not prove targeted navigation into
+each replacement window or match IPC owner client IDs to WindowServer IDs, so
+the shutdown guard remains.
 The helper rejects malformed or non-finite WindowServer bounds and rechecks
 the Desktop process birth immediately before each Accessibility geometry write.
 Window title and geometry heuristics alone cannot prove that a window is

@@ -109,6 +109,8 @@ swiftc \
     -framework AppKit -framework Foundation -framework ApplicationServices \
     scripts/CodexWindowAXValueDecoder.swift \
     scripts/CodexWindowSafetyChecks.swift \
+    scripts/CodexWindowTaskProbeValidation.swift \
+    scripts/CodexWindowTaskProbe.swift \
     scripts/codex-window-restore.swift \
     -o "${TMP_BIN_DIR}/codex-window-restore"
 
@@ -129,6 +131,15 @@ swiftc -parse-as-library \
     tests/CodexWindowSafetyChecksTests.swift \
     -o "${TMP_BIN_DIR}/codex-window-safety-checks_test"
 "${TMP_BIN_DIR}/codex-window-safety-checks_test"
+
+echo "👉 Running selected-task probe validation tests..."
+swiftc -parse-as-library \
+    -target "$(uname -m)-apple-macosx13.0" \
+    -framework AppKit -framework Foundation -framework ApplicationServices \
+    scripts/CodexWindowTaskProbeValidation.swift \
+    tests/CodexWindowTaskProbeTests.swift \
+    -o "${TMP_BIN_DIR}/codex-window-task-probe_test"
+"${TMP_BIN_DIR}/codex-window-task-probe_test"
 
 echo ""
 echo "🎉 ALL SWIFT TEST SUITES PASSED CLEANLY!"

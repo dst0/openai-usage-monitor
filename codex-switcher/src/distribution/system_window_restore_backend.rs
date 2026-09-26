@@ -3,6 +3,7 @@ use super::window_restore_capture::WindowCapture;
 use super::window_restore_frame::WindowFrame;
 use super::window_restore_process_identity::ProcessIdentity;
 use super::window_restore_screen::ScreenIdentity;
+use super::window_task_probe_validation_service::WindowTaskProbeValidationService;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -12,6 +13,14 @@ pub struct SystemWindowRestoreBackend {
 }
 
 impl SystemWindowRestoreBackend {
+    /// Explicit diagnostic only. The native helper handles focus and clipboard;
+    /// Rust validates the counts and exact process without receiving task IDs.
+    pub fn probe_selected_tasks(&mut self, process: ProcessIdentity) -> Result<usize, String> {
+        let mut args = Self::args_for_process("probe-selected-tasks", process.clone());
+        args.extend(["--allow-focus-and-clipboard".into(), "yes".into()]);
+        let response = self.invoke(&args)?;
+        WindowTaskProbeValidationService::parse(&response, &process)
+    }
     /// Counts only WindowServer windows proven to be ChatGPT standard windows.
     /// An unnamed visible window makes the result ambiguous and blocks shutdown.
     pub fn capture_window_inventory(&mut self, process: ProcessIdentity) -> Result<usize, String> {

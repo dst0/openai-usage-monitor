@@ -69,6 +69,7 @@ pub mod window_restore_sanitizer;
 pub mod window_restore_screen;
 pub mod window_restore_service;
 pub mod window_restore_tolerance;
+mod window_task_probe_validation_service;
 
 pub use app_lifecycle::AppLifecycle;
 pub use app_stop_error::AppStopError;
