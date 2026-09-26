@@ -44,7 +44,7 @@ assert_content() {
 # compatibility symlink as an unsafe parent component.
 # Build from the crate directory so rustup applies codex-switcher/rust-toolchain.toml;
 # --manifest-path from elsewhere would use the caller's default toolchain.
-(cd "${PROJECT_DIR}/codex-switcher" && /usr/bin/env cargo build --quiet --bin codex-mon)
+(cd "${PROJECT_DIR}/codex-switcher" && /usr/bin/env cargo build --locked --quiet --bin codex-mon)
 MONITOR_BIN="${PROJECT_DIR}/codex-switcher/target/debug/codex-mon"
 [ -x "${MONITOR_BIN}" ] || fail 'codex-mon helper was not built'
 

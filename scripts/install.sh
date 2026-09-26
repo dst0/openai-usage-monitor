@@ -350,7 +350,9 @@ if ! command -v rustup >/dev/null 2>&1; then
 elif ! rustup toolchain install; then
     echo "⚠️  Could not pre-install the pinned Rust toolchain; relying on rustup auto-install."
 fi
-cargo build --release
+# Build exactly the committed Cargo.lock. --locked fails closed when the
+# lockfile is missing or out of date instead of shipping newly resolved crates.
+cargo build --release --locked
 
 echo "📦 Installing CLI to ${LOCAL_BIN}..."
 # The daemon may be executing the current CLI binary. Rewriting that inode in

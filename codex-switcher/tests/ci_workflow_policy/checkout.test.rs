@@ -14,7 +14,7 @@ fn checkout_must_not_persist_credentials() {
         with("          persist-credentials: false\n", "          fetch-depth: 0\n"),
         with("          persist-credentials: false\n", "          persist-credentials: true\n"),
         // The next step's setting must not satisfy this checkout.
-        with("        with:\n          persist-credentials: false\n      - run: cargo test\n", "      - uses: x/y@SHA2 # v1.0.0\n        with:\n          persist-credentials: false\n"),
+        with("        with:\n          persist-credentials: false\n      - run: cargo test --locked\n", "      - uses: x/y@SHA2 # v1.0.0\n        with:\n          persist-credentials: false\n"),
     ] {
         assert_eq!(checkout_credential_violations(&text).len(), 1, "{text}");
     }
