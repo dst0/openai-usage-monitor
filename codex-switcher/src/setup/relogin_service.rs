@@ -136,7 +136,7 @@ pub fn relogin_account(query: &str, restart: bool, no_restart: bool) -> Result<(
         let _ = std::fs::copy(&real_config, temp_dir.join("config.toml"));
     }
 
-    let codex_bin = resolve_codex_bin();
+    let codex_bin = resolve_codex_bin()?;
     let status = Command::new(&codex_bin)
         .arg("login")
         .env("CODEX_HOME", &temp_dir)

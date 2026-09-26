@@ -31,6 +31,7 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
 
 4. **Instant Switching for Codex CLI**:
    - Codex CLI reads `~/.codex/auth.json` on each invocation.
+   - The shim resolves the official Desktop bundle's current `codex-cli/bin/codex` entry point, with the earlier `Contents/Resources/codex` layout as a fallback. CLI-only setups may use a separate `codex` executable on PATH. It rejects the Monitor's own shim and fails before account distribution when no real CLI is available.
    - Transparent `cxi` / `codex-mon` shim or `codex` wrapper ensures agent swarms and terminal sessions never fail with `429 Rate Limit Exceeded`.
 
 5. **Desktop Application Switching (`ChatGPT.app`)**:

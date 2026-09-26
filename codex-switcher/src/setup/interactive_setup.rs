@@ -72,12 +72,8 @@ pub fn run_interactive_setup() -> Result<(), String> {
     Ok(())
 }
 
-pub fn resolve_codex_bin() -> String {
-    let app_codex = "/Applications/ChatGPT.app/Contents/Resources/codex";
-    if std::path::Path::new(app_codex).exists() {
-        return app_codex.to_string();
-    }
-    "codex".to_string()
+pub fn resolve_codex_bin() -> Result<std::path::PathBuf, String> {
+    crate::codex_binary_path::resolve_real_codex_bin()
 }
 
 pub fn login_and_add_account(id: &str) -> Result<(), String> {
@@ -120,7 +116,7 @@ pub fn login_and_add_account(id: &str) -> Result<(), String> {
         let _ = std::fs::copy(&real_config, temp_dir.join("config.toml"));
     }
 
-    let codex_bin = resolve_codex_bin();
+    let codex_bin = resolve_codex_bin()?;
     let status = Command::new(&codex_bin)
         .arg("login")
         .env("CODEX_HOME", &temp_dir)

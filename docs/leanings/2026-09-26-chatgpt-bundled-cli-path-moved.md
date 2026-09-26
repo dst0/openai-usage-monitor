@@ -1,0 +1,22 @@
+# 2026-09-26 — ChatGPT bundled CLI path moved
+
+- **Status:** Resolved
+- **Task/context:** Reinstall and test OpenAI Usage Monitor after merging recovery PR #9.
+- **Unexpected observation or failure:** The installer warned that official Desktop was absent even though `/Applications/ChatGPT.app` existed, and the newly installed `codex` shim failed its `--version` command.
+- **Evidence:** ChatGPT Desktop 26.924.20706 has an executable `Contents/Resources/codex-cli/bin/codex` entry point and no executable at the former `Contents/Resources/codex` path. The installed shim returned `Failed to exec .../Contents/Resources/codex: No such file or directory`. The new entry point returned `codex-cli 0.158.0-alpha.2`.
+- **Approaches tried:**
+  - **Attempt:** Keep the fixed old path.
+    - **Outcome:** Did not work.
+    - **Why:** The file is no longer present in the updated bundle.
+  - **Attempt:** Resolve the new bundled entry point first, then the executable legacy path, then an independent standalone CLI on PATH.
+    - **Outcome:** Worked in hermetic layout tests.
+    - **Why:** It supports both observed bundle layouts and CLI-only installs while rejecting the Monitor's own `codex` shim from PATH.
+  - **Attempt:** Treat a standalone CLI reachable only through the `~/.local/bin/codex` symlink as safe to reuse while replacing that symlink.
+    - **Outcome:** Rejected in adversarial review.
+    - **Why:** The standalone CLI may remain on disk yet become unreachable by name after installation, and aliases of the replaced file may also start resolving to the Monitor shim. Installation now requires a separate surviving CLI path and refuses to overwrite a regular file.
+- **Root cause:** The official Desktop update moved its bundled CLI while the Monitor installer, shim, and isolated login still used a fixed path.
+- **Resolution:** Centralize executable path resolution, validate the modern launcher's binary payload, use it before account distribution and for isolated account login, and update the installer prerequisite check. A standalone CLI is accepted when Desktop is absent only if it is not the Monitor shim. The resolver fails closed if no real CLI exists.
+- **Verification:** Two temporary app-bundle layout tests failed against the old resolver and passed after the change. Additional hermetic tests cover missing payload, bundle symlink, CLI-only PATH fallback, and replacement-path aliases. `cargo fmt --check`, the full Rust suite (243 unit tests plus integrations), release build, `./scripts/test_swift.sh`, `bash -n scripts/install.sh`, and `git diff --check` passed. CI and installed-shim proof are tracked in the pull request.
+- **Prevention/follow-up:** Keep path-resolution fixtures independent of the installed app and check `codex --version` after every Monitor reinstall on a new ChatGPT build.
+- **Reusable learning:** Treat app-bundled CLI paths as versioned integration points; detect supported layouts before changing account state.
+- **References:** `codex-switcher/src/codex_binary_path.rs`, `codex-switcher/src/shim.rs`, `codex-switcher/src/setup/interactive_setup.rs`, `scripts/install.sh`, `README.md`, `CODEX.md`, `AGENTS.md`.

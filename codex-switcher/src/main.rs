@@ -1,6 +1,7 @@
 mod account_command_service;
 mod auto_reset;
 mod cli;
+mod codex_binary_path;
 mod command_dispatcher;
 mod commands;
 mod daemon;

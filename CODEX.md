@@ -17,6 +17,13 @@ The supported Desktop setup is the normal OpenAI Codex Desktop installation
 (`/Applications/ChatGPT.app` in the standard macOS layout), signed in and
 running normally. The installer does not patch `ChatGPT.app`, install a second
 App Server, add custom App Server flags, or require manual IPC configuration.
+The CLI shim and isolated account login resolve the executable inside that
+bundle. Current builds use `Contents/Resources/codex-cli/bin/codex`; older
+builds used `Contents/Resources/codex`. CLI-only setups may use a standalone
+`codex` on PATH after excluding the Monitor shim and the path being replaced.
+Installation preserves an existing standalone executable when that path is its
+only CLI entry point. A missing real executable is an error before automatic
+account distribution.
 
 ChatGPT Desktop starts its bundled `codex app-server`. The Monitor is only a
 same-user IPC client: it connects to `~/.codex/ipc/ipc.sock`, discovers the
