@@ -16,6 +16,8 @@ pub struct DesktopAppSession {
     pub process: Option<ProcessIdentity>,
     #[serde(default)]
     pub cli_account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_file_id: Option<String>,
 }
 
 impl DesktopAppSession {
@@ -25,6 +27,7 @@ impl DesktopAppSession {
             updated_at: Utc::now().to_rfc3339(),
             process: None,
             cli_account_id: None,
+            auth_file_id: None,
         }
     }
 

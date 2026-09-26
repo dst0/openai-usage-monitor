@@ -7,6 +7,7 @@ pub mod daemon_account_sync_service;
 pub mod daemon_loop_service;
 pub mod daemon_tick_service;
 pub mod desktop_app_session;
+mod desktop_external_binding_service;
 pub(crate) mod desktop_session_verification_service;
 pub mod distribution_account_commit_service;
 pub mod distribution_audit_logger;
