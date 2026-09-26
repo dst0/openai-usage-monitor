@@ -36,13 +36,13 @@ Binary path: `~/.local/bin/cxi` (or `~/.local/bin/codex-mon`).
    Atomically swaps `~/.codex/auth.json` with POSIX `0600` permissions and cross-process file locks (`fs2` flock).
 
 4. **Desktop App Sync & Automated Thread Recovery**:
-   Both Codex CLI and `/Applications/ChatGPT.app` share `~/.codex/auth.json`. When switching accounts via `cxi switch`, eligible restart-captured turns and turns paused by rate limits within the last 4 hours (`RECENT_QUOTA_WINDOW_SECS = 14400s`) across the top 30 unarchived user threads are resumed through the standard Desktop owner's same-user IPC connection. Ambiguous active turns are not guessed at in discovery-only mode. Desktop's bundled app-server remains the only thread writer; no second/headless app-server is started.
+   Both Codex CLI and `/Applications/ChatGPT.app` share `~/.codex/auth.json`. When switching accounts via `cxi switch`, eligible restart-captured turns and turns paused by rate limits within the last 4 hours (`RECENT_QUOTA_WINDOW_SECS = 14400s`) across the top 30 unarchived user threads are offered to the standard Desktop owner's same-user IPC connection. A cold task is opened by URL, with a bounded native retry, but IPC is sent only after Desktop reports a real owner. Automatic switching remains disabled until installed end-to-end recovery and exact selected-task restoration across multiple windows are verified. Ambiguous active turns are not guessed at in discovery-only mode. Desktop's bundled app-server remains the only thread writer; no second/headless app-server is started.
 
 5. **Resume Interrupted or Rate-Limited Threads**:
    ```bash
    cxi resume [thread-id]
    ```
-   Sends one owner-routed `thread-follower-start-turn` request with the protocol-valid text `continue` (or restores an existing queue) through Desktop IPC. Accessibility is used only for the recovery banner and final visibility check, not to click Play/Resume/Retry/Steer controls. With an explicit ID it also resumes a turn that ended with a non-quota error (for example an outage 401) before a final agent message, claims a stale deferred owner-wait for that task, and starts ChatGPT in the background if it is closed.
+   Sends one owner-routed `thread-follower-start-turn` request with the protocol-valid text `continue` (or restores an existing queue) through Desktop IPC after task ownership is confirmed. URL acceptance alone is not recovery proof, and ChatGPT may come to the foreground while mounting a cold task. Accessibility is used only for the recovery banner and final visibility check, not to click Play/Resume/Retry/Steer controls. With an explicit ID it also resumes a turn that ended with a non-quota error (for example an outage 401) before a final agent message, claims a stale deferred owner-wait for that task, and starts ChatGPT in the background if it is closed.
 
 6. **Manage Auto-Switching Policies & Multipliers**:
    ```bash
