@@ -1,6 +1,6 @@
-use crate::distribution::WindowProcessValidationService;
+use crate::distribution::{SystemWindowRestoreBackend, WindowTaskProbeService};
 use crate::window_action::WindowAction;
-use crate::{distribution::SystemWindowRestoreBackend, recovery, switcher};
+use crate::{recovery, storage, switcher};
 
 pub(super) struct DesktopCommandService;
 
@@ -55,17 +55,14 @@ impl DesktopCommandService {
             WindowAction::ProbeTasks {
                 allow_focus_and_clipboard,
             } => {
-                if !allow_focus_and_clipboard {
-                    return Err("Explicit --allow-focus-and-clipboard is required".into());
-                }
-                let pids = switcher::current_codex_app_pids_checked()?;
-                if pids.len() != 1 {
-                    return Err("Task probe requires exactly one ChatGPT main process".into());
-                }
-                let mut backend = SystemWindowRestoreBackend::new()?;
-                let process = WindowProcessValidationService::inspect(&mut backend, pids[0])?;
-                let count = backend.probe_selected_tasks(process)?;
-                println!("Observed {count} distinct task links while probing ChatGPT windows; clipboard source attribution is unverified. Clipboard may contain the last copied link; no restart was performed.");
+                let count = WindowTaskProbeService::run(
+                    allow_focus_and_clipboard,
+                    recovery::operation_lock,
+                    storage::codex_home,
+                    switcher::current_codex_app_pids_checked,
+                    SystemWindowRestoreBackend::new,
+                )?;
+                println!("{}", WindowTaskProbeService::summary(count));
                 Ok(())
             }
         }

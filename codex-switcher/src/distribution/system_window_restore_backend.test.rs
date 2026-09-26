@@ -82,29 +82,6 @@ fn inventory_fails_closed_on_unnamed_visible_window_or_malformed_response() {
 }
 
 #[test]
-fn selected_task_probe_requires_complete_unique_counts_and_exact_process() {
-    let expected = ProcessIdentity::new(4242, "1726789012:000007").unwrap();
-    let valid = json!({
-        "process": {"pid": 4242, "birth_id": "1726789012:000007"},
-        "window_ids": [31, 32],
-        "observed_task_count": 2
-    });
-    assert_eq!(
-        WindowTaskProbeValidationService::parse(&valid, &expected),
-        Ok(2)
-    );
-    let mut changed = valid.clone();
-    changed["process"]["birth_id"] = json!("1726789012:000008");
-    assert!(WindowTaskProbeValidationService::parse(&changed, &expected).is_err());
-    let mut missing = valid.clone();
-    missing["observed_task_count"] = json!(1);
-    assert!(WindowTaskProbeValidationService::parse(&missing, &expected).is_err());
-    let mut duplicate = valid.clone();
-    duplicate["window_ids"] = json!([31, 31]);
-    assert!(WindowTaskProbeValidationService::parse(&duplicate, &expected).is_err());
-}
-
-#[test]
 fn rejects_missing_or_control_character_birth_identity() {
     assert!(SystemWindowRestoreBackend::parse_process(&json!({
         "pid": 4242,

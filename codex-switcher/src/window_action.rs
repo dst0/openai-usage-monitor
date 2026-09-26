@@ -15,3 +15,7 @@ pub(super) enum WindowAction {
         allow_focus_and_clipboard: bool,
     },
 }
+
+#[cfg(test)]
+#[path = "window_action.test.rs"]
+mod tests;

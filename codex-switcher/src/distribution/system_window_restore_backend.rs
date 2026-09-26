@@ -13,14 +13,19 @@ pub struct SystemWindowRestoreBackend {
 }
 
 impl SystemWindowRestoreBackend {
-    /// Explicit diagnostic only. The native helper handles focus and clipboard;
-    /// Rust validates the counts and exact process without receiving task IDs.
+    /// Explicit diagnostic only; `WindowTaskProbeService` is its sole caller.
+    /// The native helper handles focus and clipboard; Rust validates the
+    /// counts and exact process without receiving task IDs.
     pub fn probe_selected_tasks(&mut self, process: ProcessIdentity) -> Result<usize, String> {
         let mut args = Self::args_for_process("probe-selected-tasks", process.clone());
         args.extend(["--allow-focus-and-clipboard".into(), "yes".into()]);
-        let response = self.invoke(&args)?;
+        let response = self.invoke_with_failure(&args, |stderr| {
+            WindowTaskProbeValidationService::failure(stderr)
+                .unwrap_or_else(|| Self::helper_failure(stderr))
+        })?;
         WindowTaskProbeValidationService::parse(&response, &process)
     }
+
     /// Counts only WindowServer windows proven to be ChatGPT standard windows.
     /// An unnamed visible window makes the result ambiguous and blocks shutdown.
     pub fn capture_window_inventory(&mut self, process: ProcessIdentity) -> Result<usize, String> {
@@ -104,13 +109,27 @@ impl SystemWindowRestoreBackend {
             .ok_or_else(|| "Codex window restore helper is not installed".into())
     }
 
+    /// A backend around an explicit helper, such as a temporary test fake.
+    #[cfg(test)]
+    pub(super) fn with_helper(helper: PathBuf) -> Self {
+        Self { helper }
+    }
+
     fn invoke(&self, args: &[String]) -> Result<serde_json::Value, String> {
+        self.invoke_with_failure(args, Self::helper_failure)
+    }
+
+    fn invoke_with_failure(
+        &self,
+        args: &[String],
+        failure: impl FnOnce(&[u8]) -> String,
+    ) -> Result<serde_json::Value, String> {
         let output = Command::new(&self.helper)
             .args(args)
             .output()
             .map_err(|_| "Codex window restore helper could not start".to_string())?;
         if !output.status.success() {
-            return Err(Self::helper_failure(&output.stderr));
+            return Err(failure(&output.stderr));
         }
         serde_json::from_slice(&output.stdout)
             .map_err(|_| "Codex window restore helper returned invalid data".into())
