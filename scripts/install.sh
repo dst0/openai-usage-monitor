@@ -312,7 +312,9 @@ fi
 # Desktop recovery is an optional integration. Keep CLI-only installation
 # usable, but make the standard Desktop prerequisite visible before building.
 CODEX_DESKTOP_APP="/Applications/ChatGPT.app"
-if [ ! -x "${CODEX_DESKTOP_APP}/Contents/Resources/codex" ]; then
+if { [ ! -x "${CODEX_DESKTOP_APP}/Contents/Resources/codex-cli/bin/codex" ] ||
+     [ ! -x "${CODEX_DESKTOP_APP}/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex" ]; } &&
+   [ ! -x "${CODEX_DESKTOP_APP}/Contents/Resources/codex" ]; then
     echo "⚠️  Official Codex Desktop was not found at ${CODEX_DESKTOP_APP}."
     echo "   CLI quota monitoring will work; Desktop restart/recovery needs the normal OpenAI app installation."
 fi
@@ -360,7 +362,9 @@ ln -sfn "${LOCAL_BIN}/codex-mon" "${LOCAL_BIN}/cxi"
 
 # Ensure transparent codex CLI shim exists
 echo "🔗 Configuring codex CLI shim..."
-"${LOCAL_BIN}/codex-mon" install-shim || true
+if ! "${LOCAL_BIN}/codex-mon" install-shim; then
+    echo "⚠️  Could not install codex CLI shim; any existing codex command was preserved."
+fi
 
 # Compile the native recovery banner and visibility helper
 if [ -f "${PROJECT_DIR}/scripts/codex-ui-resume.swift" ]; then
