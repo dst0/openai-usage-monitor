@@ -59,14 +59,12 @@ impl IpcResponseReader {
 
     /// XNU rejects `setsockopt` with `EINVAL` once the router has closed its
     /// end, even while the router's complete reply is still buffered. Such a
-    /// socket cannot block: a read returns the buffered bytes, then EOF. Keep
-    /// the timeout armed earlier and read on; other failures are errors.
-    pub(super) fn arm_read_timeout(
-        stream: &UnixStream,
-        timeout: Duration,
-    ) -> Result<(), IpcCallError> {
+    /// socket cannot block: a read returns the buffered bytes, then EOF, so
+    /// only that kernel error is tolerated. Everything else, including Rust's
+    /// own refusal of a zero timeout, would leave the read unbounded.
+    fn arm_read_timeout(stream: &UnixStream, timeout: Duration) -> Result<(), IpcCallError> {
         match stream.set_read_timeout(Some(timeout)) {
-            Err(error) if error.kind() != ErrorKind::InvalidInput => {
+            Err(error) if error.raw_os_error() != Some(libc::EINVAL) => {
                 Err(IpcCallError::Other(error.to_string()))
             }
             _ => Ok(()),

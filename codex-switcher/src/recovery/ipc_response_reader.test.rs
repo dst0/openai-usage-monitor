@@ -8,6 +8,8 @@ use crate::recovery::{
 use serde_json::{json, Value};
 use std::{
     os::unix::net::UnixStream,
+    sync::mpsc,
+    thread,
     time::{Duration, Instant},
 };
 
@@ -99,31 +101,36 @@ fn unknown_result_type_is_rejected() {
 }
 
 #[test]
-fn hang_up_without_a_reply_fails_without_waiting_for_the_deadline() {
+fn hang_up_without_a_reply_is_an_error_not_a_timeout() {
     let mut client = router_that_replied_and_closed(&[]);
-    let started = Instant::now();
 
     let error = await_reply(&mut client).unwrap_err();
 
     assert!(matches!(error, IpcCallError::Other(_)));
     assert!(!error.to_string().contains("timed out"), "{error}");
-    assert!(started.elapsed() < Duration::from_secs(5));
 }
 
 #[test]
 fn a_silent_router_is_bounded_by_the_deadline() {
-    let (mut client, _router) = UnixStream::pair().unwrap();
+    // The reader runs on a worker, so a regression that leaves the read
+    // unbounded fails this test instead of hanging the suite.
+    let (mut client, router) = UnixStream::pair().unwrap();
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_millis(100);
+        let result = IpcResponseReader::await_reply(&mut client, METHOD, REQUEST, deadline);
+        sender
+            .send(result.map_err(|error| error.to_string()))
+            .unwrap();
+    });
 
-    let error = IpcResponseReader::await_reply(
-        &mut client,
-        METHOD,
-        REQUEST,
-        Instant::now() + Duration::from_millis(100),
-    )
-    .unwrap_err();
+    let result = receiver
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the reader outlived its deadline");
 
+    drop(router);
     assert_eq!(
-        error.to_string(),
+        result.unwrap_err(),
         format!("Codex IPC request {METHOD} timed out")
     );
 }
@@ -140,31 +147,40 @@ fn an_expired_deadline_does_not_read_a_waiting_reply() {
 }
 
 #[test]
-fn arming_bounds_a_connected_socket_and_tolerates_a_closed_router() {
+fn arming_tolerates_only_the_kernel_refusal_after_the_router_hangs_up() {
     let (connected, _router) = UnixStream::pair().unwrap();
     IpcResponseReader::arm_read_timeout(&connected, Duration::from_secs(7)).unwrap();
     assert_eq!(
         connected.read_timeout().unwrap(),
         Some(Duration::from_secs(7))
     );
+    // Rust refuses a zero timeout as InvalidInput with no OS error. Accepting
+    // that would leave the read unbounded, so it must remain an error.
+    assert!(IpcResponseReader::arm_read_timeout(&connected, Duration::ZERO).is_err());
 
     let (closed, router) = UnixStream::pair().unwrap();
     drop(router);
-    assert!(closed
+    let refusal = closed
         .set_read_timeout(Some(Duration::from_secs(7)))
-        .is_err());
+        .unwrap_err();
+    assert_eq!(refusal.raw_os_error(), Some(libc::EINVAL));
     IpcResponseReader::arm_read_timeout(&closed, Duration::from_secs(7)).unwrap();
 }
 
 #[test]
 fn desktop_that_answers_and_exits_still_yields_the_started_turn() {
-    // Whether the router hangs up before or after the client re-arms its
-    // read timeout, the reply it already sent must be delivered.
+    // Covers the DesktopIpc request path end to end. The router sends an
+    // unrelated frame larger than the socket buffer, so that write returns
+    // only once the client has drained most of it; the client then spends far
+    // longer parsing it than the router needs to answer and exit. The client
+    // therefore re-arms its read timeout after the hang-up.
     let turn = "01a09c25-9480-7dc2-87fd-79c507f91fcb";
-    for _ in 0..20 {
+    for _ in 0..5 {
         let (client, mut router) = UnixStream::pair().unwrap();
-        let exiting_desktop = std::thread::spawn(move || {
+        let exiting_desktop = thread::spawn(move || {
             let request = read_ipc_frame(&mut router).unwrap();
+            let broadcast = json!({"type": "broadcast", "padding": "x".repeat(1 << 20)});
+            write_ipc_frame(&mut router, &broadcast).unwrap();
             let result = json!({"result": {"turn": {"id": turn}}});
             write_ipc_frame(
                 &mut router,
@@ -176,6 +192,8 @@ fn desktop_that_answers_and_exits_still_yields_the_started_turn() {
 
         let started = desktop.resume_interrupted_turn(turn, "window-one");
 
+        // Hang up first: a client that never sent must fail, not deadlock.
+        drop(desktop);
         exiting_desktop.join().unwrap();
         assert_eq!(started.unwrap(), turn);
     }

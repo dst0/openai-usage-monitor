@@ -93,8 +93,7 @@ impl DesktopIpc {
         target_client_id: Option<&str>,
         timeout: Duration,
     ) -> Result<Value, IpcCallError> {
-        let wait = ipc_response_wait(method, timeout);
-        let deadline = Instant::now() + wait;
+        let deadline = Instant::now() + ipc_response_wait(method, timeout);
         let request_id = format!(
             "codex-monitor-{}-{}-{}",
             std::process::id(),
@@ -117,9 +116,6 @@ impl DesktopIpc {
         if let Some(target) = target_client_id {
             request["targetClientId"] = Value::String(target.to_string());
         }
-        // Arm the whole wait while the router is still connected. If it
-        // replies and hangs up before the reader re-arms, this bound remains.
-        IpcResponseReader::arm_read_timeout(&self.stream, wait)?;
         write_ipc_frame(&mut self.stream, &request).map_err(IpcCallError::Other)?;
         IpcResponseReader::await_reply(&mut self.stream, method, &request_id, deadline)
     }
