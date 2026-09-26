@@ -1,4 +1,5 @@
 use super::{
+    dispatch_identity_checks::DispatchIdentityChecks,
     dispatch_mark_error::DispatchMarkError,
     manifest_store::{mark_dispatch_attempt, restore_undispatched_target},
     recovery_mode::RecoveryMode,
@@ -11,9 +12,9 @@ impl RecoveryDispatchCheckpointService {
     pub(super) fn mark_and_confirm(
         target: &mut RecoveryTarget,
         mode: RecoveryMode,
-        mut verify_identity: impl FnMut() -> Result<(), DispatchMarkError>,
+        identity: &mut DispatchIdentityChecks<'_>,
     ) -> Result<(), String> {
-        let original = match mark_dispatch_attempt(&target.id, mode, &mut verify_identity) {
+        let original = match mark_dispatch_attempt(&target.id, mode, identity) {
             Ok(original) => original,
             Err(error) => {
                 if matches!(error, DispatchMarkError::AccountChanged) {
@@ -26,7 +27,7 @@ impl RecoveryDispatchCheckpointService {
         // operation lock. Recheck after the manifest rename and fsync, before
         // any IPC bytes can leave this process. This is still a pre-send
         // failure, so the exact original checkpoint can be restored.
-        if let Err(error) = verify_identity() {
+        if let Err(error) = identity.verify() {
             if matches!(error, DispatchMarkError::AccountChanged) {
                 target.account_mismatch = true;
             }

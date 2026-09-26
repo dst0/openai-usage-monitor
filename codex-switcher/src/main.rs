@@ -24,6 +24,8 @@ mod storage;
 mod strategy;
 mod switch_command_service;
 mod switcher;
+#[cfg(test)]
+mod test_live_system;
 mod window_action;
 
 use clap::Parser;

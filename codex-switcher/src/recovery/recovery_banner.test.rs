@@ -82,3 +82,11 @@ fn failed_late_panel_status_write_keeps_original_statuses() {
     std::fs::remove_file(recovery_dir).unwrap();
     std::fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn unit_tests_cannot_resolve_the_installed_banner_helper() {
+    crate::test_live_system::assert_forbidden(
+        "installed recovery-banner helper",
+        banner_helper_candidates,
+    );
+}

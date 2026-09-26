@@ -272,6 +272,8 @@ impl Drop for RecoveryBanner {
 }
 
 pub(super) fn banner_helper_candidates() -> Vec<PathBuf> {
+    #[cfg(test)]
+    crate::test_live_system::forbid("installed recovery-banner helper");
     let mut candidates = Vec::new();
     if let Ok(path) = std::env::current_exe() {
         if let Some(parent) = path.parent() {

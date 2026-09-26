@@ -1,4 +1,5 @@
 use super::{
+    dispatch_identity_checks::DispatchIdentityChecks,
     ipc_call_error::IpcCallError,
     manifest_store::finalize_target,
     observer::Observer,
@@ -137,17 +138,23 @@ fn assert_owner_wait_rejects_account_change(with_queue: bool, change_after_marke
         RecoveryMode::ExplicitTarget,
         &mut budget,
         || Ok(()),
-        || {
-            let matched = super::manifest_store::current_account_binding().as_deref()
-                == Some(start_account.as_str());
-            if matched && change_after_marker && identity_checks.get() == 0 {
-                identity_checks.set(1);
-                crate::storage::write_active_auth_json(&next_auth).unwrap();
-            }
-            matched
-                .then_some(())
-                .ok_or(super::dispatch_mark_error::DispatchMarkError::AccountChanged)
-        },
+        &mut DispatchIdentityChecks::new(
+            || {
+                let matched = super::manifest_store::current_account_binding().as_deref()
+                    == Some(start_account.as_str());
+                if matched && change_after_marker && identity_checks.get() == 0 {
+                    identity_checks.set(1);
+                    crate::storage::write_active_auth_json(&next_auth).unwrap();
+                }
+                matched
+                    .then_some(())
+                    .ok_or(super::dispatch_mark_error::DispatchMarkError::AccountChanged)
+            },
+            // The explicit request claimed this deferred target, so its
+            // Desktop binding is irrelevant and must not be resolved: in
+            // production that runs the installed helper on live ChatGPT.
+            unconsulted_deferred_binding,
+        ),
     );
     let requests = router.finish(desktop);
     let methods = request_methods(&requests);
@@ -234,7 +241,7 @@ fn assert_unpaused_queue_wake(gate_delay: Duration) {
             thread::sleep(gate_delay.take().unwrap_or_default());
             Ok(())
         },
-        || Ok(()),
+        &mut DispatchIdentityChecks::new(|| Ok(()), unconsulted_deferred_binding),
     );
     let requests = router.finish(desktop);
     let methods = request_methods(&requests);
@@ -261,6 +268,122 @@ fn assert_unpaused_queue_wake(gate_delay: Duration) {
         result.as_ref().err(),
         candidate.dispatched
     );
+}
+
+#[test]
+fn deferred_dispatch_refuses_a_checkpoint_bound_to_another_desktop_account() {
+    for binding in [Some("account-b"), None] {
+        let outcome = dispatch_deferred_target_under(binding);
+        assert!(
+            outcome.error.as_deref()
+                == Some("Active Desktop account or process changed before recovery dispatch")
+                && outcome.account_mismatch
+                && !outcome.dispatched
+                && outcome.checkpoint_retained
+                && outcome.methods == ["thread-owner-discovery"]
+                && outcome.binding_reads == 1
+                && outcome.identity_checks == 0,
+            "binding={binding:?}: {outcome:?}"
+        );
+    }
+}
+
+#[test]
+fn deferred_dispatch_consumes_the_checkpoint_for_its_bound_desktop_account() {
+    let outcome = dispatch_deferred_target_under(Some("account-a"));
+    assert!(
+        outcome.error.is_none()
+            && !outcome.account_mismatch
+            && outcome.dispatched
+            && !outcome.checkpoint_retained
+            && outcome.methods == ["thread-owner-discovery", "thread-follower-start-turn"]
+            && outcome.binding_reads == 1
+            && outcome.identity_checks == 2,
+        "{outcome:?}"
+    );
+}
+
+#[derive(Debug)]
+struct DeferredDispatchOutcome {
+    error: Option<String>,
+    account_mismatch: bool,
+    dispatched: bool,
+    checkpoint_retained: bool,
+    methods: Vec<String>,
+    binding_reads: usize,
+    identity_checks: usize,
+}
+
+/// Dispatches a quota-interrupted target that `account-a` deferred, while the
+/// injected Desktop session resolves to `binding`.
+fn dispatch_deferred_target_under(binding: Option<&str>) -> DeferredDispatchOutcome {
+    let env = crate::distribution::test_helper::TestEnv::new("deferred_dispatch_binding");
+    let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
+    let mut candidate = target(env.home(), id);
+    OpenOptions::new()
+        .append(true)
+        .open(&candidate.observer.path)
+        .unwrap()
+        .write_all(b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"error\":{\"code\":\"usage_limit_exceeded\"}}}\n")
+        .unwrap();
+    candidate.observer = Observer::checkpoint(candidate.observer.path.clone()).unwrap();
+    candidate.state = ThreadRolloutState::InterruptedByQuota;
+    make_rollout_discoverable(env.home(), &mut candidate);
+    let original = PendingTarget {
+        id: id.into(),
+        offset: Some(candidate.observer.offset),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("account-a".into()),
+    };
+    super::manifest_store::write_manifest(std::slice::from_ref(&original)).unwrap();
+    let (mut desktop, router) = TestDesktopRouter::start(move |request| {
+        let result = if request["method"] == "thread-owner-discovery" {
+            serde_json::json!({ "supportsUntrustedAppInput": true })
+        } else {
+            serde_json::json!({ "result": { "turn": { "id": id } } })
+        };
+        Some(TestDesktopRouter::success(request, "window-one", result))
+    });
+    let (binding_reads, identity_checks) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
+    let mut budget = super::recovery_target::FOREGROUND_SCAN_BUDGET_BYTES;
+    let result = dispatch_if_needed(
+        env.home(),
+        &mut desktop,
+        &mut candidate,
+        RecoveryMode::DeferredCaptured,
+        &mut budget,
+        || Ok(()),
+        &mut DispatchIdentityChecks::new(
+            || {
+                identity_checks.set(identity_checks.get() + 1);
+                Ok(())
+            },
+            || {
+                binding_reads.set(binding_reads.get() + 1);
+                binding.map(str::to_owned)
+            },
+        ),
+    );
+    let methods = request_methods(&router.finish(desktop))
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    let checkpoint_retained = super::manifest_store::load_manifest().unwrap() == vec![original];
+    drop(env);
+    DeferredDispatchOutcome {
+        error: result.err(),
+        account_mismatch: candidate.account_mismatch,
+        dispatched: candidate.dispatched,
+        checkpoint_retained,
+        methods,
+        binding_reads: binding_reads.get(),
+        identity_checks: identity_checks.get(),
+    }
+}
+
+fn unconsulted_deferred_binding() -> Option<String> {
+    panic!("this dispatch must not resolve a deferred Desktop account binding")
 }
 
 fn request_methods(requests: &[serde_json::Value]) -> Vec<&str> {
@@ -352,7 +475,7 @@ fn assert_ineligible_queued_turn_never_contacts_owner(
         mode,
         &mut budget,
         || Ok(()),
-        || Ok(()),
+        &mut DispatchIdentityChecks::new(|| Ok(()), unconsulted_deferred_binding),
     );
     let requests = router.finish(desktop);
     let methods = request_methods(&requests);

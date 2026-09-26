@@ -2,6 +2,8 @@ use crate::{models::DesktopWindowBounds, storage};
 use std::{path::PathBuf, process::Command};
 
 pub(super) fn helper_candidates() -> Vec<PathBuf> {
+    #[cfg(test)]
+    crate::test_live_system::forbid("installed codex-ui-resume helper");
     let mut candidates = Vec::new();
     if let Ok(path) = std::env::current_exe() {
         if let Some(dir) = path.parent() {

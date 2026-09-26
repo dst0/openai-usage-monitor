@@ -1,8 +1,8 @@
 use super::{
-    dispatch_mark_error::DispatchMarkError, manifest_prune_service::ManifestPruneService,
-    pending_manifest::PendingManifest, pending_target::PendingTarget, recovery_mode::RecoveryMode,
-    stored_manifest::StoredManifest, thread_identity::valid_id,
-    thread_index_service::recent_thread_updates,
+    dispatch_identity_checks::DispatchIdentityChecks, dispatch_mark_error::DispatchMarkError,
+    manifest_prune_service::ManifestPruneService, pending_manifest::PendingManifest,
+    pending_target::PendingTarget, recovery_mode::RecoveryMode, stored_manifest::StoredManifest,
+    thread_identity::valid_id, thread_index_service::recent_thread_updates,
 };
 use crate::storage;
 use std::{
@@ -114,15 +114,15 @@ pub(super) fn validate_target_account_binding(
 pub(super) fn mark_dispatch_attempt(
     id: &str,
     mode: RecoveryMode,
-    verify_identity: impl FnOnce() -> Result<(), DispatchMarkError>,
+    identity: &mut DispatchIdentityChecks<'_>,
 ) -> Result<PendingTarget, DispatchMarkError> {
-    mark_dispatch_attempt_with_writer(id, mode, verify_identity, write_manifest)
+    mark_dispatch_attempt_with_writer(id, mode, identity, write_manifest)
 }
 
 pub(super) fn mark_dispatch_attempt_with_writer(
     id: &str,
     mode: RecoveryMode,
-    verify_identity: impl FnOnce() -> Result<(), DispatchMarkError>,
+    identity: &mut DispatchIdentityChecks<'_>,
     write_targets: impl FnOnce(&[PendingTarget]) -> Result<(), String>,
 ) -> Result<PendingTarget, DispatchMarkError> {
     let mut targets = load_manifest().map_err(DispatchMarkError::Other)?;
@@ -131,19 +131,20 @@ pub(super) fn mark_dispatch_attempt_with_writer(
             "Recovery checkpoint disappeared before IPC dispatch".into(),
         ));
     };
-    let deferred = target.awaiting_owner;
-    let binding = recovery_account_binding(deferred);
-    if deferred
-        && mode != RecoveryMode::ExplicitTarget
-        && (binding.is_none() || target.owner_account_id.as_deref() != binding.as_deref())
-    {
-        return Err(DispatchMarkError::AccountChanged);
+    // Only unattended retries stay bound to the Desktop account that deferred
+    // them; an explicit request claimed the target (see recovery_checkpoint).
+    // Resolving the binding inspects the live Desktop, so skip it otherwise.
+    if target.awaiting_owner && mode != RecoveryMode::ExplicitTarget {
+        let binding = identity.deferred_binding();
+        if binding.is_none() || target.owner_account_id != binding {
+            return Err(DispatchMarkError::AccountChanged);
+        }
     }
     let original = target.clone();
     // Owner discovery and banner startup can take longer than a manual account
     // switch. Verify the operation's starting auth and Desktop process after
     // all other checks, immediately before consuming the durable checkpoint.
-    verify_identity()?;
+    identity.verify()?;
     targets.retain(|target| target.id != id);
     if let Err(error) = write_targets(&targets) {
         // Directory sync can fail after the rename consumed the marker. No IPC
@@ -175,44 +176,26 @@ pub(super) fn restore_undispatched_target(original: &PendingTarget) -> Result<()
     }
 }
 
-pub(super) fn recovery_account_binding(deferred: bool) -> Option<String> {
-    let cli = current_account_binding();
-    let desktop = if deferred {
-        super::desktop_account_binding_service::DesktopAccountBindingService::verified(
-            cli.as_deref(),
-        )
-    } else {
-        None
-    };
-    super::desktop_account_binding_service::choose_recovery_account_binding(
-        cli.as_deref(),
-        desktop.as_deref(),
-        deferred,
+/// The account an unattended deferred retry may run under: the managed
+/// Desktop session for the exact live ChatGPT process, never the CLI auth
+/// alone. Reads the live process table and runs the installed window helper.
+pub(super) fn deferred_account_binding() -> Option<String> {
+    super::desktop_account_binding_service::DesktopAccountBindingService::verified(
+        current_account_binding().as_deref(),
     )
 }
 
+/// The production marker with a fixed deferred binding and a passing
+/// identity check, for tests that exercise only the manifest transition.
 #[cfg(test)]
 pub(super) fn mark_dispatch_attempt_for_account(
     id: &str,
     binding: Option<&str>,
     mode: RecoveryMode,
 ) -> Result<(), DispatchMarkError> {
-    let mut targets = load_manifest().map_err(DispatchMarkError::Other)?;
-    let Some(target) = targets.iter().find(|target| target.id == id) else {
-        return Err(DispatchMarkError::Other(
-            "Recovery checkpoint disappeared before IPC dispatch".into(),
-        ));
-    };
-    // An explicit request claimed this target; the binding guards only
-    // unattended retries (see `recovery_checkpoint`).
-    if target.awaiting_owner
-        && mode != RecoveryMode::ExplicitTarget
-        && (binding.is_none() || target.owner_account_id.as_deref() != binding)
-    {
-        return Err(DispatchMarkError::AccountChanged);
-    }
-    targets.retain(|target| target.id != id);
-    write_manifest(&targets).map_err(DispatchMarkError::Other)
+    let binding = binding.map(str::to_owned);
+    let mut identity = DispatchIdentityChecks::new(|| Ok(()), move || binding.clone());
+    mark_dispatch_attempt(id, mode, &mut identity).map(|_| ())
 }
 
 /// Resolve the uniquely matched active auth identity without exposing tokens.

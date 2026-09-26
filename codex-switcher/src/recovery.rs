@@ -8,6 +8,7 @@ mod checkpoint_scan_registry;
 mod deferred_recovery_service;
 mod desktop_account_binding_service;
 mod desktop_ipc;
+mod dispatch_identity_checks;
 mod dispatch_mark_error;
 mod evidence;
 mod foreground_checkpoint_service;

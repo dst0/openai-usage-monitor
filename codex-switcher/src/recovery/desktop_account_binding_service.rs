@@ -89,14 +89,6 @@ fn session_matches_binding(
         && session.process.as_ref() == Some(process)
 }
 
-pub(super) fn choose_recovery_account_binding(
-    cli: Option<&str>,
-    desktop: Option<&str>,
-    deferred: bool,
-) -> Option<String> {
-    if deferred { desktop } else { cli }.map(str::to_owned)
-}
-
 #[cfg(test)]
 #[path = "desktop_account_binding_service.test.rs"]
 mod tests;

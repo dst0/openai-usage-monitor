@@ -1,4 +1,5 @@
 use super::{
+    dispatch_identity_checks::DispatchIdentityChecks,
     manifest_store::{
         current_account_binding, finalize_target, load_manifest, load_ownerless_pending,
         load_pending, mark_dispatch_attempt_for_account, mark_dispatch_attempt_with_writer,
@@ -31,7 +32,10 @@ fn marker_write_failure_after_rename_restores_exact_checkpoint_before_ipc() {
     let error = mark_dispatch_attempt_with_writer(
         &original.id,
         RecoveryMode::CapturedRestart,
-        || Ok(()),
+        &mut DispatchIdentityChecks::new(
+            || Ok(()),
+            || unreachable!("a restart target has no deferred binding"),
+        ),
         |remaining| {
             write_manifest(remaining)?;
             Err("synthetic directory sync error after rename".into())

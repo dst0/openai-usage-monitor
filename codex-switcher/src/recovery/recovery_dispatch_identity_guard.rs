@@ -1,6 +1,8 @@
 use super::{
     desktop_account_binding_service::DesktopAccountBindingService,
-    manifest_store::current_account_binding, recovery_banner::RecoveryBanner,
+    dispatch_identity_checks::DispatchIdentityChecks,
+    manifest_store::{current_account_binding, deferred_account_binding},
+    recovery_banner::RecoveryBanner,
     recovery_mode::RecoveryMode,
 };
 use crate::{
@@ -72,6 +74,11 @@ impl RecoveryDispatchIdentityGuard {
 
     pub(super) fn verify(&self) -> Result<(), super::dispatch_mark_error::DispatchMarkError> {
         self.verify_with(current_account_binding, Self::live_process)
+    }
+
+    /// The live checks that gate each owner-routed dispatch of this operation.
+    pub(super) fn dispatch_checks(&self) -> DispatchIdentityChecks<'_> {
+        DispatchIdentityChecks::new(|| self.verify(), deferred_account_binding)
     }
 
     fn verify_with(

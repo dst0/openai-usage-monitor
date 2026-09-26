@@ -2,7 +2,7 @@
 use super::recovery_target::FOREGROUND_SCAN_BUDGET_BYTES;
 use super::{
     desktop_ipc::DesktopIpc,
-    dispatch_mark_error::DispatchMarkError,
+    dispatch_identity_checks::DispatchIdentityChecks,
     ipc_call_error::IpcCallError,
     queue_snapshot::{
         pending_count, prepare_interrupted_queue, queue_revision, queued_messages,
@@ -170,7 +170,7 @@ pub(super) fn dispatch_if_needed(
     mode: RecoveryMode,
     scan_budget: &mut u64,
     mut before_send: impl FnMut() -> Result<(), String>,
-    mut verify_identity: impl FnMut() -> Result<(), DispatchMarkError>,
+    identity: &mut DispatchIdentityChecks<'_>,
 ) -> Result<(), String> {
     if target.completed || target.failure.is_some() || target.observer.evidence.started {
         return Ok(());
@@ -213,7 +213,7 @@ pub(super) fn dispatch_if_needed(
         )? {
             return Ok(());
         }
-        RecoveryDispatchCheckpointService::mark_and_confirm(target, mode, &mut verify_identity)?;
+        RecoveryDispatchCheckpointService::mark_and_confirm(target, mode, identity)?;
         // Mark before IPC. A disconnect after forwarding has an unknown
         // outcome, so this operation must not retry the queue update.
         target.dispatched = true;
@@ -265,7 +265,7 @@ pub(super) fn dispatch_if_needed(
     )? {
         return Ok(());
     }
-    RecoveryDispatchCheckpointService::mark_and_confirm(target, mode, &mut verify_identity)?;
+    RecoveryDispatchCheckpointService::mark_and_confirm(target, mode, identity)?;
     // Mark before the call. A timeout is an unknown outcome, so this operation
     // must never retry and risk starting the interrupted turn twice.
     target.dispatched = true;
