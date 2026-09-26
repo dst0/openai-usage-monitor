@@ -1,8 +1,8 @@
 use super::{required_check_violations, reused_context_violations};
 use crate::fixtures::{compliant, with};
 
-const CLIPPY_STEP: &str = "      - name: Clippy\n        run: cargo clippy\n";
-const TEST_STEP: &str = "      - run: cargo test\n";
+const CLIPPY_STEP: &str = "      - name: Clippy\n        run: cargo clippy --locked\n";
+const TEST_STEP: &str = "      - run: cargo test --locked\n";
 /// A job that is skipped on pull requests (critic case j01).
 const GATE_JOB: &str = "  gate:\n    runs-on: macos-14\n    timeout-minutes: 5\n    if: github.event_name == 'push'\n    steps:\n      - run: echo gate\n";
 
@@ -79,11 +79,11 @@ fn required_job_steps_cannot_skip_or_mask_their_work() {
     // A condition on the step's marker line and a compact steps list.
     let marker = with(
         TEST_STEP,
-        "      - if: cancelled()\n        run: cargo test\n",
+        "      - if: cancelled()\n        run: cargo test --locked\n",
     );
     let compact = with(
-        "    steps:\n      - name: Clippy\n        run: cargo clippy\n",
-        "    steps:\n    - name: Clippy\n      if: failure()\n      run: cargo clippy\n",
+        "    steps:\n      - name: Clippy\n        run: cargo clippy --locked\n",
+        "    steps:\n    - name: Clippy\n      if: failure()\n      run: cargo clippy --locked\n",
     );
     for text in [marker, compact] {
         assert_eq!(violations(&text).len(), 1, "{text}");
@@ -100,7 +100,7 @@ fn required_job_steps_cannot_skip_or_mask_their_work() {
     // Steps of jobs that are not required checks are not restricted.
     let lint_only_optional = with(
         CLIPPY_STEP,
-        "      - name: Clippy\n        if: failure()\n        run: cargo clippy\n",
+        "      - name: Clippy\n        if: failure()\n        run: cargo clippy --locked\n",
     );
     assert_eq!(
         required_check_violations(&lint_only_optional, &["Build".to_string()], "main"),
@@ -112,7 +112,7 @@ fn required_job_steps_cannot_skip_or_mask_their_work() {
 fn unreadable_steps_of_required_jobs_fail_closed() {
     for steps in [
         "    steps: ${{ fromJSON(inputs.steps) }}\n",
-        "    steps:\n      -\n        run: cargo test\n",
+        "    steps:\n      -\n        run: cargo test --locked\n",
     ] {
         let text = with(
             "    steps:\n      - name: Checkout\n",
@@ -181,12 +181,12 @@ fn hidden_skip_conditions_fail_the_workflow_scan() {
         ),
         (
             TEST_STEP,
-            "      - run: cargo test\n        if : false\n",
+            "      - run: cargo test --locked\n        if : false\n",
             "if : false",
         ),
         (
             TEST_STEP,
-            "      - run: cargo test\n        if: success()\n          == false\n",
+            "      - run: cargo test --locked\n        if: success()\n          == false\n",
             "== false",
         ),
     ] {

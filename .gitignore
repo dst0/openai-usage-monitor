@@ -5,7 +5,8 @@ build/
 *.app
 *.dmg
 .DS_Store
-*.lock
+# Lockfiles such as codex-switcher/Cargo.lock are reviewed supply-chain inputs
+# and are committed. Monitor runtime locks live under CODEX_HOME or TMPDIR.
 .env
 .env.*
 *.swp

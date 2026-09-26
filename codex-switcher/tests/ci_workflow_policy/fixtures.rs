@@ -29,14 +29,14 @@ jobs:
         uses: actions/checkout@SHA # v4.4.0
         with:
           persist-credentials: false
-      - run: cargo test
+      - run: cargo test --locked
   lint:
     name: Lint
     runs-on: macos-14
     timeout-minutes: 5
     steps:
       - name: Clippy
-        run: cargo clippy
+        run: cargo clippy --locked
 "#;
 
 pub fn compliant() -> String {
@@ -117,7 +117,7 @@ fn uses_spellings_the_parser_skips_fail_closed() {
 #[test]
 fn local_actions_are_rejected_until_scanned() {
     let v = action_pin_violations(&with(
-        "      - run: cargo test\n",
+        "      - run: cargo test --locked\n",
         "      - uses: ./.github/actions/setup-rust\n",
     ));
     assert!(v[0].contains("outside the policy scan"), "{v:?}");
@@ -138,12 +138,12 @@ fn release_comment_must_be_exact_version() {
 fn docker_actions_require_a_sha256_digest() {
     let digest = "a".repeat(64);
     let ok = with(
-        "      - run: cargo test\n",
+        "      - run: cargo test --locked\n",
         &format!("      - uses: docker://alpine@sha256:{digest}\n"),
     );
     assert_eq!(action_pin_violations(&ok), Vec::<String>::new());
     let bad = with(
-        "      - run: cargo test\n",
+        "      - run: cargo test --locked\n",
         "      - uses: docker://alpine:3.20\n",
     );
     assert_eq!(action_pin_violations(&bad).len(), 1);
@@ -240,8 +240,8 @@ fn every_job_needs_a_bounded_timeout() {
 fn step_properties_do_not_count_as_job_properties() {
     // Steps written without extra list indentation sit at the job-property indent.
     let text = with(
-        "    timeout-minutes: 5\n    steps:\n      - name: Clippy\n        run: cargo clippy\n",
-        "    steps:\n    - name: Check\n      timeout-minutes: 5\n      run: cargo clippy\n",
+        "    timeout-minutes: 5\n    steps:\n      - name: Clippy\n        run: cargo clippy --locked\n",
+        "    steps:\n    - name: Check\n      timeout-minutes: 5\n      run: cargo clippy --locked\n",
     );
     assert_eq!(
         timeout_violations(&text),
@@ -265,7 +265,7 @@ fn four_space_indentation_and_reusable_jobs_parse() {
             .collect::<Vec<_>>(),
         ["build", "lint"]
     );
-    let reusable = with("    runs-on: macos-14\n    timeout-minutes: 5\n    steps:\n      - name: Clippy\n        run: cargo clippy\n", &format!("    uses: org/repo/.github/workflows/lint.yml@{SHA} # v1.0.0\n"));
+    let reusable = with("    runs-on: macos-14\n    timeout-minutes: 5\n    steps:\n      - name: Clippy\n        run: cargo clippy --locked\n", &format!("    uses: org/repo/.github/workflows/lint.yml@{SHA} # v1.0.0\n"));
     assert_eq!(timeout_violations(&reusable), Vec::<String>::new());
 }
 
@@ -287,6 +287,24 @@ fn jobs_parse_ids_and_direct_properties() {
         jobs("jobs: # comment\n  a:\n    timeout-minutes: 1\n").len(),
         1
     );
+}
+
+#[test]
+fn job_text_spans_one_job() {
+    let text = compliant();
+    let build = crate::workflow_jobs::job_text(&text, "build").expect("build job");
+    assert!(build.starts_with("  build:\n    name: Build\n"), "{build}");
+    assert!(
+        build.ends_with("      - run: cargo test --locked"),
+        "{build}"
+    );
+    let lint = crate::workflow_jobs::job_text(&text, "lint").expect("lint job");
+    assert!(
+        lint.starts_with("  lint:\n") && lint.ends_with("run: cargo clippy --locked"),
+        "{lint}"
+    );
+    assert_eq!(crate::workflow_jobs::job_text(&text, "Build"), None);
+    assert_eq!(crate::workflow_jobs::job_text("name: x\n", "build"), None);
 }
 
 #[test]
@@ -329,11 +347,11 @@ fn floating_rust_toolchains_are_rejected() {
         "      - run: cargo +beta test\n",
         "    env:\n      RUSTUP_TOOLCHAIN: 1.90.0\n",
     ] {
-        let text = with("      - run: cargo test\n", bad);
+        let text = with("      - run: cargo test --locked\n", bad);
         assert_eq!(floating_toolchain_violations(&text).len(), 1, "{bad:?}");
     }
     let comment = with(
-        "      - run: cargo test\n",
+        "      - run: cargo test --locked\n",
         "      # toolchain: stable was replaced\n      - run: cargo test # not stable\n",
     );
     assert_eq!(
@@ -350,7 +368,8 @@ fn masked_failures_are_rejected() {
         "set +e; cargo test",
     ] {
         assert_eq!(
-            masked_failure_violations(&with("run: cargo test", &format!("run: {bad}"))).len(),
+            masked_failure_violations(&with("run: cargo test --locked", &format!("run: {bad}")))
+                .len(),
             1,
             "{bad}"
         );

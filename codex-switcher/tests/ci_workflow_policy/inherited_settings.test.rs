@@ -100,8 +100,8 @@ fn runner_environment_files_are_rejected() {
         "      - run: |\n          echo X=1 >> ${GITHUB_ENV}\n",
     ] {
         let text = with(
-            "      - run: cargo test\n",
-            &format!("{run}      - run: cargo test\n"),
+            "      - run: cargo test --locked\n",
+            &format!("{run}      - run: cargo test --locked\n"),
         );
         assert_rejected(&text, "changes the environment of later required steps");
     }

@@ -4,7 +4,7 @@ use crate::required_checks::required_check_violations;
 use crate::rules::workflow_violations;
 
 /// The compliant fixture's step in the required `Lint` job.
-const LINT_STEP: &str = "      - name: Clippy\n        run: cargo clippy\n";
+const LINT_STEP: &str = "      - name: Clippy\n        run: cargo clippy --locked\n";
 
 fn contexts() -> Vec<String> {
     vec!["Build".to_string(), "Lint".to_string()]
@@ -68,8 +68,8 @@ fn canonical_gate_in_a_required_job_complies() {
     );
     // The gate may be any step of any required job.
     let in_build = with(
-        "      - run: cargo test\n",
-        &format!("      - run: cargo test\n{}", gate_step()),
+        "      - run: cargo test --locked\n",
+        &format!("      - run: cargo test --locked\n{}", gate_step()),
     );
     assert_eq!(violations(&in_build), Vec::<String>::new());
 }

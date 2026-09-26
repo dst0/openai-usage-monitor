@@ -42,12 +42,9 @@ jobs:
           rustc --version
           cargo clippy --version
 
-      # Cargo.lock is gitignored, so resolve it first and key the cache on it;
-      # hashing a missing file would yield a constant, never-refreshed key.
-      - name: Resolve Dependencies
-        working-directory: codex-switcher
-        run: cargo generate-lockfile
-
+      # Keyed on the toolchain and the committed Cargo.lock: a toolchain bump
+      # or a reviewed dependency change gets a fresh key, and artifacts from
+      # another compiler are never restored.
       - name: Cargo Cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -59,17 +56,18 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('codex-switcher/rust-toolchain.toml') }}-${{ hashFiles('codex-switcher/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-${{ hashFiles('codex-switcher/rust-toolchain.toml') }}-
 
-      # Lints every target, tests included, with the pinned Clippy; --locked
-      # fails rather than re-resolving the lockfile generated above. The
-      # command and directory are enforced by
+      # Lints every target, tests included, with the pinned Clippy against the
+      # committed Cargo.lock. The command and directory are enforced by
       # codex-switcher/tests/ci_workflow_policy/clippy_gate.rs.
       - name: Run Clippy on All Targets
         working-directory: codex-switcher
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      # --locked fails the run if Cargo.lock is missing or would change,
+      # instead of testing a freshly resolved dependency graph.
       - name: Run Rust Unit Tests
         working-directory: codex-switcher
-        run: cargo test --verbose
+        run: cargo test --locked --verbose
 
   test-swift:
     name: 🍏 Swift Menu Bar App Tests

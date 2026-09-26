@@ -350,7 +350,18 @@ if ! command -v rustup >/dev/null 2>&1; then
 elif ! rustup toolchain install; then
     echo "⚠️  Could not pre-install the pinned Rust toolchain; relying on rustup auto-install."
 fi
-cargo build --release
+# Build exactly the committed Cargo.lock. --locked fails closed when the
+# lockfile is missing or out of date instead of shipping newly resolved crates.
+if ! cargo build --release --locked; then
+    echo "❌ Rust build failed."
+    echo "   If the error says the lock file cannot be created or updated because of --locked,"
+    echo "   this checkout's codex-switcher/Cargo.lock is missing or does not match Cargo.toml."
+    echo "   Use an unmodified checkout; do not drop --locked, which would build unreviewed"
+    echo "   dependency versions."
+    echo "   Cargo older than 1.78 cannot read this lockfile format (version 4): install"
+    echo "   Rust with rustup so the toolchain pinned in rust-toolchain.toml is used."
+    exit 1
+fi
 
 echo "📦 Installing CLI to ${LOCAL_BIN}..."
 # The daemon may be executing the current CLI binary. Rewriting that inode in
