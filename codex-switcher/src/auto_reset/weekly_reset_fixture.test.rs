@@ -6,9 +6,7 @@ use crate::auto_reset::AutoResetReport;
 use crate::distribution::test_helper::{make_account, TestEnv};
 use crate::models::{AccountConfig, AccountsFile, AuthJson, Settings};
 use crate::storage::{update_accounts_atomically, write_active_auth_json};
-use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::MutexGuard;
 
 pub(super) const ACCOUNT_ID: &str = "user@example.invalid:account-id";
 pub(super) const BLOCKED_TASK: &str = "01a07d3c-3008-75c2-87a6-2c5c75f0e4a1";
@@ -16,21 +14,18 @@ pub(super) const OTHER_TASK: &str = "01a07d3c-3008-75c2-87a6-2c5c75f0e4a2";
 pub(super) const PRIOR_KEY: &str = "00000000-0000-4000-8000-000000000001";
 
 /// Hermetic `CODEX_HOME` holding one weekly-exhausted active account whose
-/// registry, settings, and live auth agree with the daemon's snapshot. Drop
-/// removes the directory and restores the previous `CODEX_HOME` while the
-/// shared test mutex is still held.
+/// registry, settings, and live auth agree with the daemon's snapshot.
+///
+/// `TestEnv` owns the only `TestCodexHome` guard for the test, which holds the
+/// serial lock, sets and clears `CODEX_HOME`, and releases both on drop,
+/// including while a failed assertion unwinds. Do not lock the serial mutex or
+/// create another guard here: the mutex is not reentrant.
 pub(super) struct Home {
-    env: Option<TestEnv>,
-    previous_codex_home: Option<OsString>,
-    _guard: MutexGuard<'static, ()>,
+    env: TestEnv,
 }
 
 impl Home {
     pub(super) fn prepare() -> Self {
-        let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let previous_codex_home = std::env::var_os("CODEX_HOME");
         let env = TestEnv::new("auto_reset_dispatch");
         env.populate(vec![snapshot()], Some(ACCOUNT_ID), None);
         edit_registry(|registry| {
@@ -38,19 +33,11 @@ impl Home {
             registry.settings.auto_reset_weekly_min_remaining_seconds =
                 settings().auto_reset_weekly_min_remaining_seconds;
         });
-        Self {
-            env: Some(env),
-            previous_codex_home,
-            _guard: guard,
-        }
+        Self { env }
     }
 
     pub(super) fn journal_path(&self) -> PathBuf {
-        self.env
-            .as_ref()
-            .expect("home is alive")
-            .home()
-            .join("auto-reset-state.json")
+        self.env.home().join("auto-reset-state.json")
     }
 
     pub(super) fn write_journal(&self, journal: &ResetJournal) -> Vec<u8> {
@@ -60,16 +47,6 @@ impl Home {
 
     pub(super) fn journal_bytes(&self) -> Option<Vec<u8>> {
         std::fs::read(self.journal_path()).ok()
-    }
-}
-
-impl Drop for Home {
-    fn drop(&mut self) {
-        self.env.take();
-        match self.previous_codex_home.take() {
-            Some(previous) => std::env::set_var("CODEX_HOME", previous),
-            None => std::env::remove_var("CODEX_HOME"),
-        }
     }
 }
 
