@@ -114,20 +114,20 @@ fn assert_owner_wait_rejects_account_change(with_queue: bool, change_after_marke
     // crosses the account change fails this test however slowly it happens.
     let (mut desktop, router) = TestDesktopRouter::start(move |request| {
         if request["method"] != "thread-owner-discovery" {
-            return Some(TestDesktopRouter::success(
+            return TestDesktopRouter::success(
                 request,
                 "window-one",
                 serde_json::json!({"ok": true, "result": {"turn": {"id": id}}}),
-            ));
+            );
         }
         if !change_after_marker {
             crate::storage::write_active_auth_json(&router_auth).unwrap();
         }
-        Some(TestDesktopRouter::success(
+        TestDesktopRouter::success(
             request,
             "window-one",
             serde_json::json!({ "supportsUntrustedAppInput": true }),
-        ))
+        )
     });
     let mut budget = super::recovery_target::FOREGROUND_SCAN_BUDGET_BYTES;
     let identity_checks = std::cell::Cell::new(0);
@@ -225,7 +225,7 @@ fn assert_unpaused_queue_wake(gate_delay: Duration) {
         } else {
             serde_json::json!({ "ok": true })
         };
-        Some(TestDesktopRouter::success(request, "window-one", result))
+        TestDesktopRouter::success(request, "window-one", result)
     });
     let mut budget = super::recovery_target::FOREGROUND_SCAN_BUDGET_BYTES;
     let mut gate_delay = Some(gate_delay);
@@ -343,7 +343,7 @@ fn dispatch_deferred_target_under(binding: Option<&str>) -> DeferredDispatchOutc
         } else {
             serde_json::json!({ "result": { "turn": { "id": id } } })
         };
-        Some(TestDesktopRouter::success(request, "window-one", result))
+        TestDesktopRouter::success(request, "window-one", result)
     });
     let (binding_reads, identity_checks) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
     let mut budget = super::recovery_target::FOREGROUND_SCAN_BUDGET_BYTES;
@@ -461,11 +461,11 @@ fn assert_ineligible_queued_turn_never_contacts_owner(
     // No request is expected; the client's hang-up, not a timeout, ends the
     // router, so even a late owner request would be recorded.
     let (mut desktop, router) = TestDesktopRouter::start(|request| {
-        Some(TestDesktopRouter::success(
+        TestDesktopRouter::success(
             request,
             "window-one",
             serde_json::json!({ "supportsUntrustedAppInput": true, "ok": true }),
-        ))
+        )
     });
     let mut budget = super::recovery_target::FOREGROUND_SCAN_BUDGET_BYTES;
     let result = dispatch_if_needed(

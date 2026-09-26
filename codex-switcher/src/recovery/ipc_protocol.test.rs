@@ -205,7 +205,7 @@ fn separate_task_windows_route_each_turn_to_its_discovered_owner() {
         } else {
             serde_json::json!({"result": {"turn": {"id": first}}})
         };
-        Some(TestDesktopRouter::success(request, owner, result))
+        TestDesktopRouter::success(request, owner, result)
     });
     let first_owner = client.discover_owner_info_once(first).unwrap().client_id;
     let second_owner = client.discover_owner_info_once(second).unwrap().client_id;

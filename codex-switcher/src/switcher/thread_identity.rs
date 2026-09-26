@@ -120,7 +120,7 @@ pub fn is_user_thread(codex_home: &std::path::Path, thread_id: &str) -> bool {
     false
 }
 
-fn is_valid_thread_id(thread_id: &str) -> bool {
+pub(super) fn is_valid_thread_id(thread_id: &str) -> bool {
     thread_id.len() == 36
         && thread_id.bytes().enumerate().all(|(index, byte)| {
             if matches!(index, 8 | 13 | 18 | 23) {

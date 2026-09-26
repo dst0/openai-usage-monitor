@@ -1,11 +1,10 @@
 use super::{
     desktop_ipc::DesktopIpc,
-    ipc_protocol::{read_ipc_frame, write_ipc_frame},
-    ipc_read_error::IpcReadError,
+    ipc_protocol::{write_ipc_frame, MAX_IPC_FRAME},
 };
 use serde_json::Value;
 use std::{
-    io::ErrorKind,
+    io::{ErrorKind, Read},
     os::unix::net::UnixStream,
     thread::{self, JoinHandle},
 };
@@ -24,32 +23,51 @@ pub(super) struct TestDesktopRouter {
 }
 
 impl TestDesktopRouter {
-    /// `reply` returns the response frame for a request, or `None` to leave it
-    /// unanswered. It runs on the router thread, so it can also change test
-    /// state between two requests exactly as a concurrent Desktop would.
+    /// `reply` returns the response frame for each request. It runs on the
+    /// router thread, so it can also change test state between two requests
+    /// exactly as a concurrent Desktop would.
     pub(super) fn start(
-        mut reply: impl FnMut(&Value) -> Option<Value> + Send + 'static,
+        mut reply: impl FnMut(&Value) -> Value + Send + 'static,
     ) -> (DesktopIpc, Self) {
         let (client, mut router) = UnixStream::pair().unwrap();
         let worker = thread::spawn(move || {
             let mut requests = Vec::new();
-            loop {
-                let request = match read_ipc_frame(&mut router) {
-                    Ok(request) => request,
-                    Err(IpcReadError::Io(error)) if error.kind() == ErrorKind::UnexpectedEof => {
-                        return requests;
-                    }
-                    Err(error) => panic!("client sent an unreadable IPC frame: {error}"),
-                };
+            while let Some(request) = Self::next_request(&mut router) {
                 let response = reply(&request);
                 requests.push(request);
-                if let Some(response) = response {
-                    write_ipc_frame(&mut router, &response)
-                        .expect("client hung up before reading its response");
-                }
+                write_ipc_frame(&mut router, &response)
+                    .expect("client hung up before reading its response");
             }
+            requests
         });
         (DesktopIpc::for_test(client), Self { worker })
+    }
+
+    /// The next request frame, or `None` once the client has hung up between
+    /// frames. A frame cut short is a client defect and fails the test.
+    fn next_request(router: &mut UnixStream) -> Option<Value> {
+        let mut length = [0_u8; 4];
+        loop {
+            match router.read(&mut length[..1]) {
+                Ok(0) => return None,
+                Ok(_) => break,
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => panic!("router read failed: {error}"),
+            }
+        }
+        router
+            .read_exact(&mut length[1..])
+            .expect("client sent a truncated IPC frame");
+        let length = u32::from_le_bytes(length) as usize;
+        assert!(
+            (1..=MAX_IPC_FRAME).contains(&length),
+            "client sent an IPC frame of {length} bytes"
+        );
+        let mut payload = vec![0_u8; length];
+        router
+            .read_exact(&mut payload)
+            .expect("client sent a truncated IPC frame");
+        Some(serde_json::from_slice(&payload).expect("client sent an unreadable IPC frame"))
     }
 
     /// Hangs up `client`, then returns every request the router received, in

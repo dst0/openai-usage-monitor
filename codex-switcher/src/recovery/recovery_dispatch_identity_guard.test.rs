@@ -117,3 +117,33 @@ fn dispatch_guard_rechecks_account_and_process_after_a_wait() {
         .verify_with(|| Some("account-a".into()), || Ok(process.clone()))
         .is_ok());
 }
+
+#[test]
+fn production_dispatch_checks_consult_the_live_desktop() {
+    // The live seams refuse to run in unit tests, so reaching each one proves
+    // the production wiring without touching the owner's Desktop: the identity
+    // recheck reads the ChatGPT process table, and the deferred binding asks
+    // the window helper to verify the Desktop session rather than trusting
+    // the CLI auth alone.
+    let env = crate::distribution::test_helper::TestEnv::new("dispatch_checks_wiring");
+    let account = crate::distribution::test_account_spec::TestAccountSpec {
+        id: "account-a",
+        email: "first@example.test",
+        plan: "plus",
+        ..crate::distribution::test_account_spec::TestAccountSpec::default()
+    }
+    .build();
+    env.populate(vec![account], Some("account-a"), Some("account-a"));
+    let guard = RecoveryDispatchIdentityGuard {
+        account_id: super::current_account_binding().expect("seeded CLI auth must bind"),
+        process: WindowProcessIdentity::new(4242, "1726789012:000007").unwrap(),
+    };
+
+    crate::test_live_system::assert_forbidden("process table (/bin/ps)", || {
+        guard.dispatch_checks().verify()
+    });
+    crate::test_live_system::assert_forbidden("installed window-restore helper", || {
+        guard.dispatch_checks().deferred_binding()
+    });
+    drop(env);
+}

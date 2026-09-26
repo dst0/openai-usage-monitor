@@ -87,6 +87,9 @@ mod checkpoint_scan_registry_tests;
 #[path = "recovery/deferred_recovery.test.rs"]
 mod deferred_recovery_tests;
 #[cfg(test)]
+#[path = "recovery/dispatch_marker_binding.test.rs"]
+mod dispatch_marker_binding_tests;
+#[cfg(test)]
 #[path = "recovery/evidence.test.rs"]
 mod evidence_tests;
 #[cfg(test)]
