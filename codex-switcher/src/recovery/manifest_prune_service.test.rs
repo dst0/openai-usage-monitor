@@ -427,3 +427,42 @@ fn singleton_re_prune_does_not_reset_the_full_journal_rotation() {
     assert_eq!(scanned(&scans, &rollouts), [true, true, true]);
     std::fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn detection_pass_without_ownerless_targets_keeps_rotation_turn() {
+    let home = rotation_home("detection-pass");
+    let [(first, first_rollout), (second, second_rollout)] =
+        [1, 2].map(|index| ownerless(&home, index));
+    let rotation = OwnerlessProbeRotation::new(4);
+    let scans = CheckpointScanRegistry::new(4);
+    let service = ManifestPruneService::new(&rotation, &scans);
+    let now = Utc::now().timestamp();
+    let mut targets = vec![first.clone(), second];
+    service
+        .run_with(&home, &mut targets, |_| Ok(Some(now)))
+        .unwrap();
+    assert_eq!(
+        scanned(&scans, &[&first_rollout, &second_rollout]),
+        [true, false]
+    );
+    // `load_pending()` prunes only restart targets in the same home. That
+    // pass must not consume the next ownerless turn.
+    let mut restart_only = vec![PendingTarget {
+        id: "01a098c2-0fae-74d2-a80c-00000000f0fe".into(),
+        awaiting_owner: false,
+        owner_account_id: None,
+        ..first
+    }];
+    service
+        .run_with(&home, &mut restart_only, |_| Ok(Some(now)))
+        .unwrap();
+    service
+        .run_with(&home, &mut targets, |_| Ok(Some(now)))
+        .unwrap();
+    assert_eq!(targets.len(), 2);
+    assert_eq!(
+        scanned(&scans, &[&first_rollout, &second_rollout]),
+        [true, true]
+    );
+    std::fs::remove_dir_all(home).unwrap();
+}

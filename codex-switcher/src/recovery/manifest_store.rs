@@ -54,10 +54,12 @@ pub(super) fn prune_ineligible_targets(
         return Ok(());
     }
     let updates = recent_thread_updates(home, targets)?;
-    ManifestPruneService::shared().run_with(home, targets, |id| Ok(updates.get(id).copied()))
+    prune_ineligible_targets_with(home, targets, |id| Ok(updates.get(id).copied()))
 }
 
-#[cfg(test)]
+/// The production prune pass with the SQLite lookup supplied by the caller.
+/// Tests reach the process-wide rotation and scan registry only through
+/// here, so a production pass cannot silently use different state.
 pub(super) fn prune_ineligible_targets_with(
     home: &Path,
     targets: &mut Vec<PendingTarget>,
