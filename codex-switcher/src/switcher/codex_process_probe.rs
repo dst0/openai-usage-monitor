@@ -64,6 +64,8 @@ pub(super) fn desktop_process_rows_checked() -> Result<String, String> {
 }
 
 fn ps_output_checked(columns: &str) -> Result<String, String> {
+    #[cfg(test)]
+    crate::test_live_system::forbid("process table (/bin/ps)");
     let output = Command::new("/bin/ps")
         .args(["-axo", columns])
         .output()

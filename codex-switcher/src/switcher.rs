@@ -4,6 +4,8 @@ mod account_switch_auth_service;
 mod account_switch_commit_service;
 #[path = "switcher/account_switch_noop_service.rs"]
 mod account_switch_noop_service;
+#[path = "switcher/account_switch_preflight_service.rs"]
+mod account_switch_preflight_service;
 #[path = "switcher/account_switch_service.rs"]
 mod account_switch_service;
 #[path = "switcher/account_target_resolver.rs"]
@@ -48,6 +50,8 @@ mod thread_rollout_inspector;
 mod thread_rollout_state;
 
 pub use account_switch_service::switch_to_account;
+#[cfg(test)]
+use account_switch_service::switch_to_account_with;
 pub use account_target_resolver::resolve_target_account_idx;
 pub(crate) use active_auth_registry_sync_service::ActiveAuthRegistrySyncService;
 pub use codex_app_lifecycle::send_macos_notification;
