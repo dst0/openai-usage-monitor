@@ -10,7 +10,7 @@ mod reset_credit_consumption;
 #[cfg(test)]
 use reset_credit_consumption::consume_rate_limit_reset_credit_at;
 pub(crate) use reset_credit_consumption::{
-    consume_rate_limit_reset_credit, ResetCreditConsumeOutcome,
+    consume_rate_limit_reset_credit, reset_request_blocker, ResetCreditConsumeOutcome,
 };
 
 pub fn detect_account_multiplier(account: &mut AccountConfig) -> f64 {

@@ -2,6 +2,11 @@
 //! pointing at a deleted directory, and one that removes it makes later code
 //! resolve the owner's live `~/.codex`. Only `TestCodexHome`, which serializes
 //! access and restores the previous value while unwinding, may change it.
+//!
+//! Only that guard may lock `TEST_CODEX_HOME_MUTEX`, too. The mutex is not
+//! reentrant, and the guard's nested-use check sees only other guards: a test
+//! that locks it directly and then creates a guard (for example through
+//! `TestEnv`) blocks forever instead of failing.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,6 +18,7 @@ const GUARD_FILES: [&str; 2] = [
 // Built at runtime so this file does not match its own patterns.
 const FORBIDDEN_CALLS: [&str; 2] = ["set_var(", "remove_var("];
 const KEY: &str = "CODEX_HOME";
+const SERIAL_LOCK: [&str; 2] = ["TEST_CODEX_HOME_", "MUTEX.lock("];
 
 #[test]
 fn only_the_test_guard_changes_codex_home() {
@@ -40,6 +46,13 @@ fn only_the_test_guard_changes_codex_home() {
             if compact.contains(&call) {
                 violations.push(format!("{} calls {call}…)", relative.display()));
             }
+        }
+        let serial_lock = SERIAL_LOCK.concat();
+        if compact.contains(&serial_lock) {
+            violations.push(format!(
+                "{} calls {serial_lock}…) outside the guard",
+                relative.display()
+            ));
         }
     }
 

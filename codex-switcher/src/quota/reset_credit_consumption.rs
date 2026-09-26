@@ -67,25 +67,43 @@ fn parse_reset_credit_response(
     }
 }
 
+/// Local request validation shared by the automatic preflight and the sender.
+/// `Err` means no request can be built, so none would leave this host.
+pub(crate) fn reset_request_blocker(
+    account: &AccountConfig,
+    idempotency_key: &str,
+) -> Result<(), String> {
+    validated_request_route(account, idempotency_key).map(|_| ())
+}
+
+fn validated_request_route<'a>(
+    account: &'a AccountConfig,
+    idempotency_key: &str,
+) -> Result<&'a str, String> {
+    if idempotency_key.is_empty()
+        || idempotency_key.len() > 512
+        || !idempotency_key.bytes().all(|byte| byte.is_ascii_graphic())
+    {
+        return Err("invalid_idempotency_key".into());
+    }
+    let route = reset_account_route(account)?;
+    let token = account.tokens.access_token.trim();
+    if token.is_empty() || token.bytes().any(|byte| matches!(byte, b'\r' | b'\n')) {
+        return Err("active_access_token_invalid".into());
+    }
+    Ok(route)
+}
+
 pub(super) fn consume_rate_limit_reset_credit_at(
     endpoint: &str,
     account: &AccountConfig,
     idempotency_key: &str,
 ) -> ResetCreditConsumeOutcome {
-    if idempotency_key.is_empty()
-        || idempotency_key.len() > 512
-        || !idempotency_key.bytes().all(|byte| byte.is_ascii_graphic())
-    {
-        return ResetCreditConsumeOutcome::Unavailable("invalid_idempotency_key".into());
-    }
-    let route = match reset_account_route(account) {
+    let route = match validated_request_route(account, idempotency_key) {
         Ok(route) => route,
         Err(reason) => return ResetCreditConsumeOutcome::Unavailable(reason),
     };
     let token = account.tokens.access_token.trim();
-    if token.is_empty() || token.bytes().any(|byte| matches!(byte, b'\r' | b'\n')) {
-        return ResetCreditConsumeOutcome::Unavailable("active_access_token_invalid".into());
-    }
     let request = ureq::post(endpoint)
         .timeout(Duration::from_secs(20))
         .set("Authorization", &format!("Bearer {token}"))

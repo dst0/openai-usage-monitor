@@ -1,0 +1,24 @@
+# 2026-09-27 — Raw test mutex lock deadlocked the CODEX_HOME guard
+
+- **Status:** Resolved
+- **Task/context:** PR #20. The automatic-reset and uninstall review fixes were rebased onto `main` after #14, which made `storage::test_codex_home::TestCodexHome` the single test mechanism for `CODEX_HOME`.
+- **Unexpected observation or failure:** CI was cancelled at its 30-minute job timeout, and a local run hung for 53 minutes. The harness listed three `auto_reset::weekly_reset_service::retry_tests` tests as still running. Every test built on the new auto-reset `Home` fixture was blocked; the three named were just the ones scheduled first.
+- **Evidence:** A single-test run was killed after 20 seconds and sampled. The stack stopped in `Home::prepare` (`weekly_reset_fixture.test.rs:34`) → `TestCodexHome::new` (`test_codex_home.rs:33`) → `std::sync::Mutex::lock` → `__psynch_mutexwait`. `Home::prepare` had already locked `TEST_CODEX_HOME_MUTEX` itself (line 30) before calling `TestEnv::new`, which now creates a `TestCodexHome` and locks the same non-reentrant mutex on the same thread. The same fixture also set and removed `CODEX_HOME` by hand, which `tests/enforce_codex_home_isolation.rs` already rejected on that tree.
+- **Approaches tried:**
+  - **Attempt:** Rely on the guard's nested-use check.
+    - **Outcome:** Did not work.
+    - **Why:** The check records only guards. A raw `lock()` leaves no record, so the second acquisition waits forever instead of panicking.
+  - **Attempt:** Make `Home` a thin wrapper around `TestEnv`, which owns the only guard, and drop the fixture's own lock and `CODEX_HOME` save/restore.
+    - **Outcome:** Worked.
+    - **Why:** One acquisition per test. The guard's `Drop` clears `CODEX_HOME` and releases the lock on normal exit, early return, and unwinding.
+  - **Attempt:** Extend `tests/enforce_codex_home_isolation.rs` to reject `TEST_CODEX_HOME_MUTEX.lock(` outside the guard files.
+    - **Outcome:** Worked.
+    - **Why:** It failed on the hanging fixture and passes after the fix, so a raw lock now fails fast in the test suite instead of hanging CI.
+- **Root cause:** The branch's test fixture predated #14 and paired a raw serial-mutex lock with a helper that, after #14, takes the same lock. Rebasing without conflicts kept both.
+- **Resolution:** `Home` owns only a `TestEnv`. The enforcement test forbids direct locks of the serial mutex outside `storage/test_codex_home.rs` and its tests. `AGENTS.md` names the new check.
+- **Verification:**
+  - With a panic injected into `Home::prepare`, the 13 `Home` tests failed in under a second and the other 15 `auto_reset` tests passed: no hang, and the guard was released while unwinding.
+  - The full suite was run under a process-group timeout wrapper on a local merge of `origin/main` and this branch, with the pinned toolchain; see the PR for the counts.
+- **Prevention/follow-up:** Run long test suites under a timeout that kills the whole process group. After a rebase across a test-infrastructure change, grep new test files for the old mechanism even when Git reports no conflicts.
+- **Reusable learning:** A reentrancy check that records only one acquisition path cannot catch another path to the same mutex. Keep a single owner of the lock and enforce it statically.
+- **References:** `codex-switcher/src/auto_reset/weekly_reset_fixture.test.rs`, `codex-switcher/src/storage/test_codex_home.rs`, `codex-switcher/tests/enforce_codex_home_isolation.rs`, `AGENTS.md`.
