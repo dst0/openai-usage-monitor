@@ -1,6 +1,7 @@
 //! Minimal line-oriented reader for the block-style YAML used in
 //! `.github/workflows`. The crate has no YAML dependency; the policy rules fail
-//! closed on shapes this reader does not understand (for example flow mappings).
+//! closed on shapes this reader does not understand (for example flow mappings),
+//! and `yaml_limits.rs` rejects lines that would make it misread the rest.
 
 pub fn indent(line: &str) -> usize {
     line.len() - line.trim_start().len()
@@ -9,6 +10,15 @@ pub fn indent(line: &str) -> usize {
 pub fn is_content(line: &str) -> bool {
     let t = line.trim();
     !t.is_empty() && !t.starts_with('#')
+}
+
+/// Column where the line's key or scalar starts, after any `- ` list marker.
+/// Properties of a list-item mapping share this column.
+pub fn key_column(line: &str) -> usize {
+    match line.trim_start().strip_prefix('-') {
+        Some(rest) if rest.starts_with(' ') => line.len() - rest.trim_start().len(),
+        _ => indent(line),
+    }
 }
 
 /// One `key: value` line with list prefix, key/value quotes and trailing
@@ -66,14 +76,29 @@ pub fn entry(line: &str) -> Option<Entry<'_>> {
     })
 }
 
-/// Content lines indented deeper than `lines[at]`, up to the first dedent.
+/// Indices of the content lines nested under the key on `lines[at]`: those
+/// indented past its key column, up to the first line that is not.
+fn nested(lines: &[&str], at: usize) -> Vec<usize> {
+    let base = key_column(lines[at]);
+    (at + 1..lines.len())
+        .filter(|&i| is_content(lines[i]))
+        .take_while(|&i| indent(lines[i]) > base)
+        .collect()
+}
+
+/// Content lines nested under the key on `lines[at]`.
 pub fn block_after<'a>(lines: &[&'a str], at: usize) -> Vec<&'a str> {
-    let base = indent(lines[at]);
-    lines[at + 1..]
-        .iter()
-        .copied()
-        .filter(|l| is_content(l))
-        .take_while(|l| indent(l) > base)
+    nested(lines, at).into_iter().map(|i| lines[i]).collect()
+}
+
+/// Indices of the direct members of the block under `lines[at]`: nested lines
+/// at the first nested line's indentation. Deeper lines belong to a member.
+pub fn direct_members(lines: &[&str], at: usize) -> Vec<usize> {
+    let nested = nested(lines, at);
+    let column = nested.first().map_or(0, |&i| indent(lines[i]));
+    nested
+        .into_iter()
+        .filter(|&i| indent(lines[i]) == column)
         .collect()
 }
 

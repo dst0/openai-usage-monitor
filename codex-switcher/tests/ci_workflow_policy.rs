@@ -2,14 +2,18 @@
 //! permissions, actions pinned to full commit SHAs, explicit job timeouts and
 //! concurrency, an exact Rust toolchain, and required branch-protection checks
 //! that always report. Rule logic lives in `ci_workflow_policy/rules.rs`, with
-//! the checkout and trigger rules in `checkout.rs` and `triggers.rs`; negative
-//! cases live in `fixtures.rs` and in each rule's `.test.rs` file.
+//! the checkout and trigger rules in `checkout.rs` and `triggers.rs`, and
+//! `yaml_limits.rs` rejecting YAML the line reader cannot read; negative cases
+//! live in `fixtures.rs` and in each module's `.test.rs` file.
 
 use std::fs;
 use std::path::PathBuf;
 
 #[path = "ci_workflow_policy/yaml_lines.rs"]
 mod yaml_lines;
+
+#[path = "ci_workflow_policy/yaml_limits.rs"]
+mod yaml_limits;
 
 #[path = "ci_workflow_policy/rules.rs"]
 mod rules;

@@ -3,6 +3,7 @@
 
 use crate::checkout::checkout_credential_violations;
 use crate::triggers::trigger_filter_violations;
+use crate::yaml_limits::unreadable_line_violations;
 use crate::yaml_lines::{block_after, entry, indent, is_content, jobs, top_level_block};
 
 /// Upper bound for any job's `timeout-minutes`; a larger value is not a guard.
@@ -253,6 +254,7 @@ pub fn workflow_violations(text: &str) -> Vec<String> {
         concurrency_violations(text),
         floating_toolchain_violations(text),
         masked_failure_violations(text),
+        unreadable_line_violations(text),
     ]
     .concat()
 }
