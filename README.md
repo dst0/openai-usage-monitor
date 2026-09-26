@@ -303,7 +303,10 @@ cxi wrap exec "fix bug in auth"
 # Verify/resume eligible quota-blocked or restart-captured tasks:
 cxi resume
 
-# Or resume a specific thread by ID or URL:
+# Or resume a specific thread by ID or URL. This also resumes a turn that ended
+# with a non-quota error before a final agent message (for example an outage 401),
+# claims a stale deferred owner-wait left for that task, and starts
+# /Applications/ChatGPT.app in the background when it is closed:
 cxi resume 01a07d3c-3008-75c2-87a6-2c5c75f0e48b
 cxi resume "codex://threads/01a07d3c-3008-75c2-87a6-2c5c75f0e48b"
 
@@ -432,7 +435,8 @@ background helper can read the Desktop window.
 
 - **`InterruptedByQuota`**: The turn's final `task_complete` contains an `error` payload matching `usage_limit_exceeded`, `workspace_owner_credits_depleted`, `out of credits`, or active `rate_limit_reached_type`. **Automatically resumed.**
 - **`ActiveInProgress`**: The latest event is a mid-turn event (`user_message`, `reasoning`, `custom_tool_call`, etc.) with no closing `task_complete`. A captured restart may resume it from its post-shutdown checkpoint. Discovery-only recovery refuses this ambiguous state so it cannot duplicate or stop a task the user already resumed.
-- **`CleanCompleted`**: The last turn completed cleanly with no error, or a non-quota execution error. **Never auto-resumed.**
+- **`InterruptedByError`**: The turn's final `task_complete` carries a non-quota `error` (for example a 401 during a service or auth outage) and no non-empty `last_agent_message`. The work is unfinished, so an explicit `cxi resume <id>` sends one `continue`. Because the error can also be a policy block, unattended recovery (discovery, captured restart, deferred retry) never dispatches it and drops any journaled retry intent for it.
+- **`CleanCompleted`**: The last turn completed with no error, or with an error after a final agent message. **Never auto-resumed.**
 - **`TurnAborted`**: Ambiguous user/app interruption. Auto-recovered only when captured in the pre-restart manifest; an explicit `cxi resume <id>` can also recover it. Historical user Stop actions are not automatically revived.
 - **Filtered Metadata**: Events such as `thread_settings_applied`, `item_completed`, and `token_count` are filtered out during tail inspection so they never mask or falsify turn completion states.
 

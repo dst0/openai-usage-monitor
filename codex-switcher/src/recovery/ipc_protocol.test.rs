@@ -22,6 +22,12 @@ fn desktop_ipc_dispatches_only_eligible_work() {
     ] {
         assert!(should_dispatch(TurnAborted, 0, mode));
         assert!(should_dispatch(InterruptedByQuota, 0, mode));
+        // An error may be a policy block; only an explicit request continues it.
+        assert_eq!(
+            should_dispatch(InterruptedByError, 0, mode),
+            mode == RecoveryMode::ExplicitTarget
+        );
+        assert!(!should_dispatch(InterruptedByError, 1, mode));
         assert!(!should_dispatch(InterruptedByQuota, 1, mode));
         assert!(!should_dispatch(CleanCompleted, 0, mode));
         assert!(!should_dispatch(Unknown, 0, mode));

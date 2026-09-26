@@ -84,7 +84,7 @@ built app signature and running process after installation.
 ## Core CLI Commands
 - `cxi status`: Check quota table across all accounts (`5H SPRINT`, `7D LIMIT`, `PLAN (MULT)`, `CREDITS`).
 - `cxi switch <account>`: Switch active account (automatically recovers eligible quota-blocked or restart-captured turns; ambiguous active turns are not dispatched by discovery-only recovery).
-- `cxi resume [thread-id]`: Resume an eligible quota-blocked or restart-captured thread through the Desktop owner's same-user IPC channel. Accessibility is used only for recovery visibility/banner verification, not to dispatch the turn.
+- `cxi resume [thread-id]`: Resume an eligible quota-blocked or restart-captured thread through the Desktop owner's same-user IPC channel. An explicit ID also resumes a turn that ended with a non-quota error and no final agent message, and claims any stale deferred owner-wait for that task for the duration of the run (the journal keeps the original account binding and checkpoint, so a failure before dispatch or a crash leaves the deferred retry unchanged). When ChatGPT is closed and there is something to resume, it is started in the background first. Accessibility is used only for recovery visibility/banner verification, not to dispatch the turn.
 - `cxi config`: Inspect and configure auto-switch modes (`--auto-switch-enabled`, `--auto-switch-business-only`, `--auto-switch-business-priority`, `--restart-app-on-switch`, `--preserve-window-bounds`).
 - `cxi set-multiplier <account> <val>`: Set custom quota multiplier override (e.g. 20 for Pro 20x).
 - `cxi reset-multiplier <account>`: Reset multiplier back to auto-detected default.

@@ -3,17 +3,16 @@ use super::{
     desktop_ipc::DesktopIpc,
     manifest_store::{
         current_account_binding, finalize_target, load_manifest, prune_ineligible_targets,
-        validate_target_account_binding, write_manifest,
+        write_manifest,
     },
-    pending_target::PendingTarget,
     recovery_banner::RecoveryBanner,
+    recovery_checkpoint::checkpoint_targets,
     recovery_mode::RecoveryMode,
     recovery_target::{
         prepare_target, record_target_state, RecoveryTarget, RECOVERY_DISPATCH_TIMEOUT,
         RECOVERY_EXECUTION_TIMEOUT,
     },
     target_dispatch::dispatch_if_needed,
-    thread_identity::valid_id,
 };
 use crate::{recovery_banner::BannerSessionStatus, storage, switcher};
 use std::{
@@ -46,36 +45,9 @@ pub(crate) fn recover_threads_with_banner(
     let home = storage::codex_home();
     let mut pending_manifest = load_manifest()?;
     let binding = current_account_binding();
-    validate_target_account_binding(&pending_manifest, ids, binding.as_deref())?;
-    for id in ids {
-        if !valid_id(id) {
-            return Err("Invalid thread ID".into());
-        }
-        // `save_pending` already captured pre-restart offsets. Recovery-only
-        // calls reach this path without that earlier phase, so checkpoint them
-        // here before any Desktop request is sent.
-        let offset = switcher::find_thread_rollout_path(&home, id)
-            .and_then(|path| path.metadata().ok().map(|metadata| metadata.len()));
-        if let Some(target) = pending_manifest.iter_mut().find(|target| target.id == *id) {
-            // A recovery-only request is a new operation and must never reuse a
-            // stale offset left by an earlier failed restart. A captured restart
-            // intentionally retains its pre-shutdown checkpoint.
-            if !mode.preserves_checkpoint() && !target.awaiting_owner {
-                target.offset = offset;
-            }
-        } else {
-            pending_manifest.push(PendingTarget {
-                id: id.clone(),
-                offset,
-                awaiting_owner: false,
-                captured_restart: mode == RecoveryMode::CapturedRestart,
-                owner_account_id: None,
-            });
-        }
-    }
-
+    let (previous_pending, claimed) =
+        checkpoint_targets(&home, &mut pending_manifest, ids, mode, binding.as_deref())?;
     write_manifest(&pending_manifest)?;
-    let previous_pending = pending_manifest.clone();
 
     // Establish all checkpoints before actions in any target, so early work in
     // target N cannot be missed while target 1 is being dispatched.
@@ -227,7 +199,7 @@ pub(crate) fn recover_threads_with_banner(
             target.owner_unavailable,
             target.dispatched,
             binding.as_deref(),
-            target.account_mismatch,
+            target.account_mismatch || claimed.contains(&target.id),
         );
     }
     for id in &preparation_failures {
@@ -237,7 +209,7 @@ pub(crate) fn recover_threads_with_banner(
             true,
             false,
             binding.as_deref(),
-            false,
+            claimed.contains(id),
         );
     }
     for id in completed_without_action {

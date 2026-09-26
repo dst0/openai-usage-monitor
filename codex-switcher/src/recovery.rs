@@ -17,6 +17,7 @@ mod pending_target;
 mod queue_snapshot;
 mod recovery_banner;
 mod recovery_banner_status;
+mod recovery_checkpoint;
 mod recovery_mode;
 mod recovery_service;
 mod recovery_target;
@@ -75,6 +76,9 @@ mod observer_tests;
 #[cfg(test)]
 #[path = "recovery/queue_snapshot.test.rs"]
 mod queue_snapshot_tests;
+#[cfg(test)]
+#[path = "recovery/recovery_checkpoint.test.rs"]
+mod recovery_checkpoint_tests;
 #[cfg(test)]
 #[path = "recovery/recovery_service.test.rs"]
 mod recovery_service_tests;

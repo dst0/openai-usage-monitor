@@ -23,9 +23,12 @@ pub(super) fn should_dispatch(
     // A writer lock proves only that Desktop has mounted/owns the thread. It
     // does not distinguish a running turn from an interrupted one. Therefore
     // ambiguous ActiveInProgress is dispatchable only when this operation owns
-    // a pre-restart checkpoint or the user explicitly named the target.
+    // a pre-restart checkpoint or the user explicitly named the target. An
+    // error-ended turn may be a policy block rather than an outage, so only an
+    // explicit user request continues it.
     pending == 0
         && (matches!(state, InterruptedByQuota | TurnAborted)
+            || (state == InterruptedByError && mode == RecoveryMode::ExplicitTarget)
             || (state == ActiveInProgress && mode.allows_ambiguous_active_dispatch()))
 }
 
@@ -63,8 +66,8 @@ pub(super) fn handle_owner_resolution(
     }
 }
 
-fn mark_target_dispatch(target: &mut RecoveryTarget) -> Result<(), String> {
-    match mark_dispatch_attempt(&target.id) {
+fn mark_target_dispatch(target: &mut RecoveryTarget, mode: RecoveryMode) -> Result<(), String> {
+    match mark_dispatch_attempt(&target.id, mode) {
         Ok(()) => Ok(()),
         Err(DispatchMarkError::AccountChanged) => {
             target.account_mismatch = true;
@@ -155,7 +158,7 @@ pub(super) fn dispatch_if_needed(
         )? {
             return Ok(());
         }
-        mark_target_dispatch(target)?;
+        mark_target_dispatch(target, mode)?;
         // Mark before IPC. A disconnect after forwarding has an unknown
         // outcome, so this operation must not retry the queue update.
         target.dispatched = true;
@@ -198,7 +201,7 @@ pub(super) fn dispatch_if_needed(
     )? {
         return Ok(());
     }
-    mark_target_dispatch(target)?;
+    mark_target_dispatch(target, mode)?;
     // Mark before the call. A timeout is an unknown outcome, so this operation
     // must never retry and risk starting the interrupted turn twice.
     target.dispatched = true;

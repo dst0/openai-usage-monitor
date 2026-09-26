@@ -5,6 +5,7 @@ use super::{
         validate_target_account_binding, write_manifest,
     },
     pending_target::PendingTarget,
+    recovery_mode::RecoveryMode,
     stored_manifest::StoredManifest,
 };
 use std::{path::PathBuf, process::Command};
@@ -186,16 +187,27 @@ fn dispatch_marker_is_durable_before_any_ipc_send() {
         },
     ])
     .unwrap();
-    assert!(mark_dispatch_attempt_for_account(first, Some("account-b")).is_err());
+    assert!(mark_dispatch_attempt_for_account(
+        first,
+        Some("account-b"),
+        RecoveryMode::DeferredCaptured
+    )
+    .is_err());
     assert_eq!(load_manifest().unwrap().len(), 2);
-    mark_dispatch_attempt_for_account(first, Some("account-a")).unwrap();
+    mark_dispatch_attempt_for_account(first, Some("account-a"), RecoveryMode::DeferredCaptured)
+        .unwrap();
     // A fresh process reload sees only the other target, even if the first
     // process crashed immediately before or after its IPC write.
     let reloaded = load_manifest().unwrap();
     assert_eq!(reloaded.len(), 1);
     assert_eq!(reloaded[0].id, other);
     assert!(reloaded[0].awaiting_owner);
-    assert!(mark_dispatch_attempt_for_account(first, Some("account-a")).is_err());
+    assert!(mark_dispatch_attempt_for_account(
+        first,
+        Some("account-a"),
+        RecoveryMode::DeferredCaptured
+    )
+    .is_err());
 }
 
 #[test]
@@ -391,4 +403,48 @@ fn load_pending_filters_stale_targets_without_writing_the_manifest() {
     assert!(write_manifest(&[]).is_ok());
     assert!(!temp_dir.join("desktop-recovery.json").exists());
     assert!(load_pending().unwrap().is_empty());
+}
+
+#[test]
+fn unattended_retry_intent_is_dropped_for_error_ended_turns_only() {
+    let home = std::env::temp_dir().join(format!(
+        "codex-error-retention-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    let sessions = home.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let error_id = "01a098c2-0fae-74d2-a80c-45d89e910e81";
+    let quota_id = "01a098c2-0fae-74d2-a80c-45d89e910e82";
+    for (id, line) in [
+        (
+            error_id,
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t","last_agent_message":null,"error":{"message":"unexpected status 401 Unauthorized","codex_error_info":"other"}}}"#,
+        ),
+        (
+            quota_id,
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t","last_agent_message":null,"error":{"message":"out of credits","codex_error_info":"usage_limit_exceeded"}}}"#,
+        ),
+    ] {
+        std::fs::write(
+            sessions.join(format!("rollout-2026-09-26T00-00-00-{id}.jsonl")),
+            format!("{line}\n"),
+        )
+        .unwrap();
+    }
+    let target = |id: &str| PendingTarget {
+        id: id.into(),
+        offset: Some(42),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("account-a".into()),
+    };
+    let mut pending = vec![target(error_id), target(quota_id)];
+    let now = chrono::Utc::now().timestamp();
+    prune_ineligible_targets_with(&home, &mut pending, |_| Ok(Some(now))).unwrap();
+    std::fs::remove_dir_all(&home).unwrap();
+    // A deferred worker could never dispatch the error-ended turn, so keeping
+    // it would only re-probe it every 15 seconds for four hours.
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, quota_id);
 }

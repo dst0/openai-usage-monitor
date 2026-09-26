@@ -3,6 +3,7 @@ use super::{
     pending_manifest::PendingManifest,
     pending_target::PendingTarget,
     queue_snapshot::{pending_count, query},
+    recovery_mode::RecoveryMode,
     stored_manifest::StoredManifest,
     thread_identity::valid_id,
 };
@@ -88,6 +89,9 @@ pub(super) fn prune_ineligible_targets_with(
             switcher::ThreadRolloutState::ActiveInProgress
             | switcher::ThreadRolloutState::InterruptedByQuota
             | switcher::ThreadRolloutState::TurnAborted => true,
+            // Only an explicit resume may continue an error-ended turn, so an
+            // unattended retry intent for it is dropped.
+            switcher::ThreadRolloutState::InterruptedByError => false,
             switcher::ThreadRolloutState::CleanCompleted => pending_count(home, &target.id)? > 0,
             // An unreadable rollout must not erase an undispatched intent.
             // Recovery still revalidates the state before any IPC send.
@@ -107,11 +111,12 @@ pub(super) fn finalize_target(
     owner_unavailable: bool,
     dispatched: bool,
     account_id: Option<&str>,
-    account_mismatch: bool,
+    preserve_binding: bool,
 ) {
-    if account_mismatch && !dispatched {
+    if preserve_binding && !dispatched {
         // The original account binding stays intact until that account is
-        // active again or the ordinary eligibility window expires.
+        // active again or the ordinary eligibility window expires. This also
+        // covers an explicit request that claimed a deferred target in memory.
     } else if owner_unavailable && !dispatched && account_id.is_some() {
         if let Some(target) = targets.iter_mut().find(|target| target.id == id) {
             target.awaiting_owner = true;
@@ -143,14 +148,15 @@ pub(super) fn validate_target_account_binding(
 
 /// Remove the retry intent durably before an owner-routed request can be sent.
 /// A crash after this point has an unknown outcome and must not redispatch.
-pub(super) fn mark_dispatch_attempt(id: &str) -> Result<(), DispatchMarkError> {
+pub(super) fn mark_dispatch_attempt(id: &str, mode: RecoveryMode) -> Result<(), DispatchMarkError> {
     let binding = current_account_binding();
-    mark_dispatch_attempt_for_account(id, binding.as_deref())
+    mark_dispatch_attempt_for_account(id, binding.as_deref(), mode)
 }
 
 pub(super) fn mark_dispatch_attempt_for_account(
     id: &str,
     binding: Option<&str>,
+    mode: RecoveryMode,
 ) -> Result<(), DispatchMarkError> {
     let mut targets = load_manifest().map_err(DispatchMarkError::Other)?;
     let Some(target) = targets.iter().find(|target| target.id == id) else {
@@ -158,7 +164,11 @@ pub(super) fn mark_dispatch_attempt_for_account(
             "Recovery checkpoint disappeared before IPC dispatch".into(),
         ));
     };
-    if target.awaiting_owner && (binding.is_none() || target.owner_account_id.as_deref() != binding)
+    // An explicit request claimed this target; the binding guards only
+    // unattended retries (see `recovery_checkpoint`).
+    if target.awaiting_owner
+        && mode != RecoveryMode::ExplicitTarget
+        && (binding.is_none() || target.owner_account_id.as_deref() != binding)
     {
         return Err(DispatchMarkError::AccountChanged);
     }

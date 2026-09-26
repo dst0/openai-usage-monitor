@@ -390,6 +390,7 @@ fn test_append_eligible_pending_rejects_stale_and_completed_tasks() {
     let completed_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e402";
     let unknown_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e403";
     let recent_aborted_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e404";
+    let recent_error_id = "01a07d3c-3008-75c2-87a6-2c5c75f0e405";
 
     let now = chrono::Utc::now().timestamp();
     let old_time = now - 4 * 86400; // 4 days ago
@@ -401,7 +402,8 @@ fn test_append_eligible_pending_rejects_stale_and_completed_tasks() {
              INSERT INTO threads VALUES ('{stale_id}', 0, 'user', {old_time}, '');\
              INSERT INTO threads VALUES ('{completed_id}', 0, 'user', {fresh_time}, '');\
              INSERT INTO threads VALUES ('{unknown_id}', 0, 'user', {fresh_time}, '');\
-             INSERT INTO threads VALUES ('{recent_aborted_id}', 0, 'user', {fresh_time}, '');"
+             INSERT INTO threads VALUES ('{recent_aborted_id}', 0, 'user', {fresh_time}, '');\
+             INSERT INTO threads VALUES ('{recent_error_id}', 0, 'user', {fresh_time}, '');"
         );
     let result = Command::new("/usr/bin/sqlite3")
         .arg(&database)
@@ -429,6 +431,11 @@ fn test_append_eligible_pending_rejects_stale_and_completed_tasks() {
         r#"{"type":"event_msg","payload":{"type":"turn_aborted"}}"#,
     );
 
+    create_rollout(
+        recent_error_id,
+        r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t2","last_agent_message":null,"error":{"message":"unexpected status 401 Unauthorized","codex_error_info":"other"}}}"#,
+    );
+
     let mut in_progress = Vec::new();
     append_eligible_pending(
         &root,
@@ -438,13 +445,14 @@ fn test_append_eligible_pending_rejects_stale_and_completed_tasks() {
             completed_id.to_string(),
             unknown_id.to_string(),
             recent_aborted_id.to_string(),
+            recent_error_id.to_string(),
         ],
     );
 
     assert_eq!(
         in_progress,
         vec![recent_aborted_id.to_string()],
-        "stale, cleanly completed, and unknown tasks must never be appended"
+        "stale, cleanly completed, unknown, and error-ended tasks must never be appended"
     );
 
     std::fs::remove_dir_all(root).unwrap();

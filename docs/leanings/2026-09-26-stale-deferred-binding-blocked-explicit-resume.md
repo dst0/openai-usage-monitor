@@ -1,0 +1,22 @@
+# 2026-09-26 — Stale deferred binding blocked explicit resume
+
+- **Status:** Partial
+- **Task/context:** `cxi resume <id>` for two captured-restart targets that the recovery journal (`~/.codex/desktop-recovery.json`) held as `awaiting_owner: true` with an `owner_account_id` (`codex-switcher/src/recovery/`).
+- **Unexpected observation or failure:** Both runs ended with `RECOVERY_FAILED reason=Active Desktop account changed before deferred recovery` even though the configured active account, the Desktop `auth.json` account ID, and the JWT email all matched the journal's owner binding when inspected afterwards.
+- **Evidence:** The message is produced only by the pre-IPC dispatch marker (`mark_dispatch_attempt_for_account`) when an `awaiting_owner` target's binding differs from a freshly re-read account binding. The run-start check (`validate_target_account_binding`) would have failed with a different message, so the binding matched at start. The installed binary was built from the same source, and neither `auth.json` nor `accounts.json` was modified during the two runs (file modification times predate them). The daemon was concurrently reissuing background task links for the same two targets.
+- **Approaches tried:**
+  - **Attempt:** Find the transient that changed the mark-time binding from logs and file state.
+    - **Outcome:** Partial
+    - **Why:** Monitor logs record only the result line and redact thread IDs; no evidence shows which read differed.
+  - **Attempt:** Persist the claim: clear `awaiting_owner` and `owner_account_id` in the journal before dispatch and re-defer under the then-verified account on failure.
+    - **Outcome:** Did not work
+    - **Why:** Adversarial review showed a crash or Ctrl-C during the up-to-90-second owner discovery would leave an unbound ordinary pending entry that the next unattended restart dispatches under any account; it also paired `captured_restart` with the new offset and dropped a valid deferred entry when no account was verified.
+  - **Attempt:** Claim only in memory: the operation's checkpoint view clears the binding and uses a fresh offset, the explicit-mode dispatch marker skips the binding check, and `finalize_target` preserves the original journal entry on any pre-dispatch failure.
+    - **Outcome:** Worked
+    - **Why:** An explicit resume is a new user-authorized operation, and the durable journal still reflects only the unattended retry the binding was protecting.
+- **Root cause:** Confirmed design defect: explicit resume inherited the deferred owner-wait binding and its mark-time re-check. The exact transient that made the re-read binding differ is unproven.
+- **Resolution:** New `recovery_checkpoint.rs` (`checkpoint_targets`) returns an in-memory view with explicit claims; `mark_dispatch_attempt_for_account` takes the recovery mode and skips the deferred binding only for `RecoveryMode::ExplicitTarget`; `finalize_target`'s `preserve_binding` keeps claimed entries on pre-dispatch failure. Automatic and deferred modes keep the binding check unchanged. Resume also launches ChatGPT in the background when it is closed and an unarchived user task is targeted.
+- **Verification:** `recovery_checkpoint.test.rs` (disabling the claim fails three cases; removing the explicit marker bypass fails the journal round-trip case, which also proves a crash leaves the entry deferred and excluded by `load_ownerless_pending`), `codex_availability_service.test.rs`; full `cargo test` passes. The `preserve_binding` wiring inside `recover_threads_with_banner` is not covered by a unit test because that function requires a live banner and Desktop IPC. No live thread was dispatched while testing.
+- **Prevention/follow-up:** If a mark-time account mismatch recurs in automatic modes, log which binding component (accounts file, auth account ID, or JWT email) failed, without logging identities.
+- **Reusable learning:** Safety bindings for unattended retries must not block an explicit user request for the same target, but the override belongs to the operation, not the durable journal: never persist a relaxed safety state before the irreversible step it is meant to permit.
+- **References:** `codex-switcher/src/recovery/recovery_checkpoint.rs`, `codex-switcher/src/recovery/recovery_checkpoint.test.rs`, `codex-switcher/src/recovery/manifest_store.rs`.

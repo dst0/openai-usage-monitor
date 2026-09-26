@@ -1,0 +1,22 @@
+# 2026-09-26 — Outage error turns were classified as completed
+
+- **Status:** Resolved
+- **Task/context:** `cxi resume <id>` after a Codex service outage in which every request to the Codex responses endpoint returned HTTP 401 for about an hour (`codex-switcher/src/switcher/thread_rollout_inspector.rs`).
+- **Unexpected observation or failure:** Eight interrupted threads printed `RECOVERY_SKIPPED thread=<id> reason=completed` and `RECOVERY_RESULT verified_or_completed=1 failed=0`; no `continue` was sent.
+- **Evidence:** Each affected rollout ends with `task_complete` whose `last_agent_message` is `null` and whose `error` is an object (`codex_error_info` of `other` or `unauthorized`, message `unexpected status 401 Unauthorized ...`), followed only by filtered metadata such as `thread_settings_applied`. The inspector returned `CleanCompleted` for every non-quota error, and `prepare_target` skips `CleanCompleted` targets with no queue.
+- **Approaches tried:**
+  - **Attempt:** Widen the quota keyword match to include auth failures.
+    - **Outcome:** Did not work
+    - **Why:** It would mislabel auth outages as quota exhaustion, feeding the watchdog, auto-reset credit spending, and auto-switch triggers.
+  - **Attempt:** Add a distinct `InterruptedByError` state for a non-quota error without a non-empty final agent message, dispatchable like other interrupted states.
+    - **Outcome:** Worked
+    - **Why:** It keeps quota semantics unchanged while no longer treating unfinished work as complete.
+  - **Attempt:** Make `InterruptedByError` dispatchable in every recovery mode and retained in the journal.
+    - **Outcome:** Did not work
+    - **Why:** Adversarial review of a read-only tally of local rollouts found that error turns also include policy blocks (`cyber_policy`, `misalignment_policy_violation`) with the same `null` final message; unattended recovery would send `continue` into them, and a retained deferred intent would be re-probed for hours without ever being dispatchable.
+- **Root cause:** The rollout classifier equated "the turn closed" with "the work finished". A turn closed by an error before any final agent message is interrupted.
+- **Resolution:** `ThreadRolloutState::InterruptedByError`, dispatchable only in `RecoveryMode::ExplicitTarget`; unattended modes refuse it, journal retention drops it, and pending-manifest append excludes it. An error after a final agent message, or any non-null non-string `last_agent_message`, stays `CleanCompleted` (fail closed).
+- **Verification:** `thread_rollout_inspector.test.rs` (the outage cases fail against the old classifier), `desktop_ipc_dispatches_only_eligible_work`, `unattended_retry_intent_is_dropped_for_error_ended_turns_only`, and `test_append_eligible_pending_rejects_stale_and_completed_tasks`; mutations that allow unattended dispatch or retention each fail a test; full `cargo test` passes.
+- **Prevention/follow-up:** README, AGENTS.md, CODEX.md, and skill docs describe `InterruptedByError`.
+- **Reusable learning:** Classify a turn by whether its work finished (final agent message), not merely by the presence of a terminal event; keep quota classification separate from other errors, and let only an explicit user request continue a turn whose error could be a policy decision.
+- **References:** `codex-switcher/src/switcher/thread_rollout_state.rs`, `codex-switcher/src/switcher/thread_rollout_inspector.test.rs`.
