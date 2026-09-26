@@ -21,7 +21,7 @@ Fixes # (issue number if applicable)
 Every pull request must fulfill these conditions before being reviewed by the maintainer:
 
 - [ ] **Tests pass locally**:
-  - `cd codex-switcher && cargo test` (Rust CLI test suite)
+  - `cd codex-switcher && cargo test --locked` (Rust CLI test suite against the committed `Cargo.lock`)
   - `./scripts/test_swift.sh` (Swift Menu Bar test suite)
 - [ ] **Security & Privacy**:
   - No access tokens, refresh tokens, API keys, or private paths are committed.
