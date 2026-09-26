@@ -1,6 +1,7 @@
 use super::{
     deferred_recovery_service::{
-        probe_or_retry_navigation, select_ready_targets, should_retry_navigation,
+        probe_or_retry_navigation, select_ready_targets, select_scanned_ready_targets,
+        should_retry_navigation,
     },
     ipc_call_error::IpcCallError,
     pending_target::PendingTarget,
@@ -115,4 +116,37 @@ fn account_change_does_not_probe_or_retry_deferred_target() {
     let ready =
         select_ready_targets(&[target], "account-b", |_| panic!("wrong account probed")).unwrap();
     assert!(ready.is_empty());
+}
+
+#[test]
+fn owner_probe_precedes_bounded_rollout_scan() {
+    let target = PendingTarget {
+        id: "01a098c2-0fae-74d2-a80c-45d89e910e80".into(),
+        offset: Some(84),
+        awaiting_owner: true,
+        captured_restart: true,
+        owner_account_id: Some("account-a".into()),
+    };
+    let no_owner = select_scanned_ready_targets(
+        std::slice::from_ref(&target),
+        "account-a",
+        |_| Ok(false),
+        |_, _| panic!("cold task without an owner scanned its rollout"),
+    )
+    .unwrap();
+    assert!(no_owner.is_empty());
+
+    let mut observed_budget = 0;
+    let ready = select_scanned_ready_targets(
+        std::slice::from_ref(&target),
+        "account-a",
+        |_| Ok(true),
+        |_, budget| {
+            observed_budget = *budget;
+            Ok(true)
+        },
+    )
+    .unwrap();
+    assert_eq!(ready, [target.id]);
+    assert_eq!(observed_budget, 16 * 1024 * 1024);
 }

@@ -1,0 +1,22 @@
+# 2026-09-26 — Direct switch needed a durable intent before auth replacement
+
+- **Status:** Partial
+- **Task/context:** Reviewing direct `cxi switch` across Desktop shutdown, shared-auth replacement, and the final account-registry commit.
+- **Unexpected observation or failure:** A process crash after replacing `auth.json` could leave `accounts.json` naming the old active account. The pre-shutdown target object could also become stale during shutdown; the old auth writer would try its old tokens before the final registry commit rejected them.
+- **Evidence:** The old direct-switch flow had no durable intent between auth write and registry commit. An isolated stale-target interleaving test failed before the fresh prewrite recheck and passed after it. Synthetic crash-boundary tests now exercise both sides of the auth write, extension-only mutation, and journal symlink/mode rejection; no live account was switched.
+- **Approaches tried:**
+  - **Attempt:** Rely on the final fresh-registry commit and conditional auth rollback alone.
+    - **Outcome:** Did not cover process death.
+    - **Why:** Rollback code cannot run after the process exits between the two writes.
+  - **Attempt:** Store full previous and target authentication in an intent file.
+    - **Outcome:** Rejected.
+    - **Why:** It would create another persistent plaintext credential copy.
+  - **Attempt:** Store account IDs and SHA-256 fingerprints before auth replacement, then reconcile under the recovery operation lock against private no-follow auth reads and a fresh registry.
+    - **Outcome:** Worked in synthetic crash-boundary tests.
+    - **Why:** An exact previous pair can clear the intent; an exact target auth can conditionally finish the active-ID commit; changed state remains blocked without copying tokens into the journal.
+- **Root cause:** Direct switching treated two separate durable files as one transaction and retained a target clone across Desktop shutdown.
+- **Resolution:** The post-shutdown target is revalidated before auth write. A private bounded direct-switch journal is persisted first; direct switch and distribution entrypoints reconcile it before further account changes. Failed rollback clears it only after exact prior auth and registry readback and before Desktop relaunch. A prewrite failure relaunches the prior Desktop only when that same prior auth/registry pair still matches.
+- **Verification:** Focused direct-switch journal tests and stale-target regression passed in an isolated `CODEX_HOME`. Full Rust gates, installed-app behavior, and restart recovery remain integration checks; this entry remains Partial until those finish.
+- **Prevention/follow-up:** Keep automatic switching disabled while cold-task mounting and selected-window restoration remain unproven; test the exact crash boundary and verify installed-app recovery separately.
+- **Reusable learning:** Persist a nonsecret transaction intent before the first write of a multi-file account switch; reconcile it against exact live state before any later switch.
+- **References:** `codex-switcher/src/switcher/direct_switch_journal.rs`, `codex-switcher/src/switcher/direct_switch_journal.test.rs`, `codex-switcher/src/switcher/account_switch_auth_service.test.rs`, `CODEX.md`.

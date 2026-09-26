@@ -222,13 +222,7 @@ impl DistributionDecisionService {
                     .map(|idx| accounts_file.accounts[idx].id.clone())
                     .unwrap_or_else(|_| id.to_string())
             })
-            .or_else(|| {
-                if eligible_accounts.len() >= 2 {
-                    Some(eligible_accounts[1].id.clone())
-                } else {
-                    eligible_accounts.first().map(|a| a.id.clone())
-                }
-            });
+            .or_else(|| target_app.clone());
 
         let app_depleted = current_app_val
             .as_deref()
@@ -264,14 +258,8 @@ impl DistributionDecisionService {
                 .map(|s| s.eq_ignore_ascii_case(target_cli.as_deref().unwrap_or("")))
                 == Some(true);
 
-        let should_separate = eligible_accounts.len() >= 2
-            && current_app_val.is_some()
-            && current_cli_val.is_some()
-            && current_app_val == current_cli_val;
-
-        let app_switch_needed =
-            !app_matches || app_depleted || (should_separate && is_desktop_running);
-        let cli_switch_needed = !cli_matches || cli_depleted || should_separate;
+        let app_switch_needed = !app_matches || app_depleted;
+        let cli_switch_needed = !cli_matches || cli_depleted;
 
         if !app_switch_needed && !cli_switch_needed && !request.force_restart {
             return DistributionPlan::no_action(

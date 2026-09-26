@@ -1,0 +1,22 @@
+# 2026-09-26 — Direct switch auth replacement needed a cross-account CAS
+
+- **Status:** Resolved
+- **Task/context:** Hardening shared `auth.json` replacement and rollback during direct `cxi switch`.
+- **Unexpected observation or failure:** A concurrent auth writer could be overwritten; rollback accepted a changed top-level extension at readback; generic token-field preservation would copy an old account's unknown token extension to the new account. A prior `OPENAI_API_KEY` could also survive the switch.
+- **Evidence:** Isolated tests showed the old rollback relaunched after an extension-only mismatch and overwrote an external synthetic auth change. A composition test showed a prior synthetic API key surviving. Tests confirmed that switch-specific CAS must retain top-level extensions while replacing the token object as a unit.
+- **Approaches tried:**
+  - **Attempt:** Unconditionally rewrite active auth and compare only known fields after rollback.
+    - **Outcome:** Did not work.
+    - **Why:** Another writer's auth or extension change could be lost or incorrectly accepted.
+  - **Attempt:** Reuse generic CAS token merging without a switch-specific policy.
+    - **Outcome:** Did not work.
+    - **Why:** It carried unknown fields from the previous account's token object into the target account.
+  - **Attempt:** Compare the complete existing auth document, replace the token object whole, and use exact committed auth for conditional rollback and readback.
+    - **Outcome:** Worked in focused synthetic tests.
+    - **Why:** Unrelated external auth changes block rollback, while top-level Desktop extensions survive.
+- **Root cause:** Direct switching treated shared auth as a single-writer file and did not distinguish document-level extensions from account-bound token extensions.
+- **Resolution:** Existing-auth switch and rollback now use switch-specific compare-write, clear prior API keys, and compare the full auth document after registry commit.
+- **Verification:** Focused `codex_availability_service` and `account_switch_auth_service` tests passed with isolated `CODEX_HOME`; no live account was switched.
+- **Prevention/follow-up:** Keep cross-account token replacement separate from same-account credential refresh; do not claim an advisory Monitor lock prevents an uncooperative Desktop writer after the final check.
+- **Reusable learning:** On cross-account auth handoff, CAS the whole observed document but replace account-bound tokens wholesale and verify the exact result.
+- **References:** `codex-switcher/src/storage/active_auth_compare_write_service.rs`, `codex-switcher/src/switcher/account_switch_auth_service.rs`, `codex-switcher/src/switcher/codex_availability_service.test.rs`, `CODEX.md`.

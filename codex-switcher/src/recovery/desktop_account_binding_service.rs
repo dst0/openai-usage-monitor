@@ -17,7 +17,13 @@ impl DesktopAccountBindingService {
             cli_account_id,
             switcher::current_codex_app_pids,
             |pid| WindowProcessValidationService::inspect(&mut backend, pid).ok(),
-            || DesktopAppSession::load(&storage::codex_home().join("desktop-app-session.json")),
+            || {
+                DesktopAppSession::load_checked(
+                    &storage::codex_home().join("desktop-app-session.json"),
+                )
+                .ok()
+                .flatten()
+            },
             |id| accounts.accounts.iter().any(|account| account.id == id),
         )
     }

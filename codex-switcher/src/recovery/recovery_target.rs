@@ -6,18 +6,21 @@ use super::{
 };
 use crate::switcher;
 use std::{
+    os::unix::fs::MetadataExt,
     path::Path,
     time::{Duration, Instant},
 };
 pub(super) const RECOVERY_DISPATCH_TIMEOUT: Duration = Duration::from_secs(90);
 pub(super) const RECOVERY_EXECUTION_TIMEOUT: Duration = Duration::from_secs(600);
 pub(crate) const RECOVERY_SOAK_WINDOW: Duration = Duration::from_secs(10);
+pub(super) const FOREGROUND_SCAN_BUDGET_BYTES: u64 = 16 * 1024 * 1024;
 
 pub(super) struct RecoveryTarget {
     pub(super) id: String,
     pub(super) state: switcher::ThreadRolloutState,
     pub(super) writer_locked: bool,
     pub(super) observer: Observer,
+    pub(super) scan_complete: bool,
     pub(super) existing_queue: usize,
     pub(super) mounted_by_recovery: bool,
     pub(super) owner_unavailable: bool,
@@ -35,6 +38,7 @@ pub(super) fn prepare_target(
     home: &Path,
     id: &str,
     baseline: Option<u64>,
+    scan_budget: u64,
 ) -> Result<Option<RecoveryTarget>, String> {
     use switcher::ThreadRolloutState;
     if !valid_id(id) {
@@ -61,9 +65,13 @@ pub(super) fn prepare_target(
         state,
         writer_locked: writer_is_locked(home, id),
         observer: match baseline {
+            // A deferred append cursor samples only the checkpoint boundary.
+            // Foreground dispatch must re-read the full checkpoint interval:
+            // a same-inode middle rewrite can preserve both samples.
             Some(offset) => Observer::checkpoint_at(path, offset)?,
             None => Observer::checkpoint(path)?,
         },
+        scan_complete: false,
         existing_queue: pending,
         mounted_by_recovery: false,
         owner_unavailable: false,
@@ -76,27 +84,69 @@ pub(super) fn prepare_target(
         expected_turn_id: None,
         proof_observed_at: None,
     };
-    record_target_state(&mut target)?;
+    record_target_state_with_budget(&mut target, scan_budget)?;
     // A target left in an older restart manifest may have been completed
     // manually since that failed run. If no new post-checkpoint work belongs to
     // this operation, completion is terminal and must not be revived or waited
     // on for three minutes.
-    if target.state == ThreadRolloutState::CleanCompleted && !target.completed && !queued_once {
+    if target.scan_complete
+        && target.state == ThreadRolloutState::CleanCompleted
+        && !target.completed
+        && !queued_once
+    {
         crate::runtime_print!("RECOVERY_SKIPPED thread={id} reason=completed");
         return Ok(None);
     }
     Ok(Some(target))
 }
 
+#[cfg(test)]
 pub(super) fn record_target_state_at(
     target: &mut RecoveryTarget,
     now: Instant,
 ) -> Result<(), String> {
-    let was_started = target
+    record_target_state_with_budget_at(target, now, FOREGROUND_SCAN_BUDGET_BYTES)
+}
+
+fn record_target_state_with_budget_at(
+    target: &mut RecoveryTarget,
+    now: Instant,
+    scan_budget: u64,
+) -> Result<(), String> {
+    let before = target
         .observer
-        .evidence
-        .matches_expected_turn(target.expected_turn_id.as_deref());
-    target.observer.poll()?;
+        .path
+        .metadata()
+        .map_err(|error| error.to_string())?;
+    if !target.dispatched && !target.observer.pre_dispatch_snapshot_matches(&before) {
+        return Err("Rollout identity changed before recovery dispatch".into());
+    }
+    let snapshot_end = before.len();
+    let limit = snapshot_end.min(target.observer.offset.saturating_add(scan_budget));
+    target.observer.poll_to(limit)?;
+    if target.observer.saw_oversized || target.observer.saw_malformed {
+        return Err("Unreadable rollout record prevents recovery verification".into());
+    }
+    let after = target
+        .observer
+        .path
+        .metadata()
+        .map_err(|error| error.to_string())?;
+    if before.dev() != after.dev()
+        || before.ino() != after.ino()
+        || after.len() < before.len()
+        || (!target.dispatched && after.len() != before.len())
+        || (after.len() == before.len()
+            && (after.modified().ok() != before.modified().ok()
+                || (after.ctime(), after.ctime_nsec()) != (before.ctime(), before.ctime_nsec())))
+    {
+        return Err("Rollout changed while recovery was checking its checkpoint".into());
+    }
+    target.scan_complete =
+        limit == after.len() && target.observer.partial.is_empty() && !target.observer.oversized;
+    if !target.scan_complete {
+        return Ok(());
+    }
     if target.dispatched
         && target.existing_queue > 0
         && target.expected_turn_id.is_none()
@@ -131,7 +181,7 @@ pub(super) fn record_target_state_at(
         .observer
         .evidence
         .matches_expected_turn(target.expected_turn_id.as_deref());
-    if started && !was_started && !target.execution_deadline_set {
+    if started && !target.execution_deadline_set {
         // task_started proves that the app-server accepted dispatch, but long
         // threads can spend several minutes compacting before the first model
         // item. Keep waiting for substantive work without misreporting the
@@ -199,8 +249,11 @@ pub(super) fn record_target_state_at(
     Ok(())
 }
 
-pub(super) fn record_target_state(target: &mut RecoveryTarget) -> Result<(), String> {
-    record_target_state_at(target, Instant::now())
+pub(super) fn record_target_state_with_budget(
+    target: &mut RecoveryTarget,
+    scan_budget: u64,
+) -> Result<(), String> {
+    record_target_state_with_budget_at(target, Instant::now(), scan_budget)
 }
 
 pub(super) fn proof_survived_stability_window(observed_at: Instant, now: Instant) -> bool {

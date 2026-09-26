@@ -2,7 +2,7 @@
 
 Ultra-lightweight, high-performance automatic quota monitoring and account rotation system for **OpenAI Codex** (supporting both console **Codex CLI** and desktop **Codex / ChatGPT.app**).
 
-Engineered with **100% functional parity** and zero-overhead performance: core in **Rust** (~3 MB RAM footprint, instantaneous execution) paired with a native macOS Menu Bar status application in **Swift** (`Codex Monitor.app`).
+The switching and monitoring core is written in **Rust**, paired with a native macOS Menu Bar application in **Swift** (`Codex Monitor.app`). Cold-task mounting and exact multiwindow task restoration remain subject to the Desktop limitations described below.
 
 > [!IMPORTANT]
 > **🍎 Platform Notice: Currently works exclusively on macOS (Apple Silicon M1/M2/M3/M4 & Intel, macOS 13.0 Ventura or later).**
@@ -22,7 +22,7 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
    - **Reset Credit Priority**: Accounts with available rate-limit reset credits (`credits`) are prioritized first.
    - **Business-Only Mode**: Restricts automated switching exclusively to corporate/team accounts (Team, Business, Enterprise).
    - **Business-Priority Mode**: Exhausts business quotas first, with automatic **preemptive return** to business accounts the moment their quota restores!
-   - Atomically updates `~/.codex/auth.json` protected by `fs2` file locks (`flock`) and strict POSIX `0600` permissions.
+   - Atomically updates `~/.codex/auth.json` protected by `fs2` file locks (`flock`) and strict POSIX `0600` permissions. Credential and account-registry writes stage through unpredictable `create_new` files with `O_NOFOLLOW`; first-run import and duplicate repair merge with a fresh registry under the same lock.
 
 3. **Plan Multiplier & Capacity Scaling**:
    - Auto-detects and scales capacity for OpenAI plan tiers (1.0x Plus, 2.0x Team/Business, up to 20x Pro).
@@ -31,13 +31,17 @@ Engineered with **100% functional parity** and zero-overhead performance: core i
 
 4. **Instant Switching for Codex CLI**:
    - Codex CLI reads `~/.codex/auth.json` on each invocation.
-   - The shim resolves the official Desktop bundle's current `codex-cli/bin/codex` entry point, with the earlier `Contents/Resources/codex` layout as a fallback. CLI-only setups may use a separate `codex` executable on PATH. It rejects the Monitor's own shim and fails before account distribution when no real CLI is available.
    - Transparent `cxi` / `codex-mon` shim or `codex` wrapper ensures agent swarms and terminal sessions never fail with `429 Rate Limit Exceeded`.
 
 5. **Desktop Application Switching (`ChatGPT.app`)**:
    - The desktop app (`/Applications/ChatGPT.app`, bundle ID `com.openai.codex`) shares the `~/.codex/auth.json` credentials.
+   - Desktop and Codex CLI must target the same account because they read the same credential file, including when Desktop is closed and may launch later. A requested split is rejected before a recovery journal or credential write; a CLI-only credential change is rejected while Desktop runs.
+   - Background quota polling reads access tokens without refreshing OAuth credentials or writing `auth.json`. Desktop may rotate its own refresh token; the switcher preserves that latest token in the account registry after the exact Desktop writer exits and before replacing the shared credential file. An expired inactive account needs an explicit sign-in.
+   - Direct `cxi switch` keeps the requested account's stable ID across registry synchronization and rechecks the target's credentials after Desktop shutdown. It writes a private `direct-switch-journal.json` before replacing auth, with IDs and SHA-256 fingerprints but no tokens. The next direct switch or account distribution, under the recovery operation lock, clears an exact prior state or finishes a verified target auth/registry commit; changed state or a live credential writer blocks it. A post-stop error before auth replacement relaunches the previous Desktop only after exact prior auth/registry readback. The final registry commit updates only the active ID against the latest locked registry, preserving concurrent settings and account changes; a changed active identity, removed or reauthenticated target, or newly invalid target blocks commit. Existing auth is compare-written, then checked as a full document after registry commit. Switching drops a prior API key and prior-account token extensions while retaining top-level Desktop extensions. If no auth file existed, creation cannot overwrite a newly appeared file and rollback restores absence.
+   - Re-login requires a usable decoded email claim from the official CLI login matching the selected account and a non-default workspace ID; a workspace ID alone cannot identify a user. Conflicting ID/access token email claims fail closed. JWT signatures are not verified locally. Active-auth replacement checks file identity, contents, and running credential writers immediately before writing. ChatGPT does not honor the Monitor's advisory lock, so concurrent Desktop launch remains an unsupported race.
    - With `restart_app_on_switch: true`, the tool gracefully restarts the desktop app under the selected account. Eligible tasks are resumed only after Desktop mounts their owners and the recovery checks pass; a switch can therefore finish with partial recovery.
-   - Multiple Desktop windows cannot yet be restored to their exact selected tasks after a restart. Keep automatic switching disabled until this recovery path is verified.
+   - Before any restart, it checks the exact ChatGPT process and WindowServer window inventory. A process with multiple user windows, or an ambiguous inventory, blocks the restart before credentials change until exact window-to-task restoration is available. This applies even when window-bound preservation is disabled.
+   - Keep automatic switching disabled until unattended cold-task mounting and exact selected-task restoration across windows are proven on the installed Desktop.
    - If Desktop has no eligible standard window before a restart, automatic switching can continue without window geometry restore. If there are recovery targets, owner-routed IPC waits for a visible banner after owner mounting; a missing window then defers the target with its original checkpoint. Accessibility failures, malformed geometry, and process identity mismatches still stop a preservation-enabled switch before credentials change.
 
 6. **Automated Session & Thread Resumption Across Switches**:
@@ -116,6 +120,98 @@ application. The monitor connects to Desktop's same-user socket at
 `~/.codex/ipc/ipc.sock` and asks the Desktop window that owns a thread to start
 or restore it. Desktop remains the only thread writer. The monitor never starts
 another App Server and never runs a headless `codex exec resume` process.
+
+ChatGPT Desktop and `cxi` share one `auth.json`. An APP/CLI split is unsafe
+even while Desktop is closed because its next launch reads the CLI credential.
+Both targets must select the same account; changing the CLI credential alone
+is refused while Desktop runs. Unattended quota checks never perform an OAuth
+refresh or rewrite the active credential file. Before a restart changes it,
+the switcher verifies the exact Desktop process and its bundled app-server
+writer have stopped, then saves any token Desktop refreshed during shutdown.
+Before shutdown, the planned Desktop and CLI account identities must both
+match the uniquely identified live authentication; a stale marker or registry
+cannot authorize stopping Desktop. If saving a shutdown-time token rotation
+fails, the previous Desktop is relaunched only after that live account is
+uniquely verified, and the failed handoff remains journaled. An unreadable
+process inventory or uncertain account identity stops the switch.
+Journal inspection and candidate planning hold the same recovery operation
+lock as the commit, so an older in-flight journal cannot be cleared by another
+switch. Offline account changes recheck for a Desktop writer immediately before
+replacing shared authentication; if the Desktop marker cannot be saved, the
+switcher restores the previous auth and registry or retains the journal when
+rollback is unverified. A stop error after signalling Desktop retains the
+recovery journal and checkpoint. For a checkpoint preparation error or a stop
+rejected before signalling, distribution clears its journal only after
+restoring the exact previous recovery checkpoint; failed restoration retains
+the journal for inspection.
+The switcher also checks process state and auth readback after replacement and
+again after offline registry/marker writes; the relaunched Desktop's registry
+commit requires a final auth readback.
+Shutdown token handoff and post-relaunch registry commit merge into a fresh
+`accounts.json` snapshot under the Monitor lock, preserving concurrent account
+settings. Configuration and registration update only their fields in a fresh
+registry transaction; quota HTTP runs outside that lock. Never load a registry
+and later save its whole stale snapshot. Auth readback compares the full
+document, including extension fields.
+Active-auth reads require a private regular file opened without following
+symlinks and recheck the named inode after reading.
+Desktop account distribution replaces the complete target token object and
+clears any API key belonging to the previous account. Forward replacement and
+rollback compare the exact shared-auth document and file identity immediately
+before writing; a concurrent credential change blocks the write and leaves the
+journal for inspection when the outcome is uncertain.
+An abandoned distribution journal in `stopping_desktop`, `auth_commit_app`,
+`auth_commit_cli`, `relaunching_desktop`, or an unknown phase blocks the next
+distribution, even when its worker PID is gone. Reconcile the live auth
+identity, saved active account, recovery checkpoint, and Desktop session before
+removing that journal; PID age alone is not proof of rollback.
+The distribution journal is a bounded private state file: reads require a
+same-user regular `0600` file of at most 16 KiB, opened without following
+symlinks and checked against the named inode. Writes use random exclusive
+same-filesystem `0600` staging, then atomic replacement and directory sync;
+an unsafe existing path blocks distribution.
+The Desktop session marker uses the same private bounded I/O: it is read as a
+same-user regular `0600` file of at most 16 KiB with no symlink following and
+a stable inode. A malformed or unsafe marker blocks account distribution;
+writes use random exclusive staging and directory sync.
+If marker replacement succeeds but the following directory sync fails, the
+switch restores the previous marker alongside auth and registry before clearing
+the distribution journal; an unverified restoration retains that journal.
+Offline distribution updates only `active_account_id` in a
+fresh locked registry, including on rollback, preserving concurrent settings
+and account edits. Rollback also verifies that the previous account's saved
+credentials still match the auth being restored; a changed binding retains the
+journal and blocks a success claim.
+Interactive account setup stops on an unreadable registry or active credential,
+and uses a fresh private login directory instead of a predictable PID path.
+`usage-status.json` is a derived cache: status writes take the registry lock and
+copy the latest switch settings before replacement. The Menu Bar app treats a
+missing or malformed auto-switch flag as disabled; if the cache is absent,
+the daemon creates the next complete quota snapshot.
+A manually consumed reset credit updates only that account's credit cache in a
+fresh registry transaction. Changed credentials, account route, or credit count
+make the post-consumption cache uncertain; the command reports that state and
+does not send another reset request.
+Before `cxi reset-account <account>` sends its request, it saves a private,
+mode-`0600` `manual-reset-state.json` attempt with the account reference,
+previous credit count, start time, and opaque idempotency key. A crash, unknown
+service result, or confirmed consumption with a failed cache commit leaves the
+attempt unresolved. Later manual reset commands stop before sending another
+request, including for another account. A confirmed non-consumption or an
+applied reset with a successful cache commit resolves the attempt and permits
+a later explicit reset.
+Manual and automatic reset requests share the recovery operation lock. A
+pending or unknown automatic attempt blocks a new manual request for the same
+account route even if its cached weekly timestamp changes. Any unresolved
+manual attempt blocks automatic reset across local account IDs before it
+creates another journal. Malformed, unreadable, or incomplete reset state also
+blocks spending. An HTTP error without a parsed, authoritative result remains
+uncertain, including 4xx responses. A restored weekly pool does not erase a
+pending or unknown automatic attempt or release its account-switch suppression.
+The automatic journal stores one attempt, so an unresolved attempt also blocks
+automatic reset for another account until the original outcome is reconciled.
+Keep automatic switching disabled until unattended cold-task mounting and
+multiwindow task restoration are verified on the installed Desktop build.
 
 The CLI quota monitor and account store can still be used without Desktop, but
 Desktop restart and thread recovery require the standard Desktop application to
@@ -261,6 +357,9 @@ cxi rename backup --clear
 # Inspect current configuration values:
 cxi config
 
+# Fresh and legacy registries default to automatic switching disabled until
+# cold-task recovery and window restoration are verified on this Desktop build.
+
 # Toggle automated account switching on quota exhaustion:
 cxi config --auto-switch-enabled true
 
@@ -305,10 +404,7 @@ cxi wrap exec "fix bug in auth"
 # Verify/resume eligible quota-blocked or restart-captured tasks:
 cxi resume
 
-# Or resume a specific thread by ID or URL. This also resumes a turn that ended
-# with a non-quota error before a final agent message (for example an outage 401),
-# claims a stale deferred owner-wait left for that task, and starts
-# /Applications/ChatGPT.app in the background when it is closed:
+# Or resume a specific thread by ID or URL:
 cxi resume 01a07d3c-3008-75c2-87a6-2c5c75f0e48b
 cxi resume "codex://threads/01a07d3c-3008-75c2-87a6-2c5c75f0e48b"
 
@@ -416,6 +512,10 @@ Detection runs through a two-phase analysis pipeline before terminating or resta
 | Desktop stabilization | `3 s` | Requires the same singleton main PID throughout; verifies the visible window only when one was captured before restart. |
 | Banner minimum visibility | `5 s` | Keeps the semi-transparent recovery banner visible when an eligible window and recovery target were found. |
 
+The tail reader checks the byte before its seek point. It discards a partial
+first record before strict UTF-8 decoding, retains a full record at an exact
+newline boundary, and reports unknown state for malformed complete records.
+
 `launchd` can deny Accessibility reads to the background switcher even when an
 interactive Terminal invocation of the same helper can inspect the window. The
 default `preserve_window_bounds_on_restart=true` treats that denial as blocking:
@@ -437,22 +537,33 @@ background helper can read the Desktop window.
 
 - **`InterruptedByQuota`**: The turn's final `task_complete` contains an `error` payload matching `usage_limit_exceeded`, `workspace_owner_credits_depleted`, `out of credits`, or active `rate_limit_reached_type`. **Automatically resumed.**
 - **`ActiveInProgress`**: The latest event is a mid-turn event (`user_message`, `reasoning`, `custom_tool_call`, etc.) with no closing `task_complete`. A captured restart may resume it from its post-shutdown checkpoint. Discovery-only recovery refuses this ambiguous state so it cannot duplicate or stop a task the user already resumed.
-- **`InterruptedByError`**: The turn's final `task_complete` carries a non-quota `error` (for example a 401 during a service or auth outage) and no non-empty `last_agent_message`. The work is unfinished, so an explicit `cxi resume <id>` sends one `continue`. Because the error can also be a policy block, unattended recovery (discovery, captured restart, deferred retry) never dispatches it and drops any journaled retry intent for it.
-- **`CleanCompleted`**: The last turn completed with no error, or with an error after a final agent message. **Never auto-resumed.**
+- **`InterruptedByError`**: The final `task_complete` carries a non-quota error (such as a 401 auth outage or a policy block) and no non-empty `last_agent_message`. Only explicit `cxi resume <id>` may continue it, including with queued work; unattended recovery refuses it and drops its retry intent. An error after a final agent message, including a non-null non-string final field, is treated as completed.
+- **`CleanCompleted`**: The last turn completed cleanly, or a non-quota error followed a final agent message. **Never start another turn automatically.** A restart-captured queued follow-up may still be woken through its verified Desktop owner.
 - **`TurnAborted`**: Ambiguous user/app interruption. Auto-recovered only when captured in the pre-restart manifest; an explicit `cxi resume <id>` can also recover it. Historical user Stop actions are not automatically revived.
 - **Filtered Metadata**: Events such as `thread_settings_applied`, `item_completed`, and `token_count` are filtered out during tail inspection so they never mask or falsify turn completion states.
+Tail reads stop at a captured file length and require a final newline. They
+check the byte before the seek point, discard only a partial first record
+before strict UTF-8 decoding, and retain a full record at a newline boundary.
+A malformed newer record makes the state unknown and blocks unattended dispatch.
 
 ### 💡 Desktop-Owned IPC Recovery
 
 The monitor is a remote-control client of the Desktop runtime that already owns each task. It never starts `codex exec resume`, which would compete for the writer lock and can produce “This is open in another app.”
 
+When a target has queued follow-ups, recovery applies the same turn-state and
+mode checks before and after owner discovery. It removes only Desktop's exact
+restart pause reason. It sends one owner-routed queue-state update even when
+the queue was already unpaused; mounting the task alone does not wake the
+owner's coordinator. The recovery checkpoint is consumed immediately before
+that IPC request, so an unknown send outcome is not retried automatically.
+
 **Condition of use:** Configure only ChatGPT accounts owned by the same person using this device. Continuing that person's local tasks across their own accounts is an intended feature; do not register another person's account. Monitor still requires a verified Desktop owner under the selected account before it sends a recovery request.
 
 The recovery algorithm is:
 
-1. Detect eligible, unarchived non-subagent tasks and atomically journal their IDs before shutdown. Stale manifest IDs and a caller-provided primary task are revalidated against SQLite and can never force an internal subagent into recovery. Duplicate task IDs in the recovery journal fail validation.
-2. Gracefully stop Desktop, wait for the exact main process to exit, then record a second rollout checkpoint. This excludes old work and shutdown-flush events from recovery proof. A deferred entry for the same task is replaced only when its rollout proves a newer turn started after its old checkpoint; unrelated deferred entries keep their account binding. The evidence scan reads a fixed rollout snapshot with bounded memory, including long turns. If the second checkpoint fails, the previous account remains active and Desktop is relaunched without distributing credentials; `cxi restart` also relaunches the previous Desktop state before reporting the error.
-3. Relaunch Desktop, validate its same-user IPC socket, and resolve the owner of every task. While Desktop is already running, each task is routed to its own owner, including separate windows under one account. A restart with multiple windows cannot yet restore each window's exact selected task. Only ownerless cold tasks activate ChatGPT once through a task URL; subsequent URL retries run in the background. Already-owned tasks are never cycled through the UI. A successful URL launch is not proof of mounting: owner discovery remains mandatory before dispatch.
+1. Detect eligible, unarchived non-subagent tasks and atomically journal their IDs before shutdown. Stale manifest IDs and a caller-provided primary task are revalidated against SQLite and can never force an internal subagent into recovery. Duplicate task IDs in the recovery journal fail validation. When recovery targets exist, handshake Desktop IPC before stopping ChatGPT; failure restores the prior checkpoint and leaves Desktop running.
+2. Gracefully stop Desktop, wait for the exact main process to exit, then record a second rollout checkpoint. This excludes old work and shutdown-flush events from recovery proof. A deferred entry for the same task is replaced only after a newer turn has substantive, error-free work and no queued follow-up; unrelated deferred entries keep their account binding. The evidence scan reads a fixed rollout snapshot with bounded memory, including long turns. If the second checkpoint fails, the previous account remains active and Desktop is relaunched without distributing credentials; `cxi restart` also relaunches the previous Desktop state before reporting the error.
+3. Relaunch Desktop, validate its same-user IPC socket, and resolve the owner of every task. While Desktop is already running, each task is routed to its own owner, including separate windows under one account. A restart with multiple windows is currently blocked before shutdown because their exact selected tasks cannot be reconstructed. Only ownerless cold tasks activate ChatGPT once through a task URL; subsequent URL retries run in the background. Already-owned tasks are never cycled through the UI. A successful URL launch is not proof of mounting: owner discovery remains mandatory before dispatch.
 4. Preserve any queued payloads exactly. Only the exact restart-generated pause reason is removed; user-paused queues are rejected. Otherwise send one `app_update_resume` turn-start request containing the short text `continue`. An uncertain send is never retried.
 5. Bind proof to the exact turn ID returned by Desktop IPC. Require a post-checkpoint `task_started`, substantive agent reasoning/message/tool/web-search work, and then 10 seconds without an abort or error. An acknowledgement, writer lock, navigation, or start alone is not success.
 6. Restore the primary task once only if recovery had to mount a different cold task, then require the relaunched singleton PID to remain unchanged for another 3 seconds. Verify its visible window when one was captured before restart. Recovery and account switching share an operation lock and the same pipeline.
@@ -485,29 +596,74 @@ is not verified on the current Desktop build. If the daemon is
 not running, inspect the task and use `cxi resume <id>` if it is still
 interrupted.
 
-Repeated deferred probes select one ownerless rollout per locked prune pass and
-read at most 16 MiB of new bytes from that rollout. They rotate the selection
-and withhold lifecycle evidence until reaching the captured snapshot end.
-A replaced or truncated rollout resets the bounded cursor; a complete fresh
-unchanged-length scan confirms evidence before replacing an account binding or pruning an
-undispatched retry. The Desktop account and task owner are verified afresh
-before every dispatch. Ordinary thread detection leaves ownerless retries to
-the deferred worker, so they do not stall it on unrelated SQLite lookups.
+Deferred probes use a bounded append cursor as a hint. Replacing or removing a
+saved ownerless retry requires a fresh scan of one unchanged, newline-terminated
+rollout snapshot; a partial, malformed, or oversized record in that interval cannot prove that a
+new turn was error-free. One ownerless task is selected per prune pass with
+rotation scoped to `CODEX_HOME`, without
+tail-reading the other ownerless tasks. Foreground recovery scans at most 16 MiB
+of rollout payload across its targets per pass, plus small boundary samples,
+and waits for a complete post-checkpoint snapshot before sending IPC. If
+previously scanned bytes could have changed during owner mounting, it retains
+the checkpoint for a fresh attempt. The Desktop account and task owner are
+verified afresh before every dispatch. Ordinary thread detection leaves
+ownerless retries to the deferred worker.
 
 ### ♻️ Account-Bound Weekly Reset Credits
 
 The weekly reset option is off by default and is intentionally independent of account rotation. When enabled, the daemon acts only when all of the following are true: the active account's fresh weekly availability is exactly `0%`, a reset credit is available, the selected strict remaining-time threshold is met, and a recent (up to four hours), unarchived, user-owned task ended with a quota error. It never spends a credit for an idle account, an active task, an aborted task, or a subagent.
 
-The monitor writes a private, atomic `~/.codex/auto-reset-state.json` journal before requesting a reset. It contains an opaque idempotency key, account/window marker, and task ID, is mode `0600`, and is deliberately not a log. A timeout or unknown result is retried only with that same key; a successfully applied reset is never consumed again for the same weekly window.
+The monitor writes a private, atomic `~/.codex/auto-reset-state.json` journal before requesting a reset, while holding the recovery operation lock. It contains an opaque idempotency key, account/window marker, and task ID, is mode `0600`, and is deliberately not a log. A timeout or unknown result is retried only with that same key when the original episode remains eligible; a successfully applied reset is never consumed again for the same weekly window. A corrected weekly timestamp or a different active account does not authorize replacing the sole unresolved journal. A restored quota snapshot cannot silently discard an unresolved attempt.
 
 The reset is account-scoped and does not participate in thread ownership:
 
 1. After taking the same operation lock as account switching, the monitor reloads the active account and revalidates its exact weekly exhaustion, selected threshold, reset-credit count, and account routing ID.
 2. It sends one authenticated request to the ChatGPT reset service used by Codex, with the active account header and the journaled idempotency key. No token, email, or response body is logged.
-3. `reset` and `already_redeemed` are treated as idempotent success. `nothing_to_reset` and `no_credit` permit normal auto-switch fallback. A transport failure or unknown response retains the same key and suppresses switching until the result is settled.
+3. `reset` and `already_redeemed` are treated as idempotent success. `nothing_to_reset` and `no_credit` permit normal auto-switch fallback. A transport failure or unparsed HTTP response, including 4xx, retains the same key and suppresses switching until the result is settled.
 4. Only after a confirmed success does the monitor use Desktop's existing owner-routed IPC recovery path to resume the blocked task(s).
 
 The monitor never starts a second app-server and never asks another runtime to load the task. Desktop remains the only thread writer; the direct service call is limited to the account-level reset operation. Desktop does not need a custom reset IPC handler.
+
+For an unresolved **manual** reset, inspect only `target_id`, `before_credits`,
+`started_at`, and `state` in `~/.codex/manual-reset-state.json`; keep its
+`idempotency_key` private. Confirm the exact account in the official ChatGPT
+usage view and obtain authoritative evidence that the original request was
+applied or was not consumed. An unchanged cached credit count alone does not
+settle an unknown request. An official weekly window that began after the
+journal's `started_at` can also close the old attempt. Until then, leave the
+journal and do not issue another manual reset. After the outcome is settled and
+no `cxi reset-account` process is running, the operator can remove only the
+exact private journal path:
+
+```sh
+journal_path="${CODEX_HOME:-$HOME/.codex}/manual-reset-state.json"
+if [ -f "$journal_path" ] && [ ! -L "$journal_path" ] &&
+   [ "$(stat -f '%u:%Lp' "$journal_path")" = "$(id -u):600" ]; then
+    rm -- "$journal_path"
+fi
+```
+
+On a custom `CODEX_HOME`, use that same home for the official quota check and
+the exact journal path. The manual state file is a small atomically replaced
+document, so it stays uncompressed for reliable crash recovery.
+
+For a pending or unknown **automatic** reset, inspect only `account_id`,
+`episode_key`, `state`, and `updated_at` in `auto-reset-state.json`; keep its
+`idempotency_key` private. A changed cached weekly timestamp or credit count
+does not settle the request. Let the same-key retry reach a parsed terminal
+result, or obtain official same-account evidence that the request was applied
+or was not consumed. A verified later weekly window can also close the old
+attempt. If the journal must be cleared after that proof, first disable the
+weekly auto-reset option with `cxi config --auto-reset-weekly-enabled false`
+and confirm no reset operation is running. Remove only the exact private path:
+
+```sh
+auto_journal_path="${CODEX_HOME:-$HOME/.codex}/auto-reset-state.json"
+if [ -f "$auto_journal_path" ] && [ ! -L "$auto_journal_path" ] &&
+   [ "$(stat -f '%u:%Lp' "$auto_journal_path")" = "$(id -u):600" ]; then
+    rm -- "$auto_journal_path"
+fi
+```
 
 The Monitor owns the launchd daemon lifecycle. Explicit Quit writes a private durable cancellation marker and unloads the recurring daemon. A scheduled worker that has not crossed the shutdown boundary stops; a worker already between shutdown and relaunch is allowed to restore Codex to a safe running state, but cannot begin another restart cycle. Starting Monitor clears the stale cancellation marker.
 
@@ -523,7 +679,7 @@ The Monitor stores its account registry, status cache, and recovery journals in
 - `~/.codex/accounts.json` — Stored multi-account credentials and cached quotas (strict `0600` permissions); removed only with `--purge-data`.
 - `~/.codex/usage-status.json` — Real-time quota snapshot consumed by the macOS Menu Bar app; removed by the normal uninstall.
 - `~/.codex/monitor.lock`, `daemon.lock`, `codex.lock` — Monitor coordination locks; removed when not held.
-- `~/.codex/auto-reset-state.json`, `desktop-recovery.json`, `desktop-recovery.lock`, `desktop-automation-cooldown` — Private recovery/reset state removed by uninstall.
+- `~/.codex/auto-reset-state.json`, `manual-reset-state.json`, `distribution-journal.json`, `direct-switch-journal.json`, `desktop-recovery.json`, `desktop-recovery.lock`, `desktop-automation-cooldown` — Private switching/recovery/reset state removed by uninstall.
 - `~/.codex/recovery-runs/`, `account-switcher-daemon.log`, and `account-switcher-daemon.err` — private Monitor recovery records and daemon logs; new output is redacted at write time and exact pre-existing Monitor log files are redacted during installation before writers restart; removed by uninstall.
 - `~/.codex/helps.html` — Copied offline interactive documentation guide removed by uninstall.
 - `~/.local/share/codex-monitor/` — Retained skill source used by one-line remote installs; removed by uninstall.

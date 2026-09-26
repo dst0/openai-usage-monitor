@@ -25,6 +25,7 @@ pub fn make_account(
             refresh_token: Some(format!("rt_{id}")),
             id_token: None,
             account_id: Some(id.to_string()),
+            extra: Default::default(),
         },
         enabled: true,
         priority: 0,
@@ -86,6 +87,7 @@ impl TestEnv {
                     openai_api_key: None,
                     tokens: Some(acc.tokens.clone()),
                     last_refresh: None,
+                    extra: Default::default(),
                 };
                 let _ = write_active_auth_json(&auth);
             }

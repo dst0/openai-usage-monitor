@@ -1,19 +1,18 @@
 use super::app_lifecycle::AppLifecycle;
-use super::desktop_app_session::DesktopAppSession;
-use super::distribution_account_commit_service::DistributionAccountCommitService;
 use super::distribution_audit_logger::DistributionAuditLogger;
-use super::distribution_desktop_relaunch_service::DistributionDesktopRelaunchService;
+use super::distribution_desktop_auth_handoff_service::DistributionDesktopAuthHandoffService;
+use super::distribution_desktop_switch_service::DistributionDesktopSwitchService;
 use super::distribution_journal::DistributionJournal;
+use super::distribution_offline_commit_service::DistributionOfflineCommitService;
 use super::distribution_outcome::{DistributionOutcome, DistributionStatus};
 use super::distribution_plan::DistributionPlan;
-use super::distribution_recovery_audit_service::DistributionRecoveryAuditService;
 use super::distribution_request::DistributionRequest;
-use super::log_redaction_service::LogRedactionService;
+use super::distribution_shared_auth_guard::DistributionSharedAuthGuard;
 use super::system_app_lifecycle::SystemAppLifecycle;
 use crate::models::AccountsFile;
 use crate::recovery;
-use crate::storage::{self, save_accounts};
-use crate::switcher;
+use crate::storage;
+use std::fs::File;
 use std::sync::Arc;
 
 pub struct DistributionTransactionService {
@@ -44,18 +43,41 @@ impl DistributionTransactionService {
         op_id: &str,
         plan: &DistributionPlan,
         request: &DistributionRequest,
+        accounts_file: AccountsFile,
+    ) -> Result<DistributionOutcome, String> {
+        let operation_lock = recovery::operation_lock()?;
+        self.execute_locked(op_id, plan, request, accounts_file, &operation_lock)
+    }
+
+    pub(super) fn execute_locked(
+        &self,
+        op_id: &str,
+        plan: &DistributionPlan,
+        request: &DistributionRequest,
         mut accounts_file: AccountsFile,
+        _operation_lock: &File,
     ) -> Result<DistributionOutcome, String> {
         let home = storage::codex_home();
         let trigger_str = request.trigger.as_str();
-
-        let _lock = recovery::operation_lock()?;
         self.logger.log_lock(
             op_id,
             trigger_str,
             &request.reason,
             "Acquired operation lock",
         );
+
+        DistributionSharedAuthGuard::before_journal(self.lifecycle.as_ref(), plan)?;
+        if plan.restart_required {
+            DistributionDesktopAuthHandoffService::verify_before_stop(
+                &accounts_file,
+                plan.current_app_id
+                    .as_deref()
+                    .ok_or("Current Desktop account identity is unavailable")?,
+                plan.current_cli_id
+                    .as_deref()
+                    .ok_or("Current CLI account identity is unavailable")?,
+            )?;
+        }
 
         let mut journal = DistributionJournal::create(
             &home,
@@ -68,198 +90,54 @@ impl DistributionTransactionService {
 
         let mut restarted_desktop = false;
         let mut recovery_error: Option<String> = None;
+        let mut commit_verified = true;
         if plan.restart_required {
-            let target_app_id = plan.target_app_id.as_ref().ok_or("Target app ID missing")?;
-            let target_acc =
-                DistributionAccountCommitService::find_account(&accounts_file, target_app_id)?;
-            journal.update_phase(&home, "stopping_desktop")?;
-            self.logger.log_action(
-                op_id,
-                "SHUTDOWN",
-                trigger_str,
-                &request.reason,
-                "Stopping Desktop app gracefully",
-            );
-            let running_threads = switcher::detect_in_progress_threads();
-            let capture_mode = match DistributionRecoveryAuditService::capture_window_bounds(
-                &self.logger,
-                self.lifecycle.as_ref(),
-                op_id,
-                trigger_str,
-                &request.reason,
-                &running_threads,
-                accounts_file.settings.preserve_window_bounds_on_restart,
-            ) {
-                Ok(mode) => mode,
-                Err(error) => {
-                    let _ = DistributionJournal::clear(&home);
-                    return Err(format!(
-                        "Could not capture Codex window before shutdown: {error}"
-                    ));
-                }
-            };
-            if let Err(error) = recovery::save_pending(&running_threads) {
-                self.lifecycle.abort_recovery();
-                let _ = DistributionJournal::clear(&home);
-                return Err(error);
-            }
-            let _ = recovery::arm_automation_cooldown();
-
-            if !running_threads.is_empty() {
-                let _ = recovery::preflight_desktop_dispatch();
-            }
-
-            if let Err(e) = self.lifecycle.stop_app() {
-                self.lifecycle.abort_recovery();
-                let _ = recovery::save_pending(&[]);
-                let _ = DistributionJournal::clear(&home);
-                self.logger.log_failure(
-                    op_id,
-                    "SHUTDOWN_FAILED",
-                    trigger_str,
-                    &request.reason,
-                    "Desktop shutdown failed",
-                );
-                return Err(format!("Could not stop Codex Desktop gracefully: {e}"));
-            }
-            if let Err(error) = recovery::save_pending(&running_threads) {
-                self.lifecycle.abort_recovery();
-                let relaunch = self.lifecycle.launch_app();
-                let _ = DistributionJournal::clear(&home);
-                return Err(match relaunch {
-                    Ok(pids) if pids.len() == 1 => match self
-                        .lifecycle
-                        .verify_desktop_stable(&pids, false)
-                    {
-                        Ok(()) => format!(
-                            "Post-shutdown recovery checkpoint failed: {error}; previous Desktop account relaunched"
-                        ),
-                        Err(stability) => format!(
-                            "Post-shutdown recovery checkpoint failed: {error}; previous Desktop stability failed: {stability}"
-                        ),
-                    },
-                    Ok(pids) => format!(
-                        "Post-shutdown recovery checkpoint failed: {error}; previous Desktop relaunch produced {} main processes",
-                        pids.len()
-                    ),
-                    Err(relaunch_error) => format!(
-                        "Post-shutdown recovery checkpoint failed: {error}; previous Desktop relaunch failed: {relaunch_error}"
-                    ),
-                });
-            }
-            journal.update_phase(&home, "auth_commit_app")?;
-            self.logger.log_action(
-                op_id,
-                "AUTH_COMMIT_APP",
-                trigger_str,
-                &request.reason,
-                &format!(
-                    "Target app account_ref={}",
-                    LogRedactionService::sanitize_field("account_id", target_app_id)
-                ),
-            );
-            DistributionAccountCommitService::apply_auth_tokens(&target_acc)?;
-
-            journal.update_phase(&home, "relaunching_desktop")?;
-            self.logger.log_action(
-                op_id,
-                "RELAUNCH",
-                trigger_str,
-                &request.reason,
-                "Relaunching Desktop app",
-            );
-            (restarted_desktop, recovery_error) =
-                DistributionDesktopRelaunchService::new(self.lifecycle.as_ref(), &self.logger).run(
+            let outcome =
+                DistributionDesktopSwitchService::new(self.lifecycle.as_ref(), &self.logger).run(
                     &home,
-                    target_app_id,
-                    plan.target_cli_id
-                        .as_deref()
-                        .or(accounts_file.active_account_id.as_deref()),
-                    &running_threads,
-                    capture_mode,
-                    op_id,
+                    &mut journal,
+                    plan,
                     request,
-                );
-
-            if let Some(target_cli_id) = &plan.target_cli_id {
-                if !target_cli_id.eq_ignore_ascii_case(target_app_id) {
-                    journal.update_phase(&home, "auth_commit_cli")?;
-                    let cli_acc = DistributionAccountCommitService::find_account(
-                        &accounts_file,
-                        target_cli_id,
-                    )?;
-                    DistributionAccountCommitService::apply_auth_tokens(&cli_acc)?;
-                    accounts_file.active_account_id = Some(cli_acc.id.clone());
-                    let _ = save_accounts(&accounts_file);
-                    self.logger.log_action(
-                        op_id,
-                        "AUTH_COMMIT_CLI",
-                        trigger_str,
-                        &request.reason,
-                        &format!(
-                            "Target CLI account_ref={} no_second_restart=true",
-                            LogRedactionService::sanitize_field("account_id", target_cli_id)
-                        ),
-                    );
-                } else {
-                    accounts_file.active_account_id = Some(target_acc.id.clone());
-                    let _ = save_accounts(&accounts_file);
-                }
-            }
+                    &mut accounts_file,
+                    op_id,
+                )?;
+            restarted_desktop = outcome.restarted_desktop;
+            recovery_error = outcome.recovery_error;
+            commit_verified = outcome.commit_verified;
         } else {
-            if plan.cli_switch_needed {
-                if let Some(target_cli_id) = &plan.target_cli_id {
-                    journal.update_phase(&home, "auth_commit_cli")?;
-                    let cli_acc = DistributionAccountCommitService::find_account(
-                        &accounts_file,
-                        target_cli_id,
-                    )?;
-                    DistributionAccountCommitService::apply_auth_tokens(&cli_acc)?;
-                    accounts_file.active_account_id = Some(cli_acc.id.clone());
-                    let _ = save_accounts(&accounts_file);
-                    self.logger.log_action(
-                        op_id,
-                        "AUTH_COMMIT_CLI",
-                        trigger_str,
-                        &request.reason,
-                        &format!(
-                            "CLI switched account_ref={}",
-                            LogRedactionService::sanitize_field("account_id", target_cli_id)
-                        ),
-                    );
-                }
-            }
-            if plan.app_switch_needed {
-                if let Some(target_app_id) = &plan.target_app_id {
-                    let session_path = home.join("desktop-app-session.json");
-                    let _ = DesktopAppSession::new(target_app_id).save(&session_path);
-                    self.logger.log_action(
-                        op_id,
-                        "DESKTOP_SESSION",
-                        trigger_str,
-                        &request.reason,
-                        &format!(
-                            "Desktop session account_ref={}",
-                            LogRedactionService::sanitize_field("account_id", target_app_id)
-                        ),
-                    );
-                }
-            }
+            DistributionOfflineCommitService::new(self.lifecycle.as_ref(), &self.logger).run(
+                &home,
+                &mut journal,
+                plan,
+                request,
+                &mut accounts_file,
+                op_id,
+            )?;
         }
 
         let _ = recovery::arm_automation_cooldown();
-        let _ = DistributionJournal::clear(&home);
-        if accounts_file.settings.notify_on_switch {
+        if commit_verified {
+            if let Err(error) = DistributionJournal::clear(&home) {
+                recovery_error
+                    .get_or_insert(format!("Distribution journal cleanup failed: {error}"));
+            }
+        }
+        if accounts_file.settings.notify_on_switch && commit_verified && recovery_error.is_none() {
             self.lifecycle.notify_distribution_complete();
         }
 
-        let status = if recovery_error.is_some() {
+        let status = if !commit_verified {
+            DistributionStatus::Failed
+        } else if recovery_error.is_some() {
             DistributionStatus::PartialSuccess
         } else {
             DistributionStatus::Success
         };
 
-        let msg = if recovery_error.is_some() {
+        let msg = if !commit_verified {
+            "Desktop account change is unverified; credentials and Desktop state require inspection"
+                .to_string()
+        } else if recovery_error.is_some() {
             "Accounts distributed, but desktop recovery verification is incomplete".to_string()
         } else {
             "Accounts distributed successfully".to_string()

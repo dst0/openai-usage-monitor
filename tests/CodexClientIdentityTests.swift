@@ -40,6 +40,7 @@ struct CodexClientIdentityTests {
       accounts: accounts, appAccount: nil, cliAccount: cli)
     require(snapshot.cliAccount?.id == cli.id, "CLI identity must remain available")
     require(snapshot.appAccount == nil, "missing App identity must not fall back to CLI")
+    require(!snapshot.autoSwitchEnabled, "an unspecified snapshot must leave auto-switch off")
 
     let now = Date()
     let formatter = ISO8601DateFormatter()
@@ -69,6 +70,29 @@ struct CodexClientIdentityTests {
       CodexClient.validatedDesktopAppSessionAccountId(
         from: Data("{\"account_id\":\"\(app.id)\"}".utf8), now: now) == nil,
       "marker without freshness metadata must be rejected")
+
+    let temporaryHome = FileManager.default.temporaryDirectory
+      .appendingPathComponent("codex-status-default-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(
+      at: temporaryHome, withIntermediateDirectories: false)
+    let previousHome = getenv("CODEX_HOME").map { String(cString: $0) }
+    setenv("CODEX_HOME", temporaryHome.path, 1)
+    defer {
+      if let previousHome { setenv("CODEX_HOME", previousHome, 1) }
+      else { unsetenv("CODEX_HOME") }
+      try? FileManager.default.removeItem(at: temporaryHome)
+    }
+
+    func cachedAutoSwitch(_ value: Any?) -> Bool? {
+      var payload: [String: Any] = ["timestamp": formatter.string(from: now), "accounts": []]
+      if let value { payload["auto_switch_enabled"] = value }
+      let data = try! JSONSerialization.data(withJSONObject: payload)
+      try! data.write(to: CodexClient.statusFileURL)
+      return CodexClient().loadCachedSnapshot()?.autoSwitchEnabled
+    }
+    require(cachedAutoSwitch(nil) == false, "missing cache flag must leave auto-switch off")
+    require(cachedAutoSwitch("true") == false, "malformed cache flag must leave auto-switch off")
+    require(cachedAutoSwitch(true) == true, "explicit cache enablement must remain enabled")
 
     print("  ✅ App/CLI identity separation and stale-marker rejection verified")
   }

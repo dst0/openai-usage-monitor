@@ -1,10 +1,11 @@
-use super::account_switch_service::prioritize_primary_if_user;
-use super::codex_app_lifecycle::{codex_app_pids, CODEX_APP_EXECUTABLE};
+use super::active_auth_registry_sync_service::ActiveAuthRegistrySyncService;
+use super::codex_app_lifecycle::CODEX_APP_EXECUTABLE;
 use super::codex_availability_service::CodexAvailabilityService;
+use super::desktop_session_binding_service::DesktopSessionBindingService;
+use super::primary_target_selection::prioritize_primary_if_user;
 use super::*;
 use chrono::Utc;
 use std::process::Command;
-use std::thread::sleep;
 use std::time::Duration;
 
 /// Recovery-only entry point. Uses the same verified pipeline as account switching.
@@ -20,10 +21,10 @@ pub fn resume_thread_interactive(thread_id: Option<&str>) -> Result<(), String> 
             crate::recovery::RecoveryMode::DiscoveredOnly,
         ),
     };
-    if !is_codex_app_running() {
+    let desktop_running = is_codex_app_running_checked()?;
+    if !desktop_running {
         let home = crate::storage::codex_home();
         if targets.is_empty() {
-            // Nothing was discovered, so there is no reason to start Desktop.
             crate::runtime_print!("RECOVERY_RESULT verified_or_completed=0 failed=0");
             return Ok(());
         }
@@ -36,7 +37,7 @@ pub fn resume_thread_interactive(thread_id: Option<&str>) -> Result<(), String> 
             );
         }
     }
-    CodexAvailabilityService::ensure_running_for_resume(is_codex_app_running, launch_codex_app)?;
+    CodexAvailabilityService::ensure_running_for_resume(|| desktop_running, launch_codex_app)?;
     crate::recovery::recover_threads(&targets, mode)
 }
 
@@ -176,7 +177,7 @@ pub fn restart_and_recover(
     if std::env::var_os("CODEX_RESTART_WORKER").is_none() && dispatch_self_restart(&args)? {
         return Ok(());
     }
-    sleep(Duration::from_secs(delay_seconds));
+    std::thread::sleep(Duration::from_secs(delay_seconds));
     if std::env::var_os("CODEX_RESTART_WORKER").is_some()
         && crate::recovery::restart_cancellation_requested()
     {
@@ -185,7 +186,7 @@ pub fn restart_and_recover(
     }
     let _operation = crate::recovery::operation_lock()?;
     crate::recovery::arm_automation_cooldown()?;
-    if !is_codex_app_running() {
+    if !is_codex_app_running_checked()? {
         return Err("Codex is not running".into());
     }
     let mut targets = detect_in_progress_threads();
@@ -198,7 +199,7 @@ pub fn restart_and_recover(
     }
     crate::runtime_print!(
         "RESTART_BEGIN old_pids={:?} targets={:?}",
-        codex_app_pids(),
+        current_codex_app_pids_checked()?,
         targets
     );
     let operation_id = crate::recovery::operation_id_for_banner("captured_restart");
@@ -207,14 +208,39 @@ pub fn restart_and_recover(
     if !targets.is_empty() {
         crate::recovery::preflight_desktop_dispatch()?;
     }
-    crate::recovery::save_pending(&targets)?;
-    stop_codex_app_gracefully()?;
+    let expected = banner.expected_process().clone();
+    preflight_shutdown_windows(&expected)?;
+    let checkpoint = crate::recovery::RecoveryManifestSnapshot::capture()?;
+    crate::recovery::save_pending(&targets).map_err(|error| checkpoint.rollback_error(error))?;
+    preflight_shutdown_windows(&expected).map_err(|error| checkpoint.rollback_error(error))?;
+    if let Err(error) = stop_codex_app_gracefully(&expected) {
+        return Err(if error.before_signal {
+            checkpoint.rollback_error(error.to_string())
+        } else {
+            error.to_string()
+        });
+    }
     // Re-checkpoint only after the old process has fully exited, so recovery
     // cannot be falsely verified by work flushed during shutdown.
     if let Err(error) = crate::recovery::save_pending(&targets) {
         drop(banner);
         return Err(CodexAvailabilityService::relaunch_previous_state(error));
     }
+    let current_account = (|| -> Result<String, String> {
+        let mut accounts = crate::storage::load_accounts()?;
+        ActiveAuthRegistrySyncService::sync_from_disk(&mut accounts)?
+            .ok_or("Desktop authentication disappeared after shutdown")?;
+        accounts
+            .active_account_id
+            .ok_or("Active Desktop account identity is unavailable".into())
+    })();
+    let current_account = match current_account {
+        Ok(id) => id,
+        Err(error) => {
+            drop(banner);
+            return Err(CodexAvailabilityService::relaunch_previous_state(error));
+        }
+    };
     let launched_pids = match launch_codex_app() {
         Ok(pids) => pids,
         Err(error) => {
@@ -228,15 +254,21 @@ pub fn restart_and_recover(
             "Codex relaunch must produce exactly one main process, got {launched_pids:?}"
         ))
     } else {
-        banner
-            .restore_after_relaunch(launched_pids[0], &operation_id, "captured_restart")
-            .and_then(|()| {
-                crate::recovery::recover_threads_with_banner(
-                    &targets,
-                    crate::recovery::RecoveryMode::CapturedRestart,
-                    &mut banner,
-                )
-            })
+        DesktopSessionBindingService::bind_launched(
+            &crate::storage::codex_home(),
+            &current_account,
+            launched_pids[0],
+        )
+        .and_then(|_| {
+            banner.restore_after_relaunch(launched_pids[0], &operation_id, "captured_restart")
+        })
+        .and_then(|()| {
+            crate::recovery::recover_threads_with_banner(
+                &targets,
+                crate::recovery::RecoveryMode::CapturedRestart,
+                &mut banner,
+            )
+        })
     };
     drop(banner);
     let stability_result = crate::recovery::verify_desktop_stable(&launched_pids, true);

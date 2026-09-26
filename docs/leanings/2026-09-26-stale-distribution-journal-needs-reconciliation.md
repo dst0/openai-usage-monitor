@@ -1,0 +1,22 @@
+# 2026-09-26 — A dead distribution worker does not resolve shutdown or auth writes
+
+- **Status:** Resolved
+- **Task/context:** Reviewing account distribution recovery after a process exit or uncertain shared-auth write.
+- **Unexpected observation or failure:** The next distribution deleted any journal with a dead or old PID, including a phase that may already have stopped Desktop or changed authentication, and proceeded without reconciling the prior operation.
+- **Evidence:** `stale_journal_after_shutdown_or_auth_commit_cannot_be_discarded_automatically` failed first for `auth_commit_app`. After an initial guard, it failed again for `stopping_desktop`, a phase that spans Desktop shutdown and checkpoint handoff. The final test also covers CLI commit, relaunch, and an unknown future phase.
+- **Approaches tried:**
+  - **Attempt:** Treat PID death or age as evidence that the previous distribution is finished.
+    - **Outcome:** Did not work.
+    - **Why:** Neither condition proves whether Desktop stopped or an authentication replacement committed or was rolled back.
+  - **Attempt:** Permit automatic stale cleanup for `stopping_desktop` as a pre-commit phase.
+    - **Outcome:** Did not work.
+    - **Why:** That phase remains durable through shutdown and post-stop checkpoint work.
+  - **Attempt:** Permit automatic stale cleanup only in `initialized`.
+    - **Outcome:** Worked.
+    - **Why:** No shutdown or credential write has begun in that phase.
+- **Root cause:** Journal cleanup considered process liveness but ignored that shutdown and commit phases may leave durable external state.
+- **Resolution:** The journal gate fails closed for shutdown, commit, relaunch, and unknown phases while retaining the journal. Only an untouched `initialized` journal is automatically cleaned.
+- **Verification:** `cargo test --quiet --bin codex-mon stale_journal -- --test-threads=1` passed both the new fail-closed test and the existing initialized-phase cleanup test.
+- **Prevention/follow-up:** Reconcile live auth, account registry, recovery checkpoint, and Desktop session before clearing a retained journal; keep automatic switching disabled while recovery remains unproven.
+- **Reusable learning:** A durable journal phase is part of shutdown and commit uncertainty; process death alone must not clear it.
+- **References:** `codex-switcher/src/distribution/distribution_journal_gate_service.rs`; `codex-switcher/src/distribution/distribution.test.rs`.

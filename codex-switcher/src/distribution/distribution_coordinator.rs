@@ -2,6 +2,7 @@ use super::app_lifecycle::AppLifecycle;
 use super::desktop_app_session::DesktopAppSession;
 use super::distribution_audit_logger::DistributionAuditLogger;
 use super::distribution_decision_service::DistributionDecisionService;
+use super::distribution_journal_gate_service::DistributionJournalGateService;
 use super::distribution_outcome::DistributionOutcome;
 use super::distribution_request::DistributionRequest;
 use super::distribution_transaction_service::DistributionTransactionService;
@@ -53,6 +54,14 @@ impl DistributionCoordinator {
             &format!("Evaluating distribution dry_run={}", request.dry_run),
         );
 
+        // Journal inspection, stale cleanup, candidate selection, and commit
+        // are one recovery transaction. A live recovery may exceed 300 seconds.
+        let operation_lock = crate::recovery::operation_lock()?;
+        // A prior direct cxi switch may have stopped between the shared-auth
+        // write and registry commit. Reconcile its durable intent before this
+        // entry point can plan another account change.
+        crate::switcher::reconcile_pending_direct_switch()?;
+
         let accounts_file = match storage::load_accounts() {
             Ok(accounts_file) => accounts_file,
             Err(error) => {
@@ -76,50 +85,14 @@ impl DistributionCoordinator {
 
         let home = storage::codex_home();
 
-        let existing_journal = match super::distribution_journal::DistributionJournal::load(&home) {
-            Ok(journal) => journal,
-            Err(error) => {
-                self.log_failed_outcome(&op_id, trigger_str, &request.reason, "journal_invalid");
-                return Err(error);
-            }
-        };
-        if let Some(existing) = existing_journal {
-            if existing.is_stale(std::time::Duration::from_secs(300)) {
-                self.logger.log_warning(
-                    &op_id,
-                    "STALE_JOURNAL",
-                    trigger_str,
-                    &request.reason,
-                    &format!("Cleaning up stale journal from pid={}", existing.pid),
-                );
-                if let Err(error) = super::distribution_journal::DistributionJournal::clear(&home) {
-                    self.log_failed_outcome(
-                        &op_id,
-                        trigger_str,
-                        &request.reason,
-                        "stale_journal_cleanup_failed",
-                    );
-                    return Err(error);
-                }
-                let _ = crate::recovery::arm_automation_cooldown();
-            } else {
-                self.logger.log_warning(
-                    &op_id,
-                    "DEFERRED_IN_FLIGHT",
-                    trigger_str,
-                    &request.reason,
-                    &format!(
-                        "Operation {} currently in flight (pid={})",
-                        existing.operation_id, existing.pid
-                    ),
-                );
-                return Ok(DistributionOutcome::deferred_in_flight(
-                    &op_id,
-                    trigger_str,
-                    &request.reason,
-                    format!("Operation {} currently in flight", existing.operation_id),
-                ));
-            }
+        if let Some(outcome) = DistributionJournalGateService::inspect(
+            &home,
+            &self.logger,
+            &op_id,
+            trigger_str,
+            &request.reason,
+        )? {
+            return Ok(outcome);
         }
 
         if request.trigger.is_auto() && !request.force_restart {
@@ -158,8 +131,9 @@ impl DistributionCoordinator {
             }
         }
 
-        let is_desktop_running = self.lifecycle.is_app_running();
-        let desktop_session = DesktopAppSession::load(&home.join("desktop-app-session.json"));
+        let is_desktop_running = self.lifecycle.is_app_running()?;
+        let desktop_session =
+            DesktopAppSession::load_checked(&home.join("desktop-app-session.json"))?;
 
         let current_cli_id = accounts_file.active_account_id.as_deref();
         let current_app_id = if is_desktop_running {
@@ -241,10 +215,13 @@ impl DistributionCoordinator {
             ));
         }
 
-        match self
-            .transaction_service
-            .execute(&op_id, &plan, &request, accounts_file)
-        {
+        match self.transaction_service.execute_locked(
+            &op_id,
+            &plan,
+            &request,
+            accounts_file,
+            &operation_lock,
+        ) {
             Ok(outcome) => Ok(outcome),
             Err(error) => {
                 self.log_failed_outcome(&op_id, trigger_str, &request.reason, "transaction_failed");

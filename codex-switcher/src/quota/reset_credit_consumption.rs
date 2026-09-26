@@ -104,11 +104,9 @@ pub(super) fn consume_rate_limit_reset_credit_at(
             if let Ok(outcome) = parse_reset_credit_response(response) {
                 return outcome;
             }
-            if status >= 500 {
-                ResetCreditConsumeOutcome::Unknown(format!("reset_service_http_{status}"))
-            } else {
-                ResetCreditConsumeOutcome::Unavailable(format!("reset_service_http_{status}"))
-            }
+            // A status code by itself cannot prove the request was never
+            // redeemed. Only a parsed, authoritative response can do that.
+            ResetCreditConsumeOutcome::Unknown(format!("reset_service_http_{status}"))
         }
         Err(ureq::Error::Transport(_)) => {
             ResetCreditConsumeOutcome::Unknown("reset_service_transport_uncertain".into())

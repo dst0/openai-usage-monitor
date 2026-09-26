@@ -255,7 +255,7 @@ public struct MultiAccountSnapshot: Sendable {
     resetTime: Date?,
     resetAfterSeconds: Int?,
     credits: Int,
-    autoSwitchEnabled: Bool = true,
+    autoSwitchEnabled: Bool = false,
     autoSwitchBusinessOnly: Bool = false,
     autoSwitchBusinessPriority: Bool = false,
     autoResetWeeklyEnabled: Bool = false,

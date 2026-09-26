@@ -9,9 +9,15 @@ impl ActiveAuthBindingService {
     pub(super) fn current() -> Option<String> {
         let accounts = storage::load_accounts().ok()?;
         let auth = storage::read_active_auth_json().ok()?;
+        if auth.auth_mode.as_deref() != Some("chatgpt") {
+            return None;
+        }
         let tokens = auth.tokens.as_ref()?;
-        let account_id = tokens.account_id.as_deref()?;
-        let (email, _) = crate::oauth::extract_jwt_metadata_from_tokens(tokens);
+        let account_id = tokens
+            .account_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty() && *id != "default")?;
+        let email = crate::oauth::consistent_jwt_email(tokens).ok()?;
         let mut matching = accounts.accounts.iter().filter(|account| {
             account.account_id == account_id
                 && match email.as_deref() {

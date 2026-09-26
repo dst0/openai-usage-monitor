@@ -1,16 +1,18 @@
-use crate::models::AuthJson;
-use crate::storage::{codex_home, load_accounts, read_active_auth_json, write_active_auth_json};
+use crate::models::{AccountsFile, AuthJson, AuthTokens};
+use crate::storage::{
+    auth_json_path, codex_home, load_accounts, read_active_auth_json, write_active_auth_json,
+};
 use std::io::{self, BufRead, Write};
 use std::process::Command;
 
-use super::{add_account_from_tokens, save_current_as};
+use super::{add_account_from_tokens, relogin_temp_home::ReloginTempHome, save_current_as};
 
 pub fn run_interactive_setup() -> Result<(), String> {
     println!("==================================================");
     println!("🤖 OpenAI Codex Multi-Account Setup");
     println!("==================================================");
 
-    let accounts_file = load_accounts().unwrap_or_default();
+    let accounts_file = load_login_accounts_with(load_accounts)?;
     println!(
         "Current configured accounts: {}",
         accounts_file.accounts.len()
@@ -77,6 +79,14 @@ pub fn resolve_codex_bin() -> Result<std::path::PathBuf, String> {
 }
 
 pub fn login_and_add_account(id: &str) -> Result<(), String> {
+    let codex_bin = resolve_codex_bin()?;
+    login_and_add_account_with_codex_bin(id, &codex_bin)
+}
+
+fn login_and_add_account_with_codex_bin(
+    id: &str,
+    codex_bin: impl AsRef<std::ffi::OsStr>,
+) -> Result<(), String> {
     let id_trimmed = id.trim();
     if id_trimmed.is_empty() {
         println!("🌐 Launching Codex login in browser...");
@@ -87,27 +97,10 @@ pub fn login_and_add_account(id: &str) -> Result<(), String> {
         );
     }
 
-    // 1. Create a secure, isolated temporary directory for CODEX_HOME
-    // so that the active ~/.codex/auth.json and ChatGPT.app session remain completely untouched.
-    let temp_dir_name = format!("codex-login-{}", std::process::id());
-    let temp_dir = std::env::temp_dir().join(temp_dir_name);
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    std::fs::create_dir_all(&temp_dir)
-        .map_err(|e| format!("Failed to create temporary login directory: {}", e))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&temp_dir, std::fs::Permissions::from_mode(0o700));
-    }
-
-    struct TempDirGuard<'a>(&'a std::path::Path);
-    impl<'a> Drop for TempDirGuard<'a> {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(self.0);
-        }
-    }
-    let _guard = TempDirGuard(&temp_dir);
+    // Browser login uses the same random, private CODEX_HOME lifecycle as
+    // re-login; it never removes a pathname belonging to another process.
+    let temp_home = ReloginTempHome::new()?;
+    let temp_dir = temp_home.path();
 
     // If config.toml exists in real CODEX_HOME, copy it to temp_dir so custom network/proxy settings are honored
     let real_home = codex_home();
@@ -116,8 +109,7 @@ pub fn login_and_add_account(id: &str) -> Result<(), String> {
         let _ = std::fs::copy(&real_config, temp_dir.join("config.toml"));
     }
 
-    let codex_bin = resolve_codex_bin()?;
-    let status = Command::new(&codex_bin)
+    let status = Command::new(codex_bin)
         .arg("login")
         .env("CODEX_HOME", &temp_dir)
         .status()
@@ -140,17 +132,15 @@ pub fn login_and_add_account(id: &str) -> Result<(), String> {
         .tokens
         .ok_or_else(|| "No tokens found in new auth session".to_string())?;
 
-    let mut accounts_file = load_accounts().unwrap_or_default();
+    let mut accounts_file = load_login_accounts_with(load_accounts)?;
 
     // If accounts_file has no accounts configured, but ~/.codex/auth.json has active credentials,
     // auto-save the active session first so the original account isn't lost!
-    if accounts_file.accounts.is_empty() {
-        if let Ok(active_auth) = read_active_auth_json() {
-            if let Some(active_tokens) = active_auth.tokens {
-                let _ = add_account_from_tokens(&mut accounts_file, "", active_tokens, false);
-            }
-        }
-    }
+    preserve_existing_active_session_with(
+        &mut accounts_file,
+        read_active_auth_if_present,
+        |accounts, tokens| add_account_from_tokens(accounts, "", tokens, false),
+    )?;
 
     let had_active_account = accounts_file
         .active_account_id
@@ -162,20 +152,24 @@ pub fn login_and_add_account(id: &str) -> Result<(), String> {
 
     // If there was no active account previously, initialize ~/.codex/auth.json with the new tokens
     if !had_active_account {
-        if let Ok(mut current_auth) = read_active_auth_json() {
-            if current_auth.tokens.is_none() {
+        if crate::switcher::is_shared_auth_active_checked()? {
+            return Err("Shared credentials became active before first-account setup".into());
+        }
+        let new_live_auth = match read_active_auth_if_present()? {
+            Some(mut current_auth) if current_auth.tokens.is_none() => {
                 current_auth.tokens = Some(tokens);
-                let _ = write_active_auth_json(&current_auth);
+                current_auth
             }
-        } else {
-            let new_live_auth = AuthJson {
+            Some(_) => return Err("Active credentials changed during first-account setup".into()),
+            None => AuthJson {
                 auth_mode: Some("chatgpt".to_string()),
                 openai_api_key: None,
                 tokens: Some(tokens),
                 last_refresh: Some(chrono::Utc::now().to_rfc3339()),
-            };
-            let _ = write_active_auth_json(&new_live_auth);
-        }
+                extra: Default::default(),
+            },
+        };
+        write_active_auth_json(&new_live_auth)?;
     }
 
     // Refresh quotas and status file without auto-switching or app restarts
@@ -194,3 +188,37 @@ pub fn login_and_add_account(id: &str) -> Result<(), String> {
 
     Ok(())
 }
+
+fn load_login_accounts_with(
+    load: impl FnOnce() -> Result<AccountsFile, String>,
+) -> Result<AccountsFile, String> {
+    load()
+}
+
+fn preserve_existing_active_session_with(
+    accounts: &mut AccountsFile,
+    read_auth: impl FnOnce() -> Result<Option<AuthJson>, String>,
+    save: impl FnOnce(&mut AccountsFile, AuthTokens) -> Result<String, String>,
+) -> Result<(), String> {
+    if accounts.accounts.is_empty() {
+        if let Some(auth) = read_auth()? {
+            if let Some(tokens) = auth.tokens {
+                save(accounts, tokens)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_active_auth_if_present() -> Result<Option<AuthJson>, String> {
+    match std::fs::symlink_metadata(auth_json_path()) {
+        Ok(metadata) if metadata.file_type().is_file() => read_active_auth_json().map(Some),
+        Ok(_) => Err("Active credential path is not a regular file".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err("Active credential presence could not be checked".into()),
+    }
+}
+
+#[cfg(test)]
+#[path = "interactive_setup.test.rs"]
+mod tests;

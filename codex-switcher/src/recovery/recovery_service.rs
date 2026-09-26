@@ -1,6 +1,7 @@
 use super::{
     automation_guard::operation_id_for_banner,
     desktop_ipc::DesktopIpc,
+    foreground_checkpoint_service::ForegroundCheckpointService,
     manifest_store::{
         finalize_target, load_manifest, prune_ineligible_targets, recovery_account_binding,
         write_manifest,
@@ -9,8 +10,8 @@ use super::{
     recovery_checkpoint::checkpoint_targets,
     recovery_mode::RecoveryMode,
     recovery_target::{
-        prepare_target, record_target_state, RecoveryTarget, RECOVERY_DISPATCH_TIMEOUT,
-        RECOVERY_EXECUTION_TIMEOUT,
+        prepare_target, record_target_state_with_budget, RecoveryTarget,
+        FOREGROUND_SCAN_BUDGET_BYTES, RECOVERY_DISPATCH_TIMEOUT, RECOVERY_EXECUTION_TIMEOUT,
     },
     target_dispatch::dispatch_if_needed,
 };
@@ -20,21 +21,12 @@ use std::{
     time::{Duration, Instant},
 };
 const IPC_STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
-const PRE_DISPATCH_ACTIVITY_GRACE: Duration = Duration::from_secs(3);
 
 pub fn recover_threads(ids: &[String], mode: RecoveryMode) -> Result<(), String> {
     let operation_id = operation_id_for_banner("thread_recovery");
     let mut banner =
         RecoveryBanner::start_for_running_desktop(&operation_id, ids, "thread_recovery")?;
     recover_threads_with_banner(ids, mode, &mut banner)
-}
-
-pub(super) fn sanitize_recovery_error(error: &str) -> String {
-    error
-        .chars()
-        .filter(|character| !character.is_control())
-        .take(160)
-        .collect()
 }
 
 pub(crate) fn recover_threads_with_banner(
@@ -57,10 +49,16 @@ pub(crate) fn recover_threads_with_banner(
     let mut targets = Vec::new();
     let mut completed_without_action = Vec::new();
     let mut preparation_failures = Vec::new();
+    let per_target_budget = FOREGROUND_SCAN_BUDGET_BYTES / ids.len().max(1) as u64;
     for id in ids {
         banner.record_status(id, BannerSessionStatus::InProgress);
         let previous = previous_pending.iter().find(|target| target.id == *id);
-        match prepare_target(&home, id, previous.and_then(|target| target.offset)) {
+        match prepare_target(
+            &home,
+            id,
+            previous.and_then(|target| target.offset),
+            per_target_budget,
+        ) {
             Ok(Some(target)) => targets.push(target),
             Ok(None) => {
                 banner.record_status(id, BannerSessionStatus::Skipped);
@@ -74,44 +72,40 @@ pub(crate) fn recover_threads_with_banner(
         }
     }
 
-    // Observe all targets for a short bounded grace before sending anything.
-    // This catches work that Desktop or the user already resumed after the
-    // checkpoint and prevents a duplicate empty turn without trusting locks.
-    let activity_deadline = Instant::now() + PRE_DISPATCH_ACTIVITY_GRACE;
-    while Instant::now() < activity_deadline {
-        for target in &mut targets {
-            if !target.completed && target.failure.is_none() {
-                if let Err(error) = record_target_state(target) {
-                    mark_pre_dispatch_channel_failure(target, &error);
-                }
-            }
-        }
-        if targets
-            .iter()
-            .all(|target| target.completed || target.failure.is_some())
-        {
-            break;
-        }
-        sleep(Duration::from_millis(200));
+    // Inspect the full checkpoint interval in fair bounded steps before any
+    // owner-routed request; otherwise an unseen user turn could be duplicated.
+    for id in ForegroundCheckpointService::new(&mut targets).scan_until_ready() {
+        banner.record_status(&id, BannerSessionStatus::Skipped);
+        completed_without_action.push(id);
     }
 
     // Route each turn through its Desktop owner. Cold tasks are mounted only
     // after owner discovery says they are not already owned; no fixed UI sleep
     // is treated as a readiness contract.
-    if !targets.is_empty() {
+    if targets
+        .iter()
+        .any(|target| !target.completed && target.failure.is_none())
+    {
+        let per_target_dispatch_budget = FOREGROUND_SCAN_BUDGET_BYTES / targets.len().max(1) as u64;
         match DesktopIpc::connect_with_retry(IPC_STARTUP_TIMEOUT) {
             Ok(mut desktop) => {
                 crate::runtime_print!("RECOVERY_CHANNEL_READY transport=desktop_ipc");
                 for target in &mut targets {
+                    let mut scan_budget = per_target_dispatch_budget;
                     let target_id = target.id.clone();
                     let before_send = || {
                         banner.ensure_visible_after_owner(ids, mode)?;
                         banner.record_status(&target_id, BannerSessionStatus::InProgress);
                         Ok(())
                     };
-                    if let Err(error) =
-                        dispatch_if_needed(&home, &mut desktop, target, mode, before_send)
-                    {
+                    if let Err(error) = dispatch_if_needed(
+                        &home,
+                        &mut desktop,
+                        target,
+                        mode,
+                        &mut scan_budget,
+                        before_send,
+                    ) {
                         mark_dispatch_failure(target, &error);
                     }
                 }
@@ -119,7 +113,8 @@ pub(crate) fn recover_threads_with_banner(
             }
             Err(error) => {
                 for target in &mut targets {
-                    if record_target_state(target).is_err()
+                    if record_target_state_with_budget(target, per_target_dispatch_budget).is_err()
+                        || !target.scan_complete
                         || (!target.completed && !target.observer.evidence.started)
                     {
                         // No IPC request was sent. Retain the original
@@ -148,11 +143,15 @@ pub(crate) fn recover_threads_with_banner(
     }
 
     loop {
+        let per_target_observation_budget =
+            FOREGROUND_SCAN_BUDGET_BYTES / targets.len().max(1) as u64;
         for target in &mut targets {
             if target.failure.is_some() || target.completed {
                 continue;
             }
-            if let Err(error) = record_target_state(target) {
+            if let Err(error) =
+                record_target_state_with_budget(target, per_target_observation_budget)
+            {
                 target.failure = Some(error);
             } else if (target.dispatched || target.execution_deadline_set)
                 && Instant::now() >= target.deadline

@@ -63,6 +63,35 @@ pub fn extract_jwt_metadata_from_tokens(tokens: &AuthTokens) -> (Option<String>,
     (email, plan)
 }
 
+/// Returns the decoded email claim for account binding. This checks
+/// consistency between local token claims; it does not verify JWT signatures.
+pub fn consistent_jwt_email(tokens: &AuthTokens) -> Result<Option<String>, String> {
+    let id_email = extract_jwt_metadata(tokens.id_token.as_deref()).0;
+    let access_email = extract_jwt_metadata(Some(&tokens.access_token)).0;
+    for email in [id_email.as_deref(), access_email.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        let email = email.trim();
+        if !email.contains('@')
+            || email.eq_ignore_ascii_case("user@openai.com")
+            || email.eq_ignore_ascii_case("current-user")
+        {
+            return Err("Token email identity is unusable".into());
+        }
+    }
+    if id_email
+        .as_deref()
+        .zip(access_email.as_deref())
+        .is_some_and(|(id, access)| !id.trim().eq_ignore_ascii_case(access.trim()))
+    {
+        return Err("Token email identities conflict".into());
+    }
+    Ok(id_email
+        .or(access_email)
+        .map(|email| email.trim().to_string()))
+}
+
 pub fn refresh_access_token(tokens: &mut AuthTokens) -> Result<(), String> {
     let refresh_token = tokens
         .refresh_token

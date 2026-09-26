@@ -1,6 +1,8 @@
 use super::reset_journal::ResetJournal;
 use super::reset_journal_store::ResetJournalStore;
-use super::weekly_reset_policy::{same_episode, threshold_eligible, weekly_exhausted};
+use super::weekly_reset_policy::{
+    same_episode, threshold_eligible, unresolved_attempt, weekly_exhausted,
+};
 use super::AutoResetStatus;
 use crate::models::{AccountConfig, Settings};
 
@@ -27,6 +29,27 @@ impl WeeklyResetStatusService {
                 last_event_at: None,
             };
         };
+        let journal = match ResetJournalStore::load() {
+            Ok(journal) => journal,
+            Err(_) => {
+                return AutoResetStatus {
+                    state: "journal_error".into(),
+                    reason: Some("auto_reset_journal_invalid".into()),
+                    last_event_at: None,
+                }
+            }
+        };
+        if unresolved_attempt(&journal) {
+            return AutoResetStatus {
+                state: if same_episode(&journal, active) {
+                    journal.state
+                } else {
+                    "waiting_for_previous_reset".into()
+                },
+                reason: journal.reason,
+                last_event_at: journal.updated_at,
+            };
+        }
         if !weekly_exhausted(active) {
             return AutoResetStatus {
                 state: "ready".into(),
@@ -57,28 +80,22 @@ impl WeeklyResetStatusService {
                 last_event_at: None,
             };
         }
-        match ResetJournalStore::load() {
-            Ok(journal) if same_episode(&journal, active) => AutoResetStatus {
+        match journal {
+            journal if same_episode(&journal, active) => AutoResetStatus {
                 state: journal.state,
                 reason: journal.reason,
                 last_event_at: journal.updated_at,
             },
-            Ok(_) => AutoResetStatus {
+            _ => AutoResetStatus {
                 state: "waiting_for_task".into(),
                 reason: None,
-                last_event_at: None,
-            },
-            Err(_) => AutoResetStatus {
-                state: "journal_error".into(),
-                reason: Some("auto_reset_journal_invalid".into()),
                 last_event_at: None,
             },
         }
     }
 
-    /// Clears a previous episode once usage shows a non-zero weekly pool again.
-    /// Without this, a provider response lacking a reset timestamp could prevent a
-    /// future, independent weekly-exhaustion episode from being considered.
+    /// Clears a terminal previous episode once usage shows a non-zero weekly
+    /// pool. Pending and unknown requests remain until reconciliation.
     pub(super) fn clear_completed_episode_if_restored(
         settings: &Settings,
         active: Option<&AccountConfig>,
@@ -86,8 +103,13 @@ impl WeeklyResetStatusService {
         if !settings.auto_reset_weekly_enabled || active.is_none_or(weekly_exhausted) {
             return Ok(());
         }
+        let _operation = crate::recovery::operation_lock()?;
         let journal = ResetJournalStore::load()?;
-        if journal.episode_key.is_some() {
+        // A restored pool can be the delayed effect of the very request whose
+        // response was lost. Keep its key until explicit reconciliation; a
+        // manual reset must still see the unresolved automatic attempt.
+        if journal.episode_key.is_some() && !matches!(journal.state.as_str(), "pending" | "unknown")
+        {
             ResetJournalStore::write(&ResetJournal::default())?;
         }
         Ok(())

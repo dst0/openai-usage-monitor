@@ -138,7 +138,7 @@ pub(super) enum Commands {
         /// Account ID, nickname, or email to re-authenticate (defaults to active account)
         #[arg(default_value = "")]
         account: String,
-        /// Force restart ChatGPT desktop app on re-login
+        /// Reserved; re-login currently refuses Desktop restart for credential safety
         #[arg(long)]
         restart: bool,
         /// Do not restart ChatGPT desktop app

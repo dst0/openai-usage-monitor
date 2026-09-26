@@ -323,7 +323,7 @@ public final class CodexClient: @unchecked Sendable {
     let resetTime = resetTimeStr.flatMap { Self.parseDate($0) }
     let resetAfterSec = json["reset_after_seconds"] as? Int
     let credits = json["credits"] as? Int ?? 0
-    let autoSwitch = json["auto_switch_enabled"] as? Bool ?? true
+    let autoSwitch = json["auto_switch_enabled"] as? Bool ?? false
     let autoSwitchBizOnly = json["auto_switch_business_only"] as? Bool ?? false
     let autoSwitchBizPriority = json["auto_switch_business_priority"] as? Bool ?? false
     let autoResetWeekly = json["auto_reset_weekly_enabled"] as? Bool ?? false

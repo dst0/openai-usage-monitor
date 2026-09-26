@@ -62,6 +62,54 @@ impl<'a> DistributionDesktopRelaunchService<'a> {
                 return (true, Some(error));
             }
         };
+        let Some(cli_account_id) = cli_account_id else {
+            self.lifecycle.abort_recovery();
+            return (true, Some("CLI account identity is unavailable".into()));
+        };
+        let path = home.join("desktop-app-session.json");
+        let previous = match DesktopAppSession::load_checked(&path) {
+            Ok(previous) => previous,
+            Err(error) => {
+                self.lifecycle.abort_recovery();
+                return (true, Some(error));
+            }
+        };
+        let bound = DesktopAppSession::bound(app_account_id, cli_account_id, before.clone());
+        if let Err(error) = bound.save(&path) {
+            self.lifecycle.abort_recovery();
+            let restore =
+                DesktopAppSession::restore_after_failed_save(&path, previous.as_ref(), &bound);
+            return (
+                true,
+                Some(match restore {
+                    Ok(()) => error,
+                    Err(restore) => {
+                        format!("{error}; Desktop marker rollback unverified: {restore}")
+                    }
+                }),
+            );
+        }
+        match self.lifecycle.inspect_process(pid) {
+            Ok(current) if current == before => {}
+            _ => {
+                self.lifecycle.abort_recovery();
+                let restore = Self::restore_previous_marker(&path, previous.as_ref());
+                return (
+                    true,
+                    Some(Self::identity_error_with_marker_restore(restore)),
+                );
+            }
+        }
+        self.logger.log_action(
+            operation_id,
+            "DESKTOP_SESSION",
+            request.trigger.as_str(),
+            &request.reason,
+            &format!(
+                "Desktop session account_ref={}",
+                LogRedactionService::sanitize_field("account_id", app_account_id)
+            ),
+        );
         if let Err(error) = DistributionRecoveryAuditService::restore_and_recover(
             self.logger,
             self.lifecycle,
@@ -73,36 +121,42 @@ impl<'a> DistributionDesktopRelaunchService<'a> {
         ) {
             recovery_error = Some(error);
         }
-        let process = match self.lifecycle.inspect_process(pid) {
-            Ok(after) if after == before => after,
+        match self.lifecycle.inspect_process(pid) {
+            Ok(after) if after == before => {}
             _ => {
-                recovery_error.get_or_insert_with(|| {
-                    "Desktop process identity changed during recovery".into()
+                self.lifecycle.abort_recovery();
+                let restore = Self::restore_previous_marker(&path, previous.as_ref());
+                let identity_error = Self::identity_error_with_marker_restore(restore);
+                recovery_error = Some(match recovery_error {
+                    Some(previous_error) => format!("{previous_error}; {identity_error}"),
+                    None => identity_error,
                 });
                 return (true, recovery_error);
             }
-        };
-        if let Some(cli_account_id) = cli_account_id {
-            let path = home.join("desktop-app-session.json");
-            if let Err(error) =
-                DesktopAppSession::bound(app_account_id, cli_account_id, process).save(&path)
-            {
-                recovery_error.get_or_insert(error);
-            } else {
-                self.logger.log_action(
-                    operation_id,
-                    "DESKTOP_SESSION",
-                    request.trigger.as_str(),
-                    &request.reason,
-                    &format!(
-                        "Desktop session account_ref={}",
-                        LogRedactionService::sanitize_field("account_id", app_account_id)
-                    ),
-                );
-            }
-        } else {
-            recovery_error.get_or_insert_with(|| "CLI account identity is unavailable".into());
         }
         (true, recovery_error)
+    }
+
+    fn restore_previous_marker(
+        path: &Path,
+        previous: Option<&DesktopAppSession>,
+    ) -> Result<(), String> {
+        match previous {
+            Some(previous) => previous.save(path),
+            None => match std::fs::remove_file(path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error.to_string()),
+            },
+        }
+    }
+
+    fn identity_error_with_marker_restore(restore: Result<(), String>) -> String {
+        match restore {
+            Ok(()) => "Desktop process identity changed during recovery".into(),
+            Err(error) => {
+                format!("Desktop process identity changed; marker rollback failed: {error}")
+            }
+        }
     }
 }

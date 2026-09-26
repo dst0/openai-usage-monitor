@@ -1,4 +1,5 @@
 use super::app_lifecycle::AppLifecycle;
+use super::app_stop_error::AppStopError;
 use super::window_capture_mode::WindowCaptureMode;
 use crate::distribution::window_restore_report::RestoreReport;
 use crate::distribution::{
@@ -42,11 +43,11 @@ pub(crate) fn optional_banner_capture_failure(error: &str) -> bool {
 }
 
 impl AppLifecycle for SystemAppLifecycle {
-    fn is_app_running(&self) -> bool {
-        switcher::is_codex_app_running()
+    fn is_app_running(&self) -> Result<bool, String> {
+        switcher::is_shared_auth_active_checked()
     }
 
-    fn stop_app(&self) -> Result<(), String> {
+    fn preflight_shutdown_windows(&self) -> Result<(), String> {
         let expected = self
             .recovery_banner
             .lock()
@@ -55,12 +56,29 @@ impl AppLifecycle for SystemAppLifecycle {
             .ok_or("Desktop shutdown has no captured process identity")?
             .expected_process()
             .clone();
+        switcher::preflight_shutdown_windows(&expected)
+    }
+
+    fn stop_app(&self) -> Result<(), AppStopError> {
+        let expected = self
+            .recovery_banner
+            .lock()
+            .map_err(|_| AppStopError::before("Recovery banner state lock is poisoned"))?
+            .as_ref()
+            .ok_or_else(|| {
+                AppStopError::before("Desktop shutdown has no captured process identity")
+            })?
+            .expected_process()
+            .clone();
         if switcher::current_codex_app_pids() != [expected.pid] {
-            return Err("Desktop process set changed before shutdown".into());
+            return Err(AppStopError::before(
+                "Desktop process set changed before shutdown",
+            ));
         }
-        let mut backend = SystemWindowRestoreBackend::new()?;
-        WindowProcessValidationService::confirm(&mut backend, &expected)?;
-        switcher::stop_codex_app_gracefully()
+        let mut backend = SystemWindowRestoreBackend::new().map_err(AppStopError::before)?;
+        WindowProcessValidationService::confirm(&mut backend, &expected)
+            .map_err(AppStopError::before)?;
+        switcher::stop_codex_app_gracefully(&expected)
     }
 
     fn launch_app(&self) -> Result<Vec<u32>, String> {

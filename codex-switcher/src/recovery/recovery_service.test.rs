@@ -3,11 +3,65 @@ use super::{
     observer::Observer,
     pending_target::PendingTarget,
     recovery_service::{mark_dispatch_failure, mark_pre_dispatch_channel_failure},
-    recovery_target::RecoveryTarget,
+    recovery_target::{record_target_state_at, RecoveryTarget},
 };
 use crate::switcher::ThreadRolloutState;
 use crate::{distribution::WindowProcessIdentity, recovery::RecoveryBanner};
-use std::time::Instant;
+use std::{io::Write, time::Instant};
+
+#[test]
+fn foreground_recovery_scans_large_checkpoint_in_bounded_steps_before_claiming_proof() {
+    let home = std::env::temp_dir().join(format!("codex-foreground-scan-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let rollout = home.join("rollout.jsonl");
+    std::fs::write(&rollout, b"checkpoint\n").unwrap();
+    let checkpoint = std::fs::metadata(&rollout).unwrap().len();
+    let mut writer = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&rollout)
+        .unwrap();
+    let record = format!(
+        "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"padding\":\"{}\"}}}}\n",
+        "x".repeat(8 * 1024)
+    );
+    for _ in 0..(32 * 1024 * 1024_usize).div_ceil(record.len()) {
+        writer.write_all(record.as_bytes()).unwrap();
+    }
+    writer.write_all(b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"new-turn\"}}\n").unwrap();
+    writer
+        .write_all(b"{\"type\":\"response_item\",\"payload\":{\"type\":\"reasoning\"}}\n")
+        .unwrap();
+    writer.write_all(b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"new-turn\",\"error\":{\"message\":\"failed\"}}}\n").unwrap();
+    drop(writer);
+    let mut target = RecoveryTarget {
+        id: "01a098c2-0fae-74d2-a80c-45d89e910e79".into(),
+        state: ThreadRolloutState::ActiveInProgress,
+        writer_locked: false,
+        observer: Observer::checkpoint_at(rollout.clone(), checkpoint).unwrap(),
+        scan_complete: false,
+        existing_queue: 0,
+        mounted_by_recovery: false,
+        owner_unavailable: false,
+        account_mismatch: false,
+        dispatched: false,
+        completed: false,
+        failure: None,
+        deadline: Instant::now(),
+        execution_deadline_set: false,
+        expected_turn_id: None,
+        proof_observed_at: None,
+    };
+    record_target_state_at(&mut target, Instant::now()).unwrap();
+    assert!(target.observer.offset - checkpoint <= 16 * 1024 * 1024);
+    assert!(!target.completed);
+    assert!(target.failure.is_none());
+    for _ in 0..4 {
+        record_target_state_at(&mut target, Instant::now()).unwrap();
+    }
+    assert!(target.failure.is_some());
+    assert!(!target.completed);
+    std::fs::remove_dir_all(home).unwrap();
+}
 
 #[test]
 fn cold_mount_without_a_visible_window_must_not_enter_ipc_dispatch() {
@@ -38,6 +92,7 @@ fn desktop_ipc_startup_failure_keeps_undispatched_checkpoint() {
         state: ThreadRolloutState::ActiveInProgress,
         writer_locked: false,
         observer: Observer::checkpoint(rollout).unwrap(),
+        scan_complete: false,
         existing_queue: 0,
         mounted_by_recovery: false,
         owner_unavailable: false,
@@ -89,6 +144,7 @@ fn sqlite_failure_before_dispatch_keeps_checkpoint_but_uncertain_send_does_not()
         state: ThreadRolloutState::ActiveInProgress,
         writer_locked: false,
         observer: Observer::checkpoint(rollout).unwrap(),
+        scan_complete: false,
         existing_queue: 0,
         mounted_by_recovery: false,
         owner_unavailable: false,

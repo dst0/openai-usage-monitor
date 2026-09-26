@@ -69,3 +69,93 @@ fn observer_snapshot_does_not_chase_later_rollout_writes() {
     assert!(observer.evidence.verified(None));
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn observer_rejects_replaced_rollout_after_checkpoint() {
+    let home = std::env::temp_dir().join(format!("cxi-observer-replaced-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let path = home.join("rollout.jsonl");
+    std::fs::write(&path, b"checkpoint\n").unwrap();
+    let mut observer = Observer::checkpoint(path.clone()).unwrap();
+    let replacement = home.join("replacement.jsonl");
+    std::fs::write(&replacement, b"checkpoint\n").unwrap();
+    std::fs::rename(&replacement, &path).unwrap();
+    let error = observer
+        .poll_to(std::fs::metadata(&path).unwrap().len())
+        .unwrap_err();
+    assert!(error.contains("identity changed"));
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn newline_terminated_oversized_event_remains_untrusted() {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!(
+        "cxi-observer-complete-oversized-{}",
+        std::process::id()
+    ));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&path)
+        .unwrap();
+    let mut observer = Observer::checkpoint(path.clone()).unwrap();
+    let long_started = event(
+        "event_msg",
+        serde_json::json!({"type":"task_started","turn_id":"new-turn","padding":"x".repeat(MAX_LINE)}),
+    );
+    file.write_all(&long_started).unwrap();
+    file.write_all(b"\n").unwrap();
+    observer.poll().unwrap();
+    assert!(
+        observer.saw_oversized,
+        "a skipped completed event must remain untrusted"
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn newline_terminated_malformed_event_remains_untrusted() {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!("cxi-observer-malformed-{}", std::process::id()));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&path)
+        .unwrap();
+    let mut observer = Observer::checkpoint(path.clone()).unwrap();
+    file.write_all(b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"error\":\n")
+        .unwrap();
+    observer.poll().unwrap();
+    assert!(
+        observer.saw_malformed,
+        "a skipped malformed event must remain untrusted"
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn structurally_incomplete_json_record_remains_untrusted() {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!(
+        "cxi-observer-incomplete-object-{}",
+        std::process::id()
+    ));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&path)
+        .unwrap();
+    let mut observer = Observer::checkpoint(path.clone()).unwrap();
+    file.write_all(b"{}\n{\"type\":\"event_msg\",\"payload\":{}}\n")
+        .unwrap();
+    observer.poll().unwrap();
+    assert!(
+        observer.saw_malformed,
+        "invalid record shape must not hide lifecycle state"
+    );
+    std::fs::remove_file(path).unwrap();
+}
