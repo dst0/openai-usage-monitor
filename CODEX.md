@@ -159,13 +159,19 @@ Desktop restart and thread recovery are unavailable. Optional read-only check:
 Cold tasks may fail owner discovery after an accepted macOS deep link even
 when Desktop IPC itself is healthy. The monitor activates ChatGPT once
 for an ownerless task and requests background URL retries with
-`open -g -a /Applications/ChatGPT.app`. Desktop may still take foreground focus.
-It requires a real IPC owner before dispatch.
+`open -g -a /Applications/ChatGPT.app`. If no owner mounts after at least
+10 seconds of initial waiting, one native LaunchServices URL attempt uses the
+exact `/Applications/ChatGPT.app` bundle while ordinary retries continue.
+Foreground activation is acceptable; neither route's acceptance proves
+mounting. A real IPC owner remains required before dispatch.
+The pinned route uses deprecated `LSOpenFromURLSpec` and is bounded to an
+ownerless retry; macOS compatibility must be rechecked after OS updates.
 In that case automatic distribution reports
 partial recovery rather than sending a turn without an owner. The daemon
 retains only pre-dispatch tasks without a verified owner, including transient
 URL-launch and Desktop IPC startup failures. It probes every 15 seconds and
-reissues an ownerless task URL at most once per minute. Once
+reissues an ownerless task URL at most once per minute, alternating ordinary
+and pinned native delivery only after actual attempts. Once
 ChatGPT mounts the task, it retries using the original checkpoint and normal
 turn verification. For a deferred retry after App/CLI distribution, the saved
 Desktop account must match the target, the exact live ChatGPT PID and birth
@@ -283,15 +289,14 @@ Failed status replay into a late banner blocks dispatch. Window access/geometry
 failure, panel timeout, process identity, missing helper, payload/lease failure,
 and malformed helper output block dispatch and retain the original checkpoint.
 Automatic switching stays disabled until quota-interrupted cold tasks complete
-end-to-end recovery, URL delivery preserves focus, and exact selected-task
-restoration across multiple windows is verified in the installed app. Historical
-logs show URL-to-owner-to-IPC recovery. Current live checks found accepted
-links without an owner and observed ChatGPT take foreground focus after both
-`open -g -a` and a rejected native LaunchServices experiment. The installed
-ChatGPT 26.924.20706 deep-link handler ensures its primary window is visible
-before navigating an ordinary task; no supported background mount IPC method
-was evident. Neither check dispatched a recovery turn or switched accounts.
-URL acceptance is not owner or recovery proof.
+end-to-end recovery and exact selected-task restoration across multiple windows
+is verified in the installed app. Historical logs show URL-to-owner-to-IPC
+recovery; current live checks show that accepted URL delivery may leave the
+task ownerless at an immediate check. The installed ChatGPT 26.924.20706
+deep-link handler shows its primary window before ordinary task navigation,
+which the owner accepts. No supported background mount IPC method was evident.
+These checks dispatched no recovery turn or account switch. URL acceptance is
+not owner or recovery proof.
 
 The Menu Bar's APP quota comes from `desktop-app-session.json` only when its
 saved account is bound to the exact live ChatGPT PID and process birth time.

@@ -6,6 +6,8 @@ use super::{
     },
     ipc_read_error::IpcReadError,
     owner_info::OwnerInfo,
+    owner_link_retry_schedule::{self, OwnerLinkRetry},
+    ownerless_link_mount,
 };
 use crate::switcher;
 use serde_json::Value;
@@ -18,9 +20,7 @@ const IPC_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 const IPC_OWNER_TIMEOUT: Duration = Duration::from_secs(90);
 pub(super) const IPC_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(12);
 
-/// Desktop's same-user IPC router is the supported cross-client ownership
-/// channel. Requests are routed to the window that owns the mounted thread,
-/// and that window starts the turn on its existing app-server connection.
+/// Desktop's same-user IPC router addresses the owner of a mounted thread.
 pub(super) struct DesktopIpc {
     stream: UnixStream,
     client_id: String,
@@ -181,8 +181,10 @@ impl DesktopIpc {
         &mut self,
         thread_id: &str,
     ) -> Result<OwnerInfo, IpcCallError> {
-        let deadline = Instant::now() + IPC_OWNER_TIMEOUT;
-        let mut loop_count: usize = 0;
+        let started = Instant::now();
+        let deadline = started + IPC_OWNER_TIMEOUT;
+        let mut last_ordinary = started;
+        let mut native_attempted = false;
         loop {
             match self.discover_owner_info_once(thread_id) {
                 Ok(owner) => return Ok(owner),
@@ -193,12 +195,28 @@ impl DesktopIpc {
                 return Err(IpcCallError::NoClientFound);
             }
             sleep(Duration::from_millis(200));
-            loop_count += 1;
-            // Every 2 seconds (10 ticks), re-issue background deep link in case ChatGPT was
-            // still initializing its URL handler when the initial command was run.
-            if loop_count.is_multiple_of(10) {
-                switcher::retry_thread_link_in_background(thread_id)
-                    .map_err(IpcCallError::Other)?;
+            let now = Instant::now();
+            if let Some(selected) = owner_link_retry_schedule::route(
+                now.duration_since(started),
+                now.duration_since(last_ordinary),
+                native_attempted,
+            ) {
+                match selected {
+                    OwnerLinkRetry::PinnedNative => native_attempted = true,
+                    OwnerLinkRetry::Ordinary => last_ordinary = now,
+                }
+                if let Err(error) =
+                    owner_link_retry_schedule::retry_thread_link(thread_id, selected)
+                {
+                    if switcher::is_fatal_thread_navigation_error(&error) {
+                        return Err(IpcCallError::Other(error));
+                    }
+                    let reason = match selected {
+                        OwnerLinkRetry::PinnedNative => "PINNED_TASK_NAVIGATION_FAILED",
+                        OwnerLinkRetry::Ordinary => "TASK_NAVIGATION_RETRY_FAILED",
+                    };
+                    crate::logger::log("WARN", "RECOVERY", reason);
+                }
             }
         }
     }
@@ -220,8 +238,11 @@ impl DesktopIpc {
         let (owner, mounted_by_recovery) = match self.discover_owner_info_once(thread_id) {
             Ok(owner) => (owner, false),
             Err(IpcCallError::NoClientFound) => {
-                switcher::open_thread_in_codex(thread_id).map_err(IpcCallError::Other)?;
-                (self.discover_owner_info_with_retry(thread_id)?, true)
+                let owner = ownerless_link_mount::open_then_wait_for_owner(
+                    || switcher::open_thread_in_codex(thread_id),
+                    || self.discover_owner_info_with_retry(thread_id),
+                )?;
+                (owner, true)
             }
             Err(error) => return Err(error),
         };

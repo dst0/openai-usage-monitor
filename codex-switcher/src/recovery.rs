@@ -18,6 +18,8 @@ mod manifest_prune_service;
 mod manifest_store;
 mod observer;
 mod owner_info;
+mod owner_link_retry_schedule;
+mod ownerless_link_mount;
 mod pending_manifest;
 mod pending_target;
 mod queue_snapshot;

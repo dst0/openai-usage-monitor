@@ -28,9 +28,20 @@ pub fn open_thread_in_codex(thread_id: &str) -> Result<(), String> {
     open_thread(thread_id, true)
 }
 
-/// Reissues an already requested URL without repeatedly stealing focus.
+/// Requests background delivery for a repeated URL. Desktop may still
+/// foreground its window while mounting the task.
 pub fn retry_thread_link_in_background(thread_id: &str) -> Result<(), String> {
     open_thread(thread_id, false)
+}
+
+/// Uses the exact installed ChatGPT bundle rather than the default URL
+/// handler. A successful launch is only delivery, never proof of an owner.
+pub fn retry_thread_link_natively_in_background(thread_id: &str) -> Result<(), String> {
+    let clean = clean_thread_id(thread_id);
+    if !is_valid_thread_id(&clean) {
+        return Err("Invalid thread ID for ChatGPT navigation".into());
+    }
+    super::pinned_thread_link_launch_spec::retry(&clean)
 }
 
 fn open_thread(thread_id: &str, foreground: bool) -> Result<(), String> {
