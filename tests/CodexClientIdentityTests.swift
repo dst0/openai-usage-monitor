@@ -40,6 +40,7 @@ struct CodexClientIdentityTests {
       accounts: accounts, appAccount: nil, cliAccount: cli)
     require(snapshot.cliAccount?.id == cli.id, "CLI identity must remain available")
     require(snapshot.appAccount == nil, "missing App identity must not fall back to CLI")
+    require(!snapshot.autoSwitchEnabled, "an unspecified snapshot must leave auto-switch off")
 
     let previousHome = getenv("CODEX_HOME").map { String(cString: $0) }
     let testHome = FileManager.default.temporaryDirectory
@@ -80,6 +81,8 @@ struct CodexClientIdentityTests {
     try! JSONSerialization.data(withJSONObject: oldCliCache)
       .write(to: testHome.appendingPathComponent("usage-status.json"))
     try! Data("{}".utf8).write(to: testHome.appendingPathComponent("auth.json"))
+    try! FileManager.default.setAttributes(
+      [.posixPermissions: 0o600], ofItemAtPath: testHome.appendingPathComponent("auth.json").path)
     require(CodexClient().loadCachedSnapshot()?.cliAccount == nil,
       "a cache bound to an older auth file must not display its CLI quota")
     var authInfo = stat()
@@ -100,7 +103,10 @@ struct CodexClientIdentityTests {
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     let process = CodexDesktopProcessIdentity(
       pid: 4242, birthID: "\(Int(now.timeIntervalSince1970) - 60):000001")
-    func marker(_ accountID: String, at date: Date, process: CodexDesktopProcessIdentity? = nil) -> Data {
+    func marker(
+      _ accountID: String, at date: Date, process: CodexDesktopProcessIdentity? = nil,
+      authFileID: String? = nil
+    ) -> Data {
       var object: [String: Any] = [
         "account_id": accountID,
         "updated_at": formatter.string(from: date),
@@ -108,6 +114,7 @@ struct CodexClientIdentityTests {
       if let process {
         object["process"] = ["pid": Int(process.pid), "birth_id": process.birthID]
       }
+      if let authFileID { object["auth_file_id"] = authFileID }
       return try! JSONSerialization.data(withJSONObject: object)
     }
 
@@ -122,6 +129,16 @@ struct CodexClientIdentityTests {
         from: marker(app.id, at: now, process: process), currentProcess: process, now: now)
         == app.id,
       "current App marker bound to the exact process must be accepted")
+    require(
+      CodexClient.validatedDesktopAppSessionAccountId(
+        from: marker(app.id, at: now, process: process, authFileID: "old-auth"),
+        currentProcess: process, now: now, currentAuthFileID: "new-auth") == nil,
+      "a changed shared auth file must invalidate an externally rebound App marker")
+    require(
+      CodexClient.validatedDesktopAppSessionAccountId(
+        from: marker(app.id, at: now, process: process, authFileID: "current-auth"),
+        currentProcess: process, now: now, currentAuthFileID: "current-auth") == app.id,
+      "an externally rebound App marker may use only its exact shared auth file")
     require(
       CodexClient.validatedDesktopAppSessionAccountId(
         from: marker(app.id, at: now, process: process),
@@ -155,6 +172,46 @@ struct CodexClientIdentityTests {
       CodexClient.validatedDesktopAppSessionAccountId(
         from: Data("{\"account_id\":\"\(app.id)\"}".utf8), currentProcess: process, now: now) == nil,
       "marker without freshness metadata must be rejected")
+
+    let privateMarkerURL = testHome.appendingPathComponent("private-session.json")
+    let privateMarker = marker(app.id, at: now, process: process, authFileID: "current-auth")
+    try! privateMarker.write(to: privateMarkerURL)
+    try! FileManager.default.setAttributes(
+      [.posixPermissions: 0o600], ofItemAtPath: privateMarkerURL.path)
+    require(CodexClient.readPrivateSessionMarkerData(at: privateMarkerURL) == privateMarker,
+      "a private regular marker must be readable")
+    let linkedMarkerURL = testHome.appendingPathComponent("linked-session.json")
+    try! FileManager.default.createSymbolicLink(
+      at: linkedMarkerURL, withDestinationURL: privateMarkerURL)
+    require(CodexClient.readPrivateSessionMarkerData(at: linkedMarkerURL) == nil,
+      "a symlinked marker must not be read")
+    try! FileManager.default.setAttributes(
+      [.posixPermissions: 0o644], ofItemAtPath: privateMarkerURL.path)
+    require(CodexClient.readPrivateSessionMarkerData(at: privateMarkerURL) == nil,
+      "a world-readable marker must not be read")
+
+    let temporaryHome = FileManager.default.temporaryDirectory
+      .appendingPathComponent("codex-status-default-\(UUID().uuidString)")
+    try! FileManager.default.createDirectory(
+      at: temporaryHome, withIntermediateDirectories: false)
+    let previousStatusHome = getenv("CODEX_HOME").map { String(cString: $0) }
+    setenv("CODEX_HOME", temporaryHome.path, 1)
+    defer {
+      if let previousStatusHome { setenv("CODEX_HOME", previousStatusHome, 1) }
+      else { unsetenv("CODEX_HOME") }
+      try? FileManager.default.removeItem(at: temporaryHome)
+    }
+
+    func cachedAutoSwitch(_ value: Any?) -> Bool? {
+      var payload: [String: Any] = ["timestamp": formatter.string(from: now), "accounts": []]
+      if let value { payload["auto_switch_enabled"] = value }
+      let data = try! JSONSerialization.data(withJSONObject: payload)
+      try! data.write(to: CodexClient.statusFileURL)
+      return CodexClient().loadCachedSnapshot()?.autoSwitchEnabled
+    }
+    require(cachedAutoSwitch(nil) == false, "missing cache flag must leave auto-switch off")
+    require(cachedAutoSwitch("true") == false, "malformed cache flag must leave auto-switch off")
+    require(cachedAutoSwitch(true) == true, "explicit cache enablement must remain enabled")
 
     print("  ✅ App/CLI identity separation and stale-marker rejection verified")
   }

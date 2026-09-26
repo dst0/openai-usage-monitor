@@ -41,20 +41,12 @@ impl DesktopSessionBindingService {
             .active_account_id
             .as_deref()
             .ok_or("CLI account identity is unavailable")?;
-        let account = accounts
-            .accounts
-            .iter()
-            .find(|account| account.id == active_id)
-            .ok_or("CLI account identity is unknown")?;
-        if auth
-            .tokens
-            .as_ref()
-            .and_then(|tokens| tokens.account_id.as_deref())
-            != Some(account.account_id.as_str())
-        {
+        let mut identified = accounts.clone();
+        super::ActiveAuthRegistrySyncService::reconcile(&mut identified, auth)?;
+        if identified.active_account_id.as_deref() != Some(active_id) {
             return Err("CLI authentication does not match the active account".into());
         }
-        Ok(account.id.clone())
+        Ok(active_id.to_owned())
     }
 
     pub(super) fn already_bound_to(home: &Path, account_id: &str) -> bool {
@@ -91,7 +83,23 @@ impl DesktopSessionBindingService {
             pid,
             super::current_codex_app_pids,
             Self::inspect_current,
+            Self::verified_cli_account_id,
             recover,
+        )
+    }
+
+    pub(super) fn verify_target_before_recovery(
+        home: &Path,
+        account_id: &str,
+        process: &WindowProcessIdentity,
+    ) -> Result<(), String> {
+        Self::verify_bound_with(
+            home,
+            account_id,
+            process,
+            Self::verified_cli_account_id,
+            super::current_codex_app_pids,
+            Self::inspect_current,
         )
     }
 
@@ -144,15 +152,72 @@ impl DesktopSessionBindingService {
         home: &Path,
         account_id: &str,
         pid: u32,
-        pids: impl FnMut() -> Vec<u32>,
-        inspect: impl FnMut(u32) -> Result<WindowProcessIdentity, String>,
+        mut pids: impl FnMut() -> Vec<u32>,
+        mut inspect: impl FnMut(u32) -> Result<WindowProcessIdentity, String>,
+        verified_cli: impl FnOnce() -> Result<String, String>,
         recover: impl FnOnce(&WindowProcessIdentity) -> Result<(), String>,
     ) -> Result<(), String> {
-        let bound = Self::bind_with(home, account_id, pid, pids, inspect)?;
+        let bound = Self::bind_with(home, account_id, pid, &mut pids, &mut inspect)?;
+        Self::verify_bound_with(
+            home,
+            account_id,
+            &bound,
+            verified_cli,
+            &mut pids,
+            &mut inspect,
+        )?;
         recover(&bound)
+    }
+
+    fn verify_bound_with(
+        home: &Path,
+        account_id: &str,
+        process: &WindowProcessIdentity,
+        verified_cli: impl FnOnce() -> Result<String, String>,
+        mut pids: impl FnMut() -> Vec<u32>,
+        mut inspect: impl FnMut(u32) -> Result<WindowProcessIdentity, String>,
+    ) -> Result<(), String> {
+        let path = home.join("desktop-app-session.json");
+        let marker = DesktopAppSession::load_checked(&path)?
+            .ok_or("Relaunched Desktop has no account binding")?;
+        let exact_marker = marker.account_id == account_id
+            && marker.cli_account_id.as_deref() == Some(account_id)
+            && marker.process.as_ref() == Some(process);
+        let verified = (|| {
+            if !exact_marker {
+                return Err("Relaunched Desktop account binding changed".into());
+            }
+            if verified_cli()? != account_id {
+                return Err(
+                    "Relaunched Desktop authentication differs from recovery target".into(),
+                );
+            }
+            if pids() != [process.pid] || inspect(process.pid)? != *process {
+                return Err("Relaunched Desktop process changed before recovery".into());
+            }
+            Ok(())
+        })();
+        if let Err(error) = verified {
+            if exact_marker {
+                let invalidation =
+                    DesktopAppSession::restore_after_failed_save(&path, None, &marker);
+                return Err(match invalidation {
+                    Ok(()) => error,
+                    Err(invalidation) => {
+                        format!("{error}; Desktop marker invalidation failed: {invalidation}")
+                    }
+                });
+            }
+            return Err(error);
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 #[path = "desktop_session_binding_service.test.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "desktop_session_account_identity.test.rs"]
+mod account_identity_tests;

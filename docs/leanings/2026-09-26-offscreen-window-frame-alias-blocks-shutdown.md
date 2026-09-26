@@ -1,0 +1,22 @@
+# 2026-09-26 — Offscreen window frame alias blocks shutdown
+
+- **Status:** Partial
+- **Task/context:** Guard an account-switch restart when ChatGPT has several windows whose selected tasks cannot yet be restored individually.
+- **Unexpected observation or failure:** The WindowServer preflight excluded every unnamed offscreen layer-0 window after matching named windows to the Accessibility standard-window roster. An unnamed record at a standard-window frame could therefore be ignored even though its role was unresolved.
+- **Evidence:** A read-only inventory of the current Desktop found one named standard window and one distinct unnamed offscreen renderer-sized window. Their WindowServer sharing, store, and memory classifications were the same, so those fields did not prove ownership. A synthetic safety test for an unnamed offscreen record at an Accessibility standard-window frame failed under the previous predicate, while the distinct hidden-window case passed.
+- **Approaches tried:**
+  - **Attempt:** Reject every unnamed offscreen layer-0 window.
+    - **Outcome:** Rejected.
+    - **Why:** The known one-window Desktop has a separate unnamed offscreen renderer window, so a blanket rule would block that valid case.
+  - **Attempt:** Identify the detached renderer by WindowServer sharing, store, or memory fields.
+    - **Outcome:** Did not work.
+    - **Why:** Those fields matched the named user window in the read-only inventory.
+  - **Attempt:** Cross-check offscreen unnamed frames against Accessibility standard frames and reject unexpected or malformed titles.
+    - **Outcome:** Partial.
+    - **Why:** It catches frame aliasing and unknown titled windows without rejecting the observed detached renderer, but it still relies on the Accessibility roster being complete.
+- **Root cause:** The preflight used on-screen state to exclude unidentified records without comparing their geometry to standard windows. No externally verified per-window task mapping or complete user-window roster is available.
+- **Resolution:** `unidentifiedWindowIsAmbiguous` blocks an unnamed offscreen record at any Accessibility standard-window frame and blocks unexpected or malformed titles. It allows only an empty-titled offscreen record with a distinct frame. The restart still fails closed on WindowServer/Accessibility disagreement, and automatic switching stays disabled.
+- **Verification:** The focused Swift safety test failed before the predicate change and passed afterward, covering matching and distinct offscreen frames, visible unnamed windows, unexpected titles, malformed titles, and missing titles. The rebuilt helper returned one standard window and zero ambiguity for the current exact ChatGPT process in a read-only invocation. No restart or credential mutation was performed.
+- **Prevention/follow-up:** Obtain an independently complete user-window inventory plus selected-task mapping and targeted window navigation; test at least two real user windows across an account switch before enabling automation. Accessibility completeness remains unverified.
+- **Reusable learning:** A hidden WindowServer record may share the same metadata class as a user window; exclude it only with independent window evidence, and retain uncertainty when that evidence can be incomplete.
+- **References:** `scripts/CodexWindowSafetyChecks.swift`, `scripts/codex-window-restore.swift`, `tests/CodexWindowSafetyChecksTests.swift`, `README.md`, `CODEX.md`, and `docs/leanings/2026-09-26-window-task-mapping-unavailable.md`.

@@ -3,6 +3,10 @@ use crate::models::{AccountConfig, AccountsFile, AuthJson, AuthTokens, Settings}
 use crate::storage::{save_accounts, write_active_auth_json};
 use std::path::{Path, PathBuf};
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "stable synthetic account fixture shared across tests"
+)]
 pub fn make_account(
     id: &str,
     name: Option<&str>,
@@ -25,6 +29,7 @@ pub fn make_account(
             refresh_token: Some(format!("rt_{id}")),
             id_token: None,
             account_id: Some(id.to_string()),
+            extra: Default::default(),
         },
         enabled: true,
         priority: 0,
@@ -68,9 +73,11 @@ impl TestEnv {
         active_cli: Option<&str>,
         active_app: Option<&str>,
     ) {
-        let mut settings = Settings::default();
-        settings.auto_switch_enabled = true;
-        settings.auto_switch_business_priority = true;
+        let settings = Settings {
+            auto_switch_enabled: true,
+            auto_switch_business_priority: true,
+            ..Settings::default()
+        };
 
         let accounts_file = AccountsFile {
             active_account_id: active_cli.map(ToString::to_string),
@@ -86,6 +93,7 @@ impl TestEnv {
                     openai_api_key: None,
                     tokens: Some(acc.tokens.clone()),
                     last_refresh: None,
+                    extra: Default::default(),
                 };
                 let _ = write_active_auth_json(&auth);
             }

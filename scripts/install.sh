@@ -395,6 +395,8 @@ if [ -f "${PROJECT_DIR}/scripts/codex-window-restore.swift" ]; then
     swiftc -O -target "${ARCH}-apple-macosx13.0" \
         -framework AppKit -framework Foundation -framework ApplicationServices \
         -o "${LOCAL_BIN}/codex-window-restore" \
+        "${PROJECT_DIR}/scripts/CodexWindowAXValueDecoder.swift" \
+        "${PROJECT_DIR}/scripts/CodexWindowSafetyChecks.swift" \
         "${PROJECT_DIR}/scripts/codex-window-restore.swift"
     chmod +x "${LOCAL_BIN}/codex-window-restore"
 fi

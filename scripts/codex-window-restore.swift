@@ -25,6 +25,13 @@ struct CaptureRecord: Codable {
   let screen: ScreenRecord
 }
 
+struct WindowInventoryRecord: Codable {
+  let process: ProcessRecord
+  let window_ids: [UInt32]
+  let ax_standard_count: Int
+  let ambiguous_count: Int
+}
+
 func argument(_ name: String) -> String? {
   guard let index = CommandLine.arguments.firstIndex(of: name), index + 1 < CommandLine.arguments.count else { return nil }
   return CommandLine.arguments[index + 1]
@@ -60,12 +67,12 @@ func expectedProcess(requireBirth: Bool = true) -> (pid: pid_t, birth: String) {
   return (pid_t(value), birth)
 }
 
-func axValue<T>(_ element: AXUIElement, _ attribute: String, _ type: AXValueType, _ value: inout T) -> Bool {
+func copyAXValue(_ element: AXUIElement, _ attribute: String) -> AnyObject? {
   var raw: AnyObject?
-  guard AXUIElementCopyAttributeValue(element, attribute as CFString, &raw) == .success,
-    let raw else { return false }
-  let rawValue = raw as! AXValue
-  return AXValueGetValue(rawValue, type, &value)
+  guard AXUIElementCopyAttributeValue(element, attribute as CFString, &raw) == .success else {
+    return nil
+  }
+  return raw
 }
 
 func mainWindow(_ pid: pid_t) -> (element: AXUIElement, frame: CGRect)? {
@@ -84,10 +91,8 @@ func mainWindow(_ pid: pid_t) -> (element: AXUIElement, frame: CGRect)? {
     var minimizedValue: AnyObject?
     if AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimizedValue) == .success,
       (minimizedValue as? Bool) == true { continue }
-    var position = CGPoint.zero
-    var size = CGSize.zero
-    guard axValue(window, kAXPositionAttribute as String, .cgPoint, &position),
-      axValue(window, kAXSizeAttribute as String, .cgSize, &size) else {
+    guard let position = decodeAXPoint(copyAXValue(window, kAXPositionAttribute as String)),
+      let size = decodeAXSize(copyAXValue(window, kAXSizeAttribute as String)) else {
       fail("WINDOW_GEOMETRY_FAILED")
     }
     guard size.width >= 300, size.height >= 250 else { continue }
@@ -136,12 +141,12 @@ func captureBannerWindow(_ process: (pid: pid_t, birth: String)) -> CaptureRecor
   ) as? [[String: Any]] else { fail("WINDOW_ACCESS_FAILED") }
   var best: (frame: CGRect, area: CGFloat, named: Bool)?
   for info in windows {
-    guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == process.pid,
-      (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
-      (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0 > 0,
-      let bounds = info[kCGWindowBounds as String],
-      let frame = CGRect(dictionaryRepresentation: bounds as! CFDictionary),
-      frame.width >= 300, frame.height >= 250 else { continue }
+    let frame: CGRect
+    switch bannerWindowFrame(info, expectedPID: process.pid) {
+    case .notCandidate: continue
+    case .invalidGeometry: fail("WINDOW_GEOMETRY_FAILED")
+    case .frame(let candidate): frame = candidate
+    }
     let named = (info[kCGWindowName as String] as? String) == "ChatGPT"
     let area = frame.width * frame.height
     if best == nil || (named && !best!.named) || (named == best!.named && area > best!.area) {
@@ -158,6 +163,83 @@ func captureBannerWindow(_ process: (pid: pid_t, birth: String)) -> CaptureRecor
   )
 }
 
+func standardWindowFrames(_ pid: pid_t) -> [CGRect] {
+  let app = AXUIElementCreateApplication(pid)
+  var rawWindows: AnyObject?
+  guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &rawWindows) == .success,
+    let windows = rawWindows as? [AXUIElement] else { fail("WINDOW_ACCESS_FAILED") }
+  var frames: [CGRect] = []
+  for window in windows {
+    var rawSubrole: AnyObject?
+    guard AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &rawSubrole) == .success,
+      let subrole = rawSubrole as? String else { fail("WINDOW_ACCESS_FAILED") }
+    guard subrole == kAXStandardWindowSubrole as String else { continue }
+    guard let position = decodeAXPoint(copyAXValue(window, kAXPositionAttribute as String)),
+      let size = decodeAXSize(copyAXValue(window, kAXSizeAttribute as String)),
+      size.width >= 300, size.height >= 250 else { fail("WINDOW_GEOMETRY_FAILED") }
+    frames.append(CGRect(origin: position, size: size))
+  }
+  return frames
+}
+
+/// Reads every ChatGPT window in this process, including windows on another
+/// Space. An unidentified visible layer-0 window is ambiguous; it must not be
+/// treated as proof that the user had only one window open.
+func countStandardWindows(_ process: (pid: pid_t, birth: String)) -> WindowInventoryRecord {
+  let axFrames = standardWindowFrames(process.pid)
+  guard let windows = CGWindowListCopyWindowInfo(
+    [.optionAll, .excludeDesktopElements], kCGNullWindowID
+  ) as? [[String: Any]] else { fail("WINDOW_ACCESS_FAILED") }
+  var ids = Set<UInt32>()
+  var cgFrames: [CGRect] = []
+  var ambiguous = 0
+  for info in windows {
+    guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == process.pid,
+      (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0 else { continue }
+    guard let bounds = info[kCGWindowBounds as String] as? [String: Any],
+      let x = (bounds["X"] as? NSNumber)?.doubleValue,
+      let y = (bounds["Y"] as? NSNumber)?.doubleValue,
+      let width = (bounds["Width"] as? NSNumber)?.doubleValue,
+      let height = (bounds["Height"] as? NSNumber)?.doubleValue,
+      x.isFinite, y.isFinite, width.isFinite, height.isFinite else {
+      ambiguous += 1
+      continue
+    }
+    guard width >= 300, height >= 250 else { continue }
+    let name = info[kCGWindowName as String] as? String ?? ""
+    guard (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0 > 0 else {
+      ambiguous += 1
+      continue
+    }
+    guard name == "ChatGPT" else {
+      if unidentifiedWindowIsAmbiguous(
+        info, frame: CGRect(x: x, y: y, width: width, height: height), standardFrames: axFrames
+      ) { ambiguous += 1 }
+      continue
+    }
+    guard let number = info[kCGWindowNumber as String] as? NSNumber,
+      number.uint64Value > 0, number.uint64Value <= UInt32.max else {
+      ambiguous += 1
+      continue
+    }
+    if !ids.insert(number.uint32Value).inserted { ambiguous += 1 }
+    cgFrames.append(CGRect(x: x, y: y, width: width, height: height))
+  }
+  guard processBirth(process.pid) == process.birth else { fail("PROCESS_IDENTITY_REJECTED") }
+  var unmatched = cgFrames
+  for frame in axFrames {
+    guard let index = unmatched.firstIndex(where: { framesMatch($0, frame) }) else {
+      fail("WINDOW_INVENTORY_MISMATCH")
+    }
+    unmatched.remove(at: index)
+  }
+  guard unmatched.isEmpty, ambiguous == 0 else { fail("WINDOW_INVENTORY_MISMATCH") }
+  return WindowInventoryRecord(
+    process: ProcessRecord(pid: process.pid, birth_id: process.birth),
+    window_ids: ids.sorted(), ax_standard_count: axFrames.count, ambiguous_count: ambiguous
+  )
+}
+
 func verifyAndWindow() -> ((pid: pid_t, birth: String), AXUIElement) {
   let process = expectedProcess()
   guard let window = mainWindow(process.pid) else { fail("WINDOW_NOT_FOUND") }
@@ -169,8 +251,13 @@ func setPosition(_ process: (pid: pid_t, birth: String), _ window: AXUIElement) 
     fail("POSITION_ARGUMENTS_INVALID")
   }
   var point = CGPoint(x: x, y: y)
-  guard let value = AXValueCreate(.cgPoint, &point),
-    AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value) == .success else {
+  guard let value = AXValueCreate(.cgPoint, &point) else {
+    fail("POSITION_WRITE_FAILED")
+  }
+  guard processIdentityMatches(process.pid, expectedBirth: process.birth, birthReader: processBirth) else {
+    fail("PROCESS_IDENTITY_REJECTED")
+  }
+  guard AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value) == .success else {
     fail("POSITION_WRITE_FAILED")
   }
   print("{}")
@@ -180,34 +267,48 @@ func setSize(_ process: (pid: pid_t, birth: String), _ window: AXUIElement) {
   guard let width = argument("--width").flatMap(Double.init), let height = argument("--height").flatMap(Double.init),
     width >= 300, height >= 250 else { fail("SIZE_ARGUMENTS_INVALID") }
   var size = CGSize(width: width, height: height)
-  guard let value = AXValueCreate(.cgSize, &size),
-    AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value) == .success else {
+  guard let value = AXValueCreate(.cgSize, &size) else {
+    fail("SIZE_WRITE_FAILED")
+  }
+  guard processIdentityMatches(process.pid, expectedBirth: process.birth, birthReader: processBirth) else {
+    fail("PROCESS_IDENTITY_REJECTED")
+  }
+  guard AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value) == .success else {
     fail("SIZE_WRITE_FAILED")
   }
   print("{}")
 }
 
-let command = CommandLine.arguments.dropFirst().first ?? ""
-switch command {
-case "inspect-process":
-  let process = expectedProcess(requireBirth: false)
-  let data = try! JSONEncoder().encode(ProcessRecord(pid: process.pid, birth_id: process.birth))
-  FileHandle.standardOutput.write(data)
-case "capture-window", "read-window":
-  let process = expectedProcess()
-  let record = capture(process)
-  let data = try! JSONEncoder().encode(record)
-  FileHandle.standardOutput.write(data)
-case "capture-banner-window":
-  let process = expectedProcess()
-  let data = try! JSONEncoder().encode(captureBannerWindow(process))
-  FileHandle.standardOutput.write(data)
-case "set-position":
-  let (process, window) = verifyAndWindow()
-  setPosition(process, window)
-case "set-size":
-  let (process, window) = verifyAndWindow()
-  setSize(process, window)
-default:
-  fail("COMMAND_REJECTED")
+@main
+struct CodexWindowRestoreMain {
+  static func main() {
+    let command = CommandLine.arguments.dropFirst().first ?? ""
+    switch command {
+    case "inspect-process":
+      let process = expectedProcess(requireBirth: false)
+      let data = try! JSONEncoder().encode(ProcessRecord(pid: process.pid, birth_id: process.birth))
+      FileHandle.standardOutput.write(data)
+    case "capture-window", "read-window":
+      let process = expectedProcess()
+      let record = capture(process)
+      let data = try! JSONEncoder().encode(record)
+      FileHandle.standardOutput.write(data)
+    case "capture-banner-window":
+      let process = expectedProcess()
+      let data = try! JSONEncoder().encode(captureBannerWindow(process))
+      FileHandle.standardOutput.write(data)
+    case "count-standard-windows":
+      let process = expectedProcess()
+      let data = try! JSONEncoder().encode(countStandardWindows(process))
+      FileHandle.standardOutput.write(data)
+    case "set-position":
+      let (process, window) = verifyAndWindow()
+      setPosition(process, window)
+    case "set-size":
+      let (process, window) = verifyAndWindow()
+      setSize(process, window)
+    default:
+      fail("COMMAND_REJECTED")
+    }
+  }
 }

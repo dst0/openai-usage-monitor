@@ -13,7 +13,7 @@ impl RecoveryBanner {
                 "RECOVERY",
                 &format!(
                     "RECOVERY_BANNER_STATUS_FAILED status={status:?} reason={}",
-                    super::recovery_service::sanitize_recovery_error(&error)
+                    super::recovery_error_sanitizer::RecoveryErrorSanitizer::sanitize(&error)
                 ),
             );
         }

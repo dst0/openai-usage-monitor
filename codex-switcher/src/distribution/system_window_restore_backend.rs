@@ -12,6 +12,55 @@ pub struct SystemWindowRestoreBackend {
 }
 
 impl SystemWindowRestoreBackend {
+    /// Counts only WindowServer windows proven to be ChatGPT standard windows.
+    /// An unnamed visible window makes the result ambiguous and blocks shutdown.
+    pub fn capture_window_inventory(&mut self, process: ProcessIdentity) -> Result<usize, String> {
+        let response = self.invoke(&Self::args_for_process(
+            "count-standard-windows",
+            process.clone(),
+        ))?;
+        Self::parse_window_inventory(&response, &process)
+    }
+
+    fn parse_window_inventory(
+        response: &serde_json::Value,
+        expected: &ProcessIdentity,
+    ) -> Result<usize, String> {
+        if Self::parse_process(&response["process"])? != *expected {
+            return Err("Window inventory process identity changed".into());
+        }
+        let ambiguous = response["ambiguous_count"]
+            .as_u64()
+            .ok_or("Window inventory has no ambiguity count")?;
+        if ambiguous != 0 {
+            return Err("Window inventory contains an unidentified window".into());
+        }
+        let ids = response["window_ids"]
+            .as_array()
+            .ok_or("Window inventory has no window IDs")?;
+        let ax_count = response["ax_standard_count"]
+            .as_u64()
+            .ok_or("Window inventory has no Accessibility window count")?;
+        if ax_count != ids.len() as u64 {
+            return Err("WindowServer and Accessibility window counts differ".into());
+        }
+        if ids.len() > 64 {
+            return Err("Window inventory exceeds the supported window limit".into());
+        }
+        let mut unique = std::collections::HashSet::new();
+        for id in ids {
+            let id = id
+                .as_u64()
+                .and_then(|id| u32::try_from(id).ok())
+                .filter(|id| *id != 0)
+                .ok_or("Window inventory contains an invalid window ID")?;
+            if !unique.insert(id) {
+                return Err("Window inventory contains a duplicate window ID".into());
+            }
+        }
+        Ok(ids.len())
+    }
+
     pub fn capture_banner_window(
         &mut self,
         process: ProcessIdentity,

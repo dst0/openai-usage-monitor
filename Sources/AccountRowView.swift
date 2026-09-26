@@ -215,7 +215,8 @@ public final class AccountRowView: NSView {
     if let sb = switchButton, sb.frame.contains(point) { handleSwitchClick(); return }
     if isAppSession {
       enclosingMenuItem?.menu?.cancelTracking()
-      if let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.chat").first {
+      if let app = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex").first
+        ?? NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.chat").first {
         if #available(macOS 14.0, *) { app.activate() } else { app.activate(options: [.activateIgnoringOtherApps]) }
       } else {
         NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/ChatGPT.app"))

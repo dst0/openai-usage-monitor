@@ -1,0 +1,25 @@
+# 2026-09-26 — Foreground recovery still reread a cold checkpoint
+
+- **Status:** Partial
+- **Task/context:** Bound the work done under the recovery operation lock for cold ChatGPT tasks.
+- **Unexpected observation or failure:** After deferred probes gained an append cursor, foreground recovery still created a fresh observer and reread a large post-checkpoint interval before owner IPC.
+- **Evidence:** A focused 32 MiB fixture showed one foreground preparation reading the entire interval. The deferred cursor did not reach that path.
+- **Approaches tried:**
+  - **Attempt:** Bound only the deferred worker.
+    - **Outcome:** Did not work
+    - **Why:** The foreground preparation used a separate scanner and could still monopolize the operation lock.
+  - **Attempt:** Apply a fixed total-byte cutoff.
+    - **Outcome:** Rejected
+    - **Why:** A valid later turn boundary could lie beyond that cutoff.
+  - **Attempt:** Reuse the deferred append cursor for foreground dispatch.
+    - **Outcome:** Rejected
+    - **Why:** A same-inode rewrite of the cursor's unsampled middle could hide a manually started turn.
+  - **Attempt:** Scan afresh from the checkpoint with a fair 16 MiB aggregate payload budget per pass.
+    - **Outcome:** Partial
+    - **Why:** Focused regressions passed; installed behavior remains to be verified.
+- **Root cause:** The foreground scanner was outside the deferred worker's cache and budget.
+- **Resolution:** Foreground recovery begins a fresh scan at the saved checkpoint, continues across bounded passes, and waits for a complete newline-terminated snapshot before dispatch. Growth or changed metadata after a pre-dispatch scan retains the checkpoint for a fresh attempt.
+- **Verification:** The failing 32 MiB regression reproduced the unbounded read. All 96 `recovery::` tests passed; installed behavior remains unverified.
+- **Prevention/follow-up:** Keep scanner limits on every entry path and test the byte budget, cursor handoff, file replacement, and no-dispatch boundary. Inspect installed-app latency after release.
+- **Reusable learning:** A bounded worker does not bound a second caller of the same evidence reader; budget every path that can hold the operation lock.
+- **References:** `docs/leanings/2026-09-26-repeated-cold-checkpoint-scan.md`, `codex-switcher/src/recovery/foreground_checkpoint_service.rs`, `codex-switcher/src/recovery/target_dispatch.rs`.

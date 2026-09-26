@@ -1,6 +1,7 @@
 use super::daemon_tick_service::DaemonTickService;
 use super::log_permissions_service::LogPermissionsService;
 use super::log_redaction_service::LogRedactionService;
+use crate::models::AccountsFile;
 use crate::storage::{daemon_lock_path, load_accounts};
 use fs2::FileExt;
 use std::fs::OpenOptions;
@@ -11,17 +12,39 @@ pub struct DaemonLoopService;
 
 impl DaemonLoopService {
     pub fn watchdog_needs_immediate_check() -> bool {
-        if let Ok(accounts_file) = load_accounts() {
-            if let Some(active_id) = &accounts_file.active_account_id {
-                if let Some(active) = accounts_file.accounts.iter().find(|a| a.id == *active_id) {
-                    let threshold = accounts_file.settings.switch_threshold_percent;
-                    if crate::strategy::is_account_depleted(active, threshold) {
-                        return true;
-                    }
-                }
-            }
+        let Ok(accounts_file) = load_accounts() else {
+            return false;
+        };
+        Self::watchdog_needs_immediate_check_with(&accounts_file, || {
+            !crate::switcher::detect_quota_blocked_user_threads_since(30).is_empty()
+        })
+    }
+
+    fn watchdog_needs_immediate_check_with(
+        accounts_file: &AccountsFile,
+        recent_quota_blocked: impl FnOnce() -> bool,
+    ) -> bool {
+        let settings = &accounts_file.settings;
+        if !settings.auto_switch_enabled && !settings.auto_reset_weekly_enabled {
+            return false;
         }
-        !crate::switcher::detect_quota_blocked_user_threads_since(30).is_empty()
+        let active = accounts_file
+            .active_account_id
+            .as_ref()
+            .and_then(|active_id| {
+                accounts_file
+                    .accounts
+                    .iter()
+                    .find(|account| account.id == *active_id)
+            });
+        if active.is_some_and(|account| {
+            crate::strategy::is_account_depleted(account, settings.switch_threshold_percent)
+        }) {
+            return true;
+        }
+        // Weekly reset is independent of account switching and retains the
+        // existing rapid blocked-task probe when enabled on its own.
+        recent_quota_blocked()
     }
 
     pub fn run() {
@@ -108,3 +131,7 @@ fn auth_mtime() -> Option<std::time::SystemTime> {
         .and_then(|metadata| metadata.modified())
         .ok()
 }
+
+#[cfg(test)]
+#[path = "daemon_loop_service.test.rs"]
+mod tests;

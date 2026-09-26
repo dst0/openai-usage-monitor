@@ -9,4 +9,6 @@ pub struct AuthTokens {
     pub id_token: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account_id: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }

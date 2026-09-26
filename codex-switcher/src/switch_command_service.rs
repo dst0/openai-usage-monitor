@@ -9,13 +9,13 @@ impl SwitchCommandService {
         restart: bool,
         trigger: String,
     ) -> Result<(), String> {
-        let accounts = storage::load_accounts().unwrap_or_default();
+        let accounts = storage::load_accounts()?;
         let should_restart = (restart || accounts.settings.restart_app_on_switch) && !no_restart;
         let notify = accounts.settings.notify_on_switch;
         let switch_trigger: switcher::SwitchTrigger =
             trigger.parse().unwrap_or(switcher::SwitchTrigger::User);
         println!("🔄 Switching to account '{}'...", account);
-        let dispatch = if should_restart && switcher::is_codex_app_running() {
+        let dispatch = if should_restart && switcher::is_codex_app_running_checked()? {
             let mut restart_args = vec![
                 "switch".to_string(),
                 account.clone(),

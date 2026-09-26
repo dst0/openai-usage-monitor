@@ -1,0 +1,22 @@
+# 2026-09-27 — External Desktop relaunch left APP quota unbound
+
+- **Status:** Partial
+- **Task/context:** Verify the installed Monitor after an independent ChatGPT Desktop update and restore the APP quota display without confusing it with CLI.
+- **Unexpected observation or failure:** The menu bar showed `APP —` while CLI had a numeric quota. The installed process was running, but the saved APP marker belonged to an earlier Desktop PID.
+- **Evidence:** A live menu-bar screenshot showed the dash. The marker's PID and birth identity did not match the exact running ChatGPT process. After an independently checked one-time binding, a new narrow menu-bar screenshot showed both APP and CLI as numeric. No account identifiers or credentials are recorded here.
+- **Approaches tried:**
+  - **Attempt:** Reuse the CLI quota whenever APP is unknown.
+    - **Outcome:** Rejected.
+    - **Why:** CLI authentication can change while Desktop remains open; copying a CLI label can misattribute the APP quota.
+  - **Attempt:** Read the current Desktop account through the same-user recovery IPC router.
+    - **Outcome:** Did not work.
+    - **Why:** The available router does not expose `account/read` to the Monitor.
+  - **Attempt:** Renew a previous exact-process marker only from unchanged private shared authentication that existed before the new Desktop process started.
+    - **Outcome:** Partial.
+    - **Why:** This covers an external relaunch without guessing a new account and fails closed after an auth change. A Desktop in-memory account change that does not update `auth.json` still has no authoritative signal.
+- **Root cause:** Controlled Monitor restarts wrote a new exact-process APP marker, but independent ChatGPT replacement did not. The correct stale-marker guard therefore rendered an unknown APP.
+- **Resolution:** The daemon checks external relaunch evidence after synchronizing the active account, writes a marker for the new exact process only when the prior APP account and live shared auth agree, and records the auth file identity for Swift to recheck. Background quota polling does not rotate credentials. Distribution preserves and verifies the inferred marker's auth identity.
+- **Verification:** Failing Rust regressions were reproduced before implementation. Focused tests cover private registry/auth/marker files, account and time boundaries, symlink and mode rejection, process and auth changes after save, conflicting JWT email, and rejection of a replaced inferred auth during distribution. The Swift identity suite covers auth file replacement and unsafe marker files. The combined tree passed 555 Rust unit tests, integration suites, Swift suites, and Clippy locally; remote CI, merge, and installed-app verification were pending at this record's creation.
+- **Prevention/follow-up:** Keep the external rebind narrow and report `APP —` when the proof is incomplete. Check the exact merged build and live menu after installation. An authoritative Desktop account read is still required to prove a same-process account change.
+- **Reusable learning:** A stale process-bound marker must be renewed from launch-time account evidence, never by copying the current CLI quota.
+- **References:** `codex-switcher/src/distribution/desktop_external_binding_service.rs`, `Sources/CodexClient.swift`, `docs/leanings/2026-09-26-stale-desktop-marker-swapped-app-cli-quotas.md`.

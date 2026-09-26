@@ -18,6 +18,7 @@ fn test_account() -> AccountConfig {
             refresh_token: None,
             id_token: None,
             account_id: Some("workspace-123".into()),
+            extra: Default::default(),
         },
         enabled: true,
         priority: 0,
@@ -38,6 +39,13 @@ fn test_account() -> AccountConfig {
 }
 
 fn mock_reset_endpoint(response_body: &'static str) -> (String, thread::JoinHandle<()>) {
+    mock_reset_endpoint_with_status("200 OK", response_body)
+}
+
+fn mock_reset_endpoint_with_status(
+    status: &'static str,
+    response_body: &'static str,
+) -> (String, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let worker = thread::spawn(move || {
@@ -73,13 +81,32 @@ fn mock_reset_endpoint(response_body: &'static str) -> (String, thread::JoinHand
             }
         }
         let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 response_body.len(),
                 response_body
             );
         stream.write_all(response.as_bytes()).unwrap();
     });
     (format!("http://{address}/consume"), worker)
+}
+
+#[test]
+fn ambiguous_http_client_failures_remain_unknown() {
+    for status in [
+        "408 Request Timeout",
+        "409 Conflict",
+        "429 Too Many Requests",
+        "400 Bad Request",
+    ] {
+        let (endpoint, worker) = mock_reset_endpoint_with_status(status, "invalid response");
+        let outcome =
+            consume_rate_limit_reset_credit_at(&endpoint, &test_account(), "logical-attempt-1");
+        worker.join().unwrap();
+        assert!(
+            matches!(outcome, ResetCreditConsumeOutcome::Unknown(_)),
+            "ambiguous {status} response was treated as a definite non-spend"
+        );
+    }
 }
 
 #[test]
@@ -115,4 +142,32 @@ fn reset_service_rejects_mismatched_account_route() {
         ),
         ResetCreditConsumeOutcome::Unavailable("active_account_route_mismatch".into())
     );
+}
+
+#[test]
+fn usage_probe_without_refresh_returns_401_without_consuming_refresh_token() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let worker = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 1024];
+        let count = stream.read(&mut request).unwrap();
+        assert!(std::str::from_utf8(&request[..count])
+            .unwrap()
+            .contains("GET /usage HTTP/1.1"));
+        stream
+            .write_all(
+                b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
+    });
+
+    let mut account = test_account();
+    account.tokens.refresh_token = Some("desktop-owned-refresh".into());
+    let before = account.tokens.clone();
+    let result = fetch_account_usage_at(&mut account, &format!("http://{address}/usage"), false);
+
+    assert!(result.unwrap_err().contains("401"));
+    assert_eq!(account.tokens, before);
+    worker.join().unwrap();
 }

@@ -50,6 +50,17 @@ impl ResetJournalStore {
                     .into(),
             );
         }
+        if matches!(journal.state.as_str(), "pending" | "unknown") {
+            let account_id = journal.account_id.as_deref().unwrap_or_default();
+            let episode = journal.episode_key.as_deref().unwrap_or_default();
+            if account_id.is_empty()
+                || !episode.starts_with(&format!("{account_id}|"))
+                || journal.thread_id.as_deref().is_none_or(str::is_empty)
+                || journal.idempotency_key.as_deref().is_none_or(str::is_empty)
+            {
+                return Err("Auto-reset journal has an incomplete uncertain attempt".into());
+            }
+        }
         Ok(journal)
     }
 

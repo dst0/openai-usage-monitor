@@ -38,6 +38,14 @@ pub(super) fn same_episode(journal: &ResetJournal, active: &AccountConfig) -> bo
         && journal.account_id.as_deref() == Some(active.account_id.as_str())
 }
 
+pub(super) fn unresolved_for_route(journal: &ResetJournal, active: &AccountConfig) -> bool {
+    journal.account_id.as_deref() == Some(active.account_id.as_str()) && unresolved_attempt(journal)
+}
+
+pub(super) fn unresolved_attempt(journal: &ResetJournal) -> bool {
+    matches!(journal.state.as_str(), "pending" | "unknown")
+}
+
 pub(super) fn now_string() -> String {
     Utc::now().to_rfc3339()
 }

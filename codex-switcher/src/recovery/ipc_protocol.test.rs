@@ -6,7 +6,7 @@ use super::{
         validate_start_response, write_ipc_frame, IPC_ROUTER_DISCOVERY_BUDGET, MAX_IPC_FRAME,
     },
     recovery_mode::RecoveryMode,
-    target_dispatch::should_dispatch,
+    target_dispatch::{should_dispatch, should_resume_queued},
 };
 use crate::switcher::ThreadRolloutState::*;
 use serde_json::Value;
@@ -21,7 +21,16 @@ fn desktop_ipc_dispatches_only_eligible_work() {
         RecoveryMode::ExplicitTarget,
         RecoveryMode::DiscoveredOnly,
     ] {
-        assert!(should_dispatch(TurnAborted, 0, mode));
+        assert_eq!(
+            should_dispatch(TurnAborted, 0, mode),
+            matches!(
+                mode,
+                RecoveryMode::CapturedRestart
+                    | RecoveryMode::DeferredCaptured
+                    | RecoveryMode::ExplicitTarget
+            ),
+            "discovery-only recovery must not revive an ambiguous historical Stop"
+        );
         assert!(should_dispatch(InterruptedByQuota, 0, mode));
         // An error may be a policy block; only an explicit request continues it.
         assert_eq!(
@@ -58,6 +67,37 @@ fn desktop_ipc_dispatches_only_eligible_work() {
         0,
         RecoveryMode::DeferredOwned
     ));
+}
+
+#[test]
+fn queued_recovery_obeys_turn_and_mode_policy() {
+    for mode in [
+        RecoveryMode::CapturedRestart,
+        RecoveryMode::DeferredCaptured,
+        RecoveryMode::DeferredOwned,
+        RecoveryMode::ExplicitTarget,
+        RecoveryMode::DiscoveredOnly,
+    ] {
+        assert!(should_resume_queued(InterruptedByQuota, mode));
+        assert_eq!(
+            should_resume_queued(InterruptedByError, mode),
+            mode == RecoveryMode::ExplicitTarget
+        );
+        assert_eq!(
+            should_resume_queued(TurnAborted, mode),
+            matches!(
+                mode,
+                RecoveryMode::CapturedRestart
+                    | RecoveryMode::DeferredCaptured
+                    | RecoveryMode::ExplicitTarget
+            )
+        );
+        assert_eq!(
+            should_resume_queued(CleanCompleted, mode),
+            mode != RecoveryMode::DiscoveredOnly
+        );
+        assert!(!should_resume_queued(Unknown, mode));
+    }
 }
 
 #[test]

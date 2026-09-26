@@ -47,8 +47,10 @@ impl DistributionExecutor for WrapperRecordingExecutor {
 }
 
 fn rate_limited_accounts(enabled: bool) -> AccountsFile {
-    let mut settings = Settings::default();
-    settings.auto_switch_enabled = enabled;
+    let settings = Settings {
+        auto_switch_enabled: enabled,
+        ..Settings::default()
+    };
     AccountsFile {
         active_account_id: Some("active".to_string()),
         settings,

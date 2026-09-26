@@ -3,7 +3,7 @@ use super::distribution_outcome::DistributionStatus;
 use super::distribution_request::DistributionRequest;
 use super::mock_app_lifecycle::MockAppLifecycle;
 use super::test_helper::{make_account, TestEnv};
-use crate::storage::{load_accounts, read_active_auth_json};
+use crate::storage::{load_accounts, read_active_auth_json, write_active_auth_json};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
@@ -76,7 +76,7 @@ fn desktop_account_is_bound_before_recovery_waits() {
     );
     assert_eq!(
         load_accounts().unwrap().active_account_id.as_deref(),
-        Some("cli@example.com:cli")
+        Some("target@example.com:target")
     );
     let final_session = super::desktop_app_session::DesktopAppSession::load(
         &env.home().join("desktop-app-session.json"),
@@ -84,7 +84,7 @@ fn desktop_account_is_bound_before_recovery_waits() {
     .unwrap();
     assert_eq!(
         final_session.cli_account_id.as_deref(),
-        Some("cli@example.com:cli")
+        Some("target@example.com:target")
     );
     assert_eq!(
         read_active_auth_json()
@@ -93,7 +93,7 @@ fn desktop_account_is_bound_before_recovery_waits() {
             .unwrap()
             .account_id
             .as_deref(),
-        Some("cli")
+        Some("target")
     );
 }
 
@@ -154,7 +154,7 @@ fn stale_desktop_marker_cannot_drive_automatic_distribution() {
 }
 
 #[test]
-fn explicit_app_restart_repairs_stale_desktop_marker() {
+fn explicit_app_restart_rejects_stale_desktop_marker_before_shutdown() {
     let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -199,22 +199,21 @@ fn explicit_app_restart_repairs_stale_desktop_marker() {
     let mock = Arc::new(MockAppLifecycle::new(true));
     let request = DistributionRequest::user("explicit_app_repair")
         .with_preferred_app(Some("target".into()))
-        .with_preferred_cli(Some("old".into()));
-    let result = DistributionCoordinator::with_lifecycle(mock.clone())
+        .with_preferred_cli(Some("target".into()));
+    assert!(DistributionCoordinator::with_lifecycle(mock.clone())
         .execute(request)
-        .unwrap();
-    assert_eq!(result.status, DistributionStatus::Success);
-    assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 1);
+        .is_err());
+    assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 0);
     let marker = super::desktop_app_session::DesktopAppSession::load(
         &env.home().join("desktop-app-session.json"),
     )
     .unwrap();
-    assert_eq!(marker.account_id, "target@example.com:target");
+    assert_eq!(marker.account_id, "old@example.com:old");
     assert_eq!(
         marker.cli_account_id.as_deref(),
         Some("old@example.com:old")
     );
-    assert_eq!(marker.process.unwrap().birth_id, "123:456789");
+    assert_eq!(marker.process.unwrap().birth_id, "122:456789");
     assert_eq!(
         load_accounts().unwrap().active_account_id.as_deref(),
         Some("old@example.com:old")
@@ -231,7 +230,7 @@ fn explicit_app_restart_repairs_stale_desktop_marker() {
 }
 
 #[test]
-fn cli_only_distribution_preserves_depleted_desktop_binding_without_restart() {
+fn cli_only_distribution_rejects_split_auth_without_mutation() {
     let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -271,34 +270,29 @@ fn cli_only_distribution_preserves_depleted_desktop_binding_without_restart() {
         .with_preferred_app(Some("old".into()))
         .with_preferred_cli(Some("target".into()))
         .with_allow_restart(false);
-    let outcome = DistributionCoordinator::with_lifecycle(mock.clone())
+    assert!(DistributionCoordinator::with_lifecycle(mock.clone())
         .execute(request)
-        .unwrap();
-    assert_eq!(outcome.status, DistributionStatus::Success);
+        .is_err());
+    assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 0);
+    let updated = super::desktop_app_session::DesktopAppSession::load(&marker_path).unwrap();
+    assert_eq!(updated, original);
     assert_eq!(
-        outcome.target_app_id.as_deref(),
+        load_accounts().unwrap().active_account_id.as_deref(),
         Some("old@example.com:old")
     );
     assert_eq!(
-        outcome.target_cli_id.as_deref(),
-        Some("target@example.com:target")
-    );
-    assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 0);
-    let updated = super::desktop_app_session::DesktopAppSession::load(&marker_path).unwrap();
-    assert_eq!(updated.account_id, original.account_id);
-    assert_eq!(updated.process, original.process);
-    assert_eq!(
-        updated.cli_account_id.as_deref(),
-        Some("target@example.com:target")
-    );
-    assert_eq!(
-        load_accounts().unwrap().active_account_id.as_deref(),
-        Some("target@example.com:target")
+        read_active_auth_json()
+            .unwrap()
+            .tokens
+            .unwrap()
+            .account_id
+            .as_deref(),
+        Some("old")
     );
 }
 
 #[test]
-fn automatic_cli_rotation_without_restart_preserves_desktop_binding() {
+fn automatic_cli_rotation_without_restart_rejects_split_auth() {
     let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -334,26 +328,29 @@ fn automatic_cli_rotation_without_restart_preserves_desktop_binding() {
     let marker_path = env.home().join("desktop-app-session.json");
     let original = super::desktop_app_session::DesktopAppSession::load(&marker_path).unwrap();
     let mock = Arc::new(MockAppLifecycle::new(true));
-    let outcome = DistributionCoordinator::with_lifecycle(mock.clone())
+    assert!(DistributionCoordinator::with_lifecycle(mock.clone())
         .execute(DistributionRequest::auto("quota_exhausted").with_allow_restart(false))
-        .unwrap();
-    assert_eq!(outcome.status, DistributionStatus::Success);
+        .is_err());
     assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 0);
     let updated = super::desktop_app_session::DesktopAppSession::load(&marker_path).unwrap();
-    assert_eq!(updated.account_id, original.account_id);
-    assert_eq!(updated.process, original.process);
-    assert_eq!(
-        updated.cli_account_id.as_deref(),
-        Some("target@example.com:target")
-    );
+    assert_eq!(updated, original);
     assert_eq!(
         load_accounts().unwrap().active_account_id.as_deref(),
-        Some("target@example.com:target")
+        Some("old@example.com:old")
+    );
+    assert_eq!(
+        read_active_auth_json()
+            .unwrap()
+            .tokens
+            .unwrap()
+            .account_id
+            .as_deref(),
+        Some("old")
     );
 }
 
 #[test]
-fn stopped_desktop_distribution_does_not_claim_an_app_account() {
+fn stopped_desktop_distribution_keeps_app_marker_unbound() {
     let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -402,16 +399,37 @@ fn stopped_desktop_distribution_does_not_claim_an_app_account() {
         .execute(DistributionRequest::auto("quota_exhausted"))
         .unwrap();
     assert_eq!(outcome.status, DistributionStatus::Success);
-    assert_eq!(outcome.target_app_id, None);
+    assert_eq!(
+        outcome.target_app_id.as_deref(),
+        Some("app@example.com:app")
+    );
     assert_eq!(
         outcome.target_cli_id.as_deref(),
-        Some("cli@example.com:cli")
+        Some("app@example.com:app")
     );
-    assert!(!env.home().join("desktop-app-session.json").exists());
+    let marker = super::desktop_app_session::DesktopAppSession::load_checked(
+        &env.home().join("desktop-app-session.json"),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(marker.account_id, "app@example.com:app");
+    assert!(
+        marker.process.is_none(),
+        "a closed Desktop has no live APP identity"
+    );
+    assert_eq!(
+        read_active_auth_json()
+            .unwrap()
+            .tokens
+            .unwrap()
+            .account_id
+            .as_deref(),
+        Some("app")
+    );
 }
 
 #[test]
-fn failed_cli_registry_commit_after_relaunch_restores_original_cli_identity() {
+fn changed_desktop_auth_after_relaunch_blocks_recovery() {
     let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -455,18 +473,16 @@ fn failed_cli_registry_commit_after_relaunch_restores_original_cli_identity() {
         Some("old"),
         Some("old"),
     );
-    let blocked_temp = env
-        .home()
-        .join(format!("accounts.{}.tmp.json", std::process::id()));
+    let prior_auth = read_active_auth_json().unwrap();
     let mock = Arc::new(MockAppLifecycle::new(true));
-    mock.observe_recovery(move || std::fs::create_dir(&blocked_temp).unwrap());
-    let outcome = DistributionCoordinator::with_lifecycle(mock)
-        .execute(DistributionRequest::auto("quota_exhausted"))
-        .unwrap();
-    assert_eq!(outcome.status, DistributionStatus::PartialSuccess);
-    assert_eq!(
-        outcome.target_cli_id.as_deref(),
-        Some("old@example.com:old")
+    mock.observe_launch(move || write_active_auth_json(&prior_auth).unwrap());
+    let outcome = DistributionCoordinator::with_lifecycle(mock.clone())
+        .execute(DistributionRequest::auto("quota_exhausted"));
+    assert!(!matches!(outcome, Ok(result) if result.status == DistributionStatus::Success));
+    assert_eq!(mock.recovery_calls.load(Ordering::SeqCst), 0);
+    assert!(
+        !env.home().join("desktop-app-session.json").exists(),
+        "mismatched Desktop auth must not retain a live target-account marker"
     );
     assert_eq!(
         load_accounts().unwrap().active_account_id.as_deref(),
@@ -480,15 +496,6 @@ fn failed_cli_registry_commit_after_relaunch_restores_original_cli_identity() {
             .account_id
             .as_deref(),
         Some("old")
-    );
-    let marker = super::desktop_app_session::DesktopAppSession::load(
-        &env.home().join("desktop-app-session.json"),
-    )
-    .unwrap();
-    assert_eq!(marker.account_id, "app@example.com:app");
-    assert_eq!(
-        marker.cli_account_id.as_deref(),
-        Some("old@example.com:old")
     );
 }
 
@@ -682,13 +689,66 @@ fn failed_desktop_marker_save_prevents_recovery_dispatch() {
     );
     let marker = env.home().join("desktop-app-session.json");
     let original = std::fs::read(&marker).unwrap();
-    let blocked_temp = marker.with_extension(format!("{}.tmp", std::process::id()));
-    std::fs::create_dir(&blocked_temp).unwrap();
+    let backup = env.home().join("desktop-app-session-backup.json");
+    std::fs::copy(&marker, &backup).unwrap();
     let mock = Arc::new(MockAppLifecycle::new(true));
+    mock.observe_launch(move || {
+        std::fs::remove_file(&marker).unwrap();
+        std::os::unix::fs::symlink(&backup, &marker).unwrap();
+    });
     let result = DistributionCoordinator::with_lifecycle(mock.clone())
-        .execute(DistributionRequest::auto("quota_exhausted"))
-        .unwrap();
-    assert_eq!(result.status, DistributionStatus::PartialSuccess);
+        .execute(DistributionRequest::auto("quota_exhausted"));
+    assert!(!matches!(result, Ok(outcome) if outcome.status == DistributionStatus::Success));
     assert_eq!(mock.recovery_calls.load(Ordering::SeqCst), 0);
-    assert_eq!(std::fs::read(marker).unwrap(), original);
+    assert_eq!(
+        std::fs::read(env.home().join("desktop-app-session.json")).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn cli_binding_reconciliation_rejects_a_different_desktop_account() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("cli_binding_must_match_app");
+    env.populate(
+        vec![
+            make_account(
+                "old",
+                None,
+                "old@example.com",
+                "plus",
+                60.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+            make_account(
+                "target",
+                None,
+                "target@example.com",
+                "team",
+                90.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+        ],
+        Some("old"),
+        Some("old"),
+    );
+    let marker = env.home().join("desktop-app-session.json");
+    let original = std::fs::read(&marker).unwrap();
+    let mock = MockAppLifecycle::new(true);
+    let result =
+        super::desktop_session_verification_service::DesktopSessionVerificationService::new(
+            &mock,
+            env.home(),
+        )
+        .reconcile_cli_binding("target@example.com:target");
+    assert!(result.is_err());
+    assert_eq!(std::fs::read(&marker).unwrap(), original);
 }
