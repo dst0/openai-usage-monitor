@@ -129,6 +129,11 @@ route even when the cached weekly marker changes. The single automatic journal
 cannot be replaced for another account while an attempt is unresolved. An unparsed HTTP status
 never proves non-consumption. Restored quota does not clear an uncertain auto
 journal or allow rotation; corrupt journal reads fail closed.
+Automatic reset runs every final check (registry account and policy, weekly
+quota, credits, window, live auth, Desktop) before it writes `pending`, then
+sends at once; a refusal never leaves an unsent attempt unresolved. A refused
+retry of an existing `pending`/`unknown` attempt is left unchanged with
+rotation suppressed; other retries are re-marked `pending` before sending.
 Credential and registry staging uses unpredictable `create_new`, `O_NOFOLLOW`,
 mode-0600 temporary files instead of reopening a predictable filename.
 Active-auth reads open with `O_NOFOLLOW`, require a private regular file, and
