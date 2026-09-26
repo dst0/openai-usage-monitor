@@ -2,7 +2,7 @@
 //! violations; an empty vector means the input complies.
 
 use crate::checkout::checkout_credential_violations;
-use crate::triggers::trigger_filter_violations;
+use crate::triggers::pull_request_trigger_violations;
 use crate::yaml_limits::unreadable_line_violations;
 use crate::yaml_lines::{block_after, entry, indent, is_content, jobs, top_level_block};
 
@@ -178,8 +178,13 @@ pub fn masked_failure_violations(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Required branch-protection contexts must be unconditional, unfiltered jobs.
-pub fn required_check_violations(text: &str, contexts: &[String]) -> Vec<String> {
+/// Required branch-protection contexts must be unconditional, unfiltered jobs
+/// of a workflow that runs for every pull request into `protected_branch`.
+pub fn required_check_violations(
+    text: &str,
+    contexts: &[String],
+    protected_branch: &str,
+) -> Vec<String> {
     let jobs = jobs(text);
     let mut out = Vec::new();
     for context in contexts {
@@ -199,7 +204,7 @@ pub fn required_check_violations(text: &str, contexts: &[String]) -> Vec<String>
             out.push(format!("required job `{}` must not set `{key}`", job.id));
         }
     }
-    out.extend(trigger_filter_violations(text));
+    out.extend(pull_request_trigger_violations(text, protected_branch));
     out
 }
 
@@ -233,6 +238,21 @@ pub fn toolchain_file_violations(text: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Branch in the protection script's `branches/<name>/protection` API path;
+/// `None` unless exactly one literal branch name is protected.
+pub fn protected_branch(script: &str) -> Option<&str> {
+    let mut branches = script
+        .split("/branches/")
+        .skip(1)
+        .filter_map(|rest| rest.split_once("/protection").map(|(branch, _)| branch));
+    let branch = branches.next()?;
+    let literal = !branch.is_empty()
+        && branch
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_./".contains(&b));
+    (literal && branches.next().is_none()).then_some(branch)
 }
 
 pub fn required_check_contexts(script: &str) -> Vec<String> {

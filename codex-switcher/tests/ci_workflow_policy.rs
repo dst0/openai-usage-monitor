@@ -15,6 +15,9 @@ mod yaml_lines;
 #[path = "ci_workflow_policy/yaml_limits.rs"]
 mod yaml_limits;
 
+#[path = "ci_workflow_policy/yaml_values.rs"]
+mod yaml_values;
+
 #[path = "ci_workflow_policy/rules.rs"]
 mod rules;
 
@@ -41,7 +44,9 @@ fn read(relative: &str) -> String {
 #[test]
 fn every_workflow_meets_ci_baseline() {
     let dir = repo_file(".github/workflows");
-    let contexts = rules::required_check_contexts(&read("scripts/setup-github-protection.sh"));
+    let script = read("scripts/setup-github-protection.sh");
+    let contexts = rules::required_check_contexts(&script);
+    let branch = rules::protected_branch(&script).expect("protection script names one branch");
     let mut checked = 0;
     let mut violations = Vec::new();
     for entry in fs::read_dir(&dir).expect("read workflows dir") {
@@ -57,7 +62,7 @@ fn every_workflow_meets_ci_baseline() {
         let text = fs::read_to_string(&path).expect("read workflow");
         let mut found = rules::workflow_violations(&text);
         if name == "ci.yml" {
-            found.extend(rules::required_check_violations(&text, &contexts));
+            found.extend(rules::required_check_violations(&text, &contexts, branch));
         }
         violations.extend(found.into_iter().map(|v| format!("{name}: {v}")));
     }
@@ -71,11 +76,13 @@ fn every_workflow_meets_ci_baseline() {
 
 #[test]
 fn branch_protection_lists_required_contexts() {
-    let contexts = rules::required_check_contexts(&read("scripts/setup-github-protection.sh"));
+    let script = read("scripts/setup-github-protection.sh");
+    let contexts = rules::required_check_contexts(&script);
     assert!(
         !contexts.is_empty() && contexts.iter().all(|c| !c.is_empty()),
         "{contexts:?}"
     );
+    assert_eq!(rules::protected_branch(&script), Some("main"));
 }
 
 #[test]

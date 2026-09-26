@@ -40,7 +40,8 @@ fn unquote(s: &str) -> &str {
     s
 }
 
-pub fn entry(line: &str) -> Option<Entry<'_>> {
+/// `(key, text after the colon, list_item)` of a `key: value` line.
+fn split_entry(line: &str) -> Option<(&str, &str, bool)> {
     let mut t = line.trim_start();
     let list_item = t.starts_with("- ") || t == "-";
     if list_item {
@@ -64,6 +65,11 @@ pub fn entry(line: &str) -> Option<Entry<'_>> {
     if !key_ok || !(rest.is_empty() || rest.starts_with([' ', '\t'])) {
         return None;
     }
+    Some((key, rest, list_item))
+}
+
+pub fn entry(line: &str) -> Option<Entry<'_>> {
+    let (key, rest, list_item) = split_entry(line)?;
     let (value, comment) = match rest.find(" #") {
         Some(i) => (&rest[..i], rest[i + 2..].trim()),
         None => (rest, ""),
@@ -74,6 +80,13 @@ pub fn entry(line: &str) -> Option<Entry<'_>> {
         comment,
         list_item,
     })
+}
+
+/// Value of a `key: value` line with its quotes kept and comment removed, for
+/// rules that must tell `[main]` from `"[main]"`.
+pub fn raw_value(line: &str) -> Option<&str> {
+    let (_, rest, _) = split_entry(line)?;
+    Some(rest.split(" #").next().unwrap_or("").trim())
 }
 
 /// Indices of the content lines nested under the key on `lines[at]`: those
@@ -102,12 +115,16 @@ pub fn direct_members(lines: &[&str], at: usize) -> Vec<usize> {
         .collect()
 }
 
+/// Index of the first top-level (`indent == 0`) key named `key`.
+pub fn top_level_index(lines: &[&str], key: &str) -> Option<usize> {
+    lines
+        .iter()
+        .position(|l| indent(l) == 0 && entry(l).is_some_and(|e| e.key == key))
+}
+
 /// Block of the first top-level (`indent == 0`) key named `key`.
 pub fn top_level_block<'a>(lines: &[&'a str], key: &str) -> Option<Vec<&'a str>> {
-    let at = lines
-        .iter()
-        .position(|l| indent(l) == 0 && entry(l).is_some_and(|e| e.key == key))?;
-    Some(block_after(lines, at))
+    Some(block_after(lines, top_level_index(lines, key)?))
 }
 
 #[derive(Debug, PartialEq)]

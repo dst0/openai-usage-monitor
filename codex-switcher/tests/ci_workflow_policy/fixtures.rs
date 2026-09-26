@@ -59,7 +59,7 @@ const CHECKOUT: &str =
 fn compliant_workflow_has_no_violations() {
     assert_eq!(workflow_violations(&compliant()), Vec::<String>::new());
     assert_eq!(
-        required_check_violations(&compliant(), &contexts()),
+        required_check_violations(&compliant(), &contexts(), "main"),
         Vec::<String>::new()
     );
 }
@@ -397,9 +397,16 @@ fn required_checks_must_always_report() {
             ),
             "`paths-ignore`",
         ),
+        (
+            with(
+                "on:\n  pull_request:\n    branches: [ main ]\n",
+                "on: push\n",
+            ),
+            "unconditional `pull_request`",
+        ),
     ];
     for (text, expected) in cases {
-        let v = required_check_violations(&text, &contexts());
+        let v = required_check_violations(&text, &contexts(), "main");
         assert_eq!(v.len(), 1, "{expected}: {v:?}");
         assert!(v[0].contains(expected), "{expected}: {v:?}");
     }
@@ -426,6 +433,24 @@ fn toolchain_file_must_be_exact_release_with_lint_components() {
         1
     );
     assert_eq!(toolchain_file_violations("[toolchain]\n").len(), 3);
+}
+
+#[test]
+fn protected_branch_is_parsed_from_the_protection_api_path() {
+    let put = |branch: &str| {
+        format!("gh api -X PUT \"repos/${{REPO}}/branches/{branch}/protection\" \\\n")
+    };
+    assert_eq!(protected_branch(&put("main")), Some("main"));
+    assert_eq!(protected_branch(&put("release/v2")), Some("release/v2"));
+    for script in [
+        String::new(),
+        put("${BRANCH}"),
+        put(""),
+        format!("{}{}", put("main"), put("release")),
+        "gh api repos/o/r/branches/main\n".to_string(),
+    ] {
+        assert_eq!(protected_branch(&script), None, "{script:?}");
+    }
 }
 
 #[test]
