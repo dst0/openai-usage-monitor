@@ -2,7 +2,7 @@ use super::coordinate_wrapper_automatic_distribution_with;
 use crate::distribution::distribution_executor::DistributionExecutor;
 use crate::distribution::distribution_outcome::{DistributionOutcome, DistributionStatus};
 use crate::distribution::distribution_request::DistributionRequest;
-use crate::distribution::test_helper::make_account;
+use crate::distribution::test_account_spec::TestAccountSpec;
 use crate::models::{AccountsFile, Settings};
 use std::sync::Mutex;
 
@@ -47,34 +47,31 @@ impl DistributionExecutor for WrapperRecordingExecutor {
 }
 
 fn rate_limited_accounts(enabled: bool) -> AccountsFile {
-    let mut settings = Settings::default();
-    settings.auto_switch_enabled = enabled;
+    let settings = Settings {
+        auto_switch_enabled: enabled,
+        ..Settings::default()
+    };
     AccountsFile {
         active_account_id: Some("active".to_string()),
         settings,
         accounts: vec![
-            make_account(
-                "active",
-                None,
-                "active@example.com",
-                "plus",
-                80.0,
-                None,
-                0,
-                None,
-                Some("HTTP 429 rate limit reached"),
-            ),
-            make_account(
-                "reserve",
-                None,
-                "reserve@example.com",
-                "team",
-                100.0,
-                None,
-                0,
-                None,
-                None,
-            ),
+            TestAccountSpec {
+                id: "active",
+                email: "active@example.com",
+                plan: "plus",
+                sprint_pct: 80.0,
+                error: Some("HTTP 429 rate limit reached"),
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "reserve",
+                email: "reserve@example.com",
+                plan: "team",
+                sprint_pct: 100.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
         ],
     }
 }

@@ -96,6 +96,7 @@
 - **Avoid Index Pattern**: Avoid the "index pattern" (re-exporting everything from submodules via wildcard `pub use *` in `mod.rs` or `lib.rs`). Require explicit hierarchical navigation.
 - **Logical Constant Placement**: Constants must be located in the files where they logically belong (e.g., limits for a struct in the same file as the struct). Avoid generic `constants.rs` or `types.rs` dump files.
 - **Test Locality**: Tests must be split into separate files in the same or similar meaningful way as the code they verify. Avoid large monolith `tests.rs` or inline `#[cfg(test)]` blocks for complex logic.
+- **No Source Re-inclusion in Integration Tests**: `codex-switcher` is a binary-only crate, so a `tests/*.rs` file that `#[path]`-includes a `src/` module compiles a second, partial copy in which every item used only by the binary is dead code under `-D warnings`. Test such modules with an in-crate `<module>.test.rs` (`#[cfg(test)] #[path = ...] mod tests;`) instead of re-including sources or adding `#[allow(dead_code)]`.
 
 ---
 
@@ -126,7 +127,7 @@ These rules are the portable minimum for Destination Works repositories. Reposit
 
 ### Validation and test quality
 
-- Discover and use the repository's canonical commands (`cargo test` in `codex-switcher`, `./scripts/test_swift.sh` for AppKit test suites); do not invent shared command names where the project does not define them.
+- Discover and use the repository's canonical commands (`cargo test` and `cargo clippy --all-targets -- -D warnings` in `codex-switcher`, `./scripts/test_swift.sh` for AppKit test suites); do not invent shared command names where the project does not define them. CI enforces the Clippy gate on every target, including tests.
 - Use a validation ladder: fast targeted feedback while iterating, the repository pre-commit gate before commit, and the full pre-push/release-relevant gate before push. If a named gate does not exist, run the closest repository-native equivalent and document the exact evidence.
 - A hook is developer feedback, not the authoritative merge gate. CI must rerun required checks from a clean checkout.
 - Never weaken, skip, or replace a failing check merely to make it green. Read the failure, fix the cause, rerun the narrowest relevant test, then rerun the containing gate.

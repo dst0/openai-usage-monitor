@@ -7,17 +7,28 @@ use super::{
 };
 use std::path::Path;
 
+/// Relaunches Desktop for one distribution operation; the operation ID and
+/// request are fixed at construction so every audit entry shares them.
 pub(super) struct DistributionDesktopRelaunchService<'a> {
     lifecycle: &'a dyn AppLifecycle,
     logger: &'a DistributionAuditLogger,
+    operation_id: &'a str,
+    request: &'a DistributionRequest,
 }
 
 impl<'a> DistributionDesktopRelaunchService<'a> {
     pub(super) fn new(
         lifecycle: &'a dyn AppLifecycle,
         logger: &'a DistributionAuditLogger,
+        operation_id: &'a str,
+        request: &'a DistributionRequest,
     ) -> Self {
-        Self { lifecycle, logger }
+        Self {
+            lifecycle,
+            logger,
+            operation_id,
+            request,
+        }
     }
 
     pub(super) fn run(
@@ -27,8 +38,6 @@ impl<'a> DistributionDesktopRelaunchService<'a> {
         cli_account_id: Option<&str>,
         running_threads: &[String],
         capture_mode: WindowCaptureMode,
-        operation_id: &str,
-        request: &DistributionRequest,
     ) -> (bool, Option<String>) {
         let mut recovery_error = None;
         let new_pids = match self.lifecycle.launch_app() {
@@ -36,10 +45,10 @@ impl<'a> DistributionDesktopRelaunchService<'a> {
             Err(error) => {
                 self.lifecycle.abort_recovery();
                 self.logger.log_warning(
-                    operation_id,
+                    self.operation_id,
                     "RELAUNCH_FAILED",
-                    request.trigger.as_str(),
-                    &request.reason,
+                    self.request.trigger.as_str(),
+                    &self.request.reason,
                     "Desktop relaunch failed",
                 );
                 return (false, Some(error));
@@ -68,8 +77,8 @@ impl<'a> DistributionDesktopRelaunchService<'a> {
             pid,
             running_threads,
             capture_mode,
-            operation_id,
-            request,
+            self.operation_id,
+            self.request,
         ) {
             recovery_error = Some(error);
         }
@@ -90,10 +99,10 @@ impl<'a> DistributionDesktopRelaunchService<'a> {
                 recovery_error.get_or_insert(error);
             } else {
                 self.logger.log_action(
-                    operation_id,
+                    self.operation_id,
                     "DESKTOP_SESSION",
-                    request.trigger.as_str(),
-                    &request.reason,
+                    self.request.trigger.as_str(),
+                    &self.request.reason,
                     &format!(
                         "Desktop session account_ref={}",
                         LogRedactionService::sanitize_field("account_id", app_account_id)

@@ -91,6 +91,9 @@ pub use window_restore_service::WindowRestoreService;
 pub use window_restore_tolerance::RestoreTolerance;
 
 #[cfg(test)]
+pub mod test_account_spec;
+
+#[cfg(test)]
 pub mod test_helper;
 
 #[cfg(test)]

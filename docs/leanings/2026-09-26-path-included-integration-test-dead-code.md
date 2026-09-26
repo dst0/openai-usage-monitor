@@ -1,0 +1,25 @@
+# 2026-09-26 — Path-included integration tests make binary-only code look dead
+
+- **Status:** Resolved
+- **Task/context:** Making `cargo clippy --all-targets -- -D warnings` pass in `codex-switcher/` so it can become a CI gate.
+- **Unexpected observation or failure:** Plain `cargo clippy` on the `codex-mon` binary reported no dead code in `src/recovery_banner/`, but `--all-targets` failed with eleven `dead_code`/`unused_imports` errors against `tests/../src/recovery_banner/*` (for example `ProcessIdentity::from_kernel`, `RecoverySessionCatalog`, `RecoveryBannerService::update_target`, `WindowRect::contains`).
+- **Evidence:** The errors named the path `tests/../src/...`, and `tests/recovery_banner.rs` began with `#[path = "../src/recovery_banner/mod.rs"] mod recovery_banner;`. Every flagged item is used by the binary's recovery coordinator but not by the four integration tests. The crate has no library target (`Cargo.toml` declares only `[[bin]] codex-mon`), so the integration test cannot link the real module.
+- **Approaches tried:**
+  - **Attempt:** Add `#[allow(dead_code, unused_imports)]` on the included module.
+    - **Outcome:** Rejected
+    - **Why:** It would also hide genuinely dead code in the real module, and repository rules forbid blanket suppression.
+  - **Attempt:** Add integration tests that call every flagged item.
+    - **Outcome:** Rejected
+    - **Why:** It would add tests only to silence the lint, and the next item used only by the binary would break the gate again.
+  - **Attempt:** Introduce a `lib.rs` target so integration tests link the real crate.
+    - **Outcome:** Rejected for this change
+    - **Why:** It would move every module in `main.rs` into a new public library surface, far larger than the defect.
+  - **Attempt:** Move the four tests into the crate as `src/recovery_banner/recovery_banner.test.rs`, wired with `#[cfg(test)] #[path = "recovery_banner.test.rs"] mod tests;`.
+    - **Outcome:** Worked
+    - **Why:** The tests now compile inside the binary crate, so dead-code analysis sees the real call graph and no second copy of the module exists.
+- **Root cause:** In a binary-only crate, `#[path]` re-inclusion compiles a second, partial copy of a module in the integration-test crate, and dead-code analysis runs on that copy separately. Items that only the binary uses are dead there, so the failure appears only when test targets are linted.
+- **Resolution:** Moved the banner tests into the crate. The same pass fixed the other pre-existing `--all-targets` failures: operation context moved into `DistributionDesktopRelaunchService`'s constructor, a `TestAccountSpec` parameter struct replaced the 9-argument `make_account`, `Settings` literals use struct-init syntax, and a `std::slice::from_ref` fix was applied in `codex_binary_path.rs`.
+- **Verification:** `cargo clippy --all-targets -- -D warnings` and `cargo clippy -- -D warnings` are clean. `cargo test` passes; the four moved tests run as `recovery_banner::tests::*`.
+- **Prevention/follow-up:** CI now runs `cargo clippy --all-targets -- -D warnings`. AGENTS.md forbids re-including `src/` modules in `tests/`. `tests/window_restore_service.rs` used the same pattern and passed only because its tests happened to use every included item, so it was moved into the crate as `src/distribution/window_restore_service.test.rs`. The CI toolchain is `stable`, so a Clippy release that adds lints can turn the gate red without a code change; follow the base-rebase rule in AGENTS.md.
+- **Reusable learning:** In a binary-only Rust crate, test modules in place with `<module>.test.rs`; never `#[path]`-include `src/` files into `tests/`, because the partial copy turns code used only by the binary into dead-code errors under `-D warnings`.
+- **References:** `codex-switcher/src/recovery_banner/recovery_banner.test.rs`, `codex-switcher/src/distribution/window_restore_service.test.rs`, `codex-switcher/src/distribution/test_account_spec.rs`, `.github/workflows/ci.yml`, `AGENTS.md` (Code Culture: No Source Re-inclusion in Integration Tests).

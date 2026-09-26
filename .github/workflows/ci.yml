@@ -20,6 +20,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Cargo Cache
         uses: actions/cache@v4
@@ -32,6 +34,11 @@ jobs:
             codex-switcher/target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('codex-switcher/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Run Clippy on All Targets
+        run: |
+          cd codex-switcher
+          cargo clippy --all-targets -- -D warnings
 
       - name: Run Rust Unit Tests
         run: |

@@ -168,18 +168,21 @@ impl DistributionTransactionService {
                 &request.reason,
                 "Relaunching Desktop app",
             );
-            (restarted_desktop, recovery_error) =
-                DistributionDesktopRelaunchService::new(self.lifecycle.as_ref(), &self.logger).run(
-                    &home,
-                    target_app_id,
-                    plan.target_cli_id
-                        .as_deref()
-                        .or(accounts_file.active_account_id.as_deref()),
-                    &running_threads,
-                    capture_mode,
-                    op_id,
-                    request,
-                );
+            (restarted_desktop, recovery_error) = DistributionDesktopRelaunchService::new(
+                self.lifecycle.as_ref(),
+                &self.logger,
+                op_id,
+                request,
+            )
+            .run(
+                &home,
+                target_app_id,
+                plan.target_cli_id
+                    .as_deref()
+                    .or(accounts_file.active_account_id.as_deref()),
+                &running_threads,
+                capture_mode,
+            );
 
             if let Some(target_cli_id) = &plan.target_cli_id {
                 if !target_cli_id.eq_ignore_ascii_case(target_app_id) {
