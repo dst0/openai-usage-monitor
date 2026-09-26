@@ -28,10 +28,11 @@ fn values_left_open_at_line_end_are_unreadable() {
 
 #[test]
 fn explicit_and_merge_keys_are_unreadable() {
-    // libyaml gives the job an `if:` the required-job rule cannot see.
+    // libyaml gives the job an `if:` the required-job rule cannot see. The
+    // `: value` line has no key `entry` can read either.
     assert_eq!(
         unreadable_lines("job:\n  ? if\n  : ${{ false }}\n"),
-        vec![2]
+        vec![2, 3]
     );
     assert_eq!(unreadable_lines("a:\n  ?\n"), vec![2]);
     assert_eq!(unreadable_lines("- <<: *step\n  with: {}\n"), vec![1]);
@@ -81,9 +82,53 @@ fn node_properties_escapes_and_foreign_line_breaks_are_unreadable() {
     );
 }
 
+/// Regression (PR #18 critic P0-1, P1-1): libyaml reads a deeper line after
+/// a one-line plain value as more of that value, and `key : value` as a key,
+/// so the reader saw a bare `-D warnings` gate and no job `if:`.
+#[test]
+fn continued_values_and_unparsed_keys_are_unreadable() {
+    for (text, line) in [
+        ("run: cargo clippy -- -D warnings\n  -A clippy::all\n", 2),
+        ("if: success()\n  == false\n", 2),
+        ("- run: x\n    y\n", 2),
+        ("- main\n    - dev\n", 2),
+        ("a: 'x'\n  b: 1\n", 2),
+        ("a: [x]\n  b\n", 2),
+        ("job:\n  if : false\n", 2),
+        ("job:\n  if\t: false\n", 2),
+        ("continue-on-error : true\n", 1),
+        ("- if : failure()\n", 1),
+        ("a:b: c\n", 1),
+        ("- echo a: b\n", 1),
+    ] {
+        assert_eq!(unreadable_lines(text), vec![line], "{text:?}");
+    }
+}
+
+/// Regression (PR #18 critic P0-2): `str::trim` removes U+00A0, so the reader
+/// saw `-D warnings` where libyaml passes `warnings\u{a0}` to Clippy.
+#[test]
+fn whitespace_other_than_space_and_tab_is_unreadable() {
+    for text in [
+        "run: cargo clippy -- -D warnings\u{a0}\n",
+        "a: b\u{3000}\n",
+        "a:\u{2003}b\n",
+        "a: b\x0b\n",
+        "a: b\x0c\n",
+        "# note\u{a0}\n",
+    ] {
+        assert_eq!(unreadable_lines(text), vec![1], "{text:?}");
+    }
+}
+
 #[test]
 fn single_line_values_and_block_scalars_are_readable() {
     for text in [
+        "steps:\n  -\n    run: x\n",
+        "- name: x\n  run: y\n",
+        "jobs: # note\n  a: 1\n",
+        "a: 1\n  # a deeper comment\nb: 2\n",
+        "a:\tb\n",
         "a: 1\r\nb: 2\r\n",
         "run: echo a && b || c\n",
         "if: github.ref != 'refs/heads/main'\n",

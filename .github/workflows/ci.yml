@@ -60,7 +60,9 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-${{ hashFiles('codex-switcher/rust-toolchain.toml') }}-
 
       # Lints every target, tests included, with the pinned Clippy; --locked
-      # fails rather than re-resolving the lockfile generated above.
+      # fails rather than re-resolving the lockfile generated above. The
+      # command and directory are enforced by
+      # codex-switcher/tests/ci_workflow_policy/clippy_gate.rs.
       - name: Run Clippy on All Targets
         working-directory: codex-switcher
         run: cargo clippy --workspace --all-targets --locked -- -D warnings

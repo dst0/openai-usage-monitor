@@ -1,9 +1,11 @@
 //! Enforces the AGENTS.md CI baseline on the live repository: least-privilege
 //! permissions, actions pinned to full commit SHAs, explicit job timeouts and
-//! concurrency, an exact Rust toolchain, and required branch-protection checks
-//! that always report. Rule logic lives in `ci_workflow_policy/rules.rs`, with
-//! the checkout, trigger, and required-job rules in `checkout.rs`,
-//! `triggers.rs`, and `required_checks.rs`, and `yaml_limits.rs` rejecting
+//! concurrency, an exact Rust toolchain, an all-targets Clippy gate, and
+//! required branch-protection checks that always report. Rule logic lives in
+//! `ci_workflow_policy/rules.rs`, with the checkout, trigger, required-job,
+//! Clippy gate, and inherited-settings rules in `checkout.rs`, `triggers.rs`,
+//! `required_checks.rs`, `clippy_gate.rs`, and `inherited_settings.rs`, and
+//! `yaml_limits.rs` rejecting
 //! YAML the line reader (`yaml_lines.rs`, `yaml_values.rs`, `workflow_jobs.rs`)
 //! cannot read; negative cases live in `fixtures.rs` and in each module's
 //! `.test.rs` file.
@@ -34,6 +36,12 @@ mod checkout;
 
 #[path = "ci_workflow_policy/triggers.rs"]
 mod triggers;
+
+#[path = "ci_workflow_policy/clippy_gate.rs"]
+mod clippy_gate;
+
+#[path = "ci_workflow_policy/inherited_settings.rs"]
+mod inherited_settings;
 
 #[path = "ci_workflow_policy/fixtures.rs"]
 mod fixtures;
@@ -77,6 +85,10 @@ fn every_workflow_meets_ci_baseline() {
             required_workflow_checked = true;
             found.extend(required_checks::required_check_violations(
                 &text, &contexts, branch,
+            ));
+            found.extend(clippy_gate::clippy_gate_violations(&text, &contexts));
+            found.extend(inherited_settings::inherited_setting_violations(
+                &text, &contexts,
             ));
         } else {
             found.extend(required_checks::reused_context_violations(&text, &contexts));
