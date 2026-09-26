@@ -112,6 +112,37 @@ The installation script checks and guides you through the prerequisites automati
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
+   The build uses the exact toolchain pinned in `codex-switcher/rust-toolchain.toml`;
+   the installer asks rustup to install it before compiling.
+
+### 🦀 Rust toolchain policy
+
+`codex-switcher/rust-toolchain.toml` pins one exact Rust release (with Clippy
+and rustfmt) so a new upstream `stable` cannot change build or lint results
+without a reviewed commit. rustup applies the pin whenever cargo runs from inside
+`codex-switcher/`, which is how the installer, the shell tests, and CI invoke it.
+It does not apply to `cargo --manifest-path` run from another directory, or to a
+Rust installed without rustup (the installer warns in that case).
+
+CI installs the pinned toolchain with `rustup toolchain install`, and
+`codex-switcher/tests/ci_workflow_policy.rs` enforces the policy: it rejects
+floating channels and per-command overrides in workflows, and on GitHub Actions
+it asserts that the tests themselves ran under the pinned release.
+
+To bump the toolchain:
+
+1. Change `channel` in `codex-switcher/rust-toolchain.toml` to the new exact `X.Y.Z` release.
+2. In `codex-switcher/`, run `rustup toolchain install`, then `cargo test` and
+   `cargo clippy --all-targets -- -D warnings` on both the old and new
+   toolchain; fix every lint the new release adds in the same PR. (The
+   all-targets Clippy gate is not yet clean on `main`, so compare the two runs
+   rather than expecting zero findings.)
+3. Open a dedicated `build/` PR and confirm every required check passes on its head SHA.
+
+GitHub Actions in `.github/workflows/` are likewise pinned to full commit SHAs
+with a `# vX.Y.Z` comment. To update one, resolve the release tag to its commit
+(`gh api repos/<owner>/<action>/commits/<tag> --jq .sha`), confirm the tag points
+at that commit, and update both the SHA and the comment.
 
 ### 🔌 Integration with the Official Codex Desktop App
 
