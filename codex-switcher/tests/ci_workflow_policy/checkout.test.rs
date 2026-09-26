@@ -156,15 +156,29 @@ fn continued_or_merged_nodes_cannot_fake_checkout_inputs() {
     let merged = format!(
         "      - &checkout\n        name: Checkout\n        uses: actions/checkout@{SHA} # v4.4.0\n{WITH_BLOCK}      - <<: *checkout\n        with:\n          fetch-depth: 0\n"
     );
-    for (text, line) in [
-        (with(WITH_BLOCK, &format!("        env:\n          NOTE: \"inputs follow\n{WITH_BLOCK}          \"\n")), 19),
-        (with(WITH_BLOCK, &format!("        env:\n          NOTE: 'inputs follow\n{WITH_BLOCK}          '\n")), 19),
-        (with(&format!("      - name: Checkout\n        uses: actions/checkout@{SHA} # v4.4.0\n{WITH_BLOCK}"), &merged), 21),
+    for (text, marker) in [
+        (with(WITH_BLOCK, &format!("        env:\n          NOTE: \"inputs follow\n{WITH_BLOCK}          \"\n")), "NOTE: \""),
+        (with(WITH_BLOCK, &format!("        env:\n          NOTE: 'inputs follow\n{WITH_BLOCK}          '\n")), "NOTE: '"),
+        (with(&format!("      - name: Checkout\n        uses: actions/checkout@{SHA} # v4.4.0\n{WITH_BLOCK}"), &merged), "<<: *checkout"),
     ] {
+        let line = 1 + text.lines().position(|l| l.contains(marker)).expect("marker");
         let v = crate::rules::workflow_violations(&text);
         assert!(
             v.iter().any(|m| m.starts_with(&format!("line {line}: "))),
             "{text}\n{v:?}"
         );
     }
+}
+
+/// `workflow_violations` runs the checkout rule, so the live workflow test
+/// cannot pass with a persisting checkout.
+#[test]
+fn workflow_violations_include_the_checkout_rule() {
+    let persisted = with(
+        "          persist-credentials: false\n",
+        "          fetch-depth: 0\n",
+    );
+    let v = crate::rules::workflow_violations(&persisted);
+    assert_eq!(v.len(), 1, "{v:?}");
+    assert!(v[0].starts_with("checkout at line 17: "), "{v:?}");
 }

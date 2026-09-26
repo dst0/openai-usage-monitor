@@ -2,9 +2,11 @@
 //! permissions, actions pinned to full commit SHAs, explicit job timeouts and
 //! concurrency, an exact Rust toolchain, and required branch-protection checks
 //! that always report. Rule logic lives in `ci_workflow_policy/rules.rs`, with
-//! the checkout and trigger rules in `checkout.rs` and `triggers.rs`, and
-//! `yaml_limits.rs` rejecting YAML the line reader cannot read; negative cases
-//! live in `fixtures.rs` and in each module's `.test.rs` file.
+//! the checkout, trigger, and required-job rules in `checkout.rs`,
+//! `triggers.rs`, and `required_checks.rs`, and `yaml_limits.rs` rejecting
+//! YAML the line reader (`yaml_lines.rs`, `yaml_values.rs`, `workflow_jobs.rs`)
+//! cannot read; negative cases live in `fixtures.rs` and in each module's
+//! `.test.rs` file.
 
 use std::fs;
 use std::path::PathBuf;
@@ -36,6 +38,9 @@ mod triggers;
 #[path = "ci_workflow_policy/fixtures.rs"]
 mod fixtures;
 
+/// The workflow whose jobs report the branch-protection contexts.
+const REQUIRED_CHECK_WORKFLOW: &str = "ci.yml";
+
 fn repo_file(relative: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -54,6 +59,7 @@ fn every_workflow_meets_ci_baseline() {
     let contexts = rules::required_check_contexts(&script);
     let branch = rules::protected_branch(&script).expect("protection script names one branch");
     let mut checked = 0;
+    let mut required_workflow_checked = false;
     let mut violations = Vec::new();
     for entry in fs::read_dir(&dir).expect("read workflows dir") {
         let path = entry.expect("dir entry").path();
@@ -67,7 +73,8 @@ fn every_workflow_meets_ci_baseline() {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         let text = fs::read_to_string(&path).expect("read workflow");
         let mut found = rules::workflow_violations(&text);
-        if name == "ci.yml" {
+        if name == REQUIRED_CHECK_WORKFLOW {
+            required_workflow_checked = true;
             found.extend(required_checks::required_check_violations(
                 &text, &contexts, branch,
             ));
@@ -77,6 +84,11 @@ fn every_workflow_meets_ci_baseline() {
         violations.extend(found.into_iter().map(|v| format!("{name}: {v}")));
     }
     assert!(checked > 0, "no workflows found in {}", dir.display());
+    assert!(
+        required_workflow_checked,
+        "{REQUIRED_CHECK_WORKFLOW} (the workflow reporting the required checks) not found in {}",
+        dir.display()
+    );
     assert!(
         violations.is_empty(),
         "CI baseline violations:\n{}",

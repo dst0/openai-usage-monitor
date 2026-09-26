@@ -1,5 +1,5 @@
 use super::pull_request_trigger_violations;
-use crate::fixtures::with;
+use crate::fixtures::{compliant, with};
 
 /// The compliant fixture's triggers.
 const ON_BLOCK: &str = "on:\n  pull_request:\n    branches: [ main ]\n";
@@ -157,4 +157,17 @@ fn compact_sequences_and_empty_pull_request_values_comply() {
     let compact_other_branch =
         violations_for("on:\n  pull_request:\n    branches:\n    - develop\n");
     assert_eq!(compact_other_branch.len(), 1, "{compact_other_branch:?}");
+}
+
+/// The rule checks the branch it is given, not a built-in `main`.
+#[test]
+fn branch_filters_are_checked_against_the_given_protected_branch() {
+    let develop = pull_request_trigger_violations(&compliant(), "develop");
+    assert_eq!(develop.len(), 1, "{develop:?}");
+    assert!(develop[0].contains("must list `develop`"), "{develop:?}");
+    let develop_only = with("branches: [ main ]", "branches: [ develop ]");
+    assert_eq!(
+        pull_request_trigger_violations(&develop_only, "develop"),
+        Vec::<String>::new()
+    );
 }
