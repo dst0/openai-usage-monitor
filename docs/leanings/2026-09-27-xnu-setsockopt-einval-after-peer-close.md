@@ -1,0 +1,29 @@
+# 2026-09-27 — XNU rejects setsockopt after the IPC peer closes, hiding a buffered reply
+
+- **Status:** Resolved
+- **Task/context:** Investigating the load-dependent failures of the target-dispatch wake test in `codex-switcher` (see [the fake router flake](2026-09-27-fake-ipc-router-timeout-flake.md)).
+- **Unexpected observation or failure:** Under load the wake test also failed with `error=Some("Invalid argument (os error 22)"), routed=Some(true)`. The fake router had received the wake, written a valid success reply, and closed its end. `DesktopIpc::request_raw` still returned an error.
+- **Evidence:**
+  - `request_raw` wrote the request, then called `set_read_timeout(remaining)` before each read. The router's reply and close could both land between those two calls.
+  - A standalone probe on Darwin 27.2 used `UnixStream::pair()`, wrote a reply from one end, and dropped that end. `set_read_timeout` on the other end then returned `Err(Os { code: 22, kind: InvalidInput })`, while `read_to_end` still returned all 8 buffered bytes. With the peer open, the same call succeeded; writing to the closed peer returned `EPIPE`.
+  - This matches XNU's `sosetopt` rejecting options on a socket that can neither send nor receive, the state a Unix-domain socket enters when its peer closes. The kernel source was not re-read for this task; the probe above is the authoritative evidence.
+  - `IpcResponseReader::await_reply` failed deterministically with `Invalid argument (os error 22)` for a reply queued on a connection whose router had already hung up.
+- **Approaches tried:**
+  - **Attempt:** Fix only the test harness so that the fake router never closes before the client hangs up.
+    - **Outcome:** Partial.
+    - **Why:** It removes the test failure, but the client defect remains. A Desktop that answers a recovery request and then exits would lose a turn ID it had already delivered. Recovery marks the checkpoint consumed before IPC, so it then reports a failure for work that started.
+  - **Attempt:** Treat any `set_read_timeout` failure as fatal (the previous behaviour).
+    - **Outcome:** Did not work.
+    - **Why:** On macOS that failure is expected on a peer-closed socket, even with a complete reply buffered.
+  - **Attempt:** Arm the full response wait before writing each request, while the router is certainly connected. When re-arming in the read loop, tolerate any `ErrorKind::InvalidInput`.
+    - **Outcome:** Partial.
+    - **Why:** It fixed the lost reply, but adversarial review showed the tolerance was too broad. Rust reports its own refusal of a zero `Duration` as `InvalidInput` with no OS error, and accepting that leaves the socket with no read timeout. The extra arm before the write added no bound that any test could observe.
+  - **Attempt:** When re-arming, tolerate only `raw_os_error() == Some(EINVAL)`, and drop the arm before the write.
+    - **Outcome:** Worked.
+    - **Why:** Only the kernel refusal on a peer-closed socket is ignored, and such a socket returns its buffered bytes and then EOF, so the read cannot block. A zero timeout and every other `setsockopt` failure remain errors.
+- **Root cause:** The client re-armed `SO_RCVTIMEO` after sending, and macOS reports `EINVAL` for that call once the peer has closed, regardless of unread data.
+- **Resolution:** The response loop moved from `desktop_ipc.rs` into `IpcResponseReader` (`codex-switcher/src/recovery/ipc_response_reader.rs`). Its private `arm_read_timeout` tolerates only the kernel `EINVAL`.
+- **Verification:** `reply_buffered_before_the_router_hung_up_is_not_lost` failed with `Invalid argument (os error 22)` before the fix and passes after it. New tests cover skipping unrelated frames, `no-client-found` versus other rejections, invalid result types, hang-up without a reply, a silent router bounded by the deadline, an expired deadline, arming on connected and closed sockets, a zero timeout, and a DesktopIpc round trip against a router that answers and exits. The first version of that round trip sent a small reply, and against the pre-fix logic it failed only 1 of 10 runs of 20 iterations under heavy load and 0 of 70 at light load. It now first sends an unrelated 1 MiB frame, larger than the socket buffer, so the client is still parsing it when the router answers and exits. Against the pre-fix logic it then failed 40 of 40 sandboxed runs at load average 3.
+- **Prevention/follow-up:** AGENTS.md section 4 now has an "IPC reply reading" rule. Other `set_read_timeout` or `set_write_timeout` calls made after a peer may have closed need the same review; `DesktopIpc::connect` arms its timeouts before its first request, so it is not affected.
+- **Reusable learning:** On macOS, `setsockopt` on a socket whose peer has closed fails with `EINVAL` even when unread data remains. Tolerate exactly that OS error when re-arming a read timeout, and never let it discard a reply that has already arrived. To make a test hit a close-before-re-arm race, send a frame larger than the socket buffer first.
+- **References:** `codex-switcher/src/recovery/ipc_response_reader.rs`, `codex-switcher/src/recovery/ipc_response_reader.test.rs`, `codex-switcher/src/recovery/desktop_ipc.rs`, `AGENTS.md`.
