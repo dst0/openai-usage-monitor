@@ -104,13 +104,11 @@ pub(crate) fn launch_codex_app() -> Result<Vec<u32>, String> {
             .env_remove("CODEX_PRIMARY_THREAD")
             .args(["-g", "-n", "-a", "/Applications/ChatGPT.app"])
             .status()
-            .map_err(|error| {
-                format!("Account switched, but Codex could not be relaunched: {error}")
-            })?;
+            .map_err(|error| format!("Codex could not be launched: {error}"))?;
 
         if !status.success() {
             if attempt == 3 {
-                return Err("Account switched, but Codex could not be relaunched".to_string());
+                return Err("Codex could not be launched".to_string());
             }
             sleep(Duration::from_millis(500));
             continue;

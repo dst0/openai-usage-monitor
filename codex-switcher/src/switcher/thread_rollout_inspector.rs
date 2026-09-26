@@ -90,6 +90,16 @@ pub fn read_rollout_tail_lines(path: &std::path::Path, max_bytes: u64) -> Vec<St
         .collect()
 }
 
+/// Fails closed: any non-null, non-blank value counts as a final message, so
+/// an unfamiliar payload shape is never treated as unfinished work.
+fn has_final_agent_message(payload: Option<&serde_json::Value>) -> bool {
+    match payload.and_then(|p| p.get("last_agent_message")) {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::String(message)) => !message.trim().is_empty(),
+        Some(_) => true,
+    }
+}
+
 /// Inspects lines from the end of a rollout to determine the state of the latest turn.
 pub fn inspect_thread_rollout_state_from_lines(lines: &[String]) -> ThreadRolloutState {
     for line in lines.iter().rev() {
@@ -126,7 +136,12 @@ pub fn inspect_thread_rollout_state_from_lines(lines: &[String]) -> ThreadRollou
                     {
                         return ThreadRolloutState::InterruptedByQuota;
                     }
-                    // Non-quota error, but turn completed
+                    // An auth/transport outage also closes the turn with an
+                    // error. Without a final agent message the work is
+                    // unfinished, not completed.
+                    if !has_final_agent_message(payload) {
+                        return ThreadRolloutState::InterruptedByError;
+                    }
                     return ThreadRolloutState::CleanCompleted;
                 }
             }
@@ -174,3 +189,7 @@ pub fn inspect_thread_rollout_state(
     }
     ThreadRolloutState::Unknown
 }
+
+#[cfg(test)]
+#[path = "thread_rollout_inspector.test.rs"]
+mod tests;

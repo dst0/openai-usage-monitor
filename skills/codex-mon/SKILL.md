@@ -42,7 +42,7 @@ Binary path: `~/.local/bin/cxi` (or `~/.local/bin/codex-mon`).
    ```bash
    cxi resume [thread-id]
    ```
-   Sends one owner-routed `thread-follower-start-turn` request with the protocol-valid text `continue` (or restores an existing queue) through Desktop IPC. Accessibility is used only for the recovery banner and final visibility check, not to click Play/Resume/Retry/Steer controls.
+   Sends one owner-routed `thread-follower-start-turn` request with the protocol-valid text `continue` (or restores an existing queue) through Desktop IPC. Accessibility is used only for the recovery banner and final visibility check, not to click Play/Resume/Retry/Steer controls. With an explicit ID it also resumes a turn that ended with a non-quota error (for example an outage 401) before a final agent message, claims a stale deferred owner-wait for that task, and starts ChatGPT in the background if it is closed.
 
 6. **Manage Auto-Switching Policies & Multipliers**:
    ```bash
