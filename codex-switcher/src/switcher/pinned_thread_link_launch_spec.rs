@@ -139,6 +139,8 @@ fn launch_pinned_link(thread_id: &str) -> Result<(), String> {
 }
 
 pub(super) fn retry(thread_id: &str) -> Result<(), String> {
+    #[cfg(test)]
+    crate::test_live_system::forbid("pinned ChatGPT task link (LaunchServices)");
     let metadata =
         std::fs::symlink_metadata(APP_PATH).map_err(|_| "The pinned ChatGPT app is unavailable")?;
     if !metadata.file_type().is_dir() || Path::new(APP_PATH).is_symlink() {

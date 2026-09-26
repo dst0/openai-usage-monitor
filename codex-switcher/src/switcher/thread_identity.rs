@@ -45,6 +45,8 @@ pub fn retry_thread_link_natively_in_background(thread_id: &str) -> Result<(), S
 }
 
 fn open_thread(thread_id: &str, foreground: bool) -> Result<(), String> {
+    #[cfg(test)]
+    crate::test_live_system::forbid("ChatGPT task link (/usr/bin/open)");
     let clean = clean_thread_id(thread_id);
     if !is_valid_thread_id(&clean) {
         return Err("Invalid thread ID for ChatGPT navigation".into());

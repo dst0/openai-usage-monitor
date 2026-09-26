@@ -19,3 +19,10 @@ fn only_changed_process_identity_is_a_fatal_navigation_error() {
         "Pinned ChatGPT task navigation failed (OSStatus -10814)"
     ));
 }
+
+#[test]
+fn unit_tests_cannot_send_a_pinned_task_link() {
+    crate::test_live_system::assert_forbidden("pinned ChatGPT task link (LaunchServices)", || {
+        super::retry("01234567-89ab-cdef-0123-456789abcdef")
+    });
+}
