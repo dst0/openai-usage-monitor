@@ -204,5 +204,11 @@ impl WeeklyResetService {
 }
 
 #[cfg(test)]
+#[path = "weekly_reset_fixture.test.rs"]
+mod fixture;
+#[cfg(test)]
+#[path = "weekly_reset_retry.test.rs"]
+mod retry_tests;
+#[cfg(test)]
 #[path = "weekly_reset_service.test.rs"]
 mod tests;

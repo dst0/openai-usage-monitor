@@ -130,10 +130,12 @@ cannot be replaced for another account while an attempt is unresolved. An unpars
 never proves non-consumption. Restored quota does not clear an uncertain auto
 journal or allow rotation; corrupt journal reads fail closed.
 Automatic reset runs every final check (registry account and policy, weekly
-quota, credits, window, live auth, Desktop) before it writes `pending`, then
-sends at once; a refusal never leaves an unsent attempt unresolved. A refused
-retry of an existing `pending`/`unknown` attempt is left unchanged with
-rotation suppressed; other retries are re-marked `pending` before sending.
+quota and window marker, credits, threshold, live auth, a buildable request
+route/token/key, Desktop) before it writes `pending`, then sends at once; a
+refusal never leaves an unsent attempt unresolved. A refused retry of an
+existing `pending`/`unknown` attempt, or one whose request could not be built
+(`Unavailable`), is left unchanged with rotation suppressed because the first
+request may have been applied; other retries are re-marked `pending` first.
 Credential and registry staging uses unpredictable `create_new`, `O_NOFOLLOW`,
 mode-0600 temporary files instead of reopening a predictable filename.
 Active-auth reads open with `O_NOFOLLOW`, require a private regular file, and

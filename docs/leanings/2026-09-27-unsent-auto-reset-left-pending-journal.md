@@ -2,18 +2,43 @@
 
 - **Status:** Resolved
 - **Task/context:** Review finding on PR #15: automatic weekly reset (`codex-switcher/src/auto_reset/`) persisted a new `pending` attempt and only afterwards revalidated the registry account, auto-reset policy, weekly quota, credits, window, and live auth.
-- **Unexpected observation or failure:** Every revalidation failure returned without resolving the new journal. No request had been sent, yet the single-slot journal claimed an unresolved attempt: the route's manual reset was refused, another account's automatic reset reported `waiting_for_previous_reset` with rotation suppressed, and nothing could reconcile it because the episode was no longer eligible for a same-key retry.
-- **Evidence:** A synthetic regression against the unfixed code (temporary `CODEX_HOME`, SQLite fixture with one quota-blocked task) changed the registry or live auth after the daemon's snapshot. All six scenarios (weekly pool restored, usage error, credit spent, window closing, auto-reset disabled, live auth rotated) ended with `journal=pending`, `unresolved_auto_reset_for(route) == Ok(true)`, and the other account at `waiting_for_previous_reset` with suppression. Two related gaps were found while reading the same path: Desktop being closed overwrote an existing `unknown` attempt with the non-blocking `waiting_for_desktop`, and a retry from `waiting_for_desktop` or `waiting_for_service` sent its request while the journal still showed that non-blocking state.
+- **Unexpected observation or failure:** Every revalidation failure returned without resolving the new journal. No request had been sent, yet the single-slot journal claimed an unresolved attempt. The route's manual reset was refused, and another account's automatic reset reported `waiting_for_previous_reset` with rotation suppressed. Nothing could reconcile it, because the episode was no longer eligible for a same-key retry.
+- **Evidence:** A synthetic regression ran against the unfixed code, using a temporary `CODEX_HOME` and a SQLite fixture with one quota-blocked task. It changed the registry or live auth after the daemon took its snapshot. All six scenarios (weekly pool restored, usage error, credit spent, window closing, auto-reset disabled, live auth rotated) ended with `journal=pending`, `unresolved_auto_reset_for(route) == Ok(true)`, and the other account at `waiting_for_previous_reset` with suppression. The same path had three related gaps:
+  - A closed Desktop overwrote an existing `unknown` attempt with the non-blocking `waiting_for_desktop`.
+  - A retry from `waiting_for_desktop` or `waiting_for_service` sent its request while the journal still showed that non-blocking state.
+  - An adversarial test review found a third: a retry of a `pending`/`unknown` attempt whose request could not be built returned `Unavailable`, and the outcome handler rewrote the journal to `waiting_for_service` with suppression off. This is reachable: the registry's duplicate-account merge can leave `tokens.account_id` different from `account_id`.
 - **Approaches tried:**
   - **Attempt:** Keep the write-then-recheck order and rewrite the journal to a terminal no-send state on every exit after the write.
     - **Outcome:** Rejected.
-    - **Why:** Every future exit would need the same cleanup, the cleanup is a second fallible write, and it must still distinguish a new attempt from a retry that may already have been sent.
-  - **Attempt:** Run every final check (fresh registry, policy, quota, credits, window, live auth, Desktop) before persisting `pending`, and send immediately after the durable write.
+    - **Why:** Every future exit would need the same cleanup. The cleanup is a second fallible write, and it must still tell a new attempt apart from a retry that may already have been sent.
+  - **Attempt:** Run every final check before persisting `pending`, and send immediately after the durable write.
     - **Outcome:** Worked.
     - **Why:** No code path exists between the durable marker and the request, so a refusal cannot strand an unsent attempt. The time between the last check and the request grows only by one journal write.
-- **Root cause:** The durable "request may have been sent" marker was written before the decision to send was final.
-- **Resolution:** `ResetDispatchService` owns the marker and the request. `ResetPreflightService` runs the final checks first. A refusal writes nothing for a new attempt (Desktop absence records `waiting_for_desktop` without `pending`). A refused retry of an existing `pending`/`unknown` attempt leaves the journal byte-identical and keeps rotation suppressed. Any other retry is re-marked `pending` before its request. Host effects (task detection, Desktop probe, reset request) sit behind `WeeklyResetEnvironment` so tests never touch a real Desktop, process table, or reset service.
-- **Verification:** `auto_reset::weekly_reset_service::tests` covers nine changes made during detection, including an account switch that only the final check can see. It also covers refused retries of `pending`/`unknown` (auth rotated, account switched, Desktop closed), deferred Desktop then retry, the journal state seen at each request, same-key reuse on retry, and a failed Desktop probe. Three mutations were each caught by at least one test: writing `pending` before the checks, dropping the refused-retry guard, and skipping the retry re-mark.
-- **Prevention/follow-up:** The rule is recorded in `AGENTS.md`, `CODEX.md`, and the README reset steps. A journal write that fails after its rename is still an I/O failure that fails closed. The caller reports `journal_error`, and a leftover `pending` waits for a same-key retry or operator reconciliation.
-- **Reusable learning:** Write a durable "request may be in flight" marker only after the send decision is final, with nothing that can return between the marker and the request. On retry, never demote a marker that may describe a request already sent.
-- **References:** `codex-switcher/src/auto_reset/reset_dispatch_service.rs`, `codex-switcher/src/auto_reset/reset_preflight_service.rs`, `codex-switcher/src/auto_reset/weekly_reset_service.test.rs`, `AGENTS.md`, `README.md`.
+  - **Attempt:** Rely on the preflight alone for requests that cannot be built.
+    - **Outcome:** Partial.
+    - **Why:** The preflight now refuses a request that cannot be built. A retry could still receive `Unavailable` from the sender, so the dispatcher also treats that outcome as a refusal whenever the earlier outcome may be unknown.
+- **Root cause:** The durable "request may have been sent" marker was written before the decision to send was final. The outcome handler also treated "this retry did not leave" as "no request with this key was ever applied".
+- **Resolution:**
+  - `ResetDispatchService` owns the marker and the request.
+  - `ResetPreflightService` first checks the fresh registry account and policy, weekly quota, weekly window marker, credits, threshold, live auth, a buildable request (route, token, key, via `quota::reset_request_blocker`), and Desktop.
+  - A refusal writes nothing for a new attempt. A closed Desktop records `waiting_for_desktop` without `pending`.
+  - A refused or `Unavailable` retry of an existing `pending`/`unknown` attempt leaves the journal byte-identical and keeps rotation suppressed. Any other retry is re-marked `pending` before its request.
+  - Host effects (task detection, Desktop probe, reset request) sit behind `WeeklyResetEnvironment`, so tests never touch a real Desktop, process table, or reset service.
+- **Verification:**
+  - `weekly_reset_service.test.rs` and `weekly_reset_retry.test.rs` (28 `auto_reset` tests) assert the exact refusal state and reason for 13 changes made during task detection. These include an account switch refused by the active-account check (the other account has distinct credentials, so registry de-duplication cannot merge it), a live route-only change, and a registry route mismatch.
+  - They also cover:
+    - the lock-time registry check, which exits before detection;
+    - preflight errors;
+    - refused, `Unavailable`, and Desktop-probe-failed retries of `pending`/`unknown`;
+    - eligible retries, and retries from unsent states;
+    - the original-task and missing-anchor paths;
+    - the journal state on disk at each request;
+    - the fresh registry copy being the one sent.
+  - Thirteen code mutations were each caught by at least one test. They include writing `pending` before the checks, removing the uncertain-retry and `Unavailable` guards, removing the active-account, window-marker, request-route, live-route, lock-time, anchor, and quota checks, and sending the snapshot account.
+- **Prevention/follow-up:** The rule is recorded in `AGENTS.md`, `CODEX.md`, and the README reset steps. Known residuals:
+  - `ResetOutcomeService` still calls the network and recovery directly on `Applied`, so that arm has no hermetic test.
+  - The auto-reset journal store does not fsync its parent directory after rename.
+  - A journal write that fails after its rename is an I/O failure that fails closed: the caller reports `journal_error`, and any leftover `pending` waits for a same-key retry or operator reconciliation.
+  - The manual path can still leave a `pending` attempt if the directory fsync or readback fails after its write, before any request.
+- **Reusable learning:** Write a durable "request may be in flight" marker only after the send decision is final, with nothing that can return between the marker and the request. On retry, never demote a marker that may describe an earlier request, even when this retry itself provably did not leave.
+- **References:** `codex-switcher/src/auto_reset/reset_dispatch_service.rs`, `codex-switcher/src/auto_reset/reset_preflight_service.rs`, `codex-switcher/src/quota/reset_credit_consumption.rs`, `codex-switcher/src/auto_reset/weekly_reset_service.test.rs`, `codex-switcher/src/auto_reset/weekly_reset_retry.test.rs`, `AGENTS.md`, `README.md`.
