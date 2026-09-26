@@ -106,6 +106,8 @@ The installation script checks and guides you through the prerequisites automati
    Run `./scripts/test_swift.sh` before installing; if Swift reports an SDK/compiler
    version mismatch, repair or select matching Command Line Tools and rerun the
    test. Do not publish or reinstall a partially built app bundle.
+   If you set `CLANG_MODULE_CACHE_PATH`, use a fresh canonical path (on macOS,
+   `/private/tmp/...` rather than its `/tmp` symlink) for each installation.
 3. **Rust & Cargo** (for building the ultra-lightweight CLI core):
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
