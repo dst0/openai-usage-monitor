@@ -11,9 +11,6 @@ fn jwt(email: &str, generation: &str) -> String {
 
 #[test]
 fn same_email_distinct_provider_token_aliases_block_distribution_preflight() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("distribution_cross_provider_alias");
     let first = TestAccountSpec {
         id: "provider-a",
@@ -73,9 +70,6 @@ fn same_email_distinct_provider_token_aliases_block_distribution_preflight() {
 
 #[test]
 fn same_email_distinct_provider_without_alias_passes_distribution_preflight() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("distribution_cross_provider_unique");
     let first = TestAccountSpec {
         id: "provider-a",

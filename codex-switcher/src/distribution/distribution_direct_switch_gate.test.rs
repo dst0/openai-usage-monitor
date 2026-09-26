@@ -10,9 +10,6 @@ use std::sync::Arc;
 
 #[test]
 fn malformed_prior_direct_switch_intent_blocks_distribution_without_touching_auth() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("direct_switch_intent_gate");
     let prior = TestAccountSpec {
         id: "prior",

@@ -8,9 +8,6 @@ fn fixture() -> TestEnv {
 
 #[test]
 fn journal_load_rejects_broad_file_permissions() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = fixture();
     let attempt = ManualResetAttempt::pending(
         "synthetic-account".into(),
@@ -25,16 +22,11 @@ fn journal_load_rejects_broad_file_permissions() {
     .unwrap();
     let rejected = ManualResetAttemptStore::load().is_err();
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(rejected, "broad journal permissions were accepted");
 }
 
 #[test]
 fn journal_load_rejects_malformed_unknown_and_oversized_payloads() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = fixture();
     let path = ManualResetAttemptStore::path();
     std::fs::write(&path, b"{malformed").unwrap();
@@ -54,7 +46,5 @@ fn journal_load_rejects_malformed_unknown_and_oversized_payloads() {
     std::fs::write(&path, vec![b'x'; MAX_JOURNAL_BYTES as usize + 1]).unwrap();
     let oversized_rejected = ManualResetAttemptStore::load().is_err();
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(malformed_rejected && unknown_rejected && oversized_rejected);
 }

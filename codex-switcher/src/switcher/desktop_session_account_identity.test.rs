@@ -71,9 +71,6 @@ fn direct_switch_binds_app_before_recovery_and_rejects_process_change() {
 
 #[test]
 fn retry_refuses_to_bind_cli_auth_to_a_different_desktop_account() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("retry_cli_marker_reconcile");
     env.populate(
         vec![
@@ -147,9 +144,6 @@ fn retry_refuses_to_bind_cli_auth_to_a_different_desktop_account() {
 
 #[test]
 fn same_email_cannot_relabel_another_accounts_saved_tokens() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("same_email_different_provider");
     let mut old = TestAccountSpec {
         id: "old",
@@ -181,9 +175,6 @@ fn same_email_cannot_relabel_another_accounts_saved_tokens() {
 
 #[test]
 fn direct_relaunch_restoring_previous_auth_blocks_recovery_dispatch() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("direct_relaunch_previous_auth");
     env.populate(
         vec![
@@ -245,9 +236,6 @@ fn direct_relaunch_restoring_previous_auth_blocks_recovery_dispatch() {
 
 #[test]
 fn auth_change_after_initial_binding_check_blocks_recovery_dispatch() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("direct_banner_auth_change");
     env.populate(
         vec![

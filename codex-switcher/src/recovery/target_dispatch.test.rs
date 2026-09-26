@@ -47,9 +47,6 @@ fn queued_marker_write_refuses_dispatch_after_shared_auth_changes() {
 }
 
 fn assert_owner_wait_rejects_account_change(with_queue: bool, change_after_marker: bool) {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("owner_wait_auth_change");
     let first = crate::distribution::test_account_spec::TestAccountSpec {
         id: "account-a",
@@ -190,8 +187,6 @@ fn assert_owner_wait_rejects_account_change(with_queue: bool, change_after_marke
         && !candidate.dispatched
         && retained == vec![original];
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(
         safe,
         "owner wait crossed an account change: result={result:?}, method={method:?}, dispatched={}, retained={retained:?}, observed_account={observed_account:?}",
@@ -201,9 +196,6 @@ fn assert_owner_wait_rejects_account_change(with_queue: bool, change_after_marke
 
 #[test]
 fn already_unpaused_queue_sends_one_owner_routed_wake_before_consuming_checkpoint() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("queue_owner_wake");
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let mut candidate = target(env.home(), id);
@@ -288,8 +280,6 @@ fn already_unpaused_queue_sends_one_owner_routed_wake_before_consuming_checkpoin
     let consumed = super::manifest_store::load_manifest().unwrap().is_empty();
     let passed = result.is_ok() && routed == Some(true) && candidate.dispatched && consumed;
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(
         passed,
         "unpaused queue did not complete an owner-routed IPC wake: result_ok={}, error={:?}, routed={routed:?}, dispatched={}, consumed={consumed}",
@@ -322,9 +312,6 @@ fn assert_ineligible_queued_turn_never_contacts_owner(
     state: ThreadRolloutState,
     mode: RecoveryMode,
 ) {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("queue_ineligible_mode");
     let id = "01a098c2-0fae-74d2-a80c-45d89e910e79";
     let mut candidate = target(env.home(), id);
@@ -412,8 +399,6 @@ fn assert_ineligible_queued_turn_never_contacts_owner(
         matches!(&result, Err(error) if error.contains("not eligible for queued recovery"));
     let dispatched = candidate.dispatched;
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(
         rejected && methods.is_empty() && retained && !dispatched,
         "ineligible queued recovery touched owner/checkpoint: rejected={rejected}, methods={methods:?}, retained={retained}, dispatched={dispatched}, error={:?}",

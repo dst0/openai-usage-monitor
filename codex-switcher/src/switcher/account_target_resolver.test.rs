@@ -81,8 +81,6 @@ fn removed_or_duplicated_target_fails_before_credential_selection() {
 
 #[test]
 fn disk_registry_reorder_before_real_auth_sync_uses_fresh_target_tokens() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = TestEnv::new("target_reorder_before_auth_sync");
     let initial = registry();
     let auth = active_auth(&initial);
@@ -111,17 +109,10 @@ fn disk_registry_reorder_before_real_auth_sync_uses_fresh_target_tokens() {
     assert_eq!(read_active_auth_json().unwrap(), auth);
 
     drop(env);
-    if let Some(prior) = prior_home {
-        std::env::set_var("CODEX_HOME", prior);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
 }
 
 #[test]
 fn disk_registry_target_removal_before_real_auth_sync_preserves_active_auth() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = TestEnv::new("target_removed_before_auth_sync");
     let initial = registry();
     let auth = active_auth(&initial);
@@ -143,9 +134,4 @@ fn disk_registry_target_removal_before_real_auth_sync_preserves_active_auth() {
     assert_eq!(read_active_auth_json().unwrap(), auth);
 
     drop(env);
-    if let Some(prior) = prior_home {
-        std::env::set_var("CODEX_HOME", prior);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
 }

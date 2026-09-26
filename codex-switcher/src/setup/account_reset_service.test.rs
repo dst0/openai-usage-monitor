@@ -27,9 +27,6 @@ fn setup() -> TestEnv {
 
 #[test]
 fn pending_auto_reset_for_same_window_blocks_manual_remote_request() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = setup();
     let journal = serde_json::json!({
         "version": 1,
@@ -55,8 +52,6 @@ fn pending_auto_reset_for_same_window_blocks_manual_remote_request() {
     );
     let blocked = result.is_err() && calls.get() == 0;
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(
         blocked,
         "manual reset bypassed the pending auto-reset attempt"
@@ -65,9 +60,6 @@ fn pending_auto_reset_for_same_window_blocks_manual_remote_request() {
 
 #[test]
 fn malformed_auto_reset_journal_blocks_manual_remote_request() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = setup();
     let path = env.home().join("auto-reset-state.json");
     std::fs::write(&path, b"malformed synthetic journal").unwrap();
@@ -84,16 +76,11 @@ fn malformed_auto_reset_journal_blocks_manual_remote_request() {
     let blocked =
         result.is_err_and(|error| error.contains("Auto-reset journal")) && calls.get() == 0;
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(blocked, "malformed auto-reset state permitted manual reset");
 }
 
 #[test]
 fn incomplete_pending_auto_reset_journal_blocks_manual_remote_request() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = setup();
     let path = env.home().join("auto-reset-state.json");
     std::fs::write(&path, br#"{"version":1,"state":"pending"}"#).unwrap();
@@ -109,8 +96,6 @@ fn incomplete_pending_auto_reset_journal_blocks_manual_remote_request() {
     );
     let blocked = result.is_err() && calls.get() == 0;
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(
         blocked,
         "incomplete pending auto reset permitted manual spend"
@@ -119,9 +104,6 @@ fn incomplete_pending_auto_reset_journal_blocks_manual_remote_request() {
 
 #[test]
 fn corrected_weekly_marker_does_not_bypass_unknown_auto_reset() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = setup();
     let journal = serde_json::json!({
         "version": 1,
@@ -145,8 +127,6 @@ fn corrected_weekly_marker_does_not_bypass_unknown_auto_reset() {
     );
     let blocked = result.is_err() && calls.get() == 0;
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(
         blocked,
         "a changed weekly marker bypassed an unknown auto reset"
@@ -155,9 +135,6 @@ fn corrected_weekly_marker_does_not_bypass_unknown_auto_reset() {
 
 #[test]
 fn applied_reset_preserves_concurrent_unrelated_registry_changes() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = setup();
     let result = reset_account_transaction_with(
         "main",
@@ -191,8 +168,6 @@ fn applied_reset_preserves_concurrent_unrelated_registry_changes() {
         && final_registry.accounts[1].last_credits == Some(1)
         && final_registry.accounts[1].name.as_deref() == Some("renamed");
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(
         preserved,
         "reset merge failed: result_ok={} off={} count={} moved={} credit={} renamed={}",
@@ -215,9 +190,6 @@ fn applied_reset_preserves_concurrent_unrelated_registry_changes() {
 
 #[test]
 fn applied_reset_token_conflict_keeps_new_token_and_reports_uncertain_cache() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = setup();
     let result = reset_account_transaction_with(
         "main",
@@ -237,8 +209,6 @@ fn applied_reset_token_conflict_keeps_new_token_and_reports_uncertain_cache() {
         && final_registry.accounts[0].tokens.access_token == "rotated-synthetic-token"
         && final_registry.accounts[0].last_credits == Some(2);
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(
         conflict_preserved,
         "reset conflict overwrote new account state"
@@ -247,9 +217,6 @@ fn applied_reset_token_conflict_keeps_new_token_and_reports_uncertain_cache() {
 
 #[test]
 fn applied_reset_credit_conflict_preserves_new_count() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = setup();
     let result = reset_account_transaction_with(
         "main",
@@ -268,8 +235,6 @@ fn applied_reset_credit_conflict_preserves_new_count() {
         .is_err_and(|error| error.contains("consumed") && error.contains("uncertain"))
         && final_registry.accounts[0].last_credits == Some(3);
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(
         conflict_preserved,
         "reset conflict overwrote a changed credit count"
@@ -278,9 +243,6 @@ fn applied_reset_credit_conflict_preserves_new_count() {
 
 #[test]
 fn unknown_manual_reset_blocks_a_new_request_on_the_next_invocation() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = setup();
     let calls = Cell::new(0);
     let first = reset_account_transaction_with(
@@ -301,16 +263,11 @@ fn unknown_manual_reset_blocks_a_new_request_on_the_next_invocation() {
     );
     let blocked = first.is_err() && second.is_err() && calls.get() == 1;
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(blocked, "an uncertain reset sent a second remote request");
 }
 
 #[test]
 fn applied_reset_cache_conflict_blocks_a_new_request_on_the_next_invocation() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = setup();
     let calls = Cell::new(0);
     let first = reset_account_transaction_with(
@@ -336,8 +293,6 @@ fn applied_reset_cache_conflict_blocks_a_new_request_on_the_next_invocation() {
     );
     let blocked = first.is_err() && second.is_err() && calls.get() == 1;
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(
         blocked,
         "a consumed reset with cache conflict sent a second request"
@@ -346,9 +301,6 @@ fn applied_reset_cache_conflict_blocks_a_new_request_on_the_next_invocation() {
 
 #[test]
 fn pending_attempt_survives_a_crash_before_the_remote_result() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = setup();
     let crashed = std::panic::catch_unwind(|| {
         let _ = reset_account_transaction_with(
@@ -380,16 +332,11 @@ fn pending_attempt_survives_a_crash_before_the_remote_result() {
         && calls.get() == 0
         && metadata.permissions().mode() & 0o777 == 0o600;
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(safe, "a crash lost the durable private reset attempt");
 }
 
 #[test]
 fn unsafe_manual_reset_journal_symlink_blocks_remote_request() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = setup();
     let victim = env.home().join("synthetic-victim.txt");
     std::fs::write(&victim, b"keep synthetic data").unwrap();
@@ -407,16 +354,11 @@ fn unsafe_manual_reset_journal_symlink_blocks_remote_request() {
         && calls.get() == 0
         && std::fs::read(&victim).unwrap() == b"keep synthetic data";
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(safe, "unsafe journal path permitted a remote reset");
 }
 
 #[test]
 fn resolved_applied_attempt_allows_a_later_explicit_reset() {
-    let guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let env = setup();
     let calls = Cell::new(0);
     let first = reset_account_transaction_with(
@@ -445,7 +387,5 @@ fn resolved_applied_attempt_allows_a_later_explicit_reset() {
             .unwrap()
             .is_unresolved();
     drop(env);
-    std::env::remove_var("CODEX_HOME");
-    drop(guard);
     assert!(allowed, "a resolved reset blocked a later explicit request");
 }

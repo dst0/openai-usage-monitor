@@ -8,6 +8,7 @@ use crate::distribution::distribution_request::DistributionRequest;
 use crate::distribution::test_account_spec::TestAccountSpec;
 use crate::distribution::test_helper::TestEnv;
 use crate::models::{AccountsFile, Settings};
+use crate::storage::test_codex_home::TestCodexHome;
 use crate::storage::{read_active_auth_json, write_active_auth_json};
 use std::sync::Mutex;
 
@@ -179,11 +180,8 @@ fn daemon_does_not_authorize_oauth_refresh_for_any_account() {
 
 #[test]
 fn quota_save_cannot_overwrite_relogin_between_read_and_commit() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let home =
-        std::env::temp_dir().join(format!("daemon-relogin-interleave-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
+    let test_home = TestCodexHome::new("daemon-relogin-interleave");
+    let home = test_home.path().to_path_buf();
 
     let mut stale_poll = depleted_accounts(false);
     stale_poll.accounts[0].last_primary_percentage = 12.0;
@@ -194,7 +192,6 @@ fn quota_save_cannot_overwrite_relogin_between_read_and_commit() {
     let result =
         persist_quota_caches_with_hook(&stale_poll, || crate::storage::save_accounts(&relogged));
     let final_registry = crate::storage::load_accounts().unwrap();
-    std::env::remove_var("CODEX_HOME");
     std::fs::remove_dir_all(&home).unwrap();
 
     result.unwrap();
@@ -217,9 +214,6 @@ fn status_does_not_attribute_cli_quota_without_verified_auth_file() {
 
 #[test]
 fn cli_status_file_identity_requires_matching_live_auth_tokens() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("cli_status_identity");
     let account = TestAccountSpec {
         id: "active",

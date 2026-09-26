@@ -6,9 +6,6 @@ use base64::Engine;
 
 #[test]
 fn previous_desktop_relaunch_persists_same_account_token_rotation() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("previous_relaunch_token_rotation");
     env.populate(
         vec![TestAccountSpec {
@@ -54,9 +51,6 @@ fn previous_desktop_relaunch_persists_same_account_token_rotation() {
 
 #[test]
 fn post_relaunch_commit_preserves_concurrent_registry_change() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("relaunch_registry_concurrency");
     env.populate(
         vec![
@@ -127,9 +121,6 @@ fn post_relaunch_commit_preserves_concurrent_registry_change() {
 
 #[test]
 fn post_relaunch_commit_rejects_unknown_auth_change_after_registry_write() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("relaunch_auth_extension_change");
     env.populate(
         vec![TestAccountSpec {
@@ -178,9 +169,6 @@ fn post_relaunch_commit_rejects_unknown_auth_change_after_registry_write() {
 
 #[test]
 fn unknown_auth_field_change_blocks_readback_and_rollback() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("unknown_auth_change");
     env.populate(
         vec![TestAccountSpec {
@@ -216,9 +204,6 @@ fn unknown_auth_field_change_blocks_readback_and_rollback() {
 
 #[test]
 fn desktop_switch_does_not_carry_previous_api_key_to_next_account() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("desktop_switch_previous_api_key");
     env.populate(
         vec![
@@ -264,9 +249,6 @@ fn desktop_switch_does_not_carry_previous_api_key_to_next_account() {
 
 #[test]
 fn desktop_switch_rejects_concurrent_auth_replacement() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("desktop_switch_concurrent_auth");
     env.populate(
         vec![
@@ -310,9 +292,6 @@ fn desktop_switch_rejects_concurrent_auth_replacement() {
 
 #[test]
 fn rollback_rejects_concurrent_auth_replacement() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("desktop_rollback_concurrent_auth");
     env.populate(
         vec![TestAccountSpec {

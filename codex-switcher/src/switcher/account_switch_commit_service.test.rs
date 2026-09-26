@@ -33,21 +33,8 @@ fn fixture(label: &str) -> TestEnv {
     env
 }
 
-fn finish_fixture(env: TestEnv, prior_home: Option<std::ffi::OsString>) {
-    drop(env);
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
-}
-
 #[test]
 fn direct_switch_commit_preserves_interleaved_settings_and_other_tokens() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = fixture("switch_commit_interleaved_settings");
     let initial = load_accounts().unwrap();
     let selected = initial.accounts[1].clone();
@@ -84,15 +71,11 @@ fn direct_switch_commit_preserves_interleaved_settings_and_other_tokens() {
     assert_eq!(saved.accounts[0].name.as_deref(), Some("newer nickname"));
     assert_eq!(saved.accounts[1].name.as_deref(), Some("renamed target"));
     assert_eq!(saved.accounts[1].priority, 7);
-    finish_fixture(env, prior_home);
+    drop(env);
 }
 
 #[test]
 fn direct_switch_commit_rejects_interleaved_target_rotation() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = fixture("switch_commit_rotated_target");
     let initial = load_accounts().unwrap();
     let selected = initial.accounts[1].clone();
@@ -116,15 +99,11 @@ fn direct_switch_commit_rejects_interleaved_target_rotation() {
         saved.accounts[1].tokens.refresh_token.as_deref(),
         Some("rotated-synthetic-refresh")
     );
-    finish_fixture(env, prior_home);
+    drop(env);
 }
 
 #[test]
 fn direct_switch_commit_rejects_removed_target() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = fixture("switch_commit_removed_target");
     let initial = load_accounts().unwrap();
     let selected = initial.accounts[1].clone();
@@ -148,15 +127,11 @@ fn direct_switch_commit_rejects_removed_target() {
         .accounts
         .iter()
         .all(|account| account.id != selected.id));
-    finish_fixture(env, prior_home);
+    drop(env);
 }
 
 #[test]
 fn direct_switch_commit_rejects_duplicate_target_identity() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = fixture("switch_commit_duplicate_target");
     let initial = load_accounts().unwrap();
     let selected = initial.accounts[1].clone();
@@ -179,16 +154,12 @@ fn direct_switch_commit_rejects_duplicate_target_identity() {
             .unwrap();
     assert_eq!(persisted.active_account_id, initial.active_account_id);
     assert_eq!(persisted.accounts.len(), 3);
-    finish_fixture(env, prior_home);
+    drop(env);
 }
 
 #[test]
 fn direct_switch_commit_rejects_interleaved_identity_or_eligibility_change() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     for change in ["email", "workspace", "enabled", "relogin"] {
-        let prior_home = std::env::var_os("CODEX_HOME");
         let env = fixture(&format!("switch_commit_changed_{change}"));
         let initial = load_accounts().unwrap();
         let selected = initial.accounts[1].clone();
@@ -216,16 +187,12 @@ fn direct_switch_commit_rejects_interleaved_identity_or_eligibility_change() {
         let saved = load_accounts().unwrap();
         assert_eq!(saved.active_account_id, initial.active_account_id);
         assert_eq!(saved.accounts[1].tokens, selected.tokens);
-        finish_fixture(env, prior_home);
+        drop(env);
     }
 }
 
 #[test]
 fn post_commit_auth_change_fails_closed_without_overwriting_external_auth() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = fixture("switch_post_commit_auth_change");
     let initial = load_accounts().unwrap();
     let selected = initial.accounts[1].clone();
@@ -249,15 +216,11 @@ fn post_commit_auth_change_fails_closed_without_overwriting_external_auth() {
         load_accounts().unwrap().active_account_id.as_deref(),
         Some(selected.id.as_str())
     );
-    finish_fixture(env, prior_home);
+    drop(env);
 }
 
 #[test]
 fn direct_switch_commit_rejects_interleaved_active_account_change() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = fixture("switch_commit_changed_active_id");
     let initial = load_accounts().unwrap();
     let selected = initial.accounts[1].clone();
@@ -289,15 +252,11 @@ fn direct_switch_commit_rejects_interleaved_active_account_change() {
         saved.active_account_id.as_deref(),
         Some(selected.id.as_str())
     );
-    finish_fixture(env, prior_home);
+    drop(env);
 }
 
 #[test]
 fn direct_switch_commit_accepts_target_already_selected_by_another_registry_writer() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = fixture("switch_commit_target_already_active");
     let initial = load_accounts().unwrap();
     let selected = initial.accounts[1].clone();
@@ -322,5 +281,5 @@ fn direct_switch_commit_accepts_target_already_selected_by_another_registry_writ
         Some(selected.id.as_str())
     );
     assert!(!saved.settings.auto_switch_enabled);
-    finish_fixture(env, prior_home);
+    drop(env);
 }

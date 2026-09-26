@@ -4,9 +4,6 @@ use crate::distribution::test_helper::TestEnv;
 
 #[test]
 fn commit_preserves_concurrent_settings_and_unrelated_account() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("offline_registry_field_commit");
     env.populate(
         vec![
@@ -52,9 +49,6 @@ fn commit_preserves_concurrent_settings_and_unrelated_account() {
 
 #[test]
 fn commit_refuses_a_reauthenticated_target() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("offline_registry_target_changed");
     env.populate(
         vec![

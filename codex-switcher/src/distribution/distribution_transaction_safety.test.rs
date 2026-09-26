@@ -220,9 +220,6 @@ impl AppLifecycle for HookedLifecycle {
 
 #[test]
 fn stale_marker_and_registry_cannot_stop_a_different_live_desktop_account() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("stale_marker_vs_live_auth");
     env.populate(
         vec![
@@ -269,9 +266,6 @@ fn stale_marker_and_registry_cannot_stop_a_different_live_desktop_account() {
 
 #[test]
 fn concurrent_recovery_lock_preserves_old_in_flight_distribution_journal() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("concurrent_recovery_preserves_journal");
     env.populate(
         vec![
@@ -325,9 +319,6 @@ fn concurrent_recovery_lock_preserves_old_in_flight_distribution_journal() {
 
 #[test]
 fn offline_marker_save_failure_rolls_back_shared_auth_and_registry() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("offline_marker_save_failure");
     env.populate(
         vec![
@@ -372,9 +363,6 @@ fn offline_marker_save_failure_rolls_back_shared_auth_and_registry() {
 
 #[test]
 fn late_desktop_writer_blocks_offline_auth_replacement() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("late_writer_offline_switch");
     env.populate(
         vec![
@@ -444,9 +432,6 @@ fn late_desktop_writer_blocks_offline_auth_replacement() {
 
 #[test]
 fn writer_appearing_after_prewrite_probe_cannot_report_offline_success() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("writer_after_prewrite_probe");
     env.populate(
         vec![
@@ -519,9 +504,6 @@ fn writer_appearing_after_prewrite_probe_cannot_report_offline_success() {
 
 #[test]
 fn auth_changing_during_postwrite_readback_cannot_report_offline_success() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("auth_changes_during_readback");
     env.populate(
         vec![
@@ -597,9 +579,6 @@ fn auth_changing_during_postwrite_readback_cannot_report_offline_success() {
 
 #[test]
 fn auth_changing_during_running_desktop_commit_is_not_verified() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("auth_changes_during_running_commit");
     env.populate(
         vec![TestAccountSpec {
@@ -646,9 +625,6 @@ fn auth_changing_during_running_desktop_commit_is_not_verified() {
 
 #[test]
 fn post_signal_shutdown_error_retains_recovery_journal() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("post_signal_failure_journal");
     env.populate(
         vec![
@@ -701,9 +677,6 @@ fn post_signal_shutdown_error_retains_recovery_journal() {
 
 #[test]
 fn same_owner_refresh_before_shutdown_is_preserved_during_switch() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("same_owner_pre_stop_refresh");
     let mut old = TestAccountSpec {
         id: "old",
@@ -754,9 +727,6 @@ fn same_owner_refresh_before_shutdown_is_preserved_during_switch() {
 
 #[test]
 fn failed_registry_handoff_relaunches_with_identifiable_rotated_auth() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("failed_rotated_registry_handoff");
     let mut old = TestAccountSpec {
         id: "old",
@@ -816,9 +786,6 @@ fn failed_registry_handoff_relaunches_with_identifiable_rotated_auth() {
 
 #[test]
 fn post_stop_checkpoint_error_does_not_launch_with_changed_auth() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("post_stop_checkpoint_auth_race");
     env.populate(
         vec![
@@ -872,9 +839,6 @@ fn post_stop_checkpoint_error_does_not_launch_with_changed_auth() {
 
 #[test]
 fn target_removed_before_shutdown_never_stops_desktop() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("target_removed_after_shutdown");
     env.populate(
         vec![TestAccountSpec {
@@ -923,9 +887,6 @@ fn target_removed_before_shutdown_never_stops_desktop() {
 
 #[test]
 fn failed_target_launch_does_not_leave_target_auth_in_a_stopped_desktop() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("failed_target_launch_rollback");
     env.populate(
         vec![
@@ -966,9 +927,6 @@ fn failed_target_launch_does_not_leave_target_auth_in_a_stopped_desktop() {
 
 #[test]
 fn desktop_refresh_during_recovery_is_preserved_in_registry() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("desktop_refresh_during_recovery");
     env.populate(
         vec![
@@ -1016,9 +974,6 @@ fn desktop_refresh_during_recovery_is_preserved_in_registry() {
 
 #[test]
 fn cli_registry_save_error_rolls_back_auth_and_is_reported() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("cli_registry_save_error");
     env.populate(
         vec![
@@ -1096,9 +1051,6 @@ fn cli_registry_save_error_rolls_back_auth_and_is_reported() {
 
 #[test]
 fn journal_update_failure_after_stop_relaunches_previous_desktop() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("journal_failure_after_stop");
     env.populate(
         vec![

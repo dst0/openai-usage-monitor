@@ -21,10 +21,6 @@ fn synthetic_auth() -> AuthJson {
 
 #[test]
 fn active_auth_reader_refuses_a_symlink_even_when_target_is_valid() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = TestEnv::new("auth_read_symlink");
     let victim = env.home().join("synthetic-victim.json");
     std::fs::write(&victim, serde_json::to_vec(&synthetic_auth()).unwrap()).unwrap();
@@ -37,19 +33,10 @@ fn active_auth_reader_refuses_a_symlink_even_when_target_is_valid() {
         serde_json::to_vec(&synthetic_auth()).unwrap()
     );
     drop(env);
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
 }
 
 #[test]
 fn active_auth_reader_rejects_path_replacement_after_open() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = TestEnv::new("auth_read_path_race");
     write_active_auth_json(&synthetic_auth()).unwrap();
     let mut replacement_auth = synthetic_auth();
@@ -65,19 +52,10 @@ fn active_auth_reader_rejects_path_replacement_after_open() {
     assert!(result.is_err());
     assert_eq!(read_active_auth_json().unwrap(), replacement_auth);
     drop(env);
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
 }
 
 #[test]
 fn active_auth_reader_rejects_world_readable_credentials() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let prior_home = std::env::var_os("CODEX_HOME");
     let env = TestEnv::new("auth_read_permissions");
     write_active_auth_json(&synthetic_auth()).unwrap();
     std::fs::set_permissions(
@@ -88,9 +66,4 @@ fn active_auth_reader_rejects_world_readable_credentials() {
 
     assert!(read_active_auth_json().is_err());
     drop(env);
-    if let Some(prior_home) = prior_home {
-        std::env::set_var("CODEX_HOME", prior_home);
-    } else {
-        std::env::remove_var("CODEX_HOME");
-    }
 }

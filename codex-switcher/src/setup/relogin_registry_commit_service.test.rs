@@ -42,9 +42,6 @@ fn fixture(active: bool) -> (AccountConfig, AccountsFile) {
 
 #[test]
 fn active_relogin_registry_commit_preserves_concurrent_other_account_and_settings() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("relogin_active_registry_merge");
     let (original, staged) = fixture(true);
     let mut latest = staged.clone();
@@ -69,14 +66,10 @@ fn active_relogin_registry_commit_preserves_concurrent_other_account_and_setting
     assert_eq!(saved.accounts[1].tokens, latest.accounts[1].tokens);
     assert_eq!(saved.settings.poll_interval_seconds, 127);
     drop(env);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
 fn inactive_relogin_registry_commit_preserves_concurrent_other_account_and_settings() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("relogin_inactive_registry_merge");
     let (original, staged) = fixture(false);
     let mut latest = staged.clone();
@@ -93,14 +86,10 @@ fn inactive_relogin_registry_commit_preserves_concurrent_other_account_and_setti
     assert_eq!(saved.accounts[1].tokens, latest.accounts[1].tokens);
     assert_eq!(saved.settings.poll_interval_seconds, 127);
     drop(env);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
 fn active_relogin_registry_commit_rechecks_live_auth_under_registry_lock() {
-    let _guard = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = crate::distribution::test_helper::TestEnv::new("relogin_registry_auth_changed");
     let (original, staged) = fixture(true);
     let mut latest = staged.clone();
@@ -123,5 +112,4 @@ fn active_relogin_registry_commit_rechecks_live_auth_under_registry_lock() {
     assert!(error.contains("Active credentials changed"));
     assert_eq!(load_accounts().unwrap().accounts[0].tokens, original.tokens);
     drop(env);
-    std::env::remove_var("CODEX_HOME");
 }

@@ -6,9 +6,6 @@ use crate::storage::{self, load_accounts, save_accounts, write_active_auth_json}
 
 #[test]
 fn marker_failure_rollback_preserves_concurrent_registry_changes() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("offline_marker_concurrent_registry");
     env.populate(
         vec![
@@ -67,9 +64,6 @@ fn marker_failure_rollback_preserves_concurrent_registry_changes() {
 
 #[test]
 fn marker_failure_cannot_clear_journal_after_previous_account_relogin() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("offline_marker_previous_relogin");
     env.populate(
         vec![
@@ -133,9 +127,6 @@ fn marker_failure_cannot_clear_journal_after_previous_account_relogin() {
 
 #[test]
 fn post_rename_marker_failure_restores_marker_before_journal_cleanup() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("offline_marker_postrename");
     env.populate(vec![], None, Some("previous"));
     let path = env.home().join("desktop-app-session.json");
@@ -168,9 +159,6 @@ fn post_rename_marker_failure_restores_marker_before_journal_cleanup() {
 
 #[test]
 fn changed_marker_keeps_journal_when_rollback_cannot_be_verified() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("offline_marker_changed");
     env.populate(vec![], None, Some("previous"));
     let path = env.home().join("desktop-app-session.json");
@@ -206,9 +194,6 @@ fn changed_marker_keeps_journal_when_rollback_cannot_be_verified() {
 
 #[test]
 fn full_offline_commit_rolls_back_auth_registry_and_marker_after_post_rename_error() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("offline_marker_full_postrename");
     env.populate(
         vec![

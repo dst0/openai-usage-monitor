@@ -17,9 +17,6 @@ fn read_manifest(env: &TestEnv) -> Value {
 
 #[test]
 fn window_rejection_before_save_leaves_prior_journal_untouched() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let env = TestEnv::new("window_first_preflight");
     let target = prior_manifest();
     std::fs::write(env.home().join("desktop-recovery.json"), target.to_string()).unwrap();
@@ -32,9 +29,6 @@ fn window_rejection_before_save_leaves_prior_journal_untouched() {
 
 #[test]
 fn window_rejection_after_save_restores_prior_journal() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let env = TestEnv::new("window_second_preflight");
     let target = prior_manifest();
     std::fs::write(env.home().join("desktop-recovery.json"), target.to_string()).unwrap();
