@@ -1,0 +1,19 @@
+# 2026-09-26 — Repeated cold checkpoint scans under the recovery lock
+
+- **Status:** Partial
+- **Task/context:** Repair unattended recovery of cold ChatGPT tasks after account switches.
+- **Unexpected observation or failure:** A deferred probe reread the same long post-checkpoint rollout interval, and ordinary thread detection queried SQLite for an ownerless retry with no thread index. These operations could delay the next recovery attempt while holding the recovery operation lock.
+- **Evidence:** A focused regression read an 8 MiB fixture twice and measured 16,777,370 scanned bytes before the fix versus 8,388,685 after it. Another fixture for an ownerless entry without an index waited through 12 SQLite retries (about 8.4 seconds) before the fix.
+- **Approaches tried:**
+  - **Attempt:** Keep a fixed total-byte cap on evidence scanning.
+    - **Outcome:** Rejected.
+    - **Why:** A legitimate turn with a long tool result could put its new turn boundary outside that cap and remain stranded.
+  - **Attempt:** Reuse a bounded append cursor and lifecycle evidence for deferred probes.
+    - **Outcome:** Worked in focused tests.
+    - **Why:** Bounded probes eventually cover the full interval before reporting a lifecycle result; subsequent probes inspect only appended bytes and reset on file replacement or truncation.
+- **Root cause:** Both the deferred worker and ordinary `load_pending()` revisited ownerless journal entries; the evidence reader started from the saved checkpoint on every probe, while an absent thread index triggered repeated SQLite waits.
+- **Resolution:** Cache a bounded per-process rollout cursor and lifecycle evidence, including partial-line handling and file identity checks. Rotate one ownerless target per locked prune pass, limit its older-interval probe to 16 MiB, and withhold lifecycle results until the captured snapshot end; the first version's unbounded first pass failed this regression. Confirm cached evidence with a complete fresh, unchanged-length scan before replacing an account binding or pruning an undispatched retry; otherwise a 32 MiB checkpoint interval can leave the old binding in place, a same-inode middle rewrite can retain stale evidence, and a write during confirmation can certify stale records. Exclude ownerless entries from ordinary `load_pending()`; the deferred worker remains responsible for them. Keep account and owner binding outside the cache so they are checked for every dispatch.
+- **Verification:** The repeated-read and missing-index regression tests failed before the change and passed afterward. The long-snapshot bounded-probe test failed before the 16 MiB cap and passed afterward. Focused tests also cover a 32 MiB restart checkpoint, a same-inode middle rewrite, growth during fresh confirmation, and one-target-per-pass rotation. Full gates, installed-app latency, and a live unattended cold-task mount remain to be verified.
+- **Prevention/follow-up:** Keep the append-only assumption explicit, invalidate on detectable file identity changes, and bound per-probe latency without imposing a fixed total-byte cutoff. Re-read the complete captured interval before consequential journal changes because sampled boundaries cannot prove unchanged middle bytes. Continue to fail closed on uncertain account or owner state.
+- **Reusable learning:** Cache only immutable or append-only evidence between cold-task probes; never cache the live account or task-owner decision.
+- **References:** `codex-switcher/src/recovery/checkpoint_scan_cache.rs`, `codex-switcher/src/recovery/restart_checkpoint_service.rs`, `codex-switcher/src/recovery/manifest_store.rs`, `codex-switcher/src/recovery/manifest_store.test.rs`, `CODEX.md`, `AGENTS.md`.

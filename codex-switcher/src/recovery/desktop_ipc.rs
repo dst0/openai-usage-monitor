@@ -28,6 +28,15 @@ pub(super) struct DesktopIpc {
 }
 
 impl DesktopIpc {
+    #[cfg(test)]
+    pub(super) fn for_test(stream: UnixStream) -> Self {
+        Self {
+            stream,
+            client_id: "test-monitor".into(),
+            next_id: 1,
+        }
+    }
+
     pub(super) fn connect_with_retry(timeout: Duration) -> Result<Self, String> {
         let deadline = Instant::now() + timeout;
         loop {

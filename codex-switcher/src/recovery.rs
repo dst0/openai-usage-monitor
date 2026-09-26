@@ -1,7 +1,10 @@
 //! Recovery is successful only when the target rollout records new agent work.
 //! IPC dispatch, task_started, or a queue acknowledgement is not proof.
+mod active_auth_binding_service;
 mod automation_guard;
+mod checkpoint_scan_cache;
 mod deferred_recovery_service;
+mod desktop_account_binding_service;
 mod desktop_ipc;
 mod dispatch_mark_error;
 mod evidence;
@@ -20,10 +23,12 @@ mod recovery_banner_status;
 mod recovery_mode;
 mod recovery_service;
 mod recovery_target;
+mod restart_checkpoint_service;
 mod running_desktop_banner;
 mod stored_manifest;
 mod target_dispatch;
 mod thread_identity;
+mod thread_index_service;
 mod window_capture;
 mod window_restore;
 
@@ -34,11 +39,12 @@ pub(crate) use automation_guard::{
 pub use automation_guard::{claim_restart_operation, operation_lock};
 pub(crate) use deferred_recovery_service::DeferredRecoveryService;
 use desktop_ipc::DesktopIpc;
-pub use manifest_store::{load_ownerless_pending, load_pending, save_pending};
+pub use manifest_store::{load_ownerless_pending, load_pending};
 pub(crate) use recovery_banner::RecoveryBanner;
 pub(crate) use recovery_mode::RecoveryMode;
 pub use recovery_service::recover_threads;
 pub(crate) use recovery_service::recover_threads_with_banner;
+pub use restart_checkpoint_service::save_pending;
 use std::time::Duration;
 pub(crate) use window_capture::save_desktop_window_bounds;
 pub use window_capture::{

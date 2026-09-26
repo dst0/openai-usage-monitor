@@ -1,4 +1,5 @@
 use super::{
+    desktop_ipc::DesktopIpc,
     desktop_ipc::IPC_DISCOVERY_TIMEOUT,
     ipc_protocol::{
         ipc_response_wait, parse_owner_info, read_ipc_frame, recovery_turn_start_request,
@@ -9,7 +10,7 @@ use super::{
 };
 use crate::switcher::ThreadRolloutState::*;
 use serde_json::Value;
-use std::{io::Write, os::unix::net::UnixStream, time::Duration};
+use std::{io::Write, os::unix::net::UnixStream, thread, time::Duration};
 
 #[test]
 fn desktop_ipc_dispatches_only_eligible_work() {
@@ -139,4 +140,83 @@ fn owner_and_start_responses_are_bound_to_the_expected_owner() {
     let mut malformed_turn = start_response;
     malformed_turn["result"]["result"]["turn"]["id"] = Value::String("turn\n1".into());
     assert!(validate_start_response(&malformed_turn, "owner-1").is_err());
+}
+
+#[test]
+fn separate_task_windows_route_each_turn_to_its_discovered_owner() {
+    let first = "01a09c25-9480-7dc2-87fd-79c507f91fcb";
+    let second = "01a09c25-a442-78c0-9263-73ae757030e8";
+    let (client_stream, mut router_stream) = UnixStream::pair().unwrap();
+    let router = thread::spawn(move || {
+        let mut requests = Vec::new();
+        for _ in 0..4 {
+            let request = read_ipc_frame(&mut router_stream).unwrap();
+            let method = request["method"].as_str().unwrap().to_string();
+            let id = request["params"]["conversationId"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let owner = if id == first {
+                "window-one"
+            } else {
+                "window-two"
+            };
+            requests.push((
+                method.clone(),
+                id,
+                request["targetClientId"].as_str().map(str::to_string),
+            ));
+            let result = if method == "thread-owner-discovery" {
+                serde_json::json!({"supportsUntrustedAppInput": true})
+            } else {
+                serde_json::json!({"result": {"turn": {"id": first}}})
+            };
+            write_ipc_frame(
+                &mut router_stream,
+                &serde_json::json!({
+                    "type": "response",
+                    "requestId": request["requestId"],
+                    "resultType": "success",
+                    "method": method,
+                    "handledByClientId": owner,
+                    "result": result
+                }),
+            )
+            .unwrap();
+        }
+        requests
+    });
+    let mut client = DesktopIpc::for_test(client_stream);
+    let first_owner = client.discover_owner_info_once(first).unwrap().client_id;
+    let second_owner = client.discover_owner_info_once(second).unwrap().client_id;
+    assert_ne!(first_owner, second_owner);
+    client.resume_interrupted_turn(first, &first_owner).unwrap();
+    client
+        .resume_interrupted_turn(second, &second_owner)
+        .unwrap();
+    let requests = router.join().unwrap();
+    assert_eq!(
+        requests[0],
+        ("thread-owner-discovery".into(), first.into(), None)
+    );
+    assert_eq!(
+        requests[1],
+        ("thread-owner-discovery".into(), second.into(), None)
+    );
+    assert_eq!(
+        requests[2],
+        (
+            "thread-follower-start-turn".into(),
+            first.into(),
+            Some(first_owner)
+        )
+    );
+    assert_eq!(
+        requests[3],
+        (
+            "thread-follower-start-turn".into(),
+            second.into(),
+            Some(second_owner)
+        )
+    );
 }

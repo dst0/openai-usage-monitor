@@ -2,7 +2,7 @@ use super::{
     automation_guard::operation_id_for_banner,
     desktop_ipc::DesktopIpc,
     manifest_store::{
-        current_account_binding, finalize_target, load_manifest, prune_ineligible_targets,
+        finalize_target, load_manifest, prune_ineligible_targets, recovery_account_binding,
         validate_target_account_binding, write_manifest,
     },
     pending_target::PendingTarget,
@@ -45,7 +45,10 @@ pub(crate) fn recover_threads_with_banner(
 ) -> Result<(), String> {
     let home = storage::codex_home();
     let mut pending_manifest = load_manifest()?;
-    let binding = current_account_binding();
+    let binding = recovery_account_binding(matches!(
+        mode,
+        RecoveryMode::DeferredOwned | RecoveryMode::DeferredCaptured
+    ));
     validate_target_account_binding(&pending_manifest, ids, binding.as_deref())?;
     for id in ids {
         if !valid_id(id) {

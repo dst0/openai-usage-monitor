@@ -638,6 +638,14 @@ fn test_partial_account_switch_terminal_and_cooldown() {
     )
     .unwrap();
     assert_eq!(session.account_id, "target@example.com:acc_target");
+    assert_eq!(
+        session.process.as_ref().map(|process| process.pid),
+        Some(9999)
+    );
+    assert_eq!(
+        session.cli_account_id.as_deref(),
+        Some("target@example.com:acc_target")
+    );
 
     // Cooldown must be armed
     let remaining = crate::recovery::automation_cooldown_remaining().unwrap();
@@ -650,6 +658,102 @@ fn test_partial_account_switch_terminal_and_cooldown() {
     let second_req = DistributionRequest::auto("quota_exhausted");
     let second_outcome = coordinator.execute(second_req).unwrap();
     assert_eq!(second_outcome.status, DistributionStatus::DeferredCooldown);
+}
+
+#[test]
+fn failed_desktop_launch_cannot_claim_the_target_account_for_deferred_recovery() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("failed_launch_no_session_claim");
+    env.populate(
+        vec![
+            make_account(
+                "old",
+                None,
+                "old@example.com",
+                "plus",
+                0.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+            make_account(
+                "target",
+                None,
+                "target@example.com",
+                "team",
+                90.0,
+                None,
+                1,
+                None,
+                None,
+            ),
+        ],
+        Some("old"),
+        Some("old"),
+    );
+    let original = std::fs::read(env.home().join("desktop-app-session.json")).unwrap();
+    let mock = Arc::new(MockAppLifecycle::new(true));
+    mock.set_launch_error("launch failed");
+    let outcome = DistributionCoordinator::with_lifecycle(mock)
+        .execute(DistributionRequest::auto("quota_exhausted"))
+        .unwrap();
+    assert_eq!(outcome.status, DistributionStatus::PartialSuccess);
+    assert_eq!(
+        std::fs::read(env.home().join("desktop-app-session.json")).unwrap(),
+        original,
+        "failed launch must not claim an unverified Desktop account"
+    );
+}
+
+#[test]
+fn replaced_desktop_process_cannot_claim_the_target_account() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("replaced_process_no_session_claim");
+    env.populate(
+        vec![
+            make_account(
+                "old",
+                None,
+                "old@example.com",
+                "plus",
+                0.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+            make_account(
+                "target",
+                None,
+                "target@example.com",
+                "team",
+                90.0,
+                None,
+                1,
+                None,
+                None,
+            ),
+        ],
+        Some("old"),
+        Some("old"),
+    );
+    let original = std::fs::read(env.home().join("desktop-app-session.json")).unwrap();
+    let mock = Arc::new(MockAppLifecycle::new(true));
+    mock.change_process_birth_after_first_inspection();
+    let outcome = DistributionCoordinator::with_lifecycle(mock)
+        .execute(DistributionRequest::auto("quota_exhausted"))
+        .unwrap();
+    assert_eq!(outcome.status, DistributionStatus::PartialSuccess);
+    assert_eq!(
+        std::fs::read(env.home().join("desktop-app-session.json")).unwrap(),
+        original,
+        "a changed process birth must not claim a Desktop account"
+    );
 }
 
 #[test]
@@ -741,6 +845,14 @@ fn test_at_most_one_desktop_restart() {
     )
     .unwrap();
     assert_eq!(session.account_id, "team@example.com:acc_team");
+    assert_eq!(
+        session.process.as_ref().map(|process| process.pid),
+        Some(9999)
+    );
+    assert_eq!(
+        session.cli_account_id.as_deref(),
+        Some("pro@example.com:acc_pro")
+    );
 
     // Verify CLI active auth is on acc_pro
     let auth = read_active_auth_json().unwrap();
@@ -1193,4 +1305,58 @@ fn failed_shutdown_clears_recovery_state_before_a_retry() {
         .execute(DistributionRequest::user("retry").with_preferred_app(Some("next".into())))
         .unwrap();
     assert_eq!(outcome.status, DistributionStatus::Success);
+}
+
+#[test]
+fn failed_post_shutdown_checkpoint_keeps_old_auth_and_relaunches_desktop() {
+    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let env = TestEnv::new("post_shutdown_checkpoint_failure");
+    env.populate(
+        vec![
+            make_account(
+                "old",
+                None,
+                "old@example.com",
+                "plus",
+                0.0,
+                None,
+                0,
+                None,
+                None,
+            ),
+            make_account(
+                "next",
+                None,
+                "next@example.com",
+                "team",
+                100.0,
+                None,
+                1,
+                None,
+                None,
+            ),
+        ],
+        Some("old"),
+        Some("old"),
+    );
+    let old_auth = read_active_auth_json().unwrap();
+    let mock = Arc::new(MockAppLifecycle::new(true));
+    mock.set_capture_mode(WindowCaptureMode::Absent);
+    *mock.corrupt_manifest_after_stop.lock().unwrap() =
+        Some(env.home().join("desktop-recovery.json"));
+    let result = DistributionCoordinator::with_lifecycle(mock.clone()).execute(
+        DistributionRequest::user("checkpoint failure").with_preferred_app(Some("next".into())),
+    );
+
+    assert!(result.is_err());
+    assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.launch_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.abort_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(read_active_auth_json().unwrap().tokens, old_auth.tokens);
+    assert_eq!(
+        load_accounts().unwrap().active_account_id.as_deref(),
+        Some("old@example.com:old")
+    );
 }

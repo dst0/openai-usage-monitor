@@ -3,7 +3,7 @@ use super::{
     desktop_ipc::DesktopIpc,
     ipc_call_error::IpcCallError,
     manifest_store::{
-        current_account_binding, load_manifest, prune_ineligible_targets, write_manifest,
+        load_manifest, prune_ineligible_targets, recovery_account_binding, write_manifest,
     },
     pending_target::PendingTarget,
     recovery_mode::RecoveryMode,
@@ -104,7 +104,7 @@ impl DeferredRecoveryService {
         if !targets.iter().any(|target| target.awaiting_owner) {
             return Ok(());
         }
-        let Some(account_id) = current_account_binding() else {
+        let Some(account_id) = recovery_account_binding(true) else {
             return Ok(());
         };
         let mut desktop = DesktopIpc::connect(Duration::from_secs(2))?;

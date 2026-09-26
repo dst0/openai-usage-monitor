@@ -67,6 +67,17 @@ impl AppLifecycle for SystemAppLifecycle {
         switcher::launch_codex_app()
     }
 
+    fn inspect_process(
+        &self,
+        pid: u32,
+    ) -> Result<super::window_restore_process_identity::ProcessIdentity, String> {
+        if switcher::current_codex_app_pids() != [pid] {
+            return Err("Desktop process set changed during account binding".into());
+        }
+        let mut backend = SystemWindowRestoreBackend::new()?;
+        WindowProcessValidationService::inspect(&mut backend, pid)
+    }
+
     fn capture_window_bounds(
         &self,
         operation_id: &str,

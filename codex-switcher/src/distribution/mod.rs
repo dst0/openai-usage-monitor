@@ -10,6 +10,7 @@ pub mod distribution_audit_logger;
 pub mod distribution_candidate;
 pub mod distribution_coordinator;
 pub mod distribution_decision_service;
+mod distribution_desktop_relaunch_service;
 pub mod distribution_executor;
 pub mod distribution_journal;
 pub mod distribution_outcome;

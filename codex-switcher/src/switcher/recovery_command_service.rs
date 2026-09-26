@@ -197,7 +197,10 @@ pub fn restart_and_recover(
     stop_codex_app_gracefully()?;
     // Re-checkpoint only after the old process has fully exited, so recovery
     // cannot be falsely verified by work flushed during shutdown.
-    crate::recovery::save_pending(&targets)?;
+    if let Err(error) = crate::recovery::save_pending(&targets) {
+        drop(banner);
+        return Err(CodexAvailabilityService::relaunch_previous_state(error));
+    }
     let launched_pids = match launch_codex_app() {
         Ok(pids) => pids,
         Err(error) => {

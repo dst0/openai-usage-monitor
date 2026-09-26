@@ -1,3 +1,4 @@
+use super::window_restore_process_identity::ProcessIdentity;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
@@ -9,6 +10,10 @@ use std::path::Path;
 pub struct DesktopAppSession {
     pub account_id: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub process: Option<ProcessIdentity>,
+    #[serde(default)]
+    pub cli_account_id: Option<String>,
 }
 
 impl DesktopAppSession {
@@ -16,7 +21,20 @@ impl DesktopAppSession {
         Self {
             account_id: account_id.into(),
             updated_at: Utc::now().to_rfc3339(),
+            process: None,
+            cli_account_id: None,
         }
+    }
+
+    pub fn bound(
+        account_id: impl Into<String>,
+        cli_account_id: impl Into<String>,
+        process: ProcessIdentity,
+    ) -> Self {
+        let mut session = Self::new(account_id);
+        session.process = Some(process);
+        session.cli_account_id = Some(cli_account_id.into());
+        session
     }
 
     pub fn load(path: &Path) -> Option<Self> {
