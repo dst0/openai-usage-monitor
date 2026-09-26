@@ -13,6 +13,11 @@ enum FakeCopy {
   case overwrittenDuringRead(String)
 }
 
+enum MappingChange {
+  case reordered
+  case failing(WindowTaskProbeFailure)
+}
+
 /// A scripted macOS for `WindowTaskProbe`. It logs every call so tests can
 /// check what happened before the first visible change and in what order
 /// the clipboard was read.
@@ -26,6 +31,9 @@ final class FakeProbeSystem: WindowTaskProbeSystem {
   var ids: [UInt32] = [31, 32]
   var idsAfterFirstPost: [UInt32]?
   var mapping: WindowTaskProbeFailure?
+  /// Replaces the window mapping once a shortcut has been posted.
+  var mappingAfterFirstPost: MappingChange?
+  var dropsAWindowFromTheMapping = false
   var grantsFocus = true
   /// After this many positive focus checks the window loses focus.
   var focusChecksBeforeLoss: Int?
@@ -59,7 +67,11 @@ final class FakeProbeSystem: WindowTaskProbeSystem {
   func mappedWindows(_ ids: [UInt32]) throws -> [Int] {
     log.append("map")
     if let mapping { throw mapping }
-    return Array(ids.indices)
+    switch posts > 0 ? mappingAfterFirstPost : nil {
+    case .reordered: return Array(ids.indices.reversed())
+    case .failing(let failure): throw failure
+    case nil: return Array(ids.indices.dropLast(dropsAWindowFromTheMapping ? 1 : 0))
+    }
   }
   func sameWindow(_ left: Int, _ right: Int) -> Bool { left == right }
   func beginVisibleChanges() { log.append("visible") }
@@ -163,9 +175,11 @@ struct CodexWindowTaskProbeCoreTests {
     for (index, entry) in system.log.enumerated() where entry == "post" {
       precondition(system.log[index - 1] == "count" && system.log[index - 2] == "layout")
     }
-    // Text is read only between a type check and a confirming count read.
+    // Text is read only after a type check and an unchanged count, and is
+    // followed by a confirming count read.
     for (index, entry) in system.log.enumerated() where entry == "text" {
-      precondition(system.log[index - 1] == "types" && system.log[index + 1] == "count")
+      precondition(system.log[index - 2] == "types" && system.log[index - 1] == "count")
+      precondition(system.log[index + 1] == "count")
     }
   }
 
@@ -191,7 +205,10 @@ struct CodexWindowTaskProbeCoreTests {
     let many = FakeProbeSystem()
     many.ids = (1...65).map { UInt32($0) }
     precondition(failure(many) == .windowLimitExceeded)
-    var refused = [recycled, empty, many]
+    let short = FakeProbeSystem()
+    short.dropsAWindowFromTheMapping = true
+    precondition(failure(short) == .windowMappingAmbiguous)
+    var refused = [recycled, empty, many, short]
     for reason in [WindowTaskProbeFailure.windowMinimized, .windowMappingAmbiguous] {
       let system = FakeProbeSystem()
       system.mapping = reason
@@ -267,6 +284,14 @@ struct CodexWindowTaskProbeCoreTests {
     unfocused.copies = [.write(first), .write(second)]
     unfocused.losesFocusOnCopy = true
     precondition(failure(unfocused) == .windowMappingChanged && unfocused.posts == 1)
+    let reordered = FakeProbeSystem()
+    reordered.copies = [.write(first), .write(second)]
+    reordered.mappingAfterFirstPost = .reordered
+    precondition(failure(reordered) == .windowMappingChanged && reordered.posts == 1)
+    let minimized = FakeProbeSystem()
+    minimized.copies = [.write(first), .write(second)]
+    minimized.mappingAfterFirstPost = .failing(.windowMinimized)
+    precondition(failure(minimized) == .windowMinimized && minimized.posts == 1)
     let recycled = FakeProbeSystem()
     recycled.copies = [.write(first), .write(second)]
     // Start, first focus, pre-post recheck, then the post-copy recheck.

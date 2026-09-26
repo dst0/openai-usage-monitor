@@ -10,13 +10,15 @@ func commandCharacter(forKeyCode keyCode: CGKeyCode, layout: TISInputSource) -> 
   }
   let data = Unmanaged<CFData>.fromOpaque(raw).takeUnretainedValue() as Data
   return data.withUnsafeBytes { bytes -> String? in
-    guard let keyboard = bytes.bindMemory(to: UCKeyboardLayout.self).baseAddress else { return nil }
+    guard let keyboard = bytes.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else {
+      return nil
+    }
     var deadKeyState: UInt32 = 0
     var length = 0
     var characters = [UniChar](repeating: 0, count: 4)
     let status = UCKeyTranslate(
       keyboard, UInt16(keyCode), UInt16(kUCKeyActionDown), UInt32((cmdKey >> 8) & 0xFF),
-      UInt32(LMGetKbdType()), OptionBits(kUCKeyTranslateNoDeadKeysBit),
+      UInt32(LMGetKbdType()), OptionBits(kUCKeyTranslateNoDeadKeysMask),
       &deadKeyState, characters.count, &length, &characters)
     guard status == noErr, length == 1 else { return nil }
     return String(utf16CodeUnits: characters, count: length)

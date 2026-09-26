@@ -56,9 +56,18 @@ func uniqueWindowFrameMapping(
 /// so the probe refuses it until its bundle has been re-inspected.
 let verifiedDesktopBundleIdentifier = "com.openai.codex"
 let verifiedDesktopVersion = "26.924.20706"
+let verifiedDesktopBuildNumber = "11431"
 
-func isVerifiedDesktopBuild(bundleIdentifier: String?, version: String?) -> Bool {
+func isVerifiedDesktopBuild(bundleIdentifier: String?, version: String?, buildNumber: String?) -> Bool {
   bundleIdentifier == verifiedDesktopBundleIdentifier && version == verifiedDesktopVersion
+    && buildNumber == verifiedDesktopBuildNumber
+}
+
+/// The bundle on disk describes the running code only if it was not
+/// replaced after the process launched. Unknown dates fail closed.
+func bundleUnchangedSinceLaunch(infoModified: Date?, launched: Date?) -> Bool {
+  guard let infoModified, let launched else { return false }
+  return infoModified <= launched
 }
 
 /// macOS App Shortcuts (`NSUserKeyEquivalents`) can assign Cmd+Opt+L to any
@@ -80,15 +89,20 @@ func keyEquivalentsConflictWithCopyShortcut(_ value: Any?) -> Bool {
 /// Such contents are never read, even to reject them.
 private let privatePasteboardMarkers: Set<String> = [
   "org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType",
+  "de.petermaurer.TransientPasteboardType", "com.agilebits.onepassword",
 ]
 
 func pasteboardTypesAllowTaskRead(_ types: [String]) -> Bool {
   types.contains("public.utf8-plain-text") && privatePasteboardMarkers.isDisjoint(with: types)
 }
 
-/// macOS 15.4 and later ask the user before a programmatic pasteboard read
-/// unless the reading app is set to always allow it (behavior 2). The
-/// behavior is nil on systems without the setting, where reads never ask.
-func pasteboardReadIsSilent(accessBehavior: Int?) -> Bool {
-  accessBehavior == nil || accessBehavior == 2
+/// macOS 15.4 and later may ask the user before a programmatic pasteboard
+/// read (behaviors 0 default and 1 ask), allow it silently (2), or deny it
+/// (3). An app appears in System Settings, where Always Allow can be chosen,
+/// only after it has asked once, so asking is permitted: a prompt that moves
+/// focus makes the probe fail closed. Deny and unknown values refuse before
+/// any visible change. The behavior is nil on systems without the setting.
+func pasteboardReadIsPermitted(accessBehavior: Int?) -> Bool {
+  guard let accessBehavior else { return true }
+  return (0...2).contains(accessBehavior)
 }

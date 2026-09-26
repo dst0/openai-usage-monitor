@@ -121,9 +121,12 @@ struct WindowTaskProbe<System: WindowTaskProbeSystem> {
     }
     let after = system.pasteboardChangeCount()
     guard after != before else { throw WindowTaskProbeFailure.copyLinkMissing }
-    guard before < Int.max, after == before + 1, system.pasteboardOffersTaskText() else {
+    guard before < Int.max, after == before + 1, system.pasteboardOffersTaskText(),
+      system.pasteboardChangeCount() == after else {
       throw WindowTaskProbeFailure.copyLinkAmbiguous
     }
+    // A write racing into the gap before this read is still read into
+    // memory; the confirming count below then rejects it.
     let link = system.pasteboardString()
     let confirmed = system.pasteboardChangeCount()
     guard let task = validateCopiedTaskLink(

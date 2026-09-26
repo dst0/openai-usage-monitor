@@ -98,13 +98,23 @@ struct CodexWindowTaskProbeTests {
   }
 
   static func onlyTheInspectedDesktopBuildIsAccepted() {
-    precondition(isVerifiedDesktopBuild(bundleIdentifier: "com.openai.codex", version: "26.924.20706"))
-    for (identifier, version) in [
-      ("com.openai.codex", "26.924.20707"), ("com.openai.codex", "26.924.2070"),
-      ("com.openai.chat", "26.924.20706"), ("com.openai.codex", nil), (nil, "26.924.20706"),
-    ] as [(String?, String?)] {
-      precondition(!isVerifiedDesktopBuild(bundleIdentifier: identifier, version: version))
+    precondition(isVerifiedDesktopBuild(
+      bundleIdentifier: "com.openai.codex", version: "26.924.20706", buildNumber: "11431"))
+    for (identifier, version, build) in [
+      ("com.openai.codex", "26.924.20707", "11431"), ("com.openai.codex", "26.924.2070", "11431"),
+      ("com.openai.chat", "26.924.20706", "11431"), ("com.openai.codex", "26.924.20706", "11432"),
+      ("com.openai.codex", nil, "11431"), (nil, "26.924.20706", "11431"),
+      ("com.openai.codex", "26.924.20706", nil),
+    ] as [(String?, String?, String?)] {
+      precondition(!isVerifiedDesktopBuild(bundleIdentifier: identifier, version: version, buildNumber: build))
     }
+    let launch = Date(timeIntervalSince1970: 1_790_000_000)
+    precondition(bundleUnchangedSinceLaunch(infoModified: launch.addingTimeInterval(-60), launched: launch))
+    precondition(bundleUnchangedSinceLaunch(infoModified: launch, launched: launch))
+    // Replaced on disk after launch: the running code is not what was read.
+    precondition(!bundleUnchangedSinceLaunch(infoModified: launch.addingTimeInterval(1), launched: launch))
+    precondition(!bundleUnchangedSinceLaunch(infoModified: nil, launched: launch))
+    precondition(!bundleUnchangedSinceLaunch(infoModified: launch, launched: nil))
   }
 
   static func appShortcutsOnTheCopyKeyAreRefused() {
@@ -128,11 +138,15 @@ struct CodexWindowTaskProbeTests {
       ["public.utf8-plain-text", "org.nspasteboard.ConcealedType"]))
     precondition(!pasteboardTypesAllowTaskRead(
       ["org.nspasteboard.TransientType", "public.utf8-plain-text"]))
+    for legacy in ["de.petermaurer.TransientPasteboardType", "com.agilebits.onepassword"] {
+      precondition(!pasteboardTypesAllowTaskRead(["public.utf8-plain-text", legacy]))
+    }
     // NSPasteboard.AccessBehavior: 0 default (asks), 1 ask, 2 always allow, 3 deny.
-    precondition(pasteboardReadIsSilent(accessBehavior: nil))
-    precondition(pasteboardReadIsSilent(accessBehavior: 2))
-    for behavior in [0, 1, 3, -1] {
-      precondition(!pasteboardReadIsSilent(accessBehavior: behavior))
+    for behavior in [nil, 0, 1, 2] as [Int?] {
+      precondition(pasteboardReadIsPermitted(accessBehavior: behavior))
+    }
+    for behavior in [3, -1, 4] {
+      precondition(!pasteboardReadIsPermitted(accessBehavior: behavior))
     }
   }
 

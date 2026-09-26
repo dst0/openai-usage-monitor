@@ -10,9 +10,10 @@ struct WindowTaskProbeRecord: Codable {
 /// kVK_ANSI_L. With Command held it must type `l`; see `copyShortcutKeyIsExpected`.
 private let copyDeepLinkKeyCode: CGKeyCode = 37
 private let copyDeepLinkCharacter = "l"
-/// Bounds each Accessibility call so an unresponsive Desktop cannot stall
+/// Bounds every Accessibility call so an unresponsive Desktop cannot stall
 /// the probe for the default messaging timeout on every call.
 private let accessibilityMessagingTimeout: Float = 1.0
+private let infoPlistPath = "Contents/Info.plist"
 
 /// The macOS side of the probe for one exact ChatGPT process.
 struct SystemWindowTaskProbe: WindowTaskProbeSystem {
@@ -23,7 +24,9 @@ struct SystemWindowTaskProbe: WindowTaskProbeSystem {
   init(process: (pid: pid_t, birth: String)) {
     self.process = process
     app = AXUIElementCreateApplication(process.pid)
-    AXUIElementSetMessagingTimeout(app, accessibilityMessagingTimeout)
+    // A timeout set on the system-wide element applies to every element this
+    // process uses, including those the shared inventory helpers create.
+    AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), accessibilityMessagingTimeout)
   }
 
   func now() -> TimeInterval { ProcessInfo.processInfo.systemUptime }
@@ -35,14 +38,10 @@ struct SystemWindowTaskProbe: WindowTaskProbeSystem {
     // Read through KVC so the helper still builds with SDKs older than 15.4.
     let accessBehavior: Int? = pasteboard.responds(to: NSSelectorFromString("accessBehavior"))
       ? (pasteboard.value(forKey: "accessBehavior") as? Int ?? -1) : nil
-    guard pasteboardReadIsSilent(accessBehavior: accessBehavior) else {
+    guard pasteboardReadIsPermitted(accessBehavior: accessBehavior) else {
       return .pasteboardAccessNotAllowed
     }
-    let bundle = NSRunningApplication(processIdentifier: process.pid)?.bundleURL.flatMap(Bundle.init(url:))
-    guard isVerifiedDesktopBuild(
-      bundleIdentifier: bundle?.bundleIdentifier,
-      version: bundle?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-    ) else { return .desktopVersionUnverified }
+    guard runningDesktopIsVerifiedBuild() else { return .desktopVersionUnverified }
     let defaults = UserDefaults.standard
     for domain in [verifiedDesktopBundleIdentifier, UserDefaults.globalDomain] {
       if keyEquivalentsConflictWithCopyShortcut(
@@ -69,7 +68,7 @@ struct SystemWindowTaskProbe: WindowTaskProbeSystem {
 
   func sameWindow(_ left: AXUIElement, _ right: AXUIElement) -> Bool { CFEqual(left, right) }
 
-  func beginVisibleChanges() { failureFollowsVisibleChange = true }
+  func beginVisibleChanges() { VisibleChangeMarker.shared.started = true }
 
   func requestFocus(_ window: AXUIElement) {
     // All requests are best effort: macOS may decline or defer activation
@@ -87,7 +86,6 @@ struct SystemWindowTaskProbe: WindowTaskProbeSystem {
   /// never processes, so it is not a trustworthy witness here.
   func hasKeyboardFocus(_ window: AXUIElement) -> Bool {
     let systemWide = AXUIElementCreateSystemWide()
-    AXUIElementSetMessagingTimeout(systemWide, accessibilityMessagingTimeout)
     var rawApp: AnyObject?
     var focusedPID: pid_t = 0
     guard AXUIElementCopyAttributeValue(
@@ -104,6 +102,9 @@ struct SystemWindowTaskProbe: WindowTaskProbeSystem {
   /// Command held. On Dvorak or Colemak, key 37 types another letter, which
   /// could select a different hidden Desktop command.
   func copyShortcutKeyIsExpected() -> Bool {
+    // Let any pending input-source change notification arrive first; this
+    // helper has no running run loop of its own. Not verified to be needed.
+    _ = CFRunLoopRunInMode(CFRunLoopMode.defaultMode, 0.01, true)
     guard let layout = currentKeyboardLayout() else { return false }
     return commandCharacter(forKeyCode: copyDeepLinkKeyCode, layout: layout) == copyDeepLinkCharacter
   }
@@ -129,6 +130,21 @@ struct SystemWindowTaskProbe: WindowTaskProbeSystem {
 
   func pasteboardString() -> String? { pasteboard.string(forType: .string) }
 
+  /// The running Desktop's identity, build, and version must match the
+  /// inspected build, and its Info.plist must be unchanged since launch: an
+  /// update replaced on disk while the old code runs would otherwise pass.
+  private func runningDesktopIsVerifiedBuild() -> Bool {
+    guard let running = NSRunningApplication(processIdentifier: process.pid),
+      let url = running.bundleURL, let bundle = Bundle(url: url) else { return false }
+    let modified = (try? FileManager.default.attributesOfItem(
+      atPath: url.appendingPathComponent(infoPlistPath).path))?[.modificationDate] as? Date
+    return isVerifiedDesktopBuild(
+      bundleIdentifier: bundle.bundleIdentifier,
+      version: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+      buildNumber: bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+    ) && bundleUnchangedSinceLaunch(infoModified: modified, launched: running.launchDate)
+  }
+
   private func standardWindows() throws -> [(element: AXUIElement, frame: CGRect)] {
     var raw: AnyObject?
     guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &raw) == .success,
@@ -141,7 +157,7 @@ struct SystemWindowTaskProbe: WindowTaskProbeSystem {
       guard let minimized = copyAXValue(window, kAXMinimizedAttribute as String),
         CFGetTypeID(minimized) == CFBooleanGetTypeID(),
         let isMinimized = minimized as? Bool else { throw WindowTaskProbeFailure.windowAccessFailed }
-      // Raising a minimized window would restore it; refuse before anything
+      // Raising a minimized window could restore it; refuse before anything
       // visible happens instead of discovering the problem mid-run.
       guard !isMinimized else { throw WindowTaskProbeFailure.windowMinimized }
       guard let point = decodeAXPoint(copyAXValue(window, kAXPositionAttribute as String)),
