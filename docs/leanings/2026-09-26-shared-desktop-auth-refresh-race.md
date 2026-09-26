@@ -1,0 +1,22 @@
+# 2026-09-26 — Shared Desktop authentication refresh race
+
+- **Status:** Partial
+- **Task/context:** Diagnose failed ChatGPT task retries and account switching while Monitor and the official Desktop share `~/.codex/auth.json`.
+- **Unexpected observation or failure:** Multiple turns reported that an access token could not be refreshed after another sign-in. ChatGPT could not be reopened until related processes were removed manually.
+- **Evidence:** Six sanitized rollout traces on the incident date contained the refresh failure. The live Desktop later rotated its refresh token; the saved active registry entry still held the previous token, although its account identity matched. Code inspection found that unattended quota polling could refresh OAuth tokens and write `auth.json` while Desktop was running. Process enumeration errors could be interpreted as no running Desktop. A Desktop shutdown waited for the main PID but did not prove its bundled app-server writer had exited. This evidence confirms the unsafe paths; it does not prove which specific write caused each historical failed turn.
+- **Approaches tried:**
+  - **Attempt:** Rely on the shared credential file alone to synchronize Desktop and CLI.
+    - **Outcome:** Did not work
+    - **Why:** The two clients can rotate or replace the same refresh token without a shared ownership boundary.
+  - **Attempt:** Keep APP and CLI on different accounts while Desktop runs.
+    - **Outcome:** Did not work
+    - **Why:** Both read the same `auth.json`, so the split cannot remain stable.
+  - **Attempt:** Make unattended quota checks read-only and require a verified Desktop shutdown and token handoff before an account change.
+    - **Outcome:** Partial
+    - **Why:** Regression coverage is being added; installed behavior still needs validation.
+- **Root cause:** The switcher treated a shared credential file as if Desktop and CLI had independent active credentials. Unattended refresh and insufficient shutdown proof could race Desktop's own token rotation.
+- **Resolution:** The in-progress fix removes unattended OAuth refresh and active auth writes, keeps both clients on one account while Desktop runs, preserves Desktop's latest token after shutdown, and fails closed on uncertain process or account identity. A pre-stop check now requires the planned Desktop and CLI IDs to match the uniquely identified live auth. If saving a rotated token fails after shutdown, guarded relaunch accepts only the same uniquely identified account and leaves the failed journal for inspection.
+- **Verification:** Sanitized incident traces and code paths were inspected. The targeted distribution suite passed 127 tests, including stale-marker rejection before shutdown, same-account token rotation, guarded relaunch after failed registry handoff, injected writers both before and after the prewrite probe, changed auth during offline and running Desktop readback, and offline marker-save rollback. The separate post-shutdown checkpoint regression passed. Full tests, independent review, signed installation, and live recovery verification remain pending.
+- **Prevention/follow-up:** Keep automatic switching off until the new revision passes tests, is installed, and a controlled Desktop switch plus cold-task recovery succeeds. Keep the pre-stop identity, process-inspection, shutdown rotation, late writer, offline marker rollback, and post-stop rollback regressions in the release gate.
+- **Reusable learning:** A shared refresh token needs one writer at a time and a checked handoff; a missing process-list result is never proof that a writer exited.
+- **References:** `codex-switcher/src/distribution/daemon_tick_service.rs`, `codex-switcher/src/switcher/codex_app_lifecycle.rs`, `codex-switcher/src/distribution/distribution_transaction_service.rs`.

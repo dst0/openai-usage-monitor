@@ -33,6 +33,55 @@ fn forwards_the_same_opaque_birth_identity_to_helper() {
 }
 
 #[test]
+fn inventory_requires_exact_process_and_unique_window_ids() {
+    let expected = ProcessIdentity::new(4242, "1726789012:000007").unwrap();
+    let response = json!({
+        "process": {"pid": 4242, "birth_id": "1726789012:000007"},
+        "window_ids": [31, 32],
+        "ax_standard_count": 2,
+        "ambiguous_count": 0
+    });
+    assert_eq!(
+        SystemWindowRestoreBackend::parse_window_inventory(&response, &expected).unwrap(),
+        2
+    );
+    let mut wrong = response.clone();
+    wrong["process"]["birth_id"] = json!("1726789012:000008");
+    assert!(SystemWindowRestoreBackend::parse_window_inventory(&wrong, &expected).is_err());
+    wrong = response.clone();
+    wrong["window_ids"] = json!([31, 31]);
+    assert!(SystemWindowRestoreBackend::parse_window_inventory(&wrong, &expected).is_err());
+    wrong = response;
+    wrong["ax_standard_count"] = json!(1);
+    assert!(SystemWindowRestoreBackend::parse_window_inventory(&wrong, &expected).is_err());
+}
+
+#[test]
+fn inventory_fails_closed_on_unnamed_visible_window_or_malformed_response() {
+    let expected = ProcessIdentity::new(4242, "1726789012:000007").unwrap();
+    let response = json!({
+        "process": {"pid": 4242, "birth_id": "1726789012:000007"},
+        "window_ids": [31],
+        "ax_standard_count": 1,
+        "ambiguous_count": 1
+    });
+    assert!(SystemWindowRestoreBackend::parse_window_inventory(&response, &expected).is_err());
+    let response = json!({
+        "process": {"pid": 4242, "birth_id": "1726789012:000007"},
+        "window_ids": [],
+        "ax_standard_count": 0,
+        "ambiguous_count": 0
+    });
+    assert_eq!(
+        SystemWindowRestoreBackend::parse_window_inventory(&response, &expected).unwrap(),
+        0
+    );
+    let mut malformed = response;
+    malformed.as_object_mut().unwrap().remove("ambiguous_count");
+    assert!(SystemWindowRestoreBackend::parse_window_inventory(&malformed, &expected).is_err());
+}
+
+#[test]
 fn rejects_missing_or_control_character_birth_identity() {
     assert!(SystemWindowRestoreBackend::parse_process(&json!({
         "pid": 4242,

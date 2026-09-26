@@ -2,24 +2,30 @@ use super::automatic_distribution_service::AutomaticDistributionService;
 use super::automatic_distribution_source::AutomaticDistributionSource;
 use super::cli_auth_file_identity_service::CliAuthFileIdentityService;
 use super::daemon_account_sync_service::DaemonAccountSyncService;
+use super::desktop_external_binding_service::DesktopExternalBindingService;
 use super::distribution_coordinator::DistributionCoordinator;
 use super::distribution_executor::DistributionExecutor;
 use super::distribution_outcome::DistributionOutcome;
 use super::distribution_outcome::DistributionStatus;
 use super::log_redaction_service::LogRedactionService;
 use crate::models::{AccountStatusEntry, AccountsFile, StatusFile};
-use crate::quota::update_account_quota_cache;
-use crate::storage::{
-    load_accounts, read_active_auth_json, save_accounts, write_active_auth_json, write_status_file,
-};
+use crate::quota::update_account_quota_cache_with_policy;
+use crate::storage::{load_accounts, update_accounts_atomically, write_status_file};
 use chrono::Utc;
 
 pub struct DaemonTickService;
 
 impl DaemonTickService {
     pub fn run(auto_switch: bool) -> Result<(), String> {
-        let mut accounts_file = load_accounts().unwrap_or_default();
-        let _ = DaemonAccountSyncService::sync_active_tokens(&mut accounts_file);
+        let mut accounts_file = load_accounts()?;
+        let active_sync = DaemonAccountSyncService::sync_active_tokens(&mut accounts_file);
+        if DesktopExternalBindingService::refresh_if_needed().is_err() {
+            crate::logger::log(
+                "WARN",
+                "APP_BINDING",
+                "External Desktop account binding check failed",
+            );
+        }
         if accounts_file.accounts.is_empty() {
             return Err("No accounts configured to monitor".to_string());
         }
@@ -29,12 +35,10 @@ impl DaemonTickService {
             .clone()
             .unwrap_or_else(|| accounts_file.accounts[0].id.clone());
         accounts_file.active_account_id = Some(current_active_id.clone());
-        refresh_quota_caches(&mut accounts_file, &current_active_id);
+        refresh_quota_caches(&mut accounts_file);
         DaemonAccountSyncService::cross_pollinate_organization_names(&mut accounts_file.accounts);
 
-        let mut fresh = load_accounts().unwrap_or_default();
-        merge_quota_caches(&accounts_file, &mut fresh);
-        let _ = save_accounts(&fresh);
+        let fresh = persist_quota_caches_with_hook(&accounts_file, || Ok(()))?;
         accounts_file.settings = fresh.settings;
 
         let registry_active = accounts_file
@@ -50,6 +54,11 @@ impl DaemonTickService {
             cli_auth_file_id,
         );
         write_status_file(&status)?;
+
+        if auto_switch {
+            active_sync?;
+            DaemonAccountSyncService::verify_live_active_binding(&accounts_file)?;
+        }
 
         if auto_switch {
             if let Some(account) = active {
@@ -76,31 +85,21 @@ impl DaemonTickService {
     }
 }
 
-fn refresh_quota_caches(accounts_file: &mut AccountsFile, current_active_id: &str) {
+fn refresh_quota_caches(accounts_file: &mut AccountsFile) {
+    refresh_quota_caches_with(accounts_file, update_account_quota_cache_with_policy);
+}
+
+fn refresh_quota_caches_with(
+    accounts_file: &mut AccountsFile,
+    mut refresh: impl FnMut(&mut crate::models::AccountConfig, bool),
+) {
     for account in &mut accounts_file.accounts {
-        let is_active = account.id == current_active_id;
         if !account.enabled {
             continue;
         }
-        let previous_tokens = account.tokens.clone();
-        update_account_quota_cache(account);
-        if is_active && account.needs_relogin() {
-            if let Ok(fresh_auth) = read_active_auth_json() {
-                if let Some(fresh_tokens) = fresh_auth.tokens {
-                    if fresh_tokens != account.tokens {
-                        account.tokens = fresh_tokens;
-                        update_account_quota_cache(account);
-                    }
-                }
-            }
-        }
-        if is_active && account.tokens != previous_tokens {
-            if let Ok(mut current_auth) = read_active_auth_json() {
-                current_auth.tokens = Some(account.tokens.clone());
-                current_auth.last_refresh = Some(Utc::now().to_rfc3339());
-                let _ = write_active_auth_json(&current_auth);
-            }
-        }
+        // The daemon may race with Desktop or a manual switch for any account.
+        // Quota polling must never rotate a refresh token.
+        refresh(account, false);
     }
 }
 
@@ -121,7 +120,6 @@ fn merge_quota_caches(updated: &AccountsFile, fresh: &mut AccountsFile) {
             account.last_credits = updated_account.last_credits;
             account.last_error = updated_account.last_error.clone();
             account.last_checked = updated_account.last_checked.clone();
-            account.tokens = updated_account.tokens.clone();
             account.organization_name = updated_account.organization_name.clone();
             if updated_account.multiplier_is_manual != Some(true) {
                 account.plan_multiplier = updated_account.plan_multiplier;
@@ -129,6 +127,17 @@ fn merge_quota_caches(updated: &AccountsFile, fresh: &mut AccountsFile) {
             }
         }
     }
+}
+
+fn persist_quota_caches_with_hook(
+    updated: &AccountsFile,
+    before_save: impl FnOnce() -> Result<(), String>,
+) -> Result<AccountsFile, String> {
+    before_save()?;
+    update_accounts_atomically(|fresh| {
+        merge_quota_caches(updated, fresh);
+        Ok(())
+    })
 }
 
 fn build_status(

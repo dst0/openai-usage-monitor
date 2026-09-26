@@ -1,33 +1,36 @@
 use super::app_lifecycle::AppLifecycle;
 use super::distribution_audit_logger::DistributionAuditLogger;
 use super::distribution_request::DistributionRequest;
+use super::recovery_audit_context::RecoveryAuditContext;
 use super::window_capture_mode::WindowCaptureMode;
 
 pub struct DistributionRecoveryAuditService;
 
 impl DistributionRecoveryAuditService {
-    pub fn restore_and_recover(
+    pub(super) fn restore_and_recover(
         logger: &DistributionAuditLogger,
         lifecycle: &dyn AppLifecycle,
-        pid: u32,
-        targets: &[String],
-        capture_mode: WindowCaptureMode,
-        operation_id: &str,
-        request: &DistributionRequest,
+        context: RecoveryAuditContext<'_>,
+        before_recovery: impl FnOnce() -> Result<(), String>,
     ) -> Result<(), String> {
-        let trigger = request.trigger.as_str();
-        let reason = request.reason.as_str();
-        if capture_mode == WindowCaptureMode::Captured {
-            if let Err(error) =
-                Self::restore_window_bounds(logger, lifecycle, pid, operation_id, trigger, reason)
-            {
+        let trigger = context.request.trigger.as_str();
+        let reason = context.request.reason.as_str();
+        if context.capture_mode == WindowCaptureMode::Captured {
+            if let Err(error) = Self::restore_window_bounds(
+                logger,
+                lifecycle,
+                context.pid,
+                context.operation_id,
+                trigger,
+                reason,
+            ) {
                 lifecycle.abort_recovery();
                 return Err(error);
             }
-        } else if capture_mode == WindowCaptureMode::Skipped {
-            if let Err(error) = lifecycle.rebind_banner(pid) {
+        } else if context.capture_mode == WindowCaptureMode::Skipped {
+            if let Err(error) = lifecycle.rebind_banner(context.pid) {
                 logger.log_warning(
-                    operation_id,
+                    context.operation_id,
                     "RECOVERY_BANNER_REBIND_FAILED",
                     trigger,
                     reason,
@@ -35,14 +38,18 @@ impl DistributionRecoveryAuditService {
                 );
             }
         }
+        if let Err(error) = before_recovery() {
+            lifecycle.abort_recovery();
+            return Err(error);
+        }
         Self::recover_and_verify(
             logger,
             lifecycle,
-            targets,
-            &[pid],
-            capture_mode == WindowCaptureMode::Captured,
-            operation_id,
-            request,
+            context.targets,
+            &[context.pid],
+            context.capture_mode == WindowCaptureMode::Captured,
+            context.operation_id,
+            context.request,
         )
     }
 

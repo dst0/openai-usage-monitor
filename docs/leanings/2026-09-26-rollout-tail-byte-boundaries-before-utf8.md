@@ -1,0 +1,22 @@
+# 2026-09-26 — Rollout tail byte boundaries must precede UTF-8 decoding
+
+- **Status:** Resolved
+- **Task/context:** Auditing discovery state for unattended task recovery after a malformed-tail fix.
+- **Unexpected observation or failure:** Strict decoding of the entire bounded tail rejected valid terminal events when the seek split an older multibyte character. The reader also discarded a complete terminal event when the seek landed exactly after a newline. Lossy decoding had previously let malformed newest bytes expose an older active turn.
+- **Evidence:** Three synthetic regressions reproduced the false active state, the split-character false unknown state, and the exact-boundary false unknown state before their respective fixes. No user rollout was copied.
+- **Approaches tried:**
+  - **Attempt:** Decode the whole tail lossily and drop the first line whenever the seek offset is nonzero.
+    - **Outcome:** Did not work.
+    - **Why:** Replacement bytes can hide malformed lifecycle events, and an exact line boundary has no fragment to drop.
+  - **Attempt:** Decode the whole tail strictly.
+    - **Outcome:** Partial.
+    - **Why:** The discarded prefix itself may end inside a multibyte character.
+  - **Attempt:** Check the preceding byte, drop only an incomplete first record at the byte level, then decode remaining complete records strictly.
+    - **Outcome:** Worked in focused tests.
+    - **Why:** Valid suffixes survive seek boundaries while malformed complete records remain uncertain.
+- **Root cause:** The seek boundary was treated as a line boundary after character decoding instead of being resolved in bytes first.
+- **Resolution:** The bounded reader now distinguishes an exact newline boundary from a partial record, discards only the latter, and rejects invalid UTF-8 in remaining records.
+- **Verification:** The three regressions were red before the corresponding fixes and green afterward; the final combined-tree Rust workspace gate passed with 493 unit tests and all integration suites.
+- **Prevention/follow-up:** Keep byte framing ahead of text decoding in bounded JSONL readers; preserve unknown state for malformed complete events.
+- **Reusable learning:** Resolve stream framing in bytes before strict text decoding.
+- **References:** `codex-switcher/src/switcher/thread_rollout_inspector.rs`, `codex-switcher/src/switcher.test.rs`, `docs/leanings/2026-09-26-malformed-rollout-tail-must-block-dispatch.md`.

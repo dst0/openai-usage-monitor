@@ -76,14 +76,44 @@ pub fn read_rollout_tail_lines(path: &std::path::Path, max_bytes: u64) -> Vec<St
     };
     let len = file.metadata().map(|m| m.len()).unwrap_or(0);
     let seek_pos = len.saturating_sub(max_bytes);
+    let begins_at_record = if seek_pos == 0 {
+        true
+    } else {
+        let mut preceding = [0u8; 1];
+        if file.seek(SeekFrom::Start(seek_pos - 1)).is_err()
+            || file.read_exact(&mut preceding).is_err()
+        {
+            return Vec::new();
+        }
+        preceding[0] == b'\n'
+    };
     if file.seek(SeekFrom::Start(seek_pos)).is_err() {
         return Vec::new();
     }
     let mut buf = Vec::new();
-    if file.read_to_end(&mut buf).is_err() {
+    let expected = len - seek_pos;
+    if file.take(expected).read_to_end(&mut buf).is_err() || buf.len() as u64 != expected {
         return Vec::new();
     }
-    let text = String::from_utf8_lossy(&buf);
+    // A terminal record without a newline may still be in the middle of a
+    // write. The caller must not infer an active turn from the older record.
+    if buf.last() != Some(&b'\n') {
+        return Vec::new();
+    }
+    // Replacement characters can turn a malformed latest event into an
+    // unfamiliar but parseable payload and expose an older task_started.
+    // A seek into an old record may also split a UTF-8 code point. Discard
+    // that fragment as bytes; only complete records need to decode strictly.
+    if !begins_at_record {
+        let Some(fragment_end) = buf.iter().position(|byte| *byte == b'\n') else {
+            return Vec::new();
+        };
+        buf.drain(..=fragment_end);
+    }
+    let text = match String::from_utf8(buf) {
+        Ok(text) => text,
+        Err(_) => return Vec::new(),
+    };
     text.lines()
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty())
@@ -105,7 +135,7 @@ pub fn inspect_thread_rollout_state_from_lines(lines: &[String]) -> ThreadRollou
     for line in lines.iter().rev() {
         let val = match serde_json::from_str::<serde_json::Value>(line) {
             Ok(v) => v,
-            Err(_) => continue, // Skip potentially truncated initial line of seek window
+            Err(_) => return ThreadRolloutState::Unknown,
         };
 
         let payload = val.get("payload");

@@ -1,11 +1,9 @@
-use super::account_switch_service::prioritize_primary_if_user;
-use super::codex_app_lifecycle::{codex_app_pids, CODEX_APP_EXECUTABLE};
+use super::active_auth_registry_sync_service::ActiveAuthRegistrySyncService;
 use super::codex_availability_service::CodexAvailabilityService;
 use super::desktop_session_binding_service::DesktopSessionBindingService;
+use super::primary_target_selection::prioritize_primary_if_user;
+use super::restart_worker_dispatch_service::RestartWorkerDispatchService;
 use super::*;
-use chrono::Utc;
-use std::process::Command;
-use std::thread::sleep;
 use std::time::Duration;
 
 /// Recovery-only entry point. Uses the same verified pipeline as account switching.
@@ -21,10 +19,10 @@ pub fn resume_thread_interactive(thread_id: Option<&str>) -> Result<(), String> 
             crate::recovery::RecoveryMode::DiscoveredOnly,
         ),
     };
-    if !is_codex_app_running() {
+    let desktop_running = is_codex_app_running_checked()?;
+    if !desktop_running {
         let home = crate::storage::codex_home();
         if targets.is_empty() {
-            // Nothing was discovered, so there is no reason to start Desktop.
             crate::runtime_print!("RECOVERY_RESULT verified_or_completed=0 failed=0");
             return Ok(());
         }
@@ -37,126 +35,18 @@ pub fn resume_thread_interactive(thread_id: Option<&str>) -> Result<(), String> 
             );
         }
     }
-    CodexAvailabilityService::ensure_running_for_resume(is_codex_app_running, launch_codex_app)?;
+    CodexAvailabilityService::ensure_running_for_resume(|| desktop_running, launch_codex_app)?;
     crate::recovery::recover_threads(&targets, mode)
 }
 
-/// Self-restart is supported: a detached worker, rather than the app's child
-/// shell, owns the operation so recovery survives termination of this host.
+/// Dispatch a restart outside the Desktop process when the caller is its child.
 pub fn dispatch_self_restart(args: &[String]) -> Result<bool, String> {
-    if std::env::var_os("CODEX_RESTART_WORKER").is_some() {
-        return Ok(false);
-    }
-    let output = Command::new("/bin/ps")
-        .args(["-axo", "pid=,ppid=,comm="])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        return Err("Cannot verify restart worker ancestry".into());
-    }
-    if !has_codex_ancestor(&String::from_utf8_lossy(&output.stdout), std::process::id())? {
-        return Ok(false);
-    }
-    let home = crate::storage::codex_home();
-    let label = "com.codex.switcher.restart-worker";
-    let previous = Command::new("launchctl")
-        .args(["list", label])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if previous.status.success() {
-        if String::from_utf8_lossy(&previous.stdout).contains("\"PID\"") {
-            return Err("A restart worker is already running".into());
-        }
-        let removed = Command::new("launchctl")
-            .args(["remove", label])
-            .status()
-            .map_err(|e| e.to_string())?;
-        if !removed.success() {
-            return Err("Could not retire the completed restart worker".into());
-        }
-    }
-    crate::recovery::arm_automation_cooldown()?;
-    crate::recovery::clear_restart_cancellation()?;
-    let directory = home.join("recovery-runs");
-    std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
-    let operation_id = format!("{}-{}", Utc::now().timestamp_millis(), std::process::id());
-    let log = directory.join(format!("restart-{operation_id}.log"));
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&log)
-        .map_err(|e| e.to_string())?;
-    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
-    let mut submit = Command::new("launchctl");
-    submit
-        .args(["submit", "-l", label, "-o"])
-        .arg(&log)
-        .arg("-e")
-        .arg(&log)
-        // A submitted job can be relaunched even after a short successful run.
-        // Remove the one-shot label from inside the wrapper after the child
-        // finishes. The operation claim remains the destructive at-most-once
-        // guard if the wrapper itself is interrupted before that cleanup.
-        .args([
-            "--",
-            "/bin/sh",
-            "-c",
-            "\"$@\"; /bin/launchctl remove com.codex.switcher.restart-worker >/dev/null 2>&1; exit 0",
-            "codex-restart-once",
-            "/usr/bin/env",
-            "CODEX_RESTART_WORKER=1",
-        ])
-        .arg(format!("CODEX_RESTART_OPERATION={operation_id}"))
-        .arg(format!("CODEX_HOME={}", home.display()));
-    if let Ok(primary) = std::env::var("CODEX_THREAD_ID") {
-        submit.arg(format!(
-            "CODEX_PRIMARY_THREAD={}",
-            clean_thread_id(&primary)
-        ));
-    }
-    let status = submit
-        .arg(executable)
-        .arg("--restart-worker")
-        .args(args)
-        .status()
-        .map_err(|e| e.to_string())?;
-    if !status.success() {
-        return Err("Could not launch independent restart worker".into());
-    }
-    crate::runtime_print!(
-        "RESTART_DISPATCHED job={label} log={} (scheduled, not yet verified)",
-        log.display()
-    );
-    Ok(true)
+    RestartWorkerDispatchService::dispatch(args)
 }
 
-pub(super) fn has_codex_ancestor(processes: &str, mut pid: u32) -> Result<bool, String> {
-    let rows: Vec<_> = processes
-        .lines()
-        .filter_map(|line| {
-            let mut fields = line.trim().splitn(3, char::is_whitespace);
-            let id = fields.next()?.parse::<u32>().ok()?;
-            let rest = line.trim().strip_prefix(&id.to_string())?.trim_start();
-            let split = rest.find(char::is_whitespace)?;
-            Some((id, rest[..split].parse::<u32>().ok()?, rest[split..].trim()))
-        })
-        .collect();
-    for _ in 0..128 {
-        if pid <= 1 {
-            return Ok(false);
-        }
-        let (_, parent, executable) = rows
-            .iter()
-            .find(|row| row.0 == pid)
-            .ok_or("Cannot resolve restart worker ancestry")?;
-        if *executable == CODEX_APP_EXECUTABLE {
-            return Ok(true);
-        }
-        pid = *parent;
-    }
-    Err("Cycle in restart worker ancestry".into())
+#[cfg(test)]
+pub(super) fn has_codex_ancestor(processes: &str, pid: u32) -> Result<bool, String> {
+    RestartWorkerDispatchService::has_codex_ancestor(processes, pid)
 }
 
 pub fn restart_and_recover(
@@ -177,7 +67,7 @@ pub fn restart_and_recover(
     if std::env::var_os("CODEX_RESTART_WORKER").is_none() && dispatch_self_restart(&args)? {
         return Ok(());
     }
-    sleep(Duration::from_secs(delay_seconds));
+    std::thread::sleep(Duration::from_secs(delay_seconds));
     if std::env::var_os("CODEX_RESTART_WORKER").is_some()
         && crate::recovery::restart_cancellation_requested()
     {
@@ -187,7 +77,7 @@ pub fn restart_and_recover(
     let _operation = crate::recovery::operation_lock()?;
     crate::recovery::arm_automation_cooldown()?;
     let cli_account_id = DesktopSessionBindingService::verified_cli_account_id()?;
-    if !is_codex_app_running() {
+    if !is_codex_app_running_checked()? {
         return Err("Codex is not running".into());
     }
     let mut targets = detect_in_progress_threads();
@@ -200,7 +90,7 @@ pub fn restart_and_recover(
     }
     crate::runtime_print!(
         "RESTART_BEGIN old_pids={:?} targets={:?}",
-        codex_app_pids(),
+        current_codex_app_pids_checked()?,
         targets
     );
     let operation_id = crate::recovery::operation_id_for_banner("captured_restart");
@@ -209,13 +99,44 @@ pub fn restart_and_recover(
     if !targets.is_empty() {
         crate::recovery::preflight_desktop_dispatch()?;
     }
-    crate::recovery::save_pending(&targets)?;
-    stop_codex_app_gracefully(banner.expected_process())?;
+    let expected = banner.expected_process().clone();
+    preflight_shutdown_windows(&expected)?;
+    let checkpoint = crate::recovery::RecoveryManifestSnapshot::capture()?;
+    crate::recovery::save_pending(&targets).map_err(|error| checkpoint.rollback_error(error))?;
+    preflight_shutdown_windows(&expected).map_err(|error| checkpoint.rollback_error(error))?;
+    if let Err(error) = stop_codex_app_gracefully(&expected) {
+        return Err(if error.before_signal {
+            checkpoint.rollback_error(error.to_string())
+        } else {
+            error.to_string()
+        });
+    }
     // Re-checkpoint only after the old process has fully exited, so recovery
     // cannot be falsely verified by work flushed during shutdown.
     if let Err(error) = crate::recovery::save_pending(&targets) {
         drop(banner);
         return Err(CodexAvailabilityService::relaunch_previous_state(error));
+    }
+    let current_account = (|| -> Result<String, String> {
+        let mut accounts = crate::storage::load_accounts()?;
+        ActiveAuthRegistrySyncService::sync_from_disk(&mut accounts)?
+            .ok_or("Desktop authentication disappeared after shutdown")?;
+        accounts
+            .active_account_id
+            .ok_or("Active Desktop account identity is unavailable".into())
+    })();
+    let current_account = match current_account {
+        Ok(id) => id,
+        Err(error) => {
+            drop(banner);
+            return Err(CodexAvailabilityService::relaunch_previous_state(error));
+        }
+    };
+    if current_account != cli_account_id {
+        drop(banner);
+        return Err(CodexAvailabilityService::relaunch_previous_state(
+            "CLI account changed during Desktop restart".into(),
+        ));
     }
     let launched_pids = match launch_codex_app() {
         Ok(pids) => pids,

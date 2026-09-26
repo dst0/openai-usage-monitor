@@ -222,13 +222,7 @@ impl DistributionDecisionService {
                     .map(|idx| accounts_file.accounts[idx].id.clone())
                     .unwrap_or_else(|_| id.to_string())
             })
-            .or_else(|| {
-                if eligible_accounts.len() >= 2 {
-                    Some(eligible_accounts[1].id.clone())
-                } else {
-                    eligible_accounts.first().map(|a| a.id.clone())
-                }
-            });
+            .or_else(|| target_app.clone());
 
         let app_depleted = current_app_val
             .as_deref()
@@ -264,14 +258,8 @@ impl DistributionDecisionService {
                 .map(|s| s.eq_ignore_ascii_case(target_cli.as_deref().unwrap_or("")))
                 == Some(true);
 
-        let should_separate = eligible_accounts.len() >= 2
-            && current_app_val.is_some()
-            && current_cli_val.is_some()
-            && current_app_val == current_cli_val;
-        let app_switch_needed = is_desktop_running
-            && request.allow_restart
-            && (!app_matches || app_depleted || should_separate);
-        let cli_switch_needed = !cli_matches || cli_depleted || should_separate;
+        let app_switch_needed = !app_matches || app_depleted;
+        let cli_switch_needed = !cli_matches || cli_depleted;
         if !app_switch_needed && !cli_switch_needed && !request.force_restart {
             return DistributionPlan::no_action(
                 current_app_val,
@@ -281,18 +269,16 @@ impl DistributionDecisionService {
             );
         }
 
+        let restart_required = is_desktop_running && app_switch_needed && request.allow_restart;
+
         DistributionPlan {
-            current_app_id: current_app_val.clone(),
+            current_app_id: current_app_val,
             current_cli_id: current_cli_val,
-            target_app_id: if is_desktop_running && !request.allow_restart {
-                current_app_val.clone()
-            } else {
-                target_app
-            },
+            target_app_id: target_app,
             target_cli_id: target_cli,
             app_switch_needed,
             cli_switch_needed,
-            restart_required: app_switch_needed,
+            restart_required,
             decision_reason: request.reason.clone(),
             evaluated_candidates,
         }

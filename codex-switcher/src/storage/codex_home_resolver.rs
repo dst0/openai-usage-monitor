@@ -1,8 +1,6 @@
 #[cfg(test)]
 use std::path::Path;
 use std::path::PathBuf;
-#[cfg(test)]
-use std::thread::ThreadId;
 
 /// The Codex data directory: `CODEX_HOME` when set, otherwise the live
 /// `~/.codex` shared with ChatGPT.app.
@@ -11,8 +9,7 @@ pub fn codex_home() -> PathBuf {
     #[cfg(test)]
     if let Err(message) = check_test_home(
         configured.as_deref(),
-        super::test_codex_home::active_home(),
-        std::thread::current().id(),
+        super::test_codex_home::active_home().map(|(path, _)| path),
     ) {
         panic!("{message}");
     }
@@ -28,25 +25,17 @@ fn live_codex_home(user_home: Option<PathBuf>) -> PathBuf {
     user_home.map_or_else(|| PathBuf::from(".codex"), |home| home.join(".codex"))
 }
 
-/// Test builds resolve only the home of the `TestCodexHome` held by the calling
-/// thread. Anything else is the live Desktop home, a value inherited from the
-/// developer's shell, or another test's home, and each would let a test touch
-/// state it does not own.
+/// Test builds resolve only the home of the currently held `TestCodexHome`.
+/// Anything else is the live Desktop home, a value inherited from the
+/// developer's shell, or a leftover, and each would let a test touch state it
+/// does not own. The owning thread is not checked: production code resolves
+/// the home on worker threads it spawns for the guarded test.
 #[cfg(test)]
-fn check_test_home(
-    configured: Option<&Path>,
-    active: Option<(PathBuf, ThreadId)>,
-    current: ThreadId,
-) -> Result<(), String> {
+fn check_test_home(configured: Option<&Path>, active: Option<PathBuf>) -> Result<(), String> {
     const HINT: &str = "hold a storage::test_codex_home::TestCodexHome";
-    let Some((active_path, owner)) = active else {
+    let Some(active_path) = active else {
         return Err(format!("no test owns CODEX_HOME; {HINT}"));
     };
-    if owner != current {
-        return Err(format!(
-            "CODEX_HOME belongs to another test's thread; {HINT} on this thread"
-        ));
-    }
     match configured {
         None => Err(format!("CODEX_HOME is unset; {HINT}")),
         Some(path) if path != active_path => Err(format!(

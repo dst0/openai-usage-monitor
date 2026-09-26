@@ -1,0 +1,28 @@
+# 2026-09-26 — Disabled switching still triggered fast watchdog polling
+
+- **Status:** Partial
+- **Task/context:** Keep automatic account switching disabled while investigating Desktop recovery without repeatedly waking the quota daemon.
+- **Unexpected observation or failure:** The watchdog could break out of its configured poll interval every two seconds when cached quota was depleted, even with automatic switching and weekly auto-reset disabled.
+- **Evidence:** `DaemonLoopService::watchdog_needs_immediate_check` checked depletion and scanned recent quota-blocked SQLite threads without reading either setting. A synthetic depleted account with both modes disabled made the new regression test fail before the fix and pass afterwards. Historical sanitized daemon stderr contains repeated window-capture failures, but those lines lack timestamps and do not by themselves prove this exact wakeup condition.
+- **Approaches tried:**
+  - **Attempt:** Keep the fast wakeup and rely on distribution to decline the switch.
+    - **Outcome:** Did not work.
+    - **Why:** The daemon would still poll quota and scan SQLite at the faster cadence.
+  - **Attempt:** Skip only the SQLite scan when disabled.
+    - **Outcome:** Rejected.
+    - **Why:** A depleted cached account would still break the ordinary polling interval every two seconds.
+  - **Attempt:** Gate the entire immediate watchdog decision on `auto_switch_enabled`.
+    - **Outcome:** Rejected after adversarial review.
+    - **Why:** Weekly auto-reset is independent of account switching; a reset-only user would lose prompt detection of a quota-blocked task.
+  - **Attempt:** Use the weekly reset menu status `waiting_for_task` as a fast-scan readiness gate.
+    - **Outcome:** Rejected after adversarial review.
+    - **Why:** That status does not check the live auth binding or unresolved manual reset journal, and the watchdog's active-account selection differs from the daemon tick fallback.
+  - **Attempt:** Gate fast wakeup only when both automatic actions are disabled, preserving the reset-only path.
+    - **Outcome:** Worked in focused regressions.
+    - **Why:** Both modes off avoid the rapid SQLite scan without changing independent weekly-reset detection.
+- **Root cause:** The watchdog used quota evidence as a wakeup trigger without first checking whether either automatic action could use it.
+- **Resolution:** Return `false` when the registry cannot be read or both automatic modes are disabled; preserve the prior fast detection for switching and independent weekly auto-reset.
+- **Verification:** `disabled_auto_switch_does_not_wake_watchdog_for_depleted_account` failed against the old implementation and passed after the guard. The final reset-preserving policy passed all four focused tests for disabled, enabled, reset-only, and invalid-registry states and the integrated 530-test Rust unit suite. Installed-daemon cadence after this revision remains unmeasured.
+- **Prevention/follow-up:** Keep the disabled, enabled, reset-only, and invalid-registry watchdog regressions; observe the installed daemon after deployment without changing the user's disabled setting. A separate reset-only readiness optimization needs complete auth/manual-journal proof before it can safely suppress its fast probe.
+- **Reusable learning:** A quota-triggered fast wakeup must first check which automatic action can use it; declining a later action does not avoid the cost of the wakeup itself.
+- **References:** `codex-switcher/src/distribution/daemon_loop_service.rs`, `codex-switcher/src/distribution/daemon_loop_service.test.rs`, `CODEX.md`.

@@ -127,13 +127,11 @@ fn codex_home_refuses_a_value_the_guard_did_not_set() {
 }
 
 #[test]
-fn another_thread_cannot_borrow_the_guards_home() {
-    let _home = TestCodexHome::new("borrowed");
+fn a_worker_thread_of_the_guarded_test_resolves_its_home() {
+    let home = TestCodexHome::new("worker");
+    let expected = home.path().to_path_buf();
 
-    let outcome = std::thread::spawn(|| catch_unwind(codex_home).map_err(panic_message))
-        .join()
-        .unwrap();
+    let resolved = std::thread::spawn(codex_home).join().unwrap();
 
-    let message = outcome.unwrap_err();
-    assert!(message.contains("another test's thread"), "{message}");
+    assert_eq!(resolved, expected);
 }

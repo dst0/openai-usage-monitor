@@ -24,18 +24,18 @@ impl ResetOutcomeService {
                 // official contract requires a fresh limits read afterwards. This
                 // read also gives recovery a chance to observe the restored pool.
                 let mut refreshed_account = latest_active.clone();
-                let quota_refresh_reason = match quota::fetch_account_usage(&mut refreshed_account)
-                {
-                    Ok(usage)
-                        if usage.account_id.as_deref()
-                            == Some(latest_active.account_id.as_str())
-                            && weekly_reset_reflected(&usage) == Some(true) =>
-                    {
-                        None
-                    }
-                    Ok(_) => Some("reset_applied_quota_refresh_unverified".to_string()),
-                    Err(_) => Some("reset_applied_quota_refresh_failed".to_string()),
-                };
+                let quota_refresh_reason =
+                    match quota::fetch_account_usage_read_only(&mut refreshed_account) {
+                        Ok(usage)
+                            if usage.account_id.as_deref()
+                                == Some(latest_active.account_id.as_str())
+                                && weekly_reset_reflected(&usage) == Some(true) =>
+                        {
+                            None
+                        }
+                        Ok(_) => Some("reset_applied_quota_refresh_unverified".to_string()),
+                        Err(_) => Some("reset_applied_quota_refresh_failed".to_string()),
+                    };
                 let recovery_reason = recovery::recover_threads(
                     blocked_threads,
                     recovery::RecoveryMode::DiscoveredOnly,

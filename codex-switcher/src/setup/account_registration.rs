@@ -1,7 +1,9 @@
 use crate::models::{AccountConfig, AccountsFile, AuthTokens};
 use crate::oauth::extract_jwt_metadata_from_tokens;
-use crate::quota::update_account_quota_cache;
-use crate::storage::{load_accounts, read_active_auth_json, save_accounts};
+use crate::quota::update_account_quota_cache_with_policy;
+use crate::storage::{
+    initialize_accounts_if_absent, load_accounts, read_active_auth_json, update_accounts_atomically,
+};
 
 use super::{build_predictable_account_id, deduplicate_accounts_file, find_existing_account_idx};
 
@@ -121,20 +123,75 @@ pub fn add_account_from_tokens(
     tokens: AuthTokens,
     preserve_active: bool,
 ) -> Result<String, String> {
-    let target_id = add_account_to_accounts_file(accounts_file, id, tokens, preserve_active);
+    add_account_from_tokens_with(
+        accounts_file,
+        id,
+        tokens,
+        preserve_active,
+        |account| update_account_quota_cache_with_policy(account, false),
+        || Ok(()),
+    )
+}
 
-    // Update quota cache for the target account
-    if let Some(pos) = accounts_file
+fn add_account_from_tokens_with(
+    accounts_file: &mut AccountsFile,
+    id: &str,
+    tokens: AuthTokens,
+    preserve_active: bool,
+    check_quota: impl FnOnce(&mut AccountConfig),
+    before_commit: impl FnOnce() -> Result<(), String>,
+) -> Result<String, String> {
+    // A first login can have no registry yet. Create only if still absent;
+    // another process's newer registry must win that race.
+    initialize_accounts_if_absent(&AccountsFile::default())?;
+    before_commit()?;
+    let mut target_id = None;
+    let fresh = update_accounts_atomically(|registry| {
+        target_id = Some(add_account_to_accounts_file(
+            registry,
+            id,
+            tokens,
+            preserve_active,
+        ));
+        Ok(())
+    })?;
+    *accounts_file = fresh;
+    let target_id = target_id.ok_or("Added account identity was not saved")?;
+
+    // Network quota inspection happens outside the registry lock. Merge only
+    // quota fields into the newest registry and never refresh OAuth tokens.
+    let mut polled = accounts_file
         .accounts
         .iter()
-        .position(|a| a.id == target_id)
-    {
-        let mut account = accounts_file.accounts[pos].clone();
-        update_account_quota_cache(&mut account);
-        accounts_file.accounts[pos] = account;
-    }
-
-    save_accounts(accounts_file)?;
+        .find(|account| account.id == target_id)
+        .ok_or("Added account disappeared before quota inspection")?
+        .clone();
+    check_quota(&mut polled);
+    *accounts_file = update_accounts_atomically(|registry| {
+        let account = registry
+            .accounts
+            .iter_mut()
+            .find(|account| account.id == target_id)
+            .ok_or("Added account disappeared during quota inspection")?;
+        if account.tokens != polled.tokens {
+            return Ok(());
+        }
+        account.last_primary_percentage = polled.last_primary_percentage;
+        account.last_reset_time = polled.last_reset_time.clone();
+        account.last_reset_after_seconds = polled.last_reset_after_seconds;
+        account.last_weekly_percentage = polled.last_weekly_percentage;
+        account.last_weekly_reset_time = polled.last_weekly_reset_time.clone();
+        account.last_weekly_reset_after_seconds = polled.last_weekly_reset_after_seconds;
+        account.last_credits = polled.last_credits;
+        account.last_error = polled.last_error.clone();
+        account.last_checked = polled.last_checked.clone();
+        account.organization_name = polled.organization_name.clone();
+        if account.multiplier_is_manual != Some(true) {
+            account.plan_multiplier = polled.plan_multiplier;
+            account.last_multiplier_checked = polled.last_multiplier_checked.clone();
+        }
+        Ok(())
+    })?;
     Ok(target_id)
 }
 
@@ -144,7 +201,7 @@ pub fn save_current_as(id: &str) -> Result<(), String> {
         .tokens
         .ok_or_else(|| "No tokens found in auth.json".to_string())?;
 
-    let mut accounts_file = load_accounts().unwrap_or_default();
+    let mut accounts_file = load_accounts()?;
     let target_id = add_account_from_tokens(&mut accounts_file, id, tokens, false)?;
     let saved_email = accounts_file
         .accounts
@@ -160,64 +217,73 @@ pub fn save_current_as(id: &str) -> Result<(), String> {
 }
 
 pub fn remove_account(id: &str) -> Result<(), String> {
-    let mut accounts_file = load_accounts()?;
-    let orig_len = accounts_file.accounts.len();
-    let id_trimmed = id.trim();
+    remove_account_with_hook(id, || Ok(()))
+}
 
-    // Match by exact canonical ID, nickname, email, or workspace UUID
-    let has_id_match = accounts_file
-        .accounts
-        .iter()
-        .any(|a| a.id.trim().eq_ignore_ascii_case(id_trimmed));
-    if has_id_match {
-        accounts_file
+fn remove_account_with_hook(
+    id: &str,
+    before_save: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    before_save()?;
+    let id_trimmed = id.trim();
+    update_accounts_atomically(|accounts_file| {
+        let orig_len = accounts_file.accounts.len();
+        // Match by exact canonical ID, nickname, email, or workspace UUID.
+        let has_id_match = accounts_file
             .accounts
-            .retain(|a| !a.id.trim().eq_ignore_ascii_case(id_trimmed));
-    } else {
-        let has_name_match = accounts_file.accounts.iter().any(|a| {
-            a.name
-                .as_deref()
-                .map(|n| n.trim().eq_ignore_ascii_case(id_trimmed))
-                == Some(true)
-        });
-        if has_name_match {
-            accounts_file.accounts.retain(|a| {
+            .iter()
+            .any(|a| a.id.trim().eq_ignore_ascii_case(id_trimmed));
+        if has_id_match {
+            accounts_file
+                .accounts
+                .retain(|a| !a.id.trim().eq_ignore_ascii_case(id_trimmed));
+        } else {
+            let has_name_match = accounts_file.accounts.iter().any(|a| {
                 a.name
                     .as_deref()
                     .map(|n| n.trim().eq_ignore_ascii_case(id_trimmed))
-                    != Some(true)
+                    == Some(true)
             });
-        } else {
-            let has_email_match = accounts_file
-                .accounts
-                .iter()
-                .any(|a| a.email.trim().eq_ignore_ascii_case(id_trimmed));
-            if has_email_match {
-                accounts_file
-                    .accounts
-                    .retain(|a| !a.email.trim().eq_ignore_ascii_case(id_trimmed));
+            if has_name_match {
+                accounts_file.accounts.retain(|a| {
+                    a.name
+                        .as_deref()
+                        .map(|n| n.trim().eq_ignore_ascii_case(id_trimmed))
+                        != Some(true)
+                });
             } else {
-                accounts_file
+                let has_email_match = accounts_file
                     .accounts
-                    .retain(|a| !a.account_id.trim().eq_ignore_ascii_case(id_trimmed));
+                    .iter()
+                    .any(|a| a.email.trim().eq_ignore_ascii_case(id_trimmed));
+                if has_email_match {
+                    accounts_file
+                        .accounts
+                        .retain(|a| !a.email.trim().eq_ignore_ascii_case(id_trimmed));
+                } else {
+                    accounts_file
+                        .accounts
+                        .retain(|a| !a.account_id.trim().eq_ignore_ascii_case(id_trimmed));
+                }
             }
         }
-    }
-
-    if accounts_file.accounts.len() == orig_len {
-        return Err(format!("Account '{}' not found", id));
-    }
-
-    if accounts_file.active_account_id.as_deref() == Some(id_trimmed)
-        || !accounts_file
-            .accounts
-            .iter()
-            .any(|a| Some(&a.id) == accounts_file.active_account_id.as_ref())
-    {
-        accounts_file.active_account_id = accounts_file.accounts.first().map(|a| a.id.clone());
-    }
-
-    save_accounts(&accounts_file)?;
+        if accounts_file.accounts.len() == orig_len {
+            return Err(format!("Account '{}' not found", id));
+        }
+        if accounts_file.active_account_id.as_deref() == Some(id_trimmed)
+            || !accounts_file
+                .accounts
+                .iter()
+                .any(|a| Some(&a.id) == accounts_file.active_account_id.as_ref())
+        {
+            accounts_file.active_account_id = accounts_file.accounts.first().map(|a| a.id.clone());
+        }
+        Ok(())
+    })?;
     println!("✅ Account '{}' removed.", id);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "account_registration.test.rs"]
+mod tests;

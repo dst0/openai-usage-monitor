@@ -1,25 +1,17 @@
 use super::{
-    dispatch_mark_error::DispatchMarkError,
-    pending_manifest::PendingManifest,
-    pending_target::PendingTarget,
-    queue_snapshot::pending_count,
-    recovery_mode::RecoveryMode,
-    restart_checkpoint_service::{post_checkpoint_status, post_checkpoint_status_fresh},
-    stored_manifest::StoredManifest,
-    thread_identity::valid_id,
+    dispatch_mark_error::DispatchMarkError, manifest_prune_service::ManifestPruneService,
+    pending_manifest::PendingManifest, pending_target::PendingTarget, recovery_mode::RecoveryMode,
+    stored_manifest::StoredManifest, thread_identity::valid_id,
     thread_index_service::recent_thread_updates,
 };
-use crate::{storage, switcher};
+use crate::storage;
 use std::{
     collections::HashSet,
     fs::{File, OpenOptions},
     io::Write,
     os::unix::fs::OpenOptionsExt,
     path::Path,
-    sync::atomic::{AtomicUsize, Ordering},
 };
-
-static NEXT_OWNERLESS_PROBE: AtomicUsize = AtomicUsize::new(0);
 
 pub(super) fn load_manifest() -> Result<Vec<PendingTarget>, String> {
     let path = storage::codex_home().join("desktop-recovery.json");
@@ -62,68 +54,16 @@ pub(super) fn prune_ineligible_targets(
         return Ok(());
     }
     let updates = recent_thread_updates(home, targets)?;
-    prune_ineligible_targets_with(home, targets, |id| Ok(updates.get(id).copied()))
+    ManifestPruneService::run_with(home, targets, |id| Ok(updates.get(id).copied()))
 }
 
+#[cfg(test)]
 pub(super) fn prune_ineligible_targets_with(
     home: &Path,
     targets: &mut Vec<PendingTarget>,
-    mut updated_at: impl FnMut(&str) -> Result<Option<i64>, String>,
+    updated_at: impl FnMut(&str) -> Result<Option<i64>, String>,
 ) -> Result<(), String> {
-    let now = chrono::Utc::now().timestamp();
-    let mut eligible = Vec::new();
-    // Only one ownerless rollout may use the scan budget while this caller
-    // holds the recovery operation lock. Rotate the selected target so an
-    // older long rollout cannot starve the other cold tasks.
-    let ownerless_count = targets
-        .iter()
-        .filter(|target| target.awaiting_owner)
-        .count();
-    let selected_ownerless = (ownerless_count > 0)
-        .then(|| NEXT_OWNERLESS_PROBE.fetch_add(1, Ordering::Relaxed) % ownerless_count);
-    let mut ownerless_index = 0;
-    for target in targets.iter() {
-        if !valid_id(&target.id) {
-            continue;
-        }
-        let is_recent = updated_at(&target.id)?
-            .is_some_and(|updated| (now - updated).abs() <= switcher::RECENT_QUOTA_WINDOW_SECS);
-        if !is_recent {
-            continue;
-        }
-        if target.awaiting_owner {
-            let selected = selected_ownerless == Some(ownerless_index);
-            ownerless_index += 1;
-            if !selected {
-                eligible.push(target.clone());
-                continue;
-            }
-        }
-        if target.awaiting_owner
-            && post_checkpoint_status(home, target).is_some_and(|(_, verified)| verified)
-            && post_checkpoint_status_fresh(home, target)?.1
-            && pending_count(home, &target.id)? == 0
-        {
-            continue;
-        }
-        let retain = match switcher::inspect_thread_rollout_state(home, &target.id) {
-            switcher::ThreadRolloutState::ActiveInProgress
-            | switcher::ThreadRolloutState::InterruptedByQuota
-            | switcher::ThreadRolloutState::TurnAborted => true,
-            // Only an explicit resume may continue an error-ended turn, so an
-            // unattended retry intent for it is dropped.
-            switcher::ThreadRolloutState::InterruptedByError => false,
-            switcher::ThreadRolloutState::CleanCompleted => pending_count(home, &target.id)? > 0,
-            // An unreadable rollout must not erase an undispatched intent.
-            // Recovery still revalidates the state before any IPC send.
-            switcher::ThreadRolloutState::Unknown => target.awaiting_owner,
-        };
-        if retain {
-            eligible.push(target.clone());
-        }
-    }
-    *targets = eligible;
-    Ok(())
+    ManifestPruneService::run_with(home, targets, updated_at)
 }
 
 pub(super) fn finalize_target(
@@ -169,13 +109,68 @@ pub(super) fn validate_target_account_binding(
 
 /// Remove the retry intent durably before an owner-routed request can be sent.
 /// A crash after this point has an unknown outcome and must not redispatch.
-pub(super) fn mark_dispatch_attempt(id: &str, mode: RecoveryMode) -> Result<(), DispatchMarkError> {
-    let deferred = load_manifest()
-        .map_err(DispatchMarkError::Other)?
-        .iter()
-        .any(|target| target.id == id && target.awaiting_owner);
+pub(super) fn mark_dispatch_attempt(
+    id: &str,
+    mode: RecoveryMode,
+    verify_identity: impl FnOnce() -> Result<(), DispatchMarkError>,
+) -> Result<PendingTarget, DispatchMarkError> {
+    mark_dispatch_attempt_with_writer(id, mode, verify_identity, write_manifest)
+}
+
+pub(super) fn mark_dispatch_attempt_with_writer(
+    id: &str,
+    mode: RecoveryMode,
+    verify_identity: impl FnOnce() -> Result<(), DispatchMarkError>,
+    write_targets: impl FnOnce(&[PendingTarget]) -> Result<(), String>,
+) -> Result<PendingTarget, DispatchMarkError> {
+    let mut targets = load_manifest().map_err(DispatchMarkError::Other)?;
+    let Some(target) = targets.iter().find(|target| target.id == id) else {
+        return Err(DispatchMarkError::Other(
+            "Recovery checkpoint disappeared before IPC dispatch".into(),
+        ));
+    };
+    let deferred = target.awaiting_owner;
     let binding = recovery_account_binding(deferred);
-    mark_dispatch_attempt_for_account(id, binding.as_deref(), mode)
+    if deferred
+        && mode != RecoveryMode::ExplicitTarget
+        && (binding.is_none() || target.owner_account_id.as_deref() != binding.as_deref())
+    {
+        return Err(DispatchMarkError::AccountChanged);
+    }
+    let original = target.clone();
+    // Owner discovery and banner startup can take longer than a manual account
+    // switch. Verify the operation's starting auth and Desktop process after
+    // all other checks, immediately before consuming the durable checkpoint.
+    verify_identity()?;
+    targets.retain(|target| target.id != id);
+    if let Err(error) = write_targets(&targets) {
+        // Directory sync can fail after the rename consumed the marker. No IPC
+        // has been sent, so restore the exact checkpoint before returning.
+        if let Err(restore) = restore_undispatched_target(&original) {
+            return Err(DispatchMarkError::Other(format!(
+                "Recovery marker failed: {error}; original checkpoint restoration failed: {restore}"
+            )));
+        }
+        return Err(DispatchMarkError::Other(error));
+    }
+    Ok(original)
+}
+
+pub(super) fn restore_undispatched_target(original: &PendingTarget) -> Result<(), String> {
+    let mut targets = load_manifest()?;
+    match targets.iter().find(|target| target.id == original.id) {
+        Some(existing) if existing != original => {
+            return Err("Recovery checkpoint changed before pre-send restoration".into())
+        }
+        Some(_) => return Ok(()),
+        None => targets.push(original.clone()),
+    }
+    write_manifest(&targets)?;
+    if load_manifest()?.iter().any(|target| target == original) {
+        Ok(())
+    } else {
+        Err("Recovery checkpoint restoration readback failed".into())
+    }
 }
 
 pub(super) fn recovery_account_binding(deferred: bool) -> Option<String> {
@@ -194,6 +189,7 @@ pub(super) fn recovery_account_binding(deferred: bool) -> Option<String> {
     )
 }
 
+#[cfg(test)]
 pub(super) fn mark_dispatch_attempt_for_account(
     id: &str,
     binding: Option<&str>,
@@ -230,8 +226,7 @@ pub fn load_pending() -> Result<Vec<String>, String> {
     // or SQLite retries on each ordinary thread-detection pass.
     targets.retain(|target| !target.awaiting_owner);
     prune_ineligible_targets(&home, &mut targets)?;
-    // Read-only: callers may run during recovery, whose operation lock owns
-    // manifest writes. Writing an old snapshot here could resurrect a target.
+    // Read-only: writing this snapshot could resurrect a consumed target.
     Ok(targets
         .into_iter()
         .filter(|target| !target.awaiting_owner)

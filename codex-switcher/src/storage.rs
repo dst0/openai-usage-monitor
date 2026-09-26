@@ -1,12 +1,25 @@
-use crate::models::{AccountConfig, AccountsFile, AuthJson, StatusFile};
+use crate::models::{AccountConfig, AccountsFile, AuthJson};
 use fs2::FileExt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
 
+#[path = "storage/accounts_registry_transaction_service.rs"]
+mod accounts_registry_transaction_service;
+#[path = "storage/active_auth_compare_write_service.rs"]
+mod active_auth_compare_write_service;
+#[path = "storage/active_auth_create_service.rs"]
+mod active_auth_create_service;
+#[path = "storage/active_auth_remove_service.rs"]
+mod active_auth_remove_service;
 #[path = "storage/codex_home_resolver.rs"]
 mod codex_home_resolver;
+pub(crate) use active_auth_remove_service::compare_and_remove_active_auth_json;
+#[path = "storage/status_file_service.rs"]
+mod status_file_service;
+pub use status_file_service::{sync_settings_to_status_file, write_status_file};
+
 #[cfg(test)]
 #[path = "storage/test_codex_home.rs"]
 pub(crate) mod test_codex_home;
@@ -58,72 +71,128 @@ fn acquire_switcher_lock(exclusive: bool) -> Result<File, String> {
 }
 
 pub fn read_active_auth_json() -> Result<AuthJson, String> {
+    read_active_auth_json_with_hook(|| {})
+}
+
+fn read_active_auth_json_with_hook(after_open: impl FnOnce()) -> Result<AuthJson, String> {
     let path = auth_json_path();
-    if !path.exists() {
-        return Err(format!("Auth file not found at {}", path.display()));
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&path)
+        .map_err(|_| "Active credential file could not be opened safely".to_string())?;
+    let opened = file
+        .metadata()
+        .map_err(|_| "Active credential identity could not be read".to_string())?;
+    if !opened.is_file() || opened.permissions().mode() & 0o777 != 0o600 {
+        return Err("Active credential file is not a private regular file".into());
     }
-    let mut file =
-        File::open(&path).map_err(|e| format!("Failed to open {}: {}", path.display(), e))?;
     file.lock_shared()
-        .map_err(|e| format!("Failed to lock shared {}: {}", path.display(), e))?;
+        .map_err(|_| "Active credential file could not be locked".to_string())?;
+    after_open();
 
     let mut content = String::new();
     file.read_to_string(&mut content)
-        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+        .map_err(|_| "Active credential file could not be read".to_string())?;
+
+    let named = fs::symlink_metadata(&path)
+        .map_err(|_| "Active credential identity changed during read".to_string())?;
+    if !named.is_file() || named.dev() != opened.dev() || named.ino() != opened.ino() {
+        return Err("Active credential identity changed during read".into());
+    }
 
     let auth: AuthJson = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
+        .map_err(|_| "Active credential file could not be parsed".to_string())?;
     Ok(auth)
 }
 
 pub fn write_active_auth_json(auth: &AuthJson) -> Result<(), String> {
+    // Serialize Monitor writers with registry updates. The official Desktop
+    // does not participate in this advisory lock; relogin uses an additional
+    // pathname/inode/content comparison immediately before its rename.
+    let _lock = acquire_switcher_lock(true)?;
     let path = auth_json_path();
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
 
-    let temp_path = path.with_extension(format!("{}.tmp.json", std::process::id()));
+    let mut nonce = [0u8; 8];
+    getrandom::getrandom(&mut nonce)
+        .map_err(|_| "Active credential staging nonce unavailable".to_string())?;
+    let temp_path = path.with_extension(format!(
+        "{}.{:016x}.tmp.json",
+        std::process::id(),
+        u64::from_ne_bytes(nonce)
+    ));
     let content = serde_json::to_string_pretty(auth)
         .map_err(|e| format!("Failed to serialize auth.json: {}", e))?;
-
-    {
+    let mut created = false;
+    let result = (|| {
         let mut file = OpenOptions::new()
-            .create(true)
             .write(true)
-            .truncate(false)
+            .create_new(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .mode(0o600)
             .open(&temp_path)
-            .map_err(|e| {
-                format!(
-                    "Failed to open temp auth file {}: {}",
-                    temp_path.display(),
-                    e
-                )
-            })?;
+            .map_err(|_| "Temporary credential file could not be created".to_string())?;
+        created = true;
 
         file.lock_exclusive()
-            .map_err(|e| format!("Failed to lock temp auth file: {}", e))?;
-
-        file.set_len(0)
-            .map_err(|e| format!("Failed to set_len: {}", e))?;
-        use std::io::Seek;
-        file.seek(std::io::SeekFrom::Start(0))
-            .map_err(|e| format!("Failed to seek: {}", e))?;
-
+            .map_err(|_| "Temporary credential file could not be locked".to_string())?;
         file.write_all(content.as_bytes())
-            .map_err(|e| format!("Failed to write to temp auth file: {}", e))?;
-        file.flush()
-            .map_err(|e| format!("Failed to flush: {}", e))?;
-
-        let _ = fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600));
+            .and_then(|_| file.sync_all())
+            .map_err(|_| "Temporary credential file could not be saved".to_string())?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|_| "Temporary credential permissions could not be set".to_string())?;
+        fs::rename(&temp_path, &path)
+            .map_err(|_| "Active credential replacement failed".to_string())
+    })();
+    if result.is_err() && created {
+        let _ = fs::remove_file(&temp_path);
     }
+    result
+}
 
-    fs::rename(&temp_path, &path)
-        .map_err(|e| format!("Failed to replace {}: {}", path.display(), e))?;
-    let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-    Ok(())
+pub(crate) fn write_active_auth_json_if_absent(
+    auth: &AuthJson,
+    shared_auth_active: impl FnMut() -> Result<bool, String>,
+) -> Result<(), String> {
+    active_auth_create_service::ActiveAuthCreateService::create_if_absent(auth, shared_auth_active)
+}
+
+pub(crate) fn compare_and_write_active_auth_json(
+    expected: &AuthJson,
+    replacement: &AuthJson,
+    shared_auth_active: impl FnMut() -> Result<bool, String>,
+) -> Result<(), String> {
+    let path = auth_json_path();
+    let _lock = acquire_switcher_lock(true)?;
+    active_auth_compare_write_service::ActiveAuthCompareWriteService::new(&path).execute(
+        expected,
+        replacement,
+        shared_auth_active,
+    )
+}
+
+pub(crate) fn compare_and_write_active_auth_json_for_switch(
+    expected: &AuthJson,
+    replacement: &AuthJson,
+    shared_auth_active: impl FnMut() -> Result<bool, String>,
+) -> Result<(), String> {
+    let path = auth_json_path();
+    let _lock = acquire_switcher_lock(true)?;
+    active_auth_compare_write_service::ActiveAuthCompareWriteService::new(&path)
+        .execute_replacing_tokens(expected, replacement, shared_auth_active)
 }
 
 pub fn load_accounts() -> Result<AccountsFile, String> {
+    load_accounts_with_hooks(|| {}, || {})
+}
+
+fn load_accounts_with_hooks(
+    before_initialize: impl FnOnce(),
+    before_heal: impl FnOnce(),
+) -> Result<AccountsFile, String> {
     let path = accounts_json_path();
     if !path.exists() {
         // Try auto-importing from current auth.json
@@ -164,8 +233,8 @@ pub fn load_accounts() -> Result<AccountsFile, String> {
                     settings: crate::models::Settings::default(),
                     accounts: vec![config],
                 };
-                let _ = save_accounts(&accounts_file);
-                return Ok(accounts_file);
+                before_initialize();
+                return accounts_registry_transaction_service::AccountsRegistryTransactionService::initialize_if_absent(&accounts_file);
             }
         }
         return Ok(AccountsFile::default());
@@ -187,111 +256,39 @@ pub fn load_accounts() -> Result<AccountsFile, String> {
             .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?
     };
 
-    // Auto-heal deduplication if duplicates exist in accounts.json
-    // Lock from above was dropped at block exit, so save_accounts can safely acquire exclusive lock!
+    // Auto-heal duplicate identities from a fresh snapshot under one registry
+    // lock. The first read is only a signal; another writer may have committed
+    // newer tokens before this process gets the exclusive lock.
     if crate::setup::deduplicate_accounts_file(&mut acc) {
-        let _ = save_accounts(&acc);
+        before_heal();
+        return update_accounts_atomically(|fresh| {
+            crate::setup::deduplicate_accounts_file(fresh);
+            Ok(())
+        });
     }
 
     Ok(acc)
 }
 
+#[cfg(test)]
 pub fn save_accounts(acc: &AccountsFile) -> Result<(), String> {
-    let _lock = acquire_switcher_lock(true)?;
-
-    let path = accounts_json_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-
-    let temp_path = path.with_extension(format!("{}.tmp.json", std::process::id()));
-    let content = serde_json::to_string_pretty(acc)
-        .map_err(|e| format!("Failed to serialize accounts.json: {}", e))?;
-
-    {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(false)
-            .open(&temp_path)
-            .map_err(|e| format!("Failed to open temp accounts file: {}", e))?;
-
-        file.lock_exclusive()
-            .map_err(|e| format!("Failed to lock temp accounts file: {}", e))?;
-
-        file.set_len(0)
-            .map_err(|e| format!("Failed to set_len: {}", e))?;
-        use std::io::Seek;
-        file.seek(std::io::SeekFrom::Start(0))
-            .map_err(|e| format!("Failed to seek: {}", e))?;
-
-        file.write_all(content.as_bytes())
-            .map_err(|e| format!("Failed to write: {}", e))?;
-        file.flush()
-            .map_err(|e| format!("Failed to flush: {}", e))?;
-
-        let _ = fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600));
-    }
-
-    fs::rename(&temp_path, &path)
-        .map_err(|e| format!("Failed to replace {}: {}", path.display(), e))?;
-    let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-    Ok(())
+    accounts_registry_transaction_service::AccountsRegistryTransactionService::save(acc)
 }
 
-pub fn write_status_file(status: &StatusFile) -> Result<(), String> {
-    let path = status_json_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-        #[cfg(unix)]
-        {
-            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
-        }
-    }
-
-    let content = serde_json::to_string_pretty(status)
-        .map_err(|e| format!("Failed to serialize usage-status.json: {}", e))?;
-
-    let temp_path = path.with_extension(format!("{}.tmp.json", std::process::id()));
-    fs::write(&temp_path, content.as_bytes())
-        .map_err(|e| format!("Failed to write temp status file: {}", e))?;
-    #[cfg(unix)]
-    {
-        let _ = fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600));
-    }
-    fs::rename(&temp_path, &path).map_err(|e| format!("Failed to rename status file: {}", e))?;
-    #[cfg(unix)]
-    {
-        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-    }
-    Ok(())
+pub(crate) fn initialize_accounts_if_absent(
+    initial: &AccountsFile,
+) -> Result<AccountsFile, String> {
+    accounts_registry_transaction_service::AccountsRegistryTransactionService::initialize_if_absent(
+        initial,
+    )
 }
 
-#[allow(dead_code)]
-pub fn read_status_file() -> Result<StatusFile, String> {
-    let path = status_json_path();
-    if !path.exists() {
-        return Err(format!("Status file not found at {}", path.display()));
-    }
-    let content =
-        fs::read_to_string(&path).map_err(|e| format!("Failed to read status file: {}", e))?;
-    let status: StatusFile = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse status file: {}", e))?;
-    Ok(status)
+pub fn update_accounts_atomically(
+    update: impl FnOnce(&mut AccountsFile) -> Result<(), String>,
+) -> Result<AccountsFile, String> {
+    accounts_registry_transaction_service::AccountsRegistryTransactionService::update(update)
 }
 
-pub fn sync_settings_to_status_file(settings: &crate::models::Settings) {
-    if let Ok(mut status) = read_status_file() {
-        status.auto_switch_enabled = settings.auto_switch_enabled;
-        status.auto_switch_business_only = settings.auto_switch_business_only;
-        status.auto_switch_business_priority = settings.auto_switch_business_priority;
-        status.auto_reset_weekly_enabled = settings.auto_reset_weekly_enabled;
-        status.auto_reset_weekly_min_remaining_seconds =
-            settings.auto_reset_weekly_min_remaining_seconds;
-        if !settings.auto_reset_weekly_enabled {
-            status.auto_reset_state = "disabled".to_string();
-            status.auto_reset_reason = None;
-        }
-        let _ = write_status_file(&status);
-    }
-}
+#[cfg(test)]
+#[path = "storage/active_auth_read.test.rs"]
+mod active_auth_read_tests;

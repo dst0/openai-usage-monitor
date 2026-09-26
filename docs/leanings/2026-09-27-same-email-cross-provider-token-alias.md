@@ -1,0 +1,22 @@
+# 2026-09-27 — Same-email accounts could alias another provider's tokens
+
+- **Status:** Resolved
+- **Task/context:** Integrate shared-auth account switching with Desktop task recovery for multiple accounts owned by one person.
+- **Unexpected observation or failure:** An account identity check could accept provider A's `account_id` alongside provider B's saved token when both accounts had the same email. This could bind recovery or distribution to the wrong saved account.
+- **Evidence:** Focused synthetic tests initially accepted relabeled access, refresh, and ID tokens in the recovery and distribution preflight paths. A direct-switch binding test also accepted a changed provider ID with the old token set. No live credentials were used.
+- **Approaches tried:**
+  - **Attempt:** Match only the provider ID or decoded email.
+    - **Outcome:** Did not work.
+    - **Why:** A locally relabeled token can retain the same email while belonging to another saved provider.
+  - **Attempt:** Require the entire token set to equal the saved set.
+    - **Outcome:** Rejected.
+    - **Why:** Desktop legitimately rotates tokens for the same account.
+  - **Attempt:** Reconcile against a registry copy and reject nonblank access, refresh, or ID tokens that exactly match another saved account.
+    - **Outcome:** Worked in focused tests.
+    - **Why:** It permits unique same-account rotation while refusing known cross-account token aliases without mutating the registry during verification.
+- **Root cause:** Several identity resolvers checked provider ID alone; the shared reconciler trusted provider plus email even if a credential matched another saved account.
+- **Resolution:** Direct-switch binding, recovery account binding, and distribution preflight use the checked reconciler. It rejects known token aliases across saved accounts and ignores blank optional token placeholders. The flattened `tokens.extra` map has no defined stable identity key in this codebase, so generic extension equality is not treated as credential ownership proof.
+- **Verification:** The same-email recovery and distribution cases were red before the guard and all four focused cases passed afterward, including valid rotation controls. Direct-switch identity tests passed 5/5; the blank-placeholder test was red before the adjustment and green afterward. The combined tree passed 532 Rust unit tests, all Rust integration and file-limit tests, Clippy with warnings denied, and all Swift suites. Live cross-account task recovery remains unverified.
+- **Prevention/follow-up:** Keep token ownership checks shared across switch, distribution, and recovery; add a key-specific rule if an identity-bearing `tokens.extra` field gains a documented contract. Do not infer ownership from email or provider ID alone.
+- **Reusable learning:** For same-email accounts, verify that a live credential is unique to the selected saved account before binding a Desktop task.
+- **References:** `codex-switcher/src/switcher/active_auth_registry_sync_service.rs`, `codex-switcher/src/switcher/desktop_session_account_identity.test.rs`, `codex-switcher/src/recovery/active_auth_binding_service.test.rs`, `codex-switcher/src/distribution/distribution_state_preflight_service.test.rs`.

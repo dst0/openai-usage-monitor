@@ -1,12 +1,13 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub const JOURNAL_FILENAME: &str = "distribution-journal.json";
+const MAX_JOURNAL_BYTES: u64 = 16 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DistributionJournal {
@@ -52,32 +53,108 @@ impl DistributionJournal {
 
     pub fn load(home: &Path) -> Result<Option<Self>, String> {
         let path = Self::journal_path(home);
-        let content = match std::fs::read_to_string(path) {
-            Ok(content) => content,
+        let mut file = match OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&path)
+        {
+            Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(_) => return Err("Distribution journal is unreadable".to_string()),
+            Err(_) => return Err("Distribution journal could not be opened safely".into()),
         };
-        serde_json::from_str(&content)
+        let opened = file
+            .metadata()
+            .map_err(|_| "Distribution journal metadata is unavailable".to_string())?;
+        validate_private_file(&opened)?;
+        if opened.len() > MAX_JOURNAL_BYTES {
+            return Err("Distribution journal is oversized".into());
+        }
+        let mut content = Vec::new();
+        Read::by_ref(&mut file)
+            .take(MAX_JOURNAL_BYTES + 1)
+            .read_to_end(&mut content)
+            .map_err(|_| "Distribution journal could not be read".to_string())?;
+        if content.len() as u64 > MAX_JOURNAL_BYTES {
+            return Err("Distribution journal is oversized".into());
+        }
+        let named = fs::symlink_metadata(&path)
+            .map_err(|_| "Distribution journal changed during read".to_string())?;
+        validate_private_file(&named)?;
+        if named.dev() != opened.dev() || named.ino() != opened.ino() {
+            return Err("Distribution journal changed during read".into());
+        }
+        serde_json::from_slice(&content)
             .map(Some)
-            .map_err(|_| "Distribution journal is invalid".to_string())
+            .map_err(|_| "Distribution journal is invalid".into())
     }
 
     pub fn save(&self, home: &Path) -> Result<(), String> {
-        std::fs::create_dir_all(home).map_err(|e| e.to_string())?;
+        fs::create_dir_all(home).map_err(|_| "Distribution journal directory is unavailable")?;
         let path = Self::journal_path(home);
-        let data = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        let tmp = home.join(format!("distribution-journal.{}.tmp", std::process::id()));
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)
-            .map_err(|e| e.to_string())?;
-        file.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
-        file.sync_all().map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, path).map_err(|e| e.to_string())?;
-        Ok(())
+        let previous = checked_named_file(&path)?;
+        let data = serde_json::to_vec_pretty(self)
+            .map_err(|_| "Distribution journal could not be encoded".to_string())?;
+        if data.len() as u64 > MAX_JOURNAL_BYTES {
+            return Err("Distribution journal is oversized".into());
+        }
+        let mut nonce = [0u8; 8];
+        getrandom::getrandom(&mut nonce)
+            .map_err(|_| "Distribution journal staging nonce unavailable".to_string())?;
+        let tmp = home.join(format!(
+            "distribution-journal.{}.{:016x}.tmp",
+            std::process::id(),
+            u64::from_ne_bytes(nonce)
+        ));
+        let mut temporary_identity = None;
+        let result = (|| {
+            let mut file = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .mode(0o600)
+                .open(&tmp)
+                .map_err(|_| {
+                    "Distribution journal staging file could not be created".to_string()
+                })?;
+            let created = file
+                .metadata()
+                .map_err(|_| "Distribution journal staging identity is unavailable".to_string())?;
+            temporary_identity = Some((created.dev(), created.ino()));
+            file.write_all(&data)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| "Distribution journal staging file could not be saved".to_string())?;
+            file.set_permissions(fs::Permissions::from_mode(0o600))
+                .map_err(|_| "Distribution journal staging mode could not be set".to_string())?;
+            file.sync_all()
+                .map_err(|_| "Distribution journal staging file could not be saved".to_string())?;
+            let staged = file
+                .metadata()
+                .map_err(|_| "Distribution journal staging identity is unavailable".to_string())?;
+            drop(file);
+            let named_stage = fs::symlink_metadata(&tmp)
+                .map_err(|_| "Distribution journal staging identity changed".to_string())?;
+            validate_private_file(&named_stage)?;
+            if named_stage.dev() != staged.dev() || named_stage.ino() != staged.ino() {
+                return Err("Distribution journal staging identity changed".into());
+            }
+            if checked_named_file(&path)? != previous {
+                return Err("Distribution journal changed before replacement".into());
+            }
+            fs::rename(&tmp, &path)
+                .map_err(|_| "Distribution journal replacement failed".to_string())?;
+            File::open(home)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|_| "Distribution journal directory sync failed".to_string())?;
+            Ok(())
+        })();
+        if result.is_err() {
+            if let (Some(expected), Ok(named)) = (temporary_identity, fs::symlink_metadata(&tmp)) {
+                if named.is_file() && (named.dev(), named.ino()) == expected {
+                    let _ = fs::remove_file(&tmp);
+                }
+            }
+        }
+        result
     }
 
     pub fn update_phase(&mut self, home: &Path, phase: &str) -> Result<(), String> {
@@ -88,10 +165,15 @@ impl DistributionJournal {
 
     pub fn clear(home: &Path) -> Result<(), String> {
         let path = Self::journal_path(home);
-        match std::fs::remove_file(path) {
-            Ok(()) => Ok(()),
+        if checked_named_file(&path)?.is_none() {
+            return Ok(());
+        }
+        match fs::remove_file(path) {
+            Ok(()) => File::open(home)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|_| "Distribution journal directory sync failed".into()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.to_string()),
+            Err(_) => Err("Distribution journal could not be cleared".into()),
         }
     }
 
@@ -112,6 +194,30 @@ impl DistributionJournal {
         }
         false
     }
+
+    pub fn permits_stale_cleanup(&self) -> bool {
+        self.phase == "initialized"
+    }
+}
+
+fn validate_private_file(metadata: &fs::Metadata) -> Result<(), String> {
+    // SAFETY: geteuid has no inputs and does not access Rust-managed memory.
+    let uid = unsafe { libc::geteuid() };
+    if !metadata.is_file() || metadata.uid() != uid || metadata.mode() & 0o777 != 0o600 {
+        return Err("Distribution journal ownership, mode, or type is unsafe".into());
+    }
+    Ok(())
+}
+
+fn checked_named_file(path: &Path) -> Result<Option<(u64, u64)>, String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            validate_private_file(&metadata)?;
+            Ok(Some((metadata.dev(), metadata.ino())))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err("Distribution journal path could not be inspected".into()),
+    }
 }
 
 fn is_process_alive(pid: u32) -> bool {
@@ -127,3 +233,7 @@ fn is_process_alive(pid: u32) -> bool {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "distribution_journal.test.rs"]
+mod tests;

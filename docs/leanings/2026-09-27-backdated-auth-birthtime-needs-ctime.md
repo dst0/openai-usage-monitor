@@ -1,0 +1,22 @@
+# 2026-09-27 — Backdated auth birthtime cannot prove launch-time identity
+
+- **Status:** Resolved
+- **Task/context:** Restore an APP quota binding after ChatGPT Desktop was relaunched outside Monitor.
+- **Unexpected observation or failure:** A private auth file created after the simulated Desktop launch was accepted when its mtime was restored to an earlier value.
+- **Evidence:** The focused regression reproduced that macOS `utimes` can backdate both mtime and file birthtime; file ctime still reflected the post-launch change. No auth content was recorded.
+- **Approaches tried:**
+  - **Attempt:** Require mtime before Desktop process birth.
+    - **Outcome:** Did not work.
+    - **Why:** Restoring timestamps can make a replacement file appear older than the process.
+  - **Attempt:** Require both birthtime and mtime before process birth.
+    - **Outcome:** Did not work.
+    - **Why:** On this macOS filesystem, `utimes` also moved birthtime backward.
+  - **Attempt:** Require the latest of birthtime and ctime, plus mtime, before process birth.
+    - **Outcome:** Worked.
+    - **Why:** The post-launch replacement retained a later ctime, and normal pre-launch auth passed.
+- **Root cause:** mtime and birthtime are insufficient provenance for a restored file on this filesystem.
+- **Resolution:** External APP rebind checks mtime and the maximum of birthtime and ctime against the exact new process birth. It also rechecks private file and process identity around the marker write.
+- **Verification:** The real-file `restored_auth_with_backdated_mtime_cannot_impersonate_prelaunch_auth` regression failed before the ctime guard and passed afterward. The positive real-file relaunch test continues to pass.
+- **Prevention/follow-up:** Keep the ctime check whenever launch-time auth provenance is inferred from local file metadata. If Desktop exposes an authoritative current-account read, prefer it over filesystem inference.
+- **Reusable learning:** On macOS, a backdated file birthtime does not prove when credentials were actually replaced; include ctime.
+- **References:** `codex-switcher/src/distribution/desktop_external_binding_service.rs`, `codex-switcher/src/distribution/desktop_external_binding_service.test.rs`.

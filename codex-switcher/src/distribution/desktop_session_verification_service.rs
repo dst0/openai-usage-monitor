@@ -1,8 +1,8 @@
 use super::app_lifecycle::AppLifecycle;
 use super::desktop_app_session::DesktopAppSession;
+use super::desktop_external_binding_service::DesktopExternalBindingService;
 use super::distribution_plan::DistributionPlan;
 use super::distribution_request::DistributionRequest;
-use super::window_restore_process_identity::ProcessIdentity;
 use crate::models::AccountsFile;
 use std::path::Path;
 
@@ -18,7 +18,7 @@ impl<'a> DesktopSessionVerificationService<'a> {
     }
 
     pub(super) fn verified_session(&self) -> Result<DesktopAppSession, String> {
-        let session = DesktopAppSession::load(&self.home.join("desktop-app-session.json"))
+        let session = DesktopAppSession::load_checked(&self.home.join("desktop-app-session.json"))?
             .ok_or("Running Desktop has no process-bound account session")?;
         let process = session
             .process
@@ -31,26 +31,14 @@ impl<'a> DesktopSessionVerificationService<'a> {
         if observed != *process || !session.matches_process_lifetime(&process.birth_id) {
             return Err("Running Desktop account session does not match the live process".into());
         }
+        if let Some(bound_auth_file_id) = session.auth_file_id.as_deref() {
+            let current = DesktopExternalBindingService::read_auth_evidence(self.home)
+                .ok_or("Running Desktop inferred account auth cannot be verified")?;
+            if current.0 != session.account_id || current.1 != bound_auth_file_id {
+                return Err("Running Desktop inferred account auth changed".into());
+            }
+        }
         Ok(session)
-    }
-
-    pub(super) fn bind_relaunched_process(
-        &self,
-        app_account_id: &str,
-        cli_account_id: &str,
-        pid: u32,
-    ) -> Result<ProcessIdentity, String> {
-        let before = self.lifecycle.inspect_process(pid)?;
-        let process = self.lifecycle.inspect_process(pid)?;
-        if process != before {
-            return Err("Desktop process identity changed before session binding".into());
-        }
-        DesktopAppSession::bound(app_account_id, cli_account_id, process.clone())
-            .save(&self.home.join("desktop-app-session.json"))?;
-        if self.lifecycle.inspect_process(pid)? != process {
-            return Err("Desktop process identity changed after session binding".into());
-        }
-        Ok(process)
     }
 
     pub(super) fn resolve_current_app_account(
@@ -83,7 +71,7 @@ impl<'a> DesktopSessionVerificationService<'a> {
         plan: &DistributionPlan,
         request: &DistributionRequest,
     ) -> Result<(), String> {
-        let running = self.lifecycle.is_app_running();
+        let running = self.lifecycle.is_app_running()?;
         if plan.current_app_id.is_some() && !running {
             return Err("Desktop process changed before distribution could start".into());
         }
@@ -136,20 +124,11 @@ impl<'a> DesktopSessionVerificationService<'a> {
         Ok(())
     }
 
-    pub(crate) fn update_cli_binding(
-        &self,
-        old_cli_account_id: &str,
-        cli_account_id: &str,
-    ) -> Result<(), String> {
-        let session = self.verified_session()?;
-        if session.cli_account_id.as_deref() != Some(old_cli_account_id) {
-            return Err("Desktop CLI binding changed before account commit".into());
-        }
-        self.save_cli_binding(session, cli_account_id)
-    }
-
     pub(crate) fn reconcile_cli_binding(&self, cli_account_id: &str) -> Result<(), String> {
         let session = self.verified_session()?;
+        if session.account_id != cli_account_id {
+            return Err("Desktop and CLI account bindings differ".into());
+        }
         self.save_cli_binding(session, cli_account_id)
     }
 
@@ -161,11 +140,17 @@ impl<'a> DesktopSessionVerificationService<'a> {
         let process = session
             .process
             .ok_or("Desktop process identity is missing")?;
-        DesktopAppSession::bound(session.account_id, cli_account_id, process.clone())
-            .save(&self.home.join("desktop-app-session.json"))?;
+        let mut updated =
+            DesktopAppSession::bound(session.account_id, cli_account_id, process.clone());
+        updated.auth_file_id = session.auth_file_id;
+        updated.save(&self.home.join("desktop-app-session.json"))?;
         if self.lifecycle.inspect_process(process.pid)? != process {
             return Err("Desktop process changed after CLI binding".into());
         }
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "desktop_session_verification_service.test.rs"]
+mod tests;

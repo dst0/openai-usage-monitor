@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub(super) struct Evidence {
     pub(super) started: bool,
     pub(super) work: bool,
@@ -12,13 +12,20 @@ pub(super) struct Evidence {
 }
 
 impl Evidence {
-    pub(super) fn event(&mut self, line: &[u8]) {
+    pub(super) fn event(&mut self, line: &[u8]) -> bool {
         let Ok(value) = serde_json::from_slice::<Value>(line) else {
-            return;
+            return false;
+        };
+        let Some(record) = value.get("type").and_then(Value::as_str) else {
+            return false;
         };
         let payload = &value["payload"];
+        if matches!(record, "event_msg" | "response_item")
+            && (!payload.is_object() || payload.get("type").and_then(Value::as_str).is_none())
+        {
+            return false;
+        }
         let kind = payload["type"].as_str().unwrap_or("");
-        let record = value["type"].as_str().unwrap_or("");
         let time = value["timestamp"].as_str().map(str::to_string);
         if record == "event_msg" && kind == "task_started" {
             self.started = true;
@@ -64,6 +71,7 @@ impl Evidence {
             self.work = true;
             self.work_time = time;
         }
+        true
     }
 
     pub(super) fn matches_expected_turn(&self, expected_turn_id: Option<&str>) -> bool {

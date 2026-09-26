@@ -4,11 +4,7 @@ use std::time::Duration;
 
 #[test]
 fn returns_when_the_app_has_already_exited() {
-    assert!(wait_for_app_exit_with(
-        || false,
-        Duration::ZERO,
-        Duration::ZERO,
-    ));
+    assert!(wait_for_app_exit_with(|| Ok(false), Duration::ZERO, Duration::ZERO,).unwrap());
 }
 
 #[test]
@@ -17,32 +13,44 @@ fn waits_until_the_app_exits() {
     assert!(wait_for_app_exit_with(
         || {
             checks += 1;
-            checks < 3
+            Ok(checks < 3)
         },
         Duration::from_secs(1),
         Duration::ZERO,
-    ));
+    )
+    .unwrap());
     assert_eq!(checks, 3);
 }
 
 #[test]
 fn times_out_without_forcing_termination() {
-    assert!(!wait_for_app_exit_with(
-        || true,
-        Duration::ZERO,
-        Duration::ZERO,
-    ));
+    assert!(!wait_for_app_exit_with(|| Ok(true), Duration::ZERO, Duration::ZERO,).unwrap());
 }
 
 #[test]
 fn parses_only_the_exact_codex_app_executable() {
     let process_list = format!(
-            "  42 {CODEX_APP_EXECUTABLE}\n\
+            "   0 kernel_task\n\
+               1 /sbin/launchd\n\
+              42 {CODEX_APP_EXECUTABLE}\n\
              43 /Applications/ChatGPT.app/Contents/Frameworks/Codex Helper.app/Contents/MacOS/Codex Helper\n\
              44 /Applications/Other.app/Contents/MacOS/ChatGPT\n"
         );
 
-    assert_eq!(parse_codex_app_pids(&process_list), vec![42]);
+    assert_eq!(parse_codex_app_pids(&process_list).unwrap(), vec![42]);
+}
+
+#[test]
+fn orphaned_bundled_writer_keeps_shared_auth_guard_closed() {
+    let writer =
+        "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
+    let legacy_writer = "/Applications/ChatGPT.app/Contents/Resources/codex";
+    let independent = "/usr/local/bin/codex";
+    assert!(parse_shared_auth_activity(&format!("1 /sbin/launchd\n200 {writer}\n")).unwrap());
+    assert!(
+        parse_shared_auth_activity(&format!("1 /sbin/launchd\n201 {legacy_writer}\n")).unwrap()
+    );
+    assert!(!parse_shared_auth_activity(&format!("300 {independent}\n")).unwrap());
 }
 
 #[test]
@@ -71,6 +79,7 @@ fn test_resolve_target_account_idx() {
                 refresh_token: None,
                 id_token: None,
                 account_id: Some("3f533057-4bac-44ea".to_string()),
+                extra: Default::default(),
             },
             enabled: true,
             priority: 1,
@@ -99,6 +108,7 @@ fn test_resolve_target_account_idx() {
                 refresh_token: None,
                 id_token: None,
                 account_id: Some("26a1ef5c-ad94-460e".to_string()),
+                extra: Default::default(),
             },
             enabled: true,
             priority: 2,
@@ -282,6 +292,104 @@ fn test_rollout_active_mid_turn() {
 }
 
 #[test]
+fn malformed_newest_rollout_event_cannot_authorize_unattended_dispatch() {
+    let lines = vec![
+        r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-a"}}"#
+            .to_string(),
+        r#"{"type":"event_msg","payload":{"type":"task_complete","error":{"message":"auth outage"}"#
+            .to_string(),
+    ];
+    assert_eq!(
+        inspect_thread_rollout_state_from_lines(&lines),
+        ThreadRolloutState::Unknown
+    );
+}
+
+#[test]
+fn incomplete_final_rollout_line_is_not_a_valid_tail_state() {
+    let root = std::env::temp_dir().join(format!(
+        "codex-incomplete-rollout-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    let sessions = root.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let tid = "01a07d3c-3008-75c2-87a6-2c5c75f0e499";
+    let rollout = sessions.join(format!("rollout-{tid}.jsonl"));
+    std::fs::write(
+        &rollout,
+        b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\"}}\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"",
+    )
+    .unwrap();
+    assert_eq!(
+        inspect_thread_rollout_state(&root, tid),
+        ThreadRolloutState::Unknown
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn invalid_utf8_latest_rollout_record_cannot_authorize_unattended_dispatch() {
+    let root = std::env::temp_dir().join(format!(
+        "codex-invalid-utf8-rollout-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    let sessions = root.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let tid = "01a07d3c-3008-75c2-87a6-2c5c75f0e499";
+    let rollout = sessions.join(format!("rollout-{tid}.jsonl"));
+    let mut bytes = b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\"}}\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"ta".to_vec();
+    bytes.push(0xff);
+    bytes.extend_from_slice(b"sk_complete\",\"error\":{\"message\":\"auth outage\"}}}\n");
+    std::fs::write(&rollout, bytes).unwrap();
+    assert_eq!(
+        inspect_thread_rollout_state(&root, tid),
+        ThreadRolloutState::Unknown
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn bounded_tail_can_discard_a_split_multibyte_prefix_and_read_the_terminal_event() {
+    let path = std::env::temp_dir().join(format!(
+        "codex-tail-utf8-boundary-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    let prefix = format!("{}\n", "é".repeat(100));
+    let terminal = "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n";
+    let content = format!("{prefix}{terminal}");
+    std::fs::write(&path, content.as_bytes()).unwrap();
+    let cut_inside_last_character = prefix.len() - 2;
+    let max_bytes = (content.len() - cut_inside_last_character) as u64;
+    let lines = thread_rollout_inspector::read_rollout_tail_lines(&path, max_bytes);
+    assert_eq!(
+        thread_rollout_inspector::inspect_thread_rollout_state_from_lines(&lines),
+        ThreadRolloutState::CleanCompleted
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn bounded_tail_keeps_a_complete_event_at_an_exact_newline_boundary() {
+    let path = std::env::temp_dir().join(format!(
+        "codex-tail-line-boundary-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    let prefix = "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\"}}\n";
+    let terminal = "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n";
+    std::fs::write(&path, format!("{prefix}{terminal}")).unwrap();
+    let lines = thread_rollout_inspector::read_rollout_tail_lines(&path, terminal.len() as u64);
+    assert_eq!(
+        thread_rollout_inspector::inspect_thread_rollout_state_from_lines(&lines),
+        ThreadRolloutState::CleanCompleted
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn test_inspect_thread_rollout_state_large_tail_fallback() {
     let root =
         std::env::temp_dir().join(format!("codex-rollout-large-tail-{}", std::process::id()));
@@ -334,6 +442,7 @@ fn test_switch_to_account_rejects_relogin_needed() {
             refresh_token: Some("rt_1".to_string()),
             id_token: None,
             account_id: Some("uuid-1".to_string()),
+            extra: Default::default(),
         },
         enabled: true,
         priority: 1,
@@ -352,16 +461,32 @@ fn test_switch_to_account_rejects_relogin_needed() {
         organization_name: None,
     };
 
+    let mut active = acc.clone();
+    active.id = "other@example.com:uuid-2".to_string();
+    active.email = "other@example.com".to_string();
+    active.account_id = "uuid-2".to_string();
+    active.tokens.access_token = "at_2".to_string();
+    active.tokens.refresh_token = Some("rt_2".to_string());
+    active.tokens.account_id = Some("uuid-2".to_string());
+    active.last_error = None;
     let file = crate::models::AccountsFile {
         active_account_id: Some("other@example.com:uuid-2".to_string()),
         settings: Default::default(),
-        accounts: vec![acc],
+        accounts: vec![acc, active.clone()],
     };
     crate::storage::save_accounts(&file).unwrap();
+    crate::storage::write_active_auth_json(&crate::models::AuthJson {
+        auth_mode: Some("chatgpt".to_string()),
+        openai_api_key: None,
+        tokens: Some(active.tokens),
+        last_refresh: None,
+        extra: Default::default(),
+    })
+    .unwrap();
 
     let err = switch_to_account("user@example.com:uuid-1", false, false, SwitchTrigger::User)
         .unwrap_err();
-    assert!(err.contains("requires re-login"));
+    assert!(err.contains("requires re-login"), "{err}");
     assert!(err.contains("cxi relogin"));
 }
 
