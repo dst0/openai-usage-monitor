@@ -10,9 +10,6 @@ use std::time::Duration;
 /// Recovery-only entry point. Uses the same verified pipeline as account switching.
 pub fn resume_thread_interactive(thread_id: Option<&str>) -> Result<(), String> {
     let _operation = crate::recovery::operation_lock()?;
-    if !is_codex_app_running() {
-        return Err("Codex is not running; launch it before using resume".into());
-    }
     let (targets, mode) = match thread_id {
         Some(tid) => (
             vec![clean_thread_id(tid)],
@@ -23,6 +20,23 @@ pub fn resume_thread_interactive(thread_id: Option<&str>) -> Result<(), String> 
             crate::recovery::RecoveryMode::DiscoveredOnly,
         ),
     };
+    if !is_codex_app_running() {
+        let home = crate::storage::codex_home();
+        if targets.is_empty() {
+            // Nothing was discovered, so there is no reason to start Desktop.
+            crate::runtime_print!("RECOVERY_RESULT verified_or_completed=0 failed=0");
+            return Ok(());
+        }
+        if !CodexAvailabilityService::resume_has_launchable_target(&targets, |id| {
+            is_user_thread(&home, id)
+        }) {
+            return Err(
+                "Target is absent, archived, or a subagent; Codex was not started for recovery"
+                    .into(),
+            );
+        }
+    }
+    CodexAvailabilityService::ensure_running_for_resume(is_codex_app_running, launch_codex_app)?;
     crate::recovery::recover_threads(&targets, mode)
 }
 
