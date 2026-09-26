@@ -14,6 +14,7 @@ mod foreground_checkpoint_service;
 mod ipc_call_error;
 mod ipc_protocol;
 mod ipc_read_error;
+mod ipc_response_reader;
 mod ipc_socket;
 mod manifest_prune_service;
 mod manifest_store;
