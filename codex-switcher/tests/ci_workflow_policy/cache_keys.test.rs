@@ -1,4 +1,5 @@
 use super::{cache_key_input_violations, hash_files_calls};
+use crate::git_repo::GitRepo;
 use crate::scratch_git_repo::ScratchGitRepo;
 
 const KEY: &str = "          key: ${{ runner.os }}-cargo-${{ hashFiles('codex-switcher/rust-toolchain.toml') }}-${{ hashFiles('codex-switcher/Cargo.lock') }}\n";
@@ -88,6 +89,17 @@ fn unreadable_calls_are_reported_with_their_line() {
     assert_eq!(v.len(), 1, "{v:?}");
     assert!(
         v[0].starts_with("line 2: `hashFiles('**/Cargo.lock')` is a pattern"),
+        "{v:?}"
+    );
+}
+
+#[test]
+fn unanswerable_commit_queries_fail_closed() {
+    let v = cache_key_input_violations(KEY, &GitRepo::at("/nonexistent/ci-policy"));
+    assert_eq!(v.len(), 2, "{v:?}");
+    assert!(
+        v.iter()
+            .all(|m| m.starts_with("line 1: cannot verify that `codex-switcher/")),
         "{v:?}"
     );
 }

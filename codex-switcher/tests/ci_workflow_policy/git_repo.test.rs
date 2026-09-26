@@ -29,6 +29,23 @@ fn committed_file_requires_a_regular_file_at_head() {
     }
 }
 
+/// Review of this PR, F6: a symlink named like the lockfile is a tree entry
+/// of type blob with mode 120000, not a committed lockfile.
+#[test]
+fn committed_file_rejects_symlinks_and_accepts_executables() {
+    let scratch = ScratchGitRepo::init();
+    scratch
+        .write("target.lock", "real\n")
+        .write("tool.sh", "#!/bin/sh\n");
+    std::os::unix::fs::symlink("target.lock", scratch.path("Cargo.lock")).expect("symlink");
+    scratch.git(&["update-index", "--add", "--chmod=+x", "tool.sh"]);
+    scratch.commit_all(false);
+    let repo = scratch.repo();
+    assert_eq!(repo.committed_file("Cargo.lock"), Ok(false));
+    assert_eq!(repo.committed_file("target.lock"), Ok(true));
+    assert_eq!(repo.committed_file("tool.sh"), Ok(true));
+}
+
 #[test]
 fn committed_file_fails_closed_without_a_commit_or_a_repository() {
     let empty = ScratchGitRepo::init();
@@ -38,6 +55,37 @@ fn committed_file_fails_closed_without_a_commit_or_a_repository() {
     assert!(nowhere.ignored_by_gitignore("Cargo.lock").is_err());
     assert!(nowhere.tracked_files("*.sh").is_err());
     assert!(nowhere.matches_head("Cargo.lock").is_err());
+}
+
+/// Review of this PR, F5: `ls-files` lists nothing for a path that is in
+/// neither the index nor the working tree, which is no evidence either way.
+#[test]
+fn ignored_by_gitignore_needs_a_tracked_or_present_path() {
+    let scratch = ScratchGitRepo::init();
+    scratch
+        .write(".gitignore", "*.lock\n")
+        .write("README.md", "")
+        .commit_all(false);
+    let repo = scratch.repo();
+    let missing = repo.ignored_by_gitignore("missing.lock");
+    assert!(
+        missing
+            .as_ref()
+            .is_err_and(|e| e.contains("neither tracked nor present")),
+        "{missing:?}"
+    );
+    // Tracked but deleted from the working tree still has an answer.
+    scratch
+        .write(".gitignore", "")
+        .write("gone.lock", "")
+        .commit_all(false)
+        .remove("gone.lock");
+    assert_eq!(repo.ignored_by_gitignore("gone.lock"), Ok(false));
+    scratch.write(".gitignore", "*.lock\n");
+    assert_eq!(repo.ignored_by_gitignore("gone.lock"), Ok(true));
+    // Present but untracked has one too.
+    scratch.write("new.md", "");
+    assert_eq!(repo.ignored_by_gitignore("new.md"), Ok(false));
 }
 
 #[test]
@@ -134,4 +182,22 @@ fn git_commands_drop_inherited_git_variables() {
         ]
     );
     assert_eq!(command.get_args().collect::<Vec<_>>(), ["-C", "/tmp"]);
+}
+
+/// `git_command` must isolate the variables this process actually has, not
+/// a fixed list. The marker name is one git ignores, so a concurrent test's
+/// git could inherit it harmlessly.
+#[test]
+fn git_command_drops_the_git_variables_of_this_process() {
+    const MARKER: &str = "GIT_CI_POLICY_ISOLATION_MARKER";
+    std::env::set_var(MARKER, "1");
+    let command = super::git_command(std::path::Path::new("/tmp"));
+    std::env::remove_var(MARKER);
+    assert!(
+        command
+            .get_envs()
+            .any(|(key, value)| key == MARKER && value.is_none()),
+        "{:?}",
+        command.get_envs().collect::<Vec<_>>()
+    );
 }

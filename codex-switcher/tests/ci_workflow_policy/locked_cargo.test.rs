@@ -1,4 +1,4 @@
-use super::unlocked_cargo_violations;
+use super::{cargo_commands, runs_locked, unlocked_cargo_violations};
 
 fn violations(text: &str) -> Vec<String> {
     unlocked_cargo_violations(text)
@@ -202,8 +202,138 @@ fn a_workflow_that_resolves_its_own_lockfile_is_rejected() {
 #[test]
 fn workflow_violations_include_the_locked_cargo_rule() {
     let unlocked = crate::fixtures::with("run: cargo test --locked", "run: cargo test");
+    let line = 1 + unlocked
+        .lines()
+        .position(|l| l.ends_with("run: cargo test"))
+        .expect("fixture step");
     assert_eq!(
         crate::rules::workflow_violations(&unlocked),
-        ["line 20: `cargo test` must pass `--locked` so a missing or stale Cargo.lock fails instead of being re-resolved"]
+        [format!("line {line}: `cargo test` must pass `--locked` so a missing or stale Cargo.lock fails instead of being re-resolved")]
     );
+}
+
+/// Regression (review of this PR, F1): comments were cut at the first ` #`,
+/// so a tab before `#` kept the comment text and a quoted `#` hid the rest of
+/// the line.
+#[test]
+fn quoted_hashes_and_tab_comments_do_not_hide_commands() {
+    for (text, command) in [
+        ("cargo build\t# TODO\n", "`cargo build`"),
+        // The old reader kept this comment and counted its `--locked`.
+        ("cargo build\t# --locked\n", "`cargo build`"),
+        ("echo \"Building #1\" && cargo build\n", "`cargo build`"),
+        ("run: echo \"step #2\"; cargo test\n", "`cargo test`"),
+        ("echo 'a # b' && cargo test\n", "`cargo test`"),
+    ] {
+        let v = violations(text);
+        assert_eq!(v.len(), 1, "{text:?}: {v:?}");
+        assert!(v[0].contains(command), "{text:?}: {v:?}");
+    }
+    assert_eq!(
+        violations("cargo build --locked\t# cargo test\n"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn an_unterminated_quote_is_reported() {
+    let v = violations("cargo test --locked\necho \"unclosed\ncargo build --locked\n");
+    assert_eq!(
+        v,
+        ["line 2: quote is never closed, so the cargo scan cannot tell commands from quoted text"]
+    );
+    // Quoted programs that span lines and close are read normally.
+    let awk = "awk '\n  { print }\n' file\ncargo test --locked\n";
+    assert_eq!(violations(awk), Vec::<String>::new());
+}
+
+/// Regression (review of this PR, F2): a backslash, quotes inside the word, a
+/// looked-up path, or a variable in the command position still run cargo.
+#[test]
+fn spellings_that_still_run_cargo_are_invocations() {
+    for text in [
+        "\\cargo build\n",
+        "c\\argo build\n",
+        "ca''rgo build\n",
+        "$(which cargo) build\n",
+        "$(command -v cargo) build\n",
+        "\"$(command -v cargo)\" build\n",
+        "`which cargo` build\n",
+        "$CARGO build\n",
+        "\"${CARGO}\" test\n",
+        "${CARGO_BIN:-cargo} test\n",
+        "RUSTFLAGS=-Dwarnings $MY_CARGO clippy\n",
+        "env -i $cargo test\n",
+        "if ! $CARGO build; then\n",
+        "eval \"cargo build\"\n",
+    ] {
+        let v = violations(text);
+        assert_eq!(v.len(), 1, "{text:?}: {v:?}");
+    }
+    for text in [
+        "$(command -v cargo) build --locked\n",
+        "\"$CARGO\" test --locked\n",
+        "CARGO=$(command -v cargo)\n",
+        "export CARGO=\"$(command -v cargo)\"\n",
+        "echo \"$CARGO_HOME\"\n",
+        "rm -rf \"${CARGO_TARGET_DIR}\"\n",
+        "[ -d \"$CARGO_HOME\" ]\n",
+        "PATH=\"$CARGO_HOME/bin:$PATH\"\n",
+        "$(command -v rustc) --version\n",
+        // A path under a CARGO variable is a program of its own.
+        "\"$CARGO_HOME/bin/rustup\" show\n",
+    ] {
+        assert_eq!(violations(text), Vec::<String>::new(), "{text:?}");
+    }
+}
+
+/// Review of this PR, F4: shapes around separators and continuations.
+#[test]
+fn separators_and_continuations_bound_each_command() {
+    for (text, count) in [
+        ("cargo build \\\n", 1),
+        ("cargo test | cargo build --locked\n", 1),
+        ("cargo test || cargo build --locked\n", 1),
+        ("(cargo test) --locked\n", 1),
+        // bash ends the continued command at the comment and runs it unlocked.
+        ("cargo test \\\n  # c\n  --locked\n", 1),
+    ] {
+        let v = violations(text);
+        assert_eq!(v.len(), count, "{text:?}: {v:?}");
+    }
+}
+
+#[test]
+fn cargo_commands_start_at_the_word_that_runs_cargo() {
+    assert_eq!(
+        cargo_commands("x=1 \\\n  /usr/bin/env cargo build --locked # b\nwhich cargo\n"),
+        [(
+            1,
+            vec![
+                "cargo".to_string(),
+                "build".to_string(),
+                "--locked".to_string()
+            ]
+        )]
+    );
+}
+
+#[test]
+fn runs_locked_requires_the_subcommand_and_its_own_flag() {
+    let script = "cargo build --release --locked\ncargo test\n";
+    assert!(runs_locked(script, "build"));
+    assert!(!runs_locked(script, "test"));
+    assert!(!runs_locked("cargo build --release\n", "build"));
+    assert!(runs_locked("cargo test --frozen\n", "test"));
+    for text in [
+        "cargo test -- --locked\n",
+        "cargo clippy --locked && cargo test\n",
+        "cargo --locked test\n",
+        "# cargo test --locked\n",
+    ] {
+        assert!(!runs_locked(text, "test"), "{text:?}");
+    }
+    // Prose still reads as a command (fail closed for the negative rule), so
+    // the live check binds to a required job's own text.
+    assert!(runs_locked("echo cargo test --locked\n", "test"));
 }

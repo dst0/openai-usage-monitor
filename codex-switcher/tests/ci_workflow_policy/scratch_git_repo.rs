@@ -31,6 +31,11 @@ impl ScratchGitRepo {
         GitRepo::at(&self.root)
     }
 
+    /// Absolute path of `path` inside the repository.
+    pub fn path(&self, path: &str) -> PathBuf {
+        self.root.join(path)
+    }
+
     pub fn write(&self, path: &str, contents: &str) -> &Self {
         let file = self.root.join(path);
         fs::create_dir_all(file.parent().expect("file has a parent")).expect("create parent");

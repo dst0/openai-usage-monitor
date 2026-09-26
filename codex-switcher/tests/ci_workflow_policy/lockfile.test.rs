@@ -72,8 +72,9 @@ fn a_lockfile_removed_from_head_is_rejected() {
     scratch.write(LOCKFILE, "version = 4\n").commit_all(false);
     scratch.git(&["rm", "-q", LOCKFILE]).commit_all(false);
     let v = violations(&scratch);
-    assert_eq!(v.len(), 1, "{v:?}");
+    assert_eq!(v.len(), 2, "{v:?}");
     assert!(v[0].contains("is not committed"), "{v:?}");
+    assert!(v[1].contains("neither tracked nor present"), "{v:?}");
 }
 
 #[test]

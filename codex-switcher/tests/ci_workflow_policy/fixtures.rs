@@ -290,6 +290,24 @@ fn jobs_parse_ids_and_direct_properties() {
 }
 
 #[test]
+fn job_text_spans_one_job() {
+    let text = compliant();
+    let build = crate::workflow_jobs::job_text(&text, "build").expect("build job");
+    assert!(build.starts_with("  build:\n    name: Build\n"), "{build}");
+    assert!(
+        build.ends_with("      - run: cargo test --locked"),
+        "{build}"
+    );
+    let lint = crate::workflow_jobs::job_text(&text, "lint").expect("lint job");
+    assert!(
+        lint.starts_with("  lint:\n") && lint.ends_with("run: cargo clippy --locked"),
+        "{lint}"
+    );
+    assert_eq!(crate::workflow_jobs::job_text(&text, "Build"), None);
+    assert_eq!(crate::workflow_jobs::job_text("name: x\n", "build"), None);
+}
+
+#[test]
 fn concurrency_requires_group_and_cancel() {
     assert_eq!(
         concurrency_violations(&with(

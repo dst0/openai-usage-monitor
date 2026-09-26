@@ -64,6 +64,24 @@ pub fn jobs(text: &str) -> Vec<Job> {
     out
 }
 
+/// Lines of the job `id`, its header included, joined with `\n`. `None`
+/// when the workflow has no such job.
+pub fn job_text(text: &str, id: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let body = nested(&lines, top_level_index(&lines, "jobs")?);
+    let job_indent = indent(lines[*body.first()?]);
+    let is_header = |i: &usize| indent(lines[*i]) == job_indent;
+    let start = body
+        .iter()
+        .position(|i| is_header(i) && entry(lines[*i]).is_some_and(|e| e.key == id))?;
+    let end = body[start + 1..]
+        .iter()
+        .position(is_header)
+        .map_or(body.len(), |n| start + 1 + n);
+    let (first, last) = (body[start], body.get(end).map_or(lines.len(), |&i| i));
+    Some(lines[first..last].join("\n"))
+}
+
 /// Indices of the direct properties of the step whose property is on
 /// `lines[at]`: its `- ` marker line plus later lines at the same key column.
 /// `None` when no list-item marker owns that line.

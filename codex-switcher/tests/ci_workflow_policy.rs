@@ -8,8 +8,9 @@
 //! `checkout.rs`, `triggers.rs`, `required_checks.rs`, `locked_cargo.rs`,
 //! `lockfile.rs`, and `cache_keys.rs`, and `yaml_limits.rs` rejecting YAML the
 //! line reader (`yaml_lines.rs`, `yaml_values.rs`, `workflow_jobs.rs`) cannot
-//! read. `git_repo.rs` answers what the repository commits; negative cases
-//! live in `fixtures.rs` and in each module's `.test.rs` file.
+//! read. `shell_lines.rs` reads shell command lines for the locked-cargo rule,
+//! and `git_repo.rs` answers what the repository commits; negative cases live
+//! in `fixtures.rs` and in each module's `.test.rs` file.
 
 use std::fs;
 use std::path::PathBuf;
@@ -39,6 +40,9 @@ mod checkout;
 
 #[path = "ci_workflow_policy/triggers.rs"]
 mod triggers;
+
+#[path = "ci_workflow_policy/shell_lines.rs"]
+mod shell_lines;
 
 #[path = "ci_workflow_policy/locked_cargo.rs"]
 mod locked_cargo;
@@ -169,6 +173,34 @@ fn ci_runs_on_pinned_toolchain() {
 fn cargo_lockfile_is_committed() {
     let violations = lockfile::committed_lockfile_violations(&repo(), LOCKFILE);
     assert!(violations.is_empty(), "{violations:?}");
+}
+
+/// The negative rules pass on a workflow or installer that never builds;
+/// the builds that matter must also exist with `--locked`.
+#[test]
+fn installer_and_required_rust_job_build_locked() {
+    assert!(
+        locked_cargo::runs_locked(&read("scripts/install.sh"), "build"),
+        "scripts/install.sh must run `cargo build --locked`"
+    );
+    let ci = read(&format!(".github/workflows/{REQUIRED_CHECK_WORKFLOW}"));
+    let contexts = rules::required_check_contexts(&read("scripts/setup-github-protection.sh"));
+    let required_jobs_testing_locked: Vec<String> = workflow_jobs::jobs(&ci)
+        .into_iter()
+        .filter(|job| {
+            job.prop("name")
+                .is_some_and(|n| contexts.iter().any(|c| c == n))
+        })
+        .filter(|job| {
+            workflow_jobs::job_text(&ci, &job.id)
+                .is_some_and(|t| locked_cargo::runs_locked(&t, "test"))
+        })
+        .map(|job| job.id)
+        .collect();
+    assert!(
+        !required_jobs_testing_locked.is_empty(),
+        "no required-check job in {REQUIRED_CHECK_WORKFLOW} runs `cargo test --locked`"
+    );
 }
 
 /// Workflows are covered by `workflow_violations`; the installer and the

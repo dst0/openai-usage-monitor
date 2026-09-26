@@ -1,6 +1,8 @@
-//! Read-only git queries for rules about what the repository commits, which
-//! the working tree alone cannot show: a lockfile can exist locally while
-//! `.gitignore` keeps it out of every clean checkout. Git runs without user
+//! Git queries for rules about what the repository commits, which the
+//! working tree alone cannot show: a lockfile can exist locally while
+//! `.gitignore` keeps it out of every clean checkout. The queries never change
+//! commits, refs, or file content; `git diff` may refresh the stat data cached
+//! in the index. Git runs without user
 //! or system configuration and without inherited `GIT_*` variables, so a
 //! developer's global excludes, diff drivers, or a hook's `GIT_DIR` cannot
 //! change an answer or redirect a command to another repository.
@@ -8,6 +10,10 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+
+/// Tree entry modes of a regular file: plain or executable. A symlink
+/// (`120000`) or submodule (`160000`) entry is not a committed file.
+const REGULAR_FILE_MODES: [&str; 2] = ["100644", "100755"];
 
 /// A git checkout rooted at `root`.
 pub struct GitRepo {
@@ -62,19 +68,27 @@ impl GitRepo {
         String::from_utf8(output.stdout).map_err(|e| format!("git output is not UTF-8: {e}"))
     }
 
-    /// Whether `HEAD` holds `path` as a regular file.
+    /// Whether `HEAD` holds `path` as a regular file, not a symlink,
+    /// directory, or submodule.
     pub fn committed_file(&self, path: &str) -> Result<bool, String> {
         let listing = self.stdout(&["ls-tree", "-z", "HEAD", "--", path])?;
         Ok(listing.split('\0').any(|entry| {
-            entry
-                .split_once('\t')
-                .is_some_and(|(meta, name)| name == path && meta.split(' ').nth(1) == Some("blob"))
+            entry.split_once('\t').is_some_and(|(meta, name)| {
+                let mut meta = meta.split(' ');
+                name == path
+                    && meta
+                        .next()
+                        .is_some_and(|mode| REGULAR_FILE_MODES.contains(&mode))
+                    && meta.next() == Some("blob")
+            })
         }))
     }
 
     /// Whether a versioned `.gitignore` matches `path`, tracked or not.
     /// Per-clone `.git/info/exclude` and global excludes do not count: they
-    /// cannot keep a file out of another clone.
+    /// cannot keep a file out of another clone. `git ls-files` lists only
+    /// paths in the index or the working tree, so a path in neither is an
+    /// error rather than a silent "not ignored".
     pub fn ignored_by_gitignore(&self, path: &str) -> Result<bool, String> {
         let listing = self.stdout(&[
             "ls-files",
@@ -86,7 +100,19 @@ impl GitRepo {
             "--",
             path,
         ])?;
-        Ok(!listing.is_empty())
+        if !listing.is_empty() {
+            return Ok(true);
+        }
+        let tracked = !self
+            .stdout(&["ls-files", "-z", "--cached", "--", path])?
+            .is_empty();
+        if tracked || self.root.join(path).symlink_metadata().is_ok() {
+            Ok(false)
+        } else {
+            Err(format!(
+                "`{path}` is neither tracked nor present, so git cannot tell whether it is ignored"
+            ))
+        }
     }
 
     /// Tracked paths matching `pattern`, relative to the repository root.
@@ -101,6 +127,7 @@ impl GitRepo {
 
     /// Whether the working-tree `path` has the content committed at `HEAD`.
     /// Only meaningful for a committed path: an untracked file never differs.
+    /// `git diff` may rewrite the index's cached stat data while comparing.
     pub fn matches_head(&self, path: &str) -> Result<bool, String> {
         let args = [
             "diff",
