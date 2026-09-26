@@ -60,7 +60,9 @@ public final class CodexClient: @unchecked Sendable {
     let path = codexHome.appendingPathComponent("auth.json").path
     var info = stat()
     guard path.withCString({ lstat($0, &info) == 0 }),
-      info.st_mode & S_IFMT == S_IFREG
+      info.st_mode & S_IFMT == S_IFREG,
+      info.st_uid == geteuid(),
+      info.st_mode & 0o777 == 0o600
     else { return nil }
     return "\(info.st_dev):\(info.st_ino):\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec):\(info.st_size)"
   }
@@ -69,8 +71,49 @@ public final class CodexClient: @unchecked Sendable {
     return codexHome.appendingPathComponent("desktop-app-session.json")
   }
 
+  internal static func readPrivateSessionMarkerData(at url: URL) -> Data? {
+    let fd = url.path.withCString { open($0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC) }
+    guard fd >= 0 else { return nil }
+    defer { close(fd) }
+    var opened = stat()
+    guard fstat(fd, &opened) == 0,
+      opened.st_mode & S_IFMT == S_IFREG,
+      opened.st_uid == geteuid(),
+      opened.st_mode & 0o777 == 0o600,
+      opened.st_size >= 0, opened.st_size <= 16 * 1024
+    else { return nil }
+    let size = Int(opened.st_size)
+    var bytes = [UInt8](repeating: 0, count: size)
+    var offset = 0
+    while offset < size {
+      let count = bytes.withUnsafeMutableBytes { buffer in
+        Darwin.read(fd, buffer.baseAddress!.advanced(by: offset), size - offset)
+      }
+      if count < 0 && errno == EINTR { continue }
+      guard count > 0 else { return nil }
+      offset += count
+    }
+    var after = stat()
+    var named = stat()
+    guard fstat(fd, &after) == 0,
+      url.path.withCString({ lstat($0, &named) == 0 }),
+      named.st_mode & S_IFMT == S_IFREG,
+      named.st_uid == opened.st_uid,
+      named.st_mode & 0o777 == 0o600,
+      opened.st_dev == after.st_dev, opened.st_dev == named.st_dev,
+      opened.st_ino == after.st_ino, opened.st_ino == named.st_ino,
+      opened.st_size == after.st_size, opened.st_size == named.st_size,
+      opened.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec,
+      opened.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec,
+      opened.st_mtimespec.tv_sec == named.st_mtimespec.tv_sec,
+      opened.st_mtimespec.tv_nsec == named.st_mtimespec.tv_nsec
+    else { return nil }
+    return Data(bytes)
+  }
+
   internal static func validatedDesktopAppSessionAccountId(
-    from data: Data, currentProcess: CodexDesktopProcessIdentity?, now: Date = Date()
+    from data: Data, currentProcess: CodexDesktopProcessIdentity?, now: Date = Date(),
+    currentAuthFileID: String? = nil
   ) -> String? {
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let currentProcess,
@@ -84,6 +127,12 @@ public final class CodexClient: @unchecked Sendable {
     else { return nil }
 
     let accountID = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let boundAuthFileID = json["auth_file_id"] {
+      guard let boundAuthFileID = boundAuthFileID as? String,
+        !boundAuthFileID.isEmpty,
+        boundAuthFileID == currentAuthFileID
+      else { return nil }
+    }
     let birthParts = currentProcess.birthID.split(separator: ":", omittingEmptySubsequences: false)
     guard birthParts.count == 2,
       let seconds = TimeInterval(birthParts[0]),
@@ -103,9 +152,12 @@ public final class CodexClient: @unchecked Sendable {
   private static func readDesktopAppSessionAccountId() -> String? {
     let url = Self.desktopAppSessionURL
     guard let process = CodexDesktopProcessIdentity.current(),
-      let data = try? Data(contentsOf: url),
-      let accountID = Self.validatedDesktopAppSessionAccountId(from: data, currentProcess: process),
-      CodexDesktopProcessIdentity.current() == process
+      let authFileID = Self.currentCliAuthFileID(),
+      let data = Self.readPrivateSessionMarkerData(at: url),
+      let accountID = Self.validatedDesktopAppSessionAccountId(
+        from: data, currentProcess: process, currentAuthFileID: authFileID),
+      CodexDesktopProcessIdentity.current() == process,
+      Self.currentCliAuthFileID() == authFileID
     else { return nil }
     return accountID
   }

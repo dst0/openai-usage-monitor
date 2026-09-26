@@ -302,6 +302,15 @@ A failed second checkpoint relaunches and binds the previous APP account without
 dispatching recovery requests; the relaunch saves verified same-account token
 rotation before clearing its journal. An offline switch first saves the old
 account's verified token rotation and compare-writes from that auth snapshot.
+A ChatGPT relaunch outside Monitor can renew only a prior process-bound APP
+marker for the same uniquely registered account. The private shared auth file
+must have mtime, birthtime, and ctime before the new process and contain
+complete tokens matching the active registry entry. The daemon checks process,
+marker, and auth identities again
+around its atomic marker write. Inferred bindings retain the auth file identity;
+Swift and distribution reject them after that file changes. Otherwise APP stays
+`—` until a verified restart. This does not prove an account switch inside one
+unchanged Desktop process.
 A shared-auth commit that rolls back returns
 an error, not a successful distribution status.
 An in-process logout or login that keeps the same ChatGPT PID cannot be

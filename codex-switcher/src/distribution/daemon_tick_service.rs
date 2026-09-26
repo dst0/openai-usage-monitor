@@ -2,6 +2,7 @@ use super::automatic_distribution_service::AutomaticDistributionService;
 use super::automatic_distribution_source::AutomaticDistributionSource;
 use super::cli_auth_file_identity_service::CliAuthFileIdentityService;
 use super::daemon_account_sync_service::DaemonAccountSyncService;
+use super::desktop_external_binding_service::DesktopExternalBindingService;
 use super::distribution_coordinator::DistributionCoordinator;
 use super::distribution_executor::DistributionExecutor;
 use super::distribution_outcome::DistributionOutcome;
@@ -18,6 +19,13 @@ impl DaemonTickService {
     pub fn run(auto_switch: bool) -> Result<(), String> {
         let mut accounts_file = load_accounts()?;
         let active_sync = DaemonAccountSyncService::sync_active_tokens(&mut accounts_file);
+        if DesktopExternalBindingService::refresh_if_needed().is_err() {
+            crate::logger::log(
+                "WARN",
+                "APP_BINDING",
+                "External Desktop account binding check failed",
+            );
+        }
         if accounts_file.accounts.is_empty() {
             return Err("No accounts configured to monitor".to_string());
         }
