@@ -6,6 +6,8 @@ use super::account_status_entry::AccountStatusEntry;
 pub struct StatusFile {
     pub timestamp: String,
     pub active_account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli_auth_file_id: Option<String>,
     pub active_email: Option<String>,
     pub active_plan: Option<String>,
     pub five_hour_percentage: f64,

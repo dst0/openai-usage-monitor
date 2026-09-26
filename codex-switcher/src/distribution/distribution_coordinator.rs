@@ -1,5 +1,5 @@
 use super::app_lifecycle::AppLifecycle;
-use super::desktop_app_session::DesktopAppSession;
+use super::desktop_session_verification_service::DesktopSessionVerificationService;
 use super::distribution_audit_logger::DistributionAuditLogger;
 use super::distribution_decision_service::DistributionDecisionService;
 use super::distribution_outcome::DistributionOutcome;
@@ -159,42 +159,49 @@ impl DistributionCoordinator {
         }
 
         let is_desktop_running = self.lifecycle.is_app_running();
-        let desktop_session = DesktopAppSession::load(&home.join("desktop-app-session.json"));
-
         let current_cli_id = accounts_file.active_account_id.as_deref();
         let current_app_id = if is_desktop_running {
-            desktop_session
-                .as_ref()
-                .map(|s| s.account_id.as_str())
-                .or(current_cli_id)
+            let verifier = DesktopSessionVerificationService::new(self.lifecycle.as_ref(), &home);
+            match verifier.resolve_current_app_account(&accounts_file, &request) {
+                Ok(account) => account,
+                Err(error) => {
+                    self.log_failed_outcome(
+                        &op_id,
+                        trigger_str,
+                        &request.reason,
+                        "desktop_identity_unverified",
+                    );
+                    return Err(error);
+                }
+            }
         } else {
-            desktop_session.as_ref().map(|s| s.account_id.as_str())
+            None
         };
+
+        if is_desktop_running {
+            let verifier = DesktopSessionVerificationService::new(self.lifecycle.as_ref(), &home);
+            if let Err(error) = verifier.verify_no_restart_target(
+                &accounts_file,
+                current_app_id.as_deref(),
+                &request,
+            ) {
+                self.log_failed_outcome(
+                    &op_id,
+                    trigger_str,
+                    &request.reason,
+                    "app_restart_required",
+                );
+                return Err(error);
+            }
+        }
 
         let plan = self.decision_service.evaluate(
             &accounts_file,
-            current_app_id,
+            current_app_id.as_deref(),
             current_cli_id,
             is_desktop_running,
             &request,
         );
-
-        let candidate_summary = plan
-            .evaluated_candidates
-            .iter()
-            .map(|c| {
-                if c.eligible {
-                    format!("{}:eligible", c.sanitized_label)
-                } else {
-                    format!(
-                        "{}:skip({})",
-                        c.sanitized_label,
-                        c.skip_reason.as_deref().unwrap_or("ineligible")
-                    )
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
 
         self.logger.log_decision(
             &op_id,
@@ -205,7 +212,7 @@ impl DistributionCoordinator {
                 account_ref(plan.target_app_id.as_deref()),
                 account_ref(plan.target_cli_id.as_deref()),
                 plan.restart_required,
-                candidate_summary
+                plan.candidate_summary()
             ),
         );
 

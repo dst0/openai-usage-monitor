@@ -2,7 +2,6 @@ use crate::{
     distribution::{DesktopAppSession, SystemWindowRestoreBackend, WindowProcessValidationService},
     storage, switcher,
 };
-use chrono::{DateTime, Utc};
 
 pub(super) struct DesktopAccountBindingService;
 
@@ -38,7 +37,7 @@ fn verified_with(
     let session = session()?;
     if !known_account(&session.account_id)
         || !session_matches_binding(&session, &before, cli_account_id)
-        || !session_matches_process_lifetime(&session.updated_at, &before.birth_id)
+        || !session.matches_process_lifetime(&before.birth_id)
     {
         return None;
     }
@@ -65,25 +64,6 @@ pub(super) fn choose_recovery_account_binding(
     deferred: bool,
 ) -> Option<String> {
     if deferred { desktop } else { cli }.map(str::to_owned)
-}
-
-fn session_matches_process_lifetime(updated_at: &str, birth_id: &str) -> bool {
-    let Some((seconds, micros)) = birth_id.split_once(':') else {
-        return false;
-    };
-    let (Ok(seconds), Ok(micros)) = (seconds.parse::<i64>(), micros.parse::<u32>()) else {
-        return false;
-    };
-    if micros > 999_999 {
-        return false;
-    }
-    let Some(birth) = DateTime::<Utc>::from_timestamp(seconds, micros * 1_000) else {
-        return false;
-    };
-    let Ok(saved) = DateTime::parse_from_rfc3339(updated_at) else {
-        return false;
-    };
-    birth <= saved && saved <= Utc::now()
 }
 
 #[cfg(test)]

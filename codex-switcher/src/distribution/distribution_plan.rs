@@ -36,4 +36,22 @@ impl DistributionPlan {
     pub fn has_changes(&self) -> bool {
         self.app_switch_needed || self.cli_switch_needed
     }
+
+    pub fn candidate_summary(&self) -> String {
+        self.evaluated_candidates
+            .iter()
+            .map(|candidate| {
+                if candidate.eligible {
+                    format!("{}:eligible", candidate.sanitized_label)
+                } else {
+                    format!(
+                        "{}:skip({})",
+                        candidate.sanitized_label,
+                        candidate.skip_reason.as_deref().unwrap_or("ineligible")
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }

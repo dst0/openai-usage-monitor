@@ -268,11 +268,10 @@ impl DistributionDecisionService {
             && current_app_val.is_some()
             && current_cli_val.is_some()
             && current_app_val == current_cli_val;
-
-        let app_switch_needed =
-            !app_matches || app_depleted || (should_separate && is_desktop_running);
+        let app_switch_needed = is_desktop_running
+            && request.allow_restart
+            && (!app_matches || app_depleted || should_separate);
         let cli_switch_needed = !cli_matches || cli_depleted || should_separate;
-
         if !app_switch_needed && !cli_switch_needed && !request.force_restart {
             return DistributionPlan::no_action(
                 current_app_val,
@@ -282,16 +281,18 @@ impl DistributionDecisionService {
             );
         }
 
-        let restart_required = is_desktop_running && app_switch_needed && request.allow_restart;
-
         DistributionPlan {
-            current_app_id: current_app_val,
+            current_app_id: current_app_val.clone(),
             current_cli_id: current_cli_val,
-            target_app_id: target_app,
+            target_app_id: if is_desktop_running && !request.allow_restart {
+                current_app_val.clone()
+            } else {
+                target_app
+            },
             target_cli_id: target_cli,
             app_switch_needed,
             cli_switch_needed,
-            restart_required,
+            restart_required: app_switch_needed,
             decision_reason: request.reason.clone(),
             evaluated_candidates,
         }
