@@ -156,13 +156,24 @@ ALWAYS_STATE_PATHS=(
 )
 
 # Interrupted atomic writes can leave private staging files. Match only the
-# exact Monitor-generated names and modes; preserve unrelated files.
+# exact Monitor-generated names and modes; preserve unrelated files. Keep this
+# list in step with every Rust staging writer that the fd-anchored
+# `codex-mon monitor-logs` cleanup does not already cover:
+#   distribution_journal.rs          distribution-journal.<pid>.<16 hex>.tmp
+#   direct_switch_journal_store.rs   direct-switch-journal.<pid>.<16 hex>.tmp
+#   desktop_app_session.rs           desktop-app-session.<pid>.<32 hex>.tmp
+#   manual_reset_attempt_store.rs    manual-reset-state.<pid>.<16 hex>.tmp.json
+#   active_auth_compare_write_service.rs
+#                                    auth.json.<pid>.<16 hex>.tmp
+# The last one is a Monitor-written credential copy, not Desktop's auth.json.
 monitor_state_temps() {
     local path name metadata
     for path in \
         "${CODEX_HOME}"/distribution-journal.*.tmp \
         "${CODEX_HOME}"/direct-switch-journal.*.tmp \
-        "${CODEX_HOME}"/desktop-app-session.*.tmp; do
+        "${CODEX_HOME}"/desktop-app-session.*.tmp \
+        "${CODEX_HOME}"/manual-reset-state.*.tmp.json \
+        "${CODEX_HOME}"/auth.json.*.tmp; do
         is_present "$path" || continue
         [ ! -L "$path" ] && [ -f "$path" ] || continue
         name="${path##*/}"
@@ -173,6 +184,10 @@ monitor_state_temps() {
                 [[ "$name" =~ ^direct-switch-journal\.[0-9]+\.[0-9a-f]{16}\.tmp$ ]] || continue ;;
             desktop-app-session.*)
                 [[ "$name" =~ ^desktop-app-session\.[0-9]+\.[0-9a-f]{32}\.tmp$ ]] || continue ;;
+            manual-reset-state.*)
+                [[ "$name" =~ ^manual-reset-state\.[0-9]+\.[0-9a-f]{16}\.tmp\.json$ ]] || continue ;;
+            auth.json.*)
+                [[ "$name" =~ ^auth\.json\.[0-9]+\.[0-9a-f]{16}\.tmp$ ]] || continue ;;
             *) continue ;;
         esac
         metadata="$(/usr/bin/stat -f '%u:%Lp' "$path" 2>/dev/null || true)"

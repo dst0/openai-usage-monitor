@@ -363,7 +363,11 @@ shims, copied guide, app-owned logs/journals, app-specific support/cache/state
 directories, preferences, and project skill links. It asks for confirmation; use `--yes` only for an explicitly approved
 non-interactive run. Runtime status/recovery files are removed by the normal
 uninstall; add `--purge-data` only to remove the Monitor-owned account registry
-such as `~/.codex/accounts.json`.
+such as `~/.codex/accounts.json`. Interrupted Monitor staging files are matched
+by exact name, owner, and `0600` mode, including
+`manual-reset-state.<pid>.<16 hex>.tmp.json` and the Monitor's
+`auth.json.<pid>.<16 hex>.tmp` credential copy. Any new or renamed staging
+writer needs a matching uninstall pattern and shell test in the same change.
 
 During installation, log migration occurs only after the newly built app is
 copied to same-filesystem staging and strictly signature-verified. The exact

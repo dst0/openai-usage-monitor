@@ -132,6 +132,16 @@ FAKE_CODEX_HOME="$(cd "${FAKE_HOME}/.codex" && /bin/pwd -P)"
 /usr/bin/printf 'direct staging sentinel\n' > "${FAKE_HOME}/.codex/direct-switch-journal.123.0123456789abcdef.tmp"
 /usr/bin/printf 'desktop staging sentinel\n' > "${FAKE_HOME}/.codex/desktop-app-session.123.0123456789abcdef0123456789abcdef.tmp"
 /usr/bin/printf 'foreign staging sentinel\n' > "${FAKE_HOME}/.codex/distribution-journal.abc.0123456789abcdef.tmp"
+# ManualResetAttemptStore stages `manual-reset-state.<pid>.<16 hex>.tmp.json`;
+# ActiveAuthCompareWriteService stages `auth.json.<pid>.<16 hex>.tmp`. Each
+# look-alike below differs in exactly one validated property.
+/usr/bin/printf 'manual staging sentinel\n' > "${FAKE_HOME}/.codex/manual-reset-state.123.0123456789abcdef.tmp.json"
+/usr/bin/printf 'foreign manual pid\n' > "${FAKE_HOME}/.codex/manual-reset-state.abc.0123456789abcdef.tmp.json"
+/usr/bin/printf 'foreign manual nonce\n' > "${FAKE_HOME}/.codex/manual-reset-state.123.0123456789abcde.tmp.json"
+/usr/bin/printf 'foreign manual mode\n' > "${FAKE_HOME}/.codex/manual-reset-state.124.0123456789abcdef.tmp.json"
+/usr/bin/printf 'auth staging sentinel\n' > "${FAKE_HOME}/.codex/auth.json.123.0123456789abcdef.tmp"
+/usr/bin/printf 'foreign auth nonce\n' > "${FAKE_HOME}/.codex/auth.json.123.0123456789abcdeg.tmp"
+/usr/bin/printf 'foreign auth mode\n' > "${FAKE_HOME}/.codex/auth.json.124.0123456789abcdef.tmp"
 /usr/bin/printf 'sqlite sentinel\n' > "${FAKE_HOME}/.codex/state_5.sqlite"
 /usr/bin/printf 'wal sentinel\n' > "${FAKE_HOME}/.codex/state_5.sqlite-wal"
 /usr/bin/printf 'shm sentinel\n' > "${FAKE_HOME}/.codex/state_5.sqlite-shm"
@@ -149,6 +159,11 @@ FAKE_CODEX_HOME="$(cd "${FAKE_HOME}/.codex" && /bin/pwd -P)"
     "${FAKE_HOME}/.codex/distribution-journal.123.0123456789abcdef.tmp" \
     "${FAKE_HOME}/.codex/direct-switch-journal.123.0123456789abcdef.tmp" \
     "${FAKE_HOME}/.codex/desktop-app-session.123.0123456789abcdef0123456789abcdef.tmp" \
+    "${FAKE_HOME}/.codex/manual-reset-state.123.0123456789abcdef.tmp.json" \
+    "${FAKE_HOME}/.codex/manual-reset-state.abc.0123456789abcdef.tmp.json" \
+    "${FAKE_HOME}/.codex/manual-reset-state.123.0123456789abcde.tmp.json" \
+    "${FAKE_HOME}/.codex/auth.json.123.0123456789abcdef.tmp" \
+    "${FAKE_HOME}/.codex/auth.json.123.0123456789abcdeg.tmp" \
     "${FAKE_HOME}/.codex/state_5.sqlite" \
     "${FAKE_HOME}/.codex/state_5.sqlite-wal" \
     "${FAKE_HOME}/.codex/state_5.sqlite-shm"
@@ -156,6 +171,9 @@ FAKE_CODEX_HOME="$(cd "${FAKE_HOME}/.codex" && /bin/pwd -P)"
 /usr/bin/printf '#!/bin/sh\nexit 0\n' > "${FAKE_BIN}/osascript"
 /usr/bin/printf '#!/bin/sh\nexit 0\n' > "${FAKE_BIN}/defaults"
 /usr/bin/printf '#!/bin/sh\nexit 0\n' > "${FAKE_BIN}/lsregister"
+/bin/chmod 644 \
+    "${FAKE_HOME}/.codex/manual-reset-state.124.0123456789abcdef.tmp.json" \
+    "${FAKE_HOME}/.codex/auth.json.124.0123456789abcdef.tmp"
 /bin/chmod 755 "${FAKE_BIN}/launchctl" "${FAKE_BIN}/osascript" "${FAKE_BIN}/defaults" "${FAKE_BIN}/lsregister"
 
 UNINSTALL_COPY="${TEMP_ROOT}/uninstall.sh"
@@ -194,6 +212,21 @@ HOME="${FAKE_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/desktop-app-session.123.0123456789abcdef0123456789abcdef.tmp" "${DRY_RUN_OUTPUT}" >/dev/null
 /usr/bin/grep -F 'distribution-journal.abc.0123456789abcdef.tmp' "${DRY_RUN_OUTPUT}" >/dev/null &&
     fail 'dry-run listed a foreign staging file'
+/usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/manual-reset-state.123.0123456789abcdef.tmp.json" "${DRY_RUN_OUTPUT}" >/dev/null ||
+    fail 'dry-run omitted manual reset staging'
+/usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/auth.json.123.0123456789abcdef.tmp" "${DRY_RUN_OUTPUT}" >/dev/null ||
+    fail 'dry-run omitted credential compare-write staging'
+for foreign in \
+    manual-reset-state.abc.0123456789abcdef.tmp.json \
+    manual-reset-state.123.0123456789abcde.tmp.json \
+    manual-reset-state.124.0123456789abcdef.tmp.json \
+    auth.json.123.0123456789abcdeg.tmp \
+    auth.json.124.0123456789abcdef.tmp; do
+    /usr/bin/grep -F "${foreign}" "${DRY_RUN_OUTPUT}" >/dev/null &&
+        fail "dry-run listed foreign staging look-alike ${foreign}"
+done
+assert_exists "${FAKE_HOME}/.codex/manual-reset-state.123.0123456789abcdef.tmp.json"
+assert_exists "${FAKE_HOME}/.codex/auth.json.123.0123456789abcdef.tmp"
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/auth.temporary.tmp.json" "${DRY_RUN_OUTPUT}" >/dev/null
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/.redact-1-1.tmp" "${DRY_RUN_OUTPUT}" >/dev/null
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/log/.redact-1-2.tmp" "${DRY_RUN_OUTPUT}" >/dev/null
@@ -220,6 +253,13 @@ assert_absent "${FAKE_HOME}/.codex/distribution-journal.123.0123456789abcdef.tmp
 assert_absent "${FAKE_HOME}/.codex/direct-switch-journal.123.0123456789abcdef.tmp"
 assert_absent "${FAKE_HOME}/.codex/desktop-app-session.123.0123456789abcdef0123456789abcdef.tmp"
 assert_exists "${FAKE_HOME}/.codex/distribution-journal.abc.0123456789abcdef.tmp"
+assert_absent "${FAKE_HOME}/.codex/manual-reset-state.123.0123456789abcdef.tmp.json"
+assert_absent "${FAKE_HOME}/.codex/auth.json.123.0123456789abcdef.tmp"
+assert_content 'foreign manual pid' "${FAKE_HOME}/.codex/manual-reset-state.abc.0123456789abcdef.tmp.json"
+assert_content 'foreign manual nonce' "${FAKE_HOME}/.codex/manual-reset-state.123.0123456789abcde.tmp.json"
+assert_content 'foreign manual mode' "${FAKE_HOME}/.codex/manual-reset-state.124.0123456789abcdef.tmp.json"
+assert_content 'foreign auth nonce' "${FAKE_HOME}/.codex/auth.json.123.0123456789abcdeg.tmp"
+assert_content 'foreign auth mode' "${FAKE_HOME}/.codex/auth.json.124.0123456789abcdef.tmp"
 assert_absent "${FAKE_HOME}/.codex/auth.temporary.tmp.json"
 assert_absent "${FAKE_HOME}/.codex/.redact-1-1.tmp"
 assert_absent "${FAKE_HOME}/.codex/log/.redact-1-2.tmp"

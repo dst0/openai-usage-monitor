@@ -1,0 +1,22 @@
+# 2026-09-27 — Uninstall staging list missed two Monitor writers
+
+- **Status:** Resolved
+- **Task/context:** Review finding on PR #15: `scripts/uninstall.sh` `monitor_state_temps` removed the interrupted staging files for the distribution journal, direct-switch journal, and Desktop session marker. It did not remove the manual-reset staging file.
+- **Unexpected observation or failure:** An interrupted `ManualResetAttemptStore::write` leaves `manual-reset-state.<pid>.<16 hex>.tmp.json`. Both `--dry-run` and the confirmed uninstall left it behind. The reviewer did not flag a second writer: `ActiveAuthCompareWriteService` stages `auth.json.<pid>.<16 hex>.tmp`, which holds a Monitor-written credential copy. Neither the shell list nor the fd-anchored `monitor-logs` cleanup (`auth.` + `.tmp.json`) matched it either.
+- **Evidence:** An enumeration of every `format!` or `with_extension` staging name under `codex-switcher/src`, checked against both cleanup lists, found only these two gaps. With the extended `tests/log_permissions_and_uninstall.sh`, the unfixed script failed at `dry-run omitted manual reset staging`. After only the manual pattern was added, it failed at `dry-run omitted credential compare-write staging`. Loosening the manual regex, or dropping the owner/mode check, made the look-alike assertions fail.
+- **Approaches tried:**
+  - **Attempt:** Add only the reviewer's manual-reset glob.
+    - **Outcome:** Partial.
+    - **Why:** It fixed the reported file but left the credential staging copy, which has the same failure mode.
+  - **Attempt:** Derive the list from every staging writer and add exact globs and regexes (`^manual-reset-state\.[0-9]+\.[0-9a-f]{16}\.tmp\.json$`, `^auth\.json\.[0-9]+\.[0-9a-f]{16}\.tmp$`). Keep the owner and `0600` checks.
+    - **Outcome:** Worked.
+    - **Why:** Both Rust writers use `std::process::id()` and `{:016x}`, so the names are exact and do not overlap Desktop's `auth.json` or foreign files.
+  - **Attempt:** Use an uppercase-hex look-alike (`auth.json.123.0123456789ABCDEF.tmp`) in the test.
+    - **Outcome:** Did not work.
+    - **Why:** On the default case-insensitive APFS volume it is the same directory entry as the valid lowercase fixture, so it overwrote the fixture and was removed with it. The test now uses a non-hex character (`...abcdeg`).
+- **Root cause:** The uninstall pattern list was maintained by memory rather than derived from the set of staging writers, and cleanup is split between the shell list and the Rust helper.
+- **Resolution:** Added both patterns to `monitor_state_temps`, with a comment mapping each pattern to its writer. Extended the shell test with valid files, one look-alike per validated property (pid digits, nonce length, nonce alphabet, mode), and checks for both dry-run and confirmed uninstall.
+- **Verification:** `bash tests/log_permissions_and_uninstall.sh` passes and was mutation-checked as described under Evidence.
+- **Prevention/follow-up:** `AGENTS.md` and `CODEX.md` now require that a new or renamed staging writer update the uninstall list (or the fd-anchored cleanup) and the shell test in the same change. CI does not run this shell test; it must be run locally until a workflow step is added.
+- **Reusable learning:** Derive uninstall cleanup patterns from a full scan of staging writers, and make look-alike fixtures distinct on case-insensitive file systems.
+- **References:** `scripts/uninstall.sh`, `tests/log_permissions_and_uninstall.sh`, `codex-switcher/src/setup/manual_reset_attempt_store.rs`, `codex-switcher/src/storage/active_auth_compare_write_service.rs`, `codex-switcher/src/distribution/monitor_log_cleanup_service.rs`.
