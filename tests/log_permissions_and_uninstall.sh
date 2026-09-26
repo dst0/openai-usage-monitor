@@ -42,7 +42,9 @@ assert_content() {
 # Exercise the same fd-anchored Rust helper used by install.sh and uninstall.sh.
 # The fake homes are canonicalized so the test does not reject macOS's /var
 # compatibility symlink as an unsafe parent component.
-/usr/bin/env cargo build --quiet --manifest-path "${PROJECT_DIR}/codex-switcher/Cargo.toml" --bin codex-mon
+# Build from the crate directory so rustup applies codex-switcher/rust-toolchain.toml;
+# --manifest-path from elsewhere would use the caller's default toolchain.
+(cd "${PROJECT_DIR}/codex-switcher" && /usr/bin/env cargo build --quiet --bin codex-mon)
 MONITOR_BIN="${PROJECT_DIR}/codex-switcher/target/debug/codex-mon"
 [ -x "${MONITOR_BIN}" ] || fail 'codex-mon helper was not built'
 

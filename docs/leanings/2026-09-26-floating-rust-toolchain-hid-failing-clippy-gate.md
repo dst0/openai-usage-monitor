@@ -1,0 +1,22 @@
+# 2026-09-26 — Floating Rust toolchain hid a failing Clippy gate
+
+- **Status:** Partial
+- **Task/context:** Bring `.github/workflows/ci.yml` up to the CI baseline (pinned actions, least-privilege permissions, job timeouts) and pin the Rust toolchain.
+- **Unexpected observation or failure:** CI installed Rust through `dtolnay/rust-toolchain@stable` and never ran Clippy, so the documented `cargo clippy --all-targets -- -D warnings` gate had no CI enforcement and drifted with every upstream release.
+- **Evidence:** The last green `main` run installed rustc 1.98.1 while the local default was 1.94.1. On the same tree, `cargo clippy --all-targets --keep-going -- -D warnings` reported 19 errors on 1.94.1 and 20 on 1.98.1 (findings in `src/` are reported once per binary and binary-test target). Without `--all-targets` it reported 1 and 2; 1.98.1 adds a finding for an explicit `.into_iter()` call passed to an `IntoIterator` parameter. The findings are dead code in test targets, `too_many_arguments`, `field_reassign_with_default`, and a needless slice clone.
+- **Approaches tried:**
+  - **Attempt:** Add a Clippy step to the required Rust CI job in the same change.
+    - **Outcome:** Did not work
+    - **Why:** It would turn the required check red until unrelated recovery and test code is fixed; mixing those fixes into a CI-hardening PR breaks scope.
+  - **Attempt:** Keep `dtolnay/rust-toolchain`, pinned by SHA with a `toolchain:` input.
+    - **Outcome:** Partial
+    - **Why:** It would pin the compiler, but it duplicates the version in the workflow and keeps a third-party action; `rustup toolchain install` (rustup >= 1.28, preinstalled on the runner) reads `rust-toolchain.toml` directly.
+  - **Attempt:** Pin `codex-switcher/rust-toolchain.toml` to 1.98.1, the release the last green CI run used, and install it in CI with `rustup toolchain install`.
+    - **Outcome:** Worked
+    - **Why:** One file drives local builds, the installer, and CI; `cargo test` passes on 1.98.1.
+- **Root cause:** No toolchain pin and no CI lint step, so the lint baseline was defined only by whichever rustc a developer happened to have.
+- **Resolution:** Exact toolchain pin plus `codex-switcher/tests/ci_workflow_policy.rs`, which rejects floating channels and asserts on GitHub Actions that tests ran under the pinned release. Cleaning the all-targets Clippy findings and adding the Clippy step to CI remain open.
+- **Verification:** `cargo test` (all targets) passes on 1.98.1; the policy test fails against the previous workflow and passes against the new one.
+- **Prevention/follow-up:** Fix the existing Clippy findings, then add `cargo clippy --all-targets -- -D warnings` to the required Rust job. Bump the toolchain only through the README "Rust toolchain policy".
+- **Reusable learning:** A lint gate that CI does not run on a pinned toolchain is not a gate; pin the toolchain before relying on `-D warnings`.
+- **References:** `codex-switcher/rust-toolchain.toml`, `codex-switcher/tests/ci_workflow_policy.rs`, `.github/workflows/ci.yml`, [2026-09-25-rebased-recovery-clippy-lint.md](2026-09-25-rebased-recovery-clippy-lint.md).

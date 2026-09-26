@@ -6,44 +6,72 @@ on:
   pull_request:
     branches: [ main ]
 
+# Least privilege: jobs only read the repository. actions/cache authenticates
+# with the runtime cache token, not GITHUB_TOKEN.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Third-party actions are pinned to full commit SHAs; the trailing comment names
+# the release tag the SHA was resolved from. Job names are the required status
+# check contexts in scripts/setup-github-protection.sh; rename them together.
 jobs:
   test-rust:
     name: 🦀 Rust Core Tests (cxi / codex-mon)
     runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_TERM_COLOR: always
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
+      # Installs the exact channel and components from
+      # codex-switcher/rust-toolchain.toml (rustup >= 1.28).
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        working-directory: codex-switcher
+        run: |
+          rustup --version
+          rustup toolchain install
+          rustc --version
+          cargo clippy --version
+
+      # Cargo.lock is gitignored, so resolve it first and key the cache on it;
+      # hashing a missing file would yield a constant, never-refreshed key.
+      - name: Resolve Dependencies
+        working-directory: codex-switcher
+        run: cargo generate-lockfile
 
       - name: Cargo Cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
-            ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             codex-switcher/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('codex-switcher/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-${{ hashFiles('codex-switcher/rust-toolchain.toml') }}-${{ hashFiles('codex-switcher/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-${{ hashFiles('codex-switcher/rust-toolchain.toml') }}-
 
       - name: Run Rust Unit Tests
-        run: |
-          cd codex-switcher
-          cargo test --verbose
+        working-directory: codex-switcher
+        run: cargo test --verbose
 
   test-swift:
     name: 🍏 Swift Menu Bar App Tests
     runs-on: macos-14
+    timeout-minutes: 20
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Run Swift Test Suites
         run: |
@@ -53,9 +81,12 @@ jobs:
   security-scan:
     name: 🔒 Security & Privacy Scan
     runs-on: macos-14
+    timeout-minutes: 10
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Check for Leaked Tokens or Secrets
         run: |
