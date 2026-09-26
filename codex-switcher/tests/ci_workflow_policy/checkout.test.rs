@@ -102,17 +102,43 @@ fn equivalent_spellings_and_layouts_comply() {
 }
 
 #[test]
-fn checkout_outside_a_step_or_in_another_case_is_still_checked() {
-    // GitHub resolves action owner and repository names case-insensitively.
-    let upper = with("actions/checkout@", "Actions/Checkout@");
-    assert_eq!(checkout_credential_violations(&upper), Vec::<String>::new());
-    assert_eq!(
-        checkout_credential_violations(
-            &upper.replace("persist-credentials: false", "fetch-depth: 0")
-        )
-        .len(),
-        1
-    );
+fn checkout_outside_a_step_or_in_another_spelling_is_still_checked() {
+    // GitHub resolves owner and repository names case-insensitively, and a
+    // path after the repository still names the same repository.
+    let reference = format!("actions/checkout@{SHA}");
+    for spelling in [
+        format!("Actions/Checkout@{SHA}"),
+        format!("actions/checkout/@{SHA}"),
+        format!("actions/checkout/.@{SHA}"),
+        "actions/checkout".to_string(),
+    ] {
+        let text = with(&reference, &spelling);
+        assert_eq!(
+            checkout_credential_violations(&text),
+            Vec::<String>::new(),
+            "{spelling}"
+        );
+        let persisted = text.replace("persist-credentials: false", "fetch-depth: 0");
+        assert_eq!(
+            checkout_credential_violations(&persisted).len(),
+            1,
+            "{spelling}"
+        );
+    }
+    // Other repositories are not checkouts.
+    for other in [
+        "actions/checkout-extra",
+        "my-actions/checkout",
+        "actions/cache",
+    ] {
+        let text = with(&reference, &format!("{other}@{SHA}"))
+            .replace("persist-credentials: false", "fetch-depth: 0");
+        assert_eq!(
+            checkout_credential_violations(&text),
+            Vec::<String>::new(),
+            "{other}"
+        );
+    }
     // A checkout that is not a step list item cannot be tied to its inputs.
     let job_level = with(
         "    timeout-minutes: 5\n",

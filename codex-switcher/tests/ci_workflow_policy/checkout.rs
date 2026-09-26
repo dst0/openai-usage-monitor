@@ -6,9 +6,6 @@
 
 use crate::yaml_lines::{direct_members, entry, indent, is_content, key_column};
 
-/// Compared case-insensitively: GitHub resolves owner and repository names
-/// that way.
-const CHECKOUT_ACTION: &str = "actions/checkout@";
 const MISSING: &str =
     "must set `persist-credentials: false` exactly once, directly under its `with:`";
 
@@ -16,15 +13,23 @@ const MISSING: &str =
 pub fn checkout_credential_violations(text: &str) -> Vec<String> {
     let lines: Vec<&str> = text.lines().collect();
     (0..lines.len())
-        .filter(|&i| {
-            entry(lines[i]).is_some_and(|e| {
-                e.key == "uses" && e.value.to_ascii_lowercase().starts_with(CHECKOUT_ACTION)
-            })
-        })
+        .filter(|&i| entry(lines[i]).is_some_and(|e| e.key == "uses" && is_checkout(e.value)))
         .filter_map(|i| {
             credential_problem(&lines, i).map(|p| format!("checkout at line {}: {p}", i + 1))
         })
         .collect()
+}
+
+/// Whether `uses:` names the `actions/checkout` repository, at any path or
+/// ref. GitHub compares owner and repository names case-insensitively.
+fn is_checkout(reference: &str) -> bool {
+    let mut segments = reference.split('@').next().unwrap_or("").split('/');
+    segments
+        .next()
+        .is_some_and(|owner| owner.eq_ignore_ascii_case("actions"))
+        && segments
+            .next()
+            .is_some_and(|repo| repo.eq_ignore_ascii_case("checkout"))
 }
 
 /// Why the checkout step owning `lines[at]` may persist credentials, if it may.
