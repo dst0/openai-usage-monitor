@@ -12,6 +12,7 @@ pub fn reset_account(account_id: &str) -> Result<(), String> {
         &mut file,
         account_id,
         crate::quota::consume_rate_limit_reset_credit,
+        crate::quota::update_account_quota_cache,
     )?;
     save_accounts(&file)?;
 
@@ -36,13 +37,17 @@ pub fn reset_account(account_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn reset_account_in_file<F>(
+/// Spends one reset credit through `consume_fn` and, only when it was applied,
+/// refreshes that account's cached quota through `refresh_fn`.
+pub(crate) fn reset_account_in_file<F, R>(
     file: &mut crate::models::AccountsFile,
     query: &str,
     consume_fn: F,
+    refresh_fn: R,
 ) -> Result<(String, bool), String>
 where
     F: FnOnce(&AccountConfig, &str) -> crate::quota::ResetCreditConsumeOutcome,
+    R: FnOnce(&mut AccountConfig),
 {
     let q = query.trim();
     if q.is_empty() {
@@ -79,9 +84,9 @@ where
     match outcome {
         crate::quota::ResetCreditConsumeOutcome::Applied => {
             file.accounts[acc_idx].last_credits = Some(available_credits.saturating_sub(1));
-            // Only attempt cache refresh in real runtime (ignore failure in offline / test)
+            // The credit is already spent, so a failed refresh must not lose it.
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                crate::quota::update_account_quota_cache(&mut file.accounts[acc_idx]);
+                refresh_fn(&mut file.accounts[acc_idx]);
             }));
             let name = file.accounts[acc_idx].display_name().to_string();
             let is_active = file.active_account_id.as_deref() == Some(&file.accounts[acc_idx].id);

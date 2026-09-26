@@ -1,21 +1,16 @@
 use super::*;
 use crate::models::{AccountConfig, AccountsFile, AuthJson, AuthTokens};
+use crate::storage::test_codex_home::TestCodexHome;
 
 #[test]
 fn manual_credit_reset_refuses_to_race_desktop_recovery() {
-    let _serial = TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let home =
-        std::env::temp_dir().join(format!("codex-reset-recovery-lock-{}", std::process::id()));
-    std::fs::create_dir_all(&home).unwrap();
-    std::env::set_var("CODEX_HOME", &home);
+    let _home = TestCodexHome::new("reset-recovery-lock");
     let recovery = crate::recovery::operation_lock().unwrap();
     let result = reset_account("active");
     assert!(result
         .unwrap_err()
         .contains("Another desktop switch/recovery"));
     drop(recovery);
-    std::env::remove_var("CODEX_HOME");
-    std::fs::remove_dir_all(home).unwrap();
 }
 
 fn make_test_account(
@@ -428,10 +423,7 @@ fn test_save_current_as_replaces_active_account() {
 
 #[test]
 fn test_rename_account_updates_nickname() {
-    let _lock = TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let temp_dir = std::env::temp_dir().join(format!("codex_rename_test_{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&temp_dir);
-    std::env::set_var("CODEX_HOME", &temp_dir);
+    let _home = TestCodexHome::new("rename");
 
     let mut file = AccountsFile {
         active_account_id: Some("user1@example.com:uuid-1".to_string()),
@@ -457,30 +449,40 @@ fn test_rename_account_updates_nickname() {
     file.accounts[1].name = Some("second".to_string());
     crate::storage::save_accounts(&file).unwrap();
 
+    // The status refresh stands in for the live quota refresh, which would
+    // contact chatgpt.com with these fake tokens. It records the saved name
+    // to prove the refresh runs after the rename is durable.
+    let mut refreshed_names = Vec::new();
+    let mut refresh = || {
+        let saved = crate::storage::load_accounts().unwrap();
+        refreshed_names.push(saved.accounts[0].name.clone());
+        Ok(())
+    };
+
     // 1. Rename first account to "work"
-    assert!(rename_account("first", Some("work")).is_ok());
+    assert!(rename_account_with("first", Some("work"), &mut refresh).is_ok());
     let loaded = crate::storage::load_accounts().unwrap();
     assert_eq!(loaded.accounts[0].name.as_deref(), Some("work"));
 
     // 2. Renaming to existing nickname "second" must fail with error (avoids duplicate labels!)
-    assert!(rename_account("work", Some("second")).is_err());
+    assert!(rename_account_with("work", Some("second"), &mut refresh).is_err());
 
     // 3. Clear nickname
-    assert!(rename_account("work", None).is_ok());
+    assert!(rename_account_with("work", None, &mut refresh).is_ok());
     let loaded = crate::storage::load_accounts().unwrap();
     assert_eq!(loaded.accounts[0].name, None);
+    assert_eq!(refreshed_names, [Some("work".to_string()), None]);
 
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    std::env::remove_var("CODEX_HOME");
+    // An offline refresh must not undo or fail a completed rename.
+    let offline = || Err("offline".to_string());
+    assert!(rename_account_with("user1@example.com:uuid-1", Some("home"), offline).is_ok());
+    let loaded = crate::storage::load_accounts().unwrap();
+    assert_eq!(loaded.accounts[0].name.as_deref(), Some("home"));
 }
 
 #[test]
 fn test_apply_relogin_successful_update() {
-    let _lock = TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let temp_dir =
-        std::env::temp_dir().join(format!("codex_relogin_succ_test_{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&temp_dir);
-    std::env::set_var("CODEX_HOME", &temp_dir);
+    let _home = TestCodexHome::new("relogin-success");
 
     let mut file = AccountsFile {
         active_account_id: Some("test-user@example.com:uuid-1".to_string()),
@@ -520,20 +522,11 @@ fn test_apply_relogin_successful_update() {
         Some("new_rt")
     );
     assert!(file.accounts[0].enabled);
-
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
 fn test_apply_relogin_rejects_email_mismatch() {
-    let _lock = TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let temp_dir = std::env::temp_dir().join(format!(
-        "codex_relogin_mismatch_test_{}",
-        std::process::id()
-    ));
-    let _ = std::fs::create_dir_all(&temp_dir);
-    std::env::set_var("CODEX_HOME", &temp_dir);
+    let _home = TestCodexHome::new("relogin-mismatch");
 
     let mut file = AccountsFile {
         active_account_id: Some("test-user@example.com:uuid-1".to_string()),
@@ -576,18 +569,11 @@ fn test_apply_relogin_rejects_email_mismatch() {
         file.accounts[0].last_error,
         Some("401 Unauthorized".to_string())
     );
-
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
 fn test_apply_relogin_syncs_active_auth_json() {
-    let _lock = TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let temp_dir =
-        std::env::temp_dir().join(format!("codex_relogin_sync_test_{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&temp_dir);
-    std::env::set_var("CODEX_HOME", &temp_dir);
+    let _home = TestCodexHome::new("relogin-sync");
 
     let initial_auth = AuthJson {
         auth_mode: Some("chatgpt".to_string()),
@@ -630,9 +616,6 @@ fn test_apply_relogin_syncs_active_auth_json() {
         active_auth.tokens.unwrap().refresh_token.as_deref(),
         Some("new_active_rt")
     );
-
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    std::env::remove_var("CODEX_HOME");
 }
 
 #[test]
@@ -650,14 +633,55 @@ fn test_reset_account_in_file_success() {
     };
     file.accounts[0].last_credits = Some(2);
 
-    let result = reset_account_in_file(&mut file, "user1@example.com", |_acc, _idemp| {
-        crate::quota::ResetCreditConsumeOutcome::Applied
-    });
+    // The live refresh would contact chatgpt.com with these fake tokens.
+    let mut refreshed = Vec::new();
+    let result = reset_account_in_file(
+        &mut file,
+        "user1@example.com",
+        |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Applied,
+        |account| {
+            refreshed.push((account.id.clone(), account.last_credits));
+            account.last_checked = Some("refreshed".to_string());
+        },
+    );
 
     assert!(result.is_ok());
     let (name, is_active) = result.unwrap();
     assert_eq!(name, "user1");
     assert!(is_active);
+    assert_eq!(file.accounts[0].last_credits, Some(1));
+    // The refresh runs once, after the spent credit is recorded, and its
+    // result is kept in the file that the caller saves.
+    assert_eq!(
+        refreshed,
+        [("user1@example.com:uuid-1".to_string(), Some(1))]
+    );
+    assert_eq!(file.accounts[0].last_checked.as_deref(), Some("refreshed"));
+}
+
+#[test]
+fn reset_keeps_the_spent_credit_when_the_quota_refresh_panics() {
+    let mut file = crate::models::AccountsFile {
+        active_account_id: Some("user1@example.com:uuid-1".to_string()),
+        settings: Default::default(),
+        accounts: vec![make_test_account(
+            "user1@example.com:uuid-1",
+            "user1@example.com",
+            "uuid-1",
+            Some("rt_1"),
+            "at_1",
+        )],
+    };
+    file.accounts[0].last_credits = Some(2);
+
+    let result = reset_account_in_file(
+        &mut file,
+        "user1@example.com",
+        |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Applied,
+        |_account| panic!("simulated refresh failure"),
+    );
+
+    assert_eq!(result.unwrap(), ("user1".to_string(), true));
     assert_eq!(file.accounts[0].last_credits, Some(1));
 }
 
@@ -676,13 +700,18 @@ fn test_reset_account_in_file_no_credits() {
     };
     file.accounts[0].last_credits = Some(0);
 
-    let result = reset_account_in_file(&mut file, "user1@example.com", |_acc, _idemp| {
-        crate::quota::ResetCreditConsumeOutcome::Applied
-    });
+    let mut refreshes = 0;
+    let result = reset_account_in_file(
+        &mut file,
+        "user1@example.com",
+        |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Applied,
+        |_account| refreshes += 1,
+    );
 
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("no reset credits available"));
     assert_eq!(file.accounts[0].last_credits, Some(0));
+    assert_eq!(refreshes, 0);
 }
 
 #[test]
@@ -700,21 +729,42 @@ fn test_reset_account_in_file_outcome_handling() {
     };
     file.accounts[0].last_credits = Some(1);
 
+    let mut refreshes = 0;
+
     // NotConsumed
-    let res1 = reset_account_in_file(&mut file, "user1@example.com", |_acc, _idemp| {
-        crate::quota::ResetCreditConsumeOutcome::NotConsumed("nothing_to_reset".into())
-    });
+    let res1 = reset_account_in_file(
+        &mut file,
+        "user1@example.com",
+        |_acc, _idemp| {
+            crate::quota::ResetCreditConsumeOutcome::NotConsumed("nothing_to_reset".into())
+        },
+        |_account| refreshes += 1,
+    );
     assert!(res1.is_err());
     assert!(res1.unwrap_err().contains("Reset credit was not consumed"));
     assert_eq!(file.accounts[0].last_credits, Some(1));
 
     // Unavailable
-    let res2 = reset_account_in_file(&mut file, "user1@example.com", |_acc, _idemp| {
-        crate::quota::ResetCreditConsumeOutcome::Unavailable("service_busy".into())
-    });
+    let res2 = reset_account_in_file(
+        &mut file,
+        "user1@example.com",
+        |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Unavailable("service_busy".into()),
+        |_account| refreshes += 1,
+    );
     assert!(res2.is_err());
     assert!(res2.unwrap_err().contains("service is unavailable"));
     assert_eq!(file.accounts[0].last_credits, Some(1));
+
+    // Unknown
+    let res3 = reset_account_in_file(
+        &mut file,
+        "user1@example.com",
+        |_acc, _idemp| crate::quota::ResetCreditConsumeOutcome::Unknown("timeout".into()),
+        |_account| refreshes += 1,
+    );
+    assert!(res3.unwrap_err().contains("outcome uncertain"));
+    assert_eq!(file.accounts[0].last_credits, Some(1));
+    assert_eq!(refreshes, 0, "only an applied reset refreshes the quota");
 }
 
 #[test]
@@ -742,9 +792,13 @@ fn test_reset_account_in_file_desktop_app_alias() {
     file.accounts[0].last_credits = Some(1);
     file.accounts[1].last_credits = Some(2);
 
+    let applied =
+        |_acc: &AccountConfig, _idemp: &str| crate::quota::ResetCreditConsumeOutcome::Applied;
+    let mut refreshed = Vec::new();
+
     // "desktop-app" should resolve to active account (user2)
-    let res = reset_account_in_file(&mut file, "desktop-app", |_acc, _idemp| {
-        crate::quota::ResetCreditConsumeOutcome::Applied
+    let res = reset_account_in_file(&mut file, "desktop-app", applied, |account| {
+        refreshed.push(account.id.clone())
     });
     assert!(res.is_ok());
     let (name, is_active) = res.unwrap();
@@ -753,15 +807,17 @@ fn test_reset_account_in_file_desktop_app_alias() {
     assert_eq!(file.accounts[1].last_credits, Some(1));
 
     // "active" should also resolve to active account
-    let res_active = reset_account_in_file(&mut file, "active", |_acc, _idemp| {
-        crate::quota::ResetCreditConsumeOutcome::Applied
+    let res_active = reset_account_in_file(&mut file, "active", applied, |account| {
+        refreshed.push(account.id.clone())
     });
     assert!(res_active.is_ok());
     assert_eq!(file.accounts[1].last_credits, Some(0));
 
     // empty query should return error
-    let res_empty = reset_account_in_file(&mut file, "   ", |_acc, _idemp| {
-        crate::quota::ResetCreditConsumeOutcome::Applied
+    let res_empty = reset_account_in_file(&mut file, "   ", applied, |account| {
+        refreshed.push(account.id.clone())
     });
     assert!(res_empty.is_err());
+    assert_eq!(file.accounts[0].last_credits, Some(1));
+    assert_eq!(refreshed, ["user2@example.com:uuid-2"; 2]);
 }

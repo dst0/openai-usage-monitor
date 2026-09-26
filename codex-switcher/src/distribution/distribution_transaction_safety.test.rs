@@ -12,9 +12,6 @@ use std::sync::Arc;
 
 #[test]
 fn cli_only_registry_write_failure_is_not_reported_as_distributed() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("cli_only_registry_write_failure");
     env.populate(
         vec![
@@ -74,9 +71,6 @@ fn cli_only_registry_write_failure_is_not_reported_as_distributed() {
 
 #[test]
 fn failed_cli_restore_keeps_checkpoint_relaunch_binding_on_staged_app_auth() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("checkpoint_cli_restore_failure");
     env.populate(
         vec![
@@ -156,9 +150,6 @@ fn failed_cli_restore_keeps_checkpoint_relaunch_binding_on_staged_app_auth() {
 
 #[test]
 fn stale_cli_plan_cannot_overwrite_a_switch_completed_before_operation_lock() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("stale_cli_plan");
     env.populate(
         vec![
@@ -259,9 +250,6 @@ fn stale_cli_plan_cannot_overwrite_a_switch_completed_before_operation_lock() {
 
 #[test]
 fn distribution_rejects_cli_auth_that_disagrees_with_registry() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("cli_auth_mismatch");
     env.populate(
         vec![
@@ -318,9 +306,6 @@ fn distribution_rejects_cli_auth_that_disagrees_with_registry() {
 
 #[test]
 fn journal_write_failure_after_shutdown_relaunches_previous_desktop() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("journal_failure_after_stop");
     env.populate(
         vec![
@@ -389,9 +374,6 @@ fn journal_write_failure_after_shutdown_relaunches_previous_desktop() {
 
 #[test]
 fn post_stop_recovery_preserves_distinct_previous_app_and_cli_accounts() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("distinct_post_stop_recovery");
     env.populate(
         vec![
@@ -474,9 +456,6 @@ fn post_stop_recovery_preserves_distinct_previous_app_and_cli_accounts() {
 
 #[test]
 fn failed_app_auth_staging_after_stop_still_relaunches_desktop() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("app_auth_staging_failure");
     env.populate(
         vec![
@@ -532,9 +511,6 @@ fn failed_app_auth_staging_after_stop_still_relaunches_desktop() {
 
 #[test]
 fn cli_journal_failure_after_relaunch_restores_cli_without_restarting_app_again() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("cli_journal_failure_after_relaunch");
     env.populate(
         vec![

@@ -129,9 +129,6 @@ fn status_does_not_attribute_cli_quota_without_verified_auth_file() {
 
 #[test]
 fn cli_status_file_identity_requires_matching_live_auth_tokens() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("cli_status_identity");
     let account = make_account(
         "active",

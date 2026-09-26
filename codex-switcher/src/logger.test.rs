@@ -123,12 +123,8 @@ fn test_logger_rotation_rejects_symlinked_active_or_archive_parent() {
 
 #[test]
 fn logger_and_audit_share_redaction_before_brotli_rotation() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let temp_dir = temporary_dir("redaction");
-    let previous_home = std::env::var_os("CODEX_HOME");
-    std::env::set_var("CODEX_HOME", &temp_dir);
+    let home = crate::storage::test_codex_home::TestCodexHome::new("logger-redaction");
+    MonitorLogLifecycleLock::ensure(home.path()).unwrap();
     let raw = "{\"email\":\"quoted.user@example.test\",\"thread\":\"550e8400-e29b-41d4-a716-446655440000\",\"path\":\"/Users/dst/private\",\"authorization\":\"Bearer secret\"}";
     log("INFO", "RECOVERY", raw);
     DistributionAuditLogger::new(switcher_log_path()).log_action(
@@ -151,10 +147,4 @@ fn logger_and_audit_share_redaction_before_brotli_rotation() {
     let roundtrip = String::from_utf8(decompress_brotli(&compressed).unwrap()).unwrap();
     assert!(!roundtrip.contains("quoted.user@example.test"));
     assert!(roundtrip.contains("[PATH]"));
-
-    match previous_home {
-        Some(home) => std::env::set_var("CODEX_HOME", home),
-        None => std::env::remove_var("CODEX_HOME"),
-    }
-    let _ = fs::remove_dir_all(temp_dir);
 }

@@ -5,16 +5,13 @@ use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
-pub fn codex_home() -> PathBuf {
-    if let Ok(p) = std::env::var("CODEX_HOME") {
-        if !p.is_empty() {
-            return PathBuf::from(p);
-        }
-    }
-    dirs::home_dir()
-        .map(|h| h.join(".codex"))
-        .unwrap_or_else(|| PathBuf::from(".codex"))
-}
+#[path = "storage/codex_home_resolver.rs"]
+mod codex_home_resolver;
+#[cfg(test)]
+#[path = "storage/test_codex_home.rs"]
+pub(crate) mod test_codex_home;
+
+pub use codex_home_resolver::codex_home;
 
 pub fn auth_json_path() -> PathBuf {
     codex_home().join("auth.json")

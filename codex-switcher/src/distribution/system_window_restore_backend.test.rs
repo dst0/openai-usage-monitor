@@ -1,4 +1,5 @@
 use super::*;
+use crate::distribution::monitor_log_lifecycle_lock::MonitorLogLifecycleLock;
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
 
@@ -104,6 +105,9 @@ fn banner_capture_uses_non_ax_command_and_rejects_changed_process_identity() {
 
 #[test]
 fn running_desktop_recovery_uses_windowserver_and_continues_without_visible_window() {
+    // A missing window is logged, so the log must land in a test home.
+    let home = crate::storage::test_codex_home::TestCodexHome::new("running-banner");
+    MonitorLogLifecycleLock::ensure(home.path()).unwrap();
     let directory = std::env::temp_dir().join(format!(
         "codex-running-banner-test-{}-{}",
         std::process::id(),
@@ -131,6 +135,8 @@ fn running_desktop_recovery_uses_windowserver_and_continues_without_visible_wind
     assert_eq!(banner.expected_process().pid, 4242);
     assert_eq!(banner.expected_process().birth_id, "1726789012:000007");
     drop(banner);
+    let log = std::fs::read_to_string(home.path().join("log/switcher.log")).unwrap();
+    assert!(log.contains("RECOVERY_BANNER_UNAVAILABLE"), "{log}");
     let invalid_capture = "#!/bin/sh\ncase \"$1\" in\n  inspect-process) printf '%s' '{\"pid\":4242,\"birth_id\":\"1726789012:000007\"}' ;;\n  capture-banner-window) printf '%s' 'invalid data' ;;\n  *) exit 3 ;;\nesac\n";
     std::fs::write(&helper, invalid_capture).unwrap();
     assert!(crate::recovery::RecoveryBanner::start_with_backend(

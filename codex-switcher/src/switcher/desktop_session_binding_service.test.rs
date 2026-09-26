@@ -65,9 +65,6 @@ fn direct_switch_binds_app_before_recovery_and_rejects_process_change() {
 
 #[test]
 fn retry_reconciles_cli_binding_after_partial_cli_commit() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("retry_cli_marker_reconcile");
     env.populate(
         vec![

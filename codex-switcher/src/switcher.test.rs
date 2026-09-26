@@ -312,12 +312,6 @@ fn test_inspect_thread_rollout_state_large_tail_fallback() {
 }
 
 #[test]
-fn test_detect_in_progress_live() {
-    let in_progress = detect_in_progress_threads();
-    crate::runtime_print!("Live detected in-progress threads: {:?}", in_progress);
-}
-
-#[test]
 fn detects_when_self_restart_needs_an_independent_worker() {
     let rows = format!("1 0 /sbin/launchd\n100 1 {CODEX_APP_EXECUTABLE}\n200 100 /app-server\n300 200 /bin/zsh\n400 300 /cxi\n500 1 /cxi");
     assert!(has_codex_ancestor(&rows, 400).unwrap());
@@ -327,10 +321,7 @@ fn detects_when_self_restart_needs_an_independent_worker() {
 
 #[test]
 fn test_switch_to_account_rejects_relogin_needed() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX.lock().unwrap();
-    let temp_dir = std::env::temp_dir().join(format!("codex_relogin_guard_{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&temp_dir);
-    std::env::set_var("CODEX_HOME", &temp_dir);
+    let _home = crate::storage::test_codex_home::TestCodexHome::new("relogin-guard");
 
     let acc = crate::models::AccountConfig {
         id: "user@example.com:uuid-1".to_string(),
@@ -372,8 +363,6 @@ fn test_switch_to_account_rejects_relogin_needed() {
         .unwrap_err();
     assert!(err.contains("requires re-login"));
     assert!(err.contains("cxi relogin"));
-
-    let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
 #[test]

@@ -9,9 +9,6 @@ use std::sync::{Arc, Mutex};
 
 #[test]
 fn desktop_account_is_bound_before_recovery_waits() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("desktop_marker_before_recovery");
     env.populate(
         vec![
@@ -99,9 +96,6 @@ fn desktop_account_is_bound_before_recovery_waits() {
 
 #[test]
 fn stale_desktop_marker_cannot_drive_automatic_distribution() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("stale_desktop_marker_distribution");
     env.populate(
         vec![
@@ -155,9 +149,6 @@ fn stale_desktop_marker_cannot_drive_automatic_distribution() {
 
 #[test]
 fn explicit_app_restart_repairs_stale_desktop_marker() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("explicit_stale_marker_repair");
     env.populate(
         vec![
@@ -232,9 +223,6 @@ fn explicit_app_restart_repairs_stale_desktop_marker() {
 
 #[test]
 fn cli_only_distribution_preserves_depleted_desktop_binding_without_restart() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("cli_only_depleted_app");
     env.populate(
         vec![
@@ -299,9 +287,6 @@ fn cli_only_distribution_preserves_depleted_desktop_binding_without_restart() {
 
 #[test]
 fn automatic_cli_rotation_without_restart_preserves_desktop_binding() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("auto_cli_only");
     env.populate(
         vec![
@@ -354,9 +339,6 @@ fn automatic_cli_rotation_without_restart_preserves_desktop_binding() {
 
 #[test]
 fn stopped_desktop_distribution_does_not_claim_an_app_account() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("stopped_desktop_no_app_claim");
     env.populate(
         vec![
@@ -412,9 +394,6 @@ fn stopped_desktop_distribution_does_not_claim_an_app_account() {
 
 #[test]
 fn failed_cli_registry_commit_after_relaunch_restores_original_cli_identity() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("cli_registry_rollback_after_relaunch");
     env.populate(
         vec![
@@ -494,9 +473,6 @@ fn failed_cli_registry_commit_after_relaunch_restores_original_cli_identity() {
 
 #[test]
 fn app_retarget_without_restart_cannot_write_an_unbound_marker() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("no_restart_app_retarget");
     env.populate(
         vec![
@@ -545,9 +521,6 @@ fn app_retarget_without_restart_cannot_write_an_unbound_marker() {
 
 #[test]
 fn unknown_cli_target_is_rejected_before_desktop_shutdown() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("invalid_cli_preflight");
     env.populate(
         vec![
@@ -602,9 +575,6 @@ fn unknown_cli_target_is_rejected_before_desktop_shutdown() {
 
 #[test]
 fn desktop_identity_change_before_transaction_prevents_auth_mutation() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("desktop_changed_before_lock");
     env.populate(
         vec![
@@ -648,9 +618,6 @@ fn desktop_identity_change_before_transaction_prevents_auth_mutation() {
 
 #[test]
 fn failed_desktop_marker_save_prevents_recovery_dispatch() {
-    let _lock = crate::setup::TEST_CODEX_HOME_MUTEX
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
     let env = TestEnv::new("marker_save_failure_no_dispatch");
     env.populate(
         vec![
