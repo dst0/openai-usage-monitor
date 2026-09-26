@@ -47,9 +47,6 @@ use account_reset_service::reset_account_in_file;
 use relogin_service::apply_relogin_to_accounts_file;
 
 #[cfg(test)]
-pub(crate) static TEST_CODEX_HOME_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-#[cfg(test)]
 #[path = "setup/relogin_commit_service.test.rs"]
 mod relogin_commit_tests;
 #[cfg(test)]
