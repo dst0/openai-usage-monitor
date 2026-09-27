@@ -4,7 +4,7 @@ const JOURNAL_VERSION: u8 = 1;
 const MAX_TARGET_ID_BYTES: usize = 2048;
 
 /// One manual reset request. An unresolved record prevents issuing a new key.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ManualResetAttempt {
     version: u8,
@@ -29,13 +29,6 @@ impl ManualResetAttempt {
 
     pub(super) fn is_unresolved(&self) -> bool {
         self.state != "resolved"
-    }
-
-    pub(super) fn matches_pending(&self, target_id: &str, credits: u32, key: &str) -> bool {
-        self.state == "pending"
-            && self.target_id == target_id
-            && self.before_credits == credits
-            && self.idempotency_key == key
     }
 
     pub(super) fn mark_unknown(&mut self) {

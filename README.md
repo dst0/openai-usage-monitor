@@ -295,6 +295,12 @@ attempt unresolved. Later manual reset commands stop before sending another
 request, including for another account. A confirmed non-consumption or an
 applied reset with a successful cache commit resolves the attempt and permits
 a later explicit reset.
+The attempt file and its directory entry are flushed before the request. If
+saving the attempt or reading it back fails, no request is sent, and the
+command withdraws (marks resolved) only a record that reads back exactly as
+the attempt it just created, so an unsent attempt cannot block every later
+manual and automatic reset. An unreadable or different record may belong to
+another operation and is left for reconciliation.
 Manual and automatic reset requests share the recovery operation lock. A
 pending or unknown automatic attempt blocks a new manual request for the same
 account route even if its cached weekly timestamp changes. Any unresolved
@@ -725,10 +731,10 @@ The monitor writes a private, atomic `~/.codex/auto-reset-state.json` journal be
 
 The reset is account-scoped and does not participate in thread ownership:
 
-1. After taking the same operation lock as account switching, the monitor reloads the active account and revalidates its exact weekly exhaustion and window marker, selected threshold, reset-credit count, account routing ID, live CLI authentication, that a request can be built for the account route and token, and running Desktop. Only then does it write the `pending` journal entry, and the request follows immediately, so a change noticed during preparation never leaves an unsent attempt marked unresolved. If a check fails, or the request cannot be built, while retrying an attempt that is already `pending` or `unknown`, the journal stays unchanged and switching stays suppressed, because the earlier request may have reached the service.
+1. After taking the same operation lock as account switching, the monitor reloads the active account and revalidates its exact weekly exhaustion and window marker, selected threshold, reset-credit count, account routing ID, live CLI authentication, that a request can be built for the account route and token, and running Desktop. Only then does it write the `pending` journal entry, and the request follows immediately, so a change noticed during preparation never leaves an unsent attempt marked unresolved. The journal file and its directory entry are flushed before the request. If that write fails, nothing is sent: a `pending` entry that reads back exactly as this write is withdrawn to a retryable `journal_error` (reason `pending_marker_not_durable`) that keeps its key and task, and an unreadable or different journal is left unchanged. If a check fails, or the request cannot be built, while retrying an attempt that is already `pending` or `unknown`, the journal stays byte-for-byte unchanged and switching stays suppressed, because the earlier request may have reached the service. The status reason then names why this retry waits (`retry_refused:<cause>`, `retry_unavailable:<reason>`, or `original_reset_task_is_no_longer_quota_blocked`); the journal keeps the attempt's own reason.
 2. It sends one authenticated request to the ChatGPT reset service used by Codex, with the active account header and the journaled idempotency key. No token, email, or response body is logged.
 3. `reset` and `already_redeemed` are treated as idempotent success. `nothing_to_reset` and `no_credit` permit normal auto-switch fallback. A transport failure or unparsed HTTP response, including 4xx, retains the same key and suppresses switching until the result is settled.
-4. Only after a confirmed success does the monitor use Desktop's existing owner-routed IPC recovery path to resume the blocked task(s).
+4. Only after a confirmed success does the monitor record `applied`, read fresh usage, and use Desktop's existing owner-routed IPC recovery path to resume the blocked task(s). If `applied` became visible but could not be flushed, recovery still runs and the write is repeated, because a later tick never retries an `applied` episode; if `applied` never replaced `pending`, the same-key retry receives the idempotent success and recovers then.
 
 The monitor never starts a second app-server and never asks another runtime to load the task. Desktop remains the only thread writer; the direct service call is limited to the account-level reset operation. Desktop does not need a custom reset IPC handler.
 
@@ -772,6 +778,17 @@ if [ -f "$auto_journal_path" ] && [ ! -L "$auto_journal_path" ] &&
     rm -- "$auto_journal_path"
 fi
 ```
+
+Older builds could leave an attempt `pending` although its request was never
+sent: a manual attempt whose save or readback failed after it was written, or
+(before PR #20) an automatic attempt whose final checks refused after the
+journal was written. The Monitor withdraws an unsent attempt only in the
+command that created it, while its fresh key proves ownership; a record left
+by an earlier run is indistinguishable from one whose request reached the
+service, so it is never cleared automatically. Reconcile such a record with
+the same evidence as any other unresolved attempt. An automatic one can also
+settle itself through the same-key retry while its original task and weekly
+window remain eligible.
 
 The Monitor owns the launchd daemon lifecycle. Explicit Quit writes a private durable cancellation marker and unloads the recurring daemon. A scheduled worker that has not crossed the shutdown boundary stops; a worker already between shutdown and relaunch is allowed to restore Codex to a safe running state, but cannot begin another restart cycle. Starting Monitor clears the stale cancellation marker.
 

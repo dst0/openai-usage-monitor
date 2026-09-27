@@ -1,0 +1,40 @@
+# 2026-09-28 — A directory flush after the rename could strand an unsent reset
+
+- **Status:** Resolved
+- **Task/context:** Follow-ups to PR #20 in `codex-switcher/src/auto_reset/` and `codex-switcher/src/setup/`, listed as known residuals in [2026-09-27-unsent-auto-reset-left-pending-journal.md](2026-09-27-unsent-auto-reset-left-pending-journal.md). The automatic reset journal did not flush its directory after the rename. The manual path could leave an unsent `pending` attempt. The `Applied` arm had no hermetic test. A refused retry reported a stale reason.
+- **Unexpected observation or failure:**
+  - Adding the missing directory flush to the automatic journal created a new failure exit after the rename. A `pending` marker could then be visible on disk while the dispatcher returned before sending, which recreated the strand that PR #20 fixed.
+  - The same exit in the `Applied` arm had a second effect. An `applied` journal that became visible but was not flushed skipped the recovery hand-off. No later tick repeats that hand-off, because a tick that sees `applied` returns early.
+  - On the manual path, a failed directory flush or readback returned "no reset request was sent" but left the attempt `pending`. That blocked every later manual reset and the automatic reset of every account.
+- **Evidence:** All results come from hermetic regression tests with an injected `StateFileOperations` fake. The fake uses the real temporary filesystem and injects an `EIO` fault at a chosen call.
+  - The automatic journal's call log ended at `replace`, with no `sync_directory` call (`journal_write_flushes_the_directory_after_the_rename`).
+  - After the flush was added, a failed flush left the journal `("pending", None)` and no request was sent (`unflushed_pending_marker_is_withdrawn_before_any_request`).
+  - The manual attempt stayed `pending` after a failed flush and after a transient readback failure, and no request was sent (`unflushed_attempt_is_withdrawn_before_any_request`, `transient_readback_failure_withdraws_the_unsent_attempt`).
+  - A visible but unflushed `applied` journal produced no recovery call (`visible_but_unflushed_applied_journal_still_hands_off_recovery`).
+  - Refused retries reported the journal's reason, `synthetic_prior_reason`, instead of the cause of the refusal.
+- **Approaches tried:**
+  - **Attempt:** Add the directory flush only.
+    - **Outcome:** Partial
+    - **Why:** The write became durable, but its new post-rename failure left an unsent `pending` marker behind.
+  - **Attempt:** Choose the recovery action from the failed stage (a directory-flush failure means the new content is visible).
+    - **Outcome:** Rejected
+    - **Why:** The failed stage cannot show whose record is on disk. It also does not cover a failed readback after a successful write.
+  - **Attempt:** Re-read the record, and withdraw only a record that exactly equals the one just written. The equality check covers the fresh random key and the new timestamp. The manual path marks it `resolved`. The automatic path rewrites it to a retryable `journal_error` with the reason `pending_marker_not_durable` and keeps the key and task. An unreadable or different record is left unchanged.
+    - **Outcome:** Worked
+    - **Why:** Only the command that wrote the record can prove that it owns it, and that command has provably sent nothing. Any other record may describe a request that did leave, so it fails closed.
+  - **Attempt:** On any failed `applied` write, either always hand off recovery or never hand it off.
+    - **Outcome:** Rejected
+    - **Why:** If `applied` never replaced `pending`, recovering now unblocks the task. The same-key retry then waits for that original task forever while rotation stays suppressed. If `applied` is visible, never recovering loses the recovery that the credit paid for. A readback decides between the two: hand off and rewrite when `applied` is visible, and otherwise defer to the same-key retry.
+- **Root cause:** A marker that means "a request may be in flight", or "applied: do not repeat", was treated as published once its rename succeeded. Any fallible step after the rename but before the side effect is part of the marker protocol. The old code had no failure path for that step.
+- **Resolution:**
+  - Both stores write through the shared `state_file::PrivateStateFileWriteService`. It stages an exclusive `0600` file, flushes it, renames it into place, and flushes the directory. The staging names are unchanged, so uninstall still matches them.
+  - Readback-proven withdrawal is implemented by `ManualResetAttemptRecordService` (manual) and `ResetPendingMarkService` (automatic).
+  - `AppliedResetSettlementService` handles `Applied` through `WeeklyResetEnvironment` (`read_usage`, `recover_threads`, `journal_files`).
+  - A refused retry reports `retry_refused:<cause>` or `retry_unavailable:<reason>` and leaves the journal byte-identical.
+  - The threshold check was split into validation and a total comparison. This removed an error branch in the preflight that could never run.
+- **Verification:** `cargo test --locked` passed 722 unit tests plus the integration suites; the new state-file, journal, durability, applied, retry, and manual-withdrawal tests are included. All 20 hand-applied mutations of the new logic were each caught by at least one test. `cargo clippy --workspace --all-targets --locked -- -D warnings` and `cargo fmt --check` pass.
+- **Prevention/follow-up:**
+  - The rule is recorded in `AGENTS.md`, `CODEX.md`, and the README reset steps.
+  - The README reconciliation steps explain unsent attempts left by older builds. Those attempts cannot be withdrawn automatically, because only the run that wrote a record can prove it owns the record.
+- **Reusable learning:** Every fallible step between the moment a marker becomes visible and its side effect belongs to the marker protocol. Either the step cannot fail, or its failure path re-reads the record and withdraws only its own exact marker. A terminal state that is visible but not flushed must not skip side effects that later ticks will never repeat.
+- **References:** `codex-switcher/src/state_file/private_state_file_write_service.rs`, `codex-switcher/src/auto_reset/reset_pending_mark_service.rs`, `codex-switcher/src/auto_reset/applied_reset_settlement_service.rs`, `codex-switcher/src/setup/manual_reset_attempt_record_service.rs`, `codex-switcher/src/auto_reset/weekly_reset_durability.test.rs`, `codex-switcher/src/auto_reset/weekly_reset_applied.test.rs`, `codex-switcher/src/setup/unsent_manual_reset_withdrawal.test.rs`.

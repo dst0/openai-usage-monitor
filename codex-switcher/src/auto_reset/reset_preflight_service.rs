@@ -1,6 +1,6 @@
 use super::reset_preflight::ResetPreflight;
 use super::weekly_reset_environment::WeeklyResetEnvironment;
-use super::weekly_reset_policy::{episode_key, threshold_eligible, weekly_exhausted};
+use super::weekly_reset_policy::{episode_key, remaining_exceeds_threshold, weekly_exhausted};
 use crate::models::{AccountConfig, Settings};
 use crate::{quota, storage};
 
@@ -60,10 +60,12 @@ impl ResetPreflightService {
         if latest_active.last_credits.unwrap_or(0) == 0 {
             return Ok(ResetPreflight::refused("no_credit", None));
         }
-        if !threshold_eligible(
+        // `still_enabled` pinned the threshold to the one the caller already
+        // validated; only the fresh remaining time can change the answer.
+        if !remaining_exceeds_threshold(
             latest_active,
-            latest.settings.auto_reset_weekly_min_remaining_seconds,
-        )? {
+            settings.auto_reset_weekly_min_remaining_seconds,
+        ) {
             return Ok(ResetPreflight::refused("waiting_for_window", None));
         }
         let live_auth_matches = storage::read_active_auth_json()

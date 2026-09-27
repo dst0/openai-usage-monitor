@@ -1,23 +1,30 @@
 use crate::models::{AccountConfig, AccountsFile};
 use crate::quota::ResetCreditConsumeOutcome;
+use crate::state_file::SystemStateFileOperations;
 use crate::storage::{load_accounts, update_accounts_atomically};
 
 #[path = "manual_reset_attempt.rs"]
 mod manual_reset_attempt;
+#[path = "manual_reset_attempt_record_service.rs"]
+mod manual_reset_attempt_record_service;
 #[path = "manual_reset_attempt_store.rs"]
 mod manual_reset_attempt_store;
 
 use manual_reset_attempt::ManualResetAttempt;
+use manual_reset_attempt_record_service::ManualResetAttemptRecordService;
 use manual_reset_attempt_store::ManualResetAttemptStore;
 
 pub(crate) fn unresolved_manual_reset() -> Result<bool, String> {
-    Ok(ManualResetAttemptStore::load()?.is_some_and(|attempt| attempt.is_unresolved()))
+    Ok(ManualResetAttemptStore::new(&SystemStateFileOperations)
+        .load()?
+        .is_some_and(|attempt| attempt.is_unresolved()))
 }
 
 /// Consumes an available rate-limit reset credit for the specified account, restoring its quota.
 pub fn reset_account(account_id: &str) -> Result<(), String> {
     let _operation = crate::recovery::operation_lock()?;
     let (name, is_active) = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         account_id,
         crate::daemon::sync_active_tokens,
         crate::quota::consume_rate_limit_reset_credit,
@@ -45,6 +52,7 @@ pub fn reset_account(account_id: &str) -> Result<(), String> {
 }
 
 fn reset_account_transaction_with<S, F>(
+    store: &ManualResetAttemptStore<'_>,
     query: &str,
     synchronize: S,
     consume_fn: F,
@@ -53,7 +61,7 @@ where
     S: FnOnce(&mut AccountsFile) -> Result<bool, String>,
     F: FnOnce(&AccountConfig, &str) -> crate::quota::ResetCreditConsumeOutcome,
 {
-    if ManualResetAttemptStore::load()?.is_some_and(|attempt| attempt.is_unresolved()) {
+    if store.load()?.is_some_and(|attempt| attempt.is_unresolved()) {
         return Err(
             "A previous manual reset is unresolved; reconcile its recorded attempt before requesting another credit"
                 .into(),
@@ -84,12 +92,7 @@ where
     );
     // Persist before dispatch. A crash or unknown response must not permit a
     // second invocation to mint a different idempotency key.
-    ManualResetAttemptStore::write(&attempt)?;
-    if !ManualResetAttemptStore::load()?
-        .is_some_and(|saved| saved.matches_pending(&target.id, available_credits, &idempotency_key))
-    {
-        return Err("Manual reset attempt readback failed; no reset request was sent".into());
-    }
+    ManualResetAttemptRecordService::new(store).record_pending(&attempt)?;
     let outcome = consume_fn(&target, &idempotency_key);
     let local_result =
         apply_reset_outcome(&mut file, account_index, available_credits, outcome.clone());
@@ -101,7 +104,7 @@ where
             match commit_consumed_credit(&target, consumed_credits) {
                 Ok(result) => {
                     attempt.mark_resolved();
-                    ManualResetAttemptStore::write(&attempt).map_err(|_| {
+                    store.write(&attempt).map_err(|_| {
                         "Reset credit was consumed and cached, but attempt state is uncertain; do not retry"
                             .to_string()
                     })?;
@@ -109,7 +112,7 @@ where
                 }
                 Err(_) => {
                     attempt.mark_applied_uncertain();
-                    if ManualResetAttemptStore::write(&attempt).is_err() {
+                    if store.write(&attempt).is_err() {
                         return Err("Reset credit was consumed, but cache and attempt state are uncertain; do not retry".into());
                     }
                     Err("Reset credit was consumed, but local cache is uncertain; do not retry automatically".into())
@@ -118,7 +121,7 @@ where
         }
         ResetCreditConsumeOutcome::Unknown(_) => {
             attempt.mark_unknown();
-            ManualResetAttemptStore::write(&attempt).map_err(|_| {
+            store.write(&attempt).map_err(|_| {
                 "Reset outcome and attempt state are uncertain; do not retry".to_string()
             })?;
             Err(
@@ -128,7 +131,7 @@ where
         }
         ResetCreditConsumeOutcome::NotConsumed(_) | ResetCreditConsumeOutcome::Unavailable(_) => {
             attempt.mark_resolved();
-            ManualResetAttemptStore::write(&attempt)?;
+            store.write(&attempt)?;
             local_result
         }
     }
@@ -247,3 +250,6 @@ fn reset_target_index(file: &AccountsFile, query: &str) -> Result<usize, String>
 #[cfg(test)]
 #[path = "account_reset_service.test.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "unsent_manual_reset_withdrawal.test.rs"]
+mod unsent_withdrawal_tests;

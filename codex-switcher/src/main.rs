@@ -19,6 +19,7 @@ mod recovery;
 pub mod recovery_banner;
 mod setup;
 mod shim;
+mod state_file;
 mod status_table_service;
 mod storage;
 mod strategy;

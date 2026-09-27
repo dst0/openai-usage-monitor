@@ -82,15 +82,48 @@ pub(super) fn report(
     }
 }
 
+/// Validates the configured threshold, then applies it.
 pub(super) fn threshold_eligible(active: &AccountConfig, threshold: u64) -> Result<bool, String> {
     if threshold > MAX_THRESHOLD_SECONDS {
         return Err("Weekly reset threshold exceeds 167 hours".into());
     }
-    if threshold == 0 {
-        return Ok(true);
-    }
-    let remaining = active.last_weekly_reset_after_seconds.unwrap_or(0);
-    Ok(remaining > threshold as i64)
+    Ok(remaining_exceeds_threshold(active, threshold))
+}
+
+/// Whether strictly more than `threshold` seconds remain before the normal
+/// weekly reset (always true for a zero threshold). It is total over `u64`;
+/// validating the configured value is `threshold_eligible`'s job.
+pub(super) fn remaining_exceeds_threshold(active: &AccountConfig, threshold: u64) -> bool {
+    threshold == 0
+        || active
+            .last_weekly_reset_after_seconds
+            .is_some_and(|remaining| i128::from(remaining) > i128::from(threshold))
+}
+
+/// Why the daemon snapshot alone holds a retry of an unresolved attempt this
+/// tick, or `None` when the snapshot still permits it.
+pub(super) fn snapshot_retry_hold(
+    active: &AccountConfig,
+    threshold: u64,
+) -> Result<Option<&'static str>, String> {
+    Ok(if !weekly_exhausted(active) {
+        Some("weekly_pool_available")
+    } else if active.last_error.is_some() {
+        Some("active_account_usage_read_failed")
+    } else if active.last_credits.unwrap_or(0) == 0 {
+        Some("no_credit")
+    } else if !threshold_eligible(active, threshold)? {
+        Some("waiting_for_window")
+    } else {
+        None
+    })
+}
+
+/// Status reason for a retry of a `pending`/`unknown` attempt that sent
+/// nothing. It names this retry's refusal; the journal keeps the attempt's
+/// own reason byte for byte.
+pub(super) fn retry_refused_reason(state: &str, reason: Option<&str>) -> String {
+    format!("retry_refused:{}", reason.unwrap_or(state))
 }
 
 pub(super) fn terminal_no_spend_state(state: &str) -> bool {

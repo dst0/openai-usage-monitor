@@ -3,13 +3,17 @@ use super::reset_journal::{ResetJournal, JOURNAL_VERSION};
 use super::reset_journal_store::ResetJournalStore;
 use super::weekly_reset_environment::WeeklyResetEnvironment;
 use super::weekly_reset_policy::{
-    episode_key, new_idempotency_key, report, same_episode, terminal_no_spend_state,
-    threshold_eligible, unresolved_attempt, weekly_exhausted,
+    episode_key, new_idempotency_key, report, retry_refused_reason, same_episode,
+    snapshot_retry_hold, terminal_no_spend_state, threshold_eligible, unresolved_attempt,
+    weekly_exhausted,
 };
 use super::weekly_reset_status_service::WeeklyResetStatusService;
 use super::AutoResetReport;
 use crate::models::{AccountConfig, Settings};
 use crate::{recovery, storage};
+
+/// Status reason when the task that justified an attempt is no longer blocked.
+const ORIGINAL_TASK_UNBLOCKED: &str = "original_reset_task_is_no_longer_quota_blocked";
 
 pub(super) struct WeeklyResetService;
 
@@ -25,27 +29,34 @@ impl WeeklyResetService {
         if !settings.auto_reset_weekly_enabled {
             return Ok(report("disabled", None, None, false));
         }
-        let initial_journal = ResetJournalStore::load()?;
-        if unresolved_attempt(&initial_journal)
-            && (!same_episode(&initial_journal, active)
-                || !weekly_exhausted(active)
-                || active.last_error.is_some()
-                || active.last_credits.unwrap_or(0) == 0
-                || !threshold_eligible(active, settings.auto_reset_weekly_min_remaining_seconds)?)
-        {
-            return Ok(report(
-                if same_episode(&initial_journal, active) {
-                    initial_journal.state
-                } else {
-                    "waiting_for_previous_reset".into()
-                },
-                initial_journal.reason,
-                initial_journal.updated_at,
-                true,
-            ));
+        let store = ResetJournalStore::new(environment.journal_files());
+        let initial_journal = store.load()?;
+        if unresolved_attempt(&initial_journal) {
+            if !same_episode(&initial_journal, active) {
+                return Ok(report(
+                    "waiting_for_previous_reset",
+                    initial_journal.reason,
+                    initial_journal.updated_at,
+                    true,
+                ));
+            }
+            if let Some(hold) =
+                snapshot_retry_hold(active, settings.auto_reset_weekly_min_remaining_seconds)?
+            {
+                return Ok(report(
+                    initial_journal.state,
+                    Some(retry_refused_reason(hold, None)),
+                    initial_journal.updated_at,
+                    true,
+                ));
+            }
         }
         if !weekly_exhausted(active) {
-            WeeklyResetStatusService::clear_completed_episode_if_restored(settings, Some(active))?;
+            WeeklyResetStatusService::clear_completed_episode_if_restored(
+                settings,
+                Some(active),
+                &store,
+            )?;
             return Ok(report("ready", None, None, false));
         }
         if active.last_error.is_some() {
@@ -77,7 +88,7 @@ impl WeeklyResetService {
                 ))
             }
         };
-        let mut journal = ResetJournalStore::load()?;
+        let mut journal = store.load()?;
         let current = storage::load_accounts()?;
         let current_active = current
             .accounts
@@ -132,14 +143,14 @@ impl WeeklyResetService {
                         false,
                     ));
                 }
-                let suppress_auto_switch = matches!(journal.state.as_str(), "pending" | "unknown");
+                let suppress_auto_switch = unresolved_attempt(&journal);
                 return Ok(report(
                     if suppress_auto_switch {
                         "waiting_for_original_task"
                     } else {
                         "waiting_for_task"
                     },
-                    journal.reason,
+                    Some(ORIGINAL_TASK_UNBLOCKED.into()),
                     journal.updated_at,
                     suppress_auto_switch,
                 ));
@@ -168,13 +179,12 @@ impl WeeklyResetService {
                 ));
             };
             if !blocked_threads.contains(&original_anchor) {
-                let outcome_may_be_unknown =
-                    matches!(journal.state.as_str(), "pending" | "unknown");
+                let suppress_auto_switch = unresolved_attempt(&journal);
                 return Ok(report(
                     "waiting_for_original_task",
-                    Some("original_reset_task_is_no_longer_quota_blocked".into()),
+                    Some(ORIGINAL_TASK_UNBLOCKED.into()),
                     journal.updated_at,
-                    outcome_may_be_unknown,
+                    suppress_auto_switch,
                 ));
             }
         } else {
@@ -203,6 +213,12 @@ impl WeeklyResetService {
     }
 }
 
+#[cfg(test)]
+#[path = "weekly_reset_applied.test.rs"]
+mod applied_tests;
+#[cfg(test)]
+#[path = "weekly_reset_durability.test.rs"]
+mod durability_tests;
 #[cfg(test)]
 #[path = "weekly_reset_fixture.test.rs"]
 mod fixture;

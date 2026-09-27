@@ -199,6 +199,7 @@ fn restored_quota_does_not_erase_an_uncertain_auto_reset_attempt() {
         weekly_reset_status_service::WeeklyResetStatusService::clear_completed_episode_if_restored(
             &settings,
             Some(&account),
+            &journal_store_for(&path),
         )
         .unwrap();
         assert_eq!(
@@ -254,6 +255,42 @@ fn threshold_is_strict_when_nonzero() {
     account.last_weekly_reset_after_seconds = Some(86_401);
     assert!(threshold_eligible(&account, 86_400).unwrap());
     assert!(threshold_eligible(&account, 0).unwrap());
+}
+
+/// Only the configured value is validated; the comparison the final preflight
+/// relies on is total, so no threshold can wrap into a false "eligible".
+#[test]
+fn threshold_validation_is_separate_from_a_total_comparison() {
+    let account = test_account();
+    assert!(threshold_eligible(&account, 167 * 3600).is_ok());
+    assert!(threshold_eligible(&account, 167 * 3600 + 1).is_err());
+    assert!(!remaining_exceeds_threshold(&account, u64::MAX));
+    let mut unknown_window = test_account();
+    unknown_window.last_weekly_reset_after_seconds = None;
+    assert!(!remaining_exceeds_threshold(&unknown_window, 1));
+    assert!(remaining_exceeds_threshold(&unknown_window, 0));
+}
+
+#[test]
+fn invalid_threshold_fails_closed_before_any_reset_work() {
+    let env = crate::distribution::test_helper::TestEnv::new("auto_invalid_threshold");
+    env.populate(
+        vec![test_account()],
+        Some("user@example.invalid:account-id"),
+        None,
+    );
+    let settings = Settings {
+        auto_reset_weekly_enabled: true,
+        auto_reset_weekly_min_remaining_seconds: 167 * 3600 + 1,
+        ..Settings::default()
+    };
+    let result = maybe_consume_weekly_reset(&settings, &test_account());
+    let no_auto_journal = !env.home().join("auto-reset-state.json").exists();
+    drop(env);
+    assert!(
+        result.is_err_and(|error| error.contains("167 hours")) && no_auto_journal,
+        "an out-of-range threshold was treated as an answer"
+    );
 }
 
 #[test]
