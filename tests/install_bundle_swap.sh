@@ -5,7 +5,37 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && /bin/pwd -P)"
 TEMP_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/codex-monitor-swap-test.XXXXXX")"
 trap '/bin/rm -rf -- "${TEMP_ROOT}"' EXIT INT TERM
 
-source "${PROJECT_DIR}/scripts/install_bundle_swap.sh"
+HELPER="${PROJECT_DIR}/scripts/install_bundle_swap.sh"
+
+fail() {
+    printf 'FAIL: %s\n' "$*" >&2
+    exit 1
+}
+
+# The helper removes and renames whatever paths it is given, and this test
+# gives it only paths under TEMP_ROOT. A line that names an installed app
+# location itself would act on this machine, so fail before sourcing it.
+INSTALLED_PATH='/Applications|HOME|~|(^|[;&|({[:space:]])(source|[.])[[:space:]]'
+# installed_paths FILE: the non-comment lines of FILE that name an installed
+# location or source another file.
+installed_paths() {
+    /usr/bin/grep -n -E "${INSTALLED_PATH}" "$1" |
+        /usr/bin/grep -v -E '^[0-9]+:[[:space:]]*#' || true
+}
+PROBE="${TEMP_ROOT}/guard-probe.sh"
+for line in '/bin/rm -rf -- "/Applications/${bundle_name}"' '/bin/mv "${HOME}/Applications/x" y' \
+    '/bin/rm -rf ~/Applications/x' 'source "${PROJECT_DIR}/scripts/x.sh"'; do
+    /usr/bin/printf '%s\n' "${line}" > "${PROBE}"
+    [ -n "$(installed_paths "${PROBE}")" ] || fail "installed-path guard missed: ${line}"
+done
+/usr/bin/printf '%s\n' '# /Applications or ~/Applications' '/bin/mv "${APP_STAGING_PATH}" "${target}"' \
+    > "${PROBE}"
+[ -z "$(installed_paths "${PROBE}")" ] || fail "installed-path guard rejected a temporary path or comment"
+UNSAFE="$(installed_paths "${HELPER}")"
+[ -z "${UNSAFE}" ] || fail "bundle swap helper names an installed location:
+${UNSAFE}"
+
+source "${HELPER}"
 
 reset_state() {
     APP_STAGE_ROOT=""
@@ -15,11 +45,6 @@ reset_state() {
     APP_TARGET_PATH=""
     APP_SWAP_ACTIVE=0
     APP_HAD_EXISTING_TARGET=0
-}
-
-fail() {
-    printf 'FAIL: %s\n' "$*" >&2
-    exit 1
 }
 
 INSTALL_DIR="${TEMP_ROOT}/Applications"

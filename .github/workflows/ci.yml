@@ -73,10 +73,31 @@ jobs:
       # launchctl, osascript, defaults, lsregister, and getconf replaced by
       # fakes, so the runner's launchd, login items, and /Applications are
       # never touched. It builds codex-mon itself, from codex-switcher/ and
-      # with the committed Cargo.lock. The step is enforced by
+      # with the committed Cargo.lock. Every tracked tests/*.sh needs a step
+      # like this one in a required job, setting only `name` and
+      # `run: bash <script>`, as enforced by
       # codex-switcher/tests/ci_workflow_policy/shell_test_gate.rs.
       - name: Run Uninstall Shell Test
         run: bash tests/log_permissions_and_uninstall.sh
+
+      # The installer tests below work on temporary directories and on copies
+      # of the installer helpers whose ps, kill, launchctl, and sleep are
+      # fakes, or only read scripts/install.sh. They never install, sign an
+      # installed app, signal a real process, or touch launchd.
+      - name: Run Installer Bundle Swap Shell Test
+        run: bash tests/install_bundle_swap.sh
+
+      - name: Run Installer CLI Staging Order Shell Test
+        run: bash tests/install_cli_staging_signature.sh
+
+      - name: Run Installer Log Redaction Order Shell Test
+        run: bash tests/install_log_redaction_quiescence.sh
+
+      - name: Run Installer Monitor Process Guard Shell Test
+        run: bash tests/install_monitor_process_guard.sh
+
+      - name: Run Installer Restart Worker Wait Shell Test
+        run: bash tests/install_restart_worker_wait.sh
 
   test-swift:
     name: 🍏 Swift Menu Bar App Tests
@@ -92,6 +113,17 @@ jobs:
         run: |
           chmod +x ./scripts/test_swift.sh
           ./scripts/test_swift.sh
+
+      # Compiles the recovery banner from its source manifest into a temporary
+      # directory; nothing is installed or launched.
+      - name: Run Recovery Banner Manifest Shell Test
+        run: bash tests/recovery_banner_manifest.sh
+
+      # test_swift.sh also runs this test before its first compile, for local
+      # runs. The policy cannot see inside that script, so this step is the
+      # enforced run.
+      - name: Run Swift Module Cache Path Shell Test
+        run: bash tests/swift_module_cache_path.sh
 
   security-scan:
     name: 🔒 Security & Privacy Scan

@@ -10,6 +10,12 @@ fail() {
     exit 1
 }
 
+# The fakes' paths are spliced into sed programs below, which only works for
+# plain path characters.
+case "${TEMP_ROOT}" in
+    *[!A-Za-z0-9/._+-]*) fail "TMPDIR must be a path of letters, digits, /, ., _, +, and -: ${TEMP_ROOT}" ;;
+esac
+
 FAKE_BIN="${TEMP_ROOT}/bin"
 /bin/mkdir -p "${FAKE_BIN}"
 FAKE_STATE="${TEMP_ROOT}/state"
@@ -40,6 +46,34 @@ GUARD_COPY="${TEMP_ROOT}/install_monitor_process_guard.sh"
     -e "s|/bin/ps|${FAKE_BIN}/ps|g" \
     -e "s|/bin/kill|${FAKE_BIN}/kill|g" \
     "${PROJECT_DIR}/scripts/install_monitor_process_guard.sh" > "${GUARD_COPY}"
+# The copy may reach processes only through the fakes. A bare `kill`, the
+# builtin, or another spelling the rewrite missed would inspect or signal the
+# real PID 4242 on this machine, and a sourced file would run unrewritten, so
+# fail before sourcing it.
+PROCESS_COMMAND='(^|[^[:alnum:]_.])(kill|pkill|killall|ps|pgrep|lsappinfo|launchctl|osascript|open)([^[:alnum:]_.-]|$)'
+SOURCE_COMMAND='(^|[;&|({[:space:]])(source|[.])[[:space:]]'
+# unfaked_commands FILE: the non-comment lines of FILE that still name a
+# process command once the fakes' paths are removed, or that source a file.
+unfaked_commands() {
+    /usr/bin/sed -e "s|${FAKE_BIN}/ps||g" -e "s|${FAKE_BIN}/kill||g" "$1" |
+        /usr/bin/grep -n -E "${PROCESS_COMMAND}|${SOURCE_COMMAND}" |
+        /usr/bin/grep -v -E '^[0-9]+:[[:space:]]*#' || true
+}
+# The check must reject each of these lines, and accept the fakes and comments.
+PROBE="${TEMP_ROOT}/guard-probe.sh"
+for line in 'kill -TERM "${pid}"' '"${KILL:-kill}" -TERM 1' 'builtin kill -0 1' \
+    '/usr/bin/pkill CodexMonitor' 'x="$(ps -p 1 -o comm=)"' '/usr/bin/pgrep -x CodexMonitor' \
+    '/bin/launchctl bootout gui/501/x' '/usr/bin/osascript -e quit' '/usr/bin/open -a x' \
+    'source "${PROJECT_DIR}/scripts/x.sh"' '    . ./x.sh'; do
+    /usr/bin/printf '%s\n' "${line}" > "${PROBE}"
+    [ -n "$(unfaked_commands "${PROBE}")" ] || fail "fake guard missed: ${line}"
+done
+/usr/bin/printf '%s\n' "\"${FAKE_BIN}/kill\" -TERM 1" "${FAKE_BIN}/ps -p 1" '# kill ps' \
+    'local source_bundle' 'echo "cannot signal"' > "${PROBE}"
+[ -z "$(unfaked_commands "${PROBE}")" ] || fail "fake guard rejected fakes or comments"
+UNFAKED="$(unfaked_commands "${GUARD_COPY}")"
+[ -z "${UNFAKED}" ] || fail "guard copy can still reach a real process command:
+${UNFAKED}"
 
 BUNDLE_NAME="Codex Monitor.app"
 INSTALL_DIR="${TEMP_ROOT}/Applications"
