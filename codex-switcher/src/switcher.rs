@@ -20,6 +20,8 @@ mod codex_availability_service;
 mod codex_process_probe;
 #[path = "switcher/desktop_session_binding_service.rs"]
 mod desktop_session_binding_service;
+#[path = "switcher/desktop_shutdown_window_guard.rs"]
+mod desktop_shutdown_window_guard;
 #[path = "switcher/desktop_writer_exit_gate.rs"]
 mod desktop_writer_exit_gate;
 #[path = "switcher/direct_switch_journal.rs"]
@@ -34,10 +36,14 @@ mod pinned_thread_link_launch_spec;
 mod primary_target_selection;
 #[path = "switcher/recovery_command_service.rs"]
 mod recovery_command_service;
+#[path = "switcher/restart_window_task_service.rs"]
+mod restart_window_task_service;
 #[path = "switcher/restart_worker_dispatch_service.rs"]
 mod restart_worker_dispatch_service;
 #[path = "switcher/switch_outcome.rs"]
 mod switch_outcome;
+#[path = "switcher/switch_restart_target_service.rs"]
+mod switch_restart_target_service;
 #[path = "switcher/switch_trigger.rs"]
 mod switch_trigger;
 #[path = "switcher/thread_detection_service.rs"]
@@ -64,7 +70,6 @@ pub(crate) use codex_app_lifecycle::{
 pub(crate) use direct_switch_journal::create_direct_switch_intent_for_test;
 pub(crate) use direct_switch_journal::reconcile_pending_direct_switch;
 pub(crate) use pinned_thread_link_launch_spec::is_identity_change as is_fatal_thread_navigation_error;
-use primary_target_selection::prioritize_primary_if_user;
 pub use recovery_command_service::{
     dispatch_self_restart, restart_and_recover, resume_thread_interactive,
 };
@@ -92,6 +97,8 @@ use codex_app_lifecycle::wait_for_app_exit_with;
 use codex_process_probe::{parse_codex_app_pids, parse_shared_auth_activity, CODEX_APP_EXECUTABLE};
 #[cfg(test)]
 use primary_target_selection::prioritize_primary;
+#[cfg(test)]
+use primary_target_selection::prioritize_primary_if_user;
 #[cfg(test)]
 use recovery_command_service::has_codex_ancestor;
 #[cfg(test)]

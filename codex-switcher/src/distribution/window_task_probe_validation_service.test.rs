@@ -10,8 +10,17 @@ fn response(window_ids: serde_json::Value, count: u64) -> serde_json::Value {
     json!({
         "process": {"pid": 4242, "birth_id": "1726789012:000007"},
         "window_ids": window_ids,
-        "observed_task_count": count
+        "observed_task_count": count,
+        "clipboard_restored": true
     })
+}
+
+fn report(count: usize, clipboard_restored: bool) -> WindowTaskReport {
+    WindowTaskReport {
+        windows: count,
+        verified: count,
+        clipboard_restored,
+    }
 }
 
 #[test]
@@ -19,8 +28,16 @@ fn accepts_only_a_complete_count_for_the_exact_process() {
     let valid = response(json!([31, 32]), 2);
     assert_eq!(
         WindowTaskProbeValidationService::parse(&valid, &expected()),
-        Ok(2)
+        Ok(report(2, true))
     );
+    let mut kept = valid.clone();
+    kept["clipboard_restored"] = json!(false);
+    assert_eq!(
+        WindowTaskProbeValidationService::parse(&kept, &expected()),
+        Ok(report(2, false))
+    );
+    kept["clipboard_restored"] = json!("false");
+    assert!(WindowTaskProbeValidationService::parse(&kept, &expected()).is_err());
     let mut changed = valid.clone();
     changed["process"]["birth_id"] = json!("1726789012:000008");
     assert!(WindowTaskProbeValidationService::parse(&changed, &expected()).is_err());
@@ -59,7 +76,7 @@ fn window_limit_matches_the_native_helper() {
     let over_limit: Vec<u32> = (1..=65).collect();
     assert_eq!(
         WindowTaskProbeValidationService::parse(&response(json!(at_limit), 64), &expected()),
-        Ok(64)
+        Ok(report(64, true))
     );
     assert!(
         WindowTaskProbeValidationService::parse(&response(json!(over_limit), 65), &expected())
@@ -94,15 +111,20 @@ fn response_may_not_carry_extra_or_missing_fields() {
 #[test]
 fn only_fixed_failure_codes_are_named() {
     assert_eq!(
-        WindowTaskProbeValidationService::failure(b"WINDOW_FOCUS_FAILED\n").as_deref(),
+        WindowTaskProbeValidationService::failure(b"WINDOW_FOCUS_FAILED\n", "Task probe")
+            .as_deref(),
         Some("Task probe failed: WINDOW_FOCUS_FAILED")
     );
     assert_eq!(
-        WindowTaskProbeValidationService::failure(b"COMMAND_REJECTED").as_deref(),
+        WindowTaskProbeValidationService::failure(b"COMMAND_REJECTED", "Task probe").as_deref(),
         Some("Task probe failed: COMMAND_REJECTED")
     );
     assert_eq!(
-        WindowTaskProbeValidationService::failure(b"COPY_LINK_AMBIGUOUS after-focus\n").as_deref(),
+        WindowTaskProbeValidationService::failure(
+            b"COPY_LINK_AMBIGUOUS after-focus\n",
+            "Task probe"
+        )
+        .as_deref(),
         Some(
             "Task probe failed: COPY_LINK_AMBIGUOUS after it began focusing ChatGPT windows; \
              the clipboard may now hold a copied task link"
@@ -118,7 +140,10 @@ fn only_fixed_failure_codes_are_named() {
         b"window_focus_failed\n",
         b"",
     ] {
-        assert_eq!(WindowTaskProbeValidationService::failure(unknown), None);
+        assert_eq!(
+            WindowTaskProbeValidationService::failure(unknown, "Task probe"),
+            None
+        );
     }
 }
 

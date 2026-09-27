@@ -70,8 +70,16 @@ pub mod window_restore_sanitizer;
 pub mod window_restore_screen;
 pub mod window_restore_service;
 pub mod window_restore_tolerance;
+mod window_task_command;
+pub mod window_task_entry;
+mod window_task_helper_client;
 pub mod window_task_probe_service;
 mod window_task_probe_validation_service;
+pub mod window_task_report;
+pub mod window_task_restart_session;
+pub mod window_task_restore_report;
+mod window_task_session_validation_service;
+pub mod window_task_snapshot;
 
 pub use app_lifecycle::AppLifecycle;
 pub use app_stop_error::AppStopError;
@@ -114,6 +122,8 @@ pub use window_restore_screen::ScreenIdentity;
 pub use window_restore_service::WindowRestoreService;
 pub use window_restore_tolerance::RestoreTolerance;
 pub use window_task_probe_service::WindowTaskProbeService;
+pub use window_task_report::WindowTaskReport;
+pub use window_task_restart_session::WindowTaskRestartSession;
 
 #[cfg(test)]
 pub mod test_account_spec;

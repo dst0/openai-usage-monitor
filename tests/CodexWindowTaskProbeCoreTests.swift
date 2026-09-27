@@ -49,6 +49,9 @@ final class FakeProbeSystem: WindowTaskProbeSystem {
   var overwriteOnRead: String?
   var focused: Int?
   var posts = 0
+  /// Another app writes the clipboard when the IDs are read after this many posts.
+  var foreignWriteAfterPosts: Int?
+  var preserved: (text: String?, count: Int)?
 
 
   func now() -> TimeInterval { clock }
@@ -61,6 +64,10 @@ final class FakeProbeSystem: WindowTaskProbeSystem {
   }
   func windowIDs() throws -> [UInt32] {
     log.append("ids")
+    if let after = foreignWriteAfterPosts, posts == after {
+      write("an unrelated later copy")
+      foreignWriteAfterPosts = nil
+    }
     if posts > 0, let changed = idsAfterFirstPost { return changed }
     return ids
   }
@@ -127,6 +134,16 @@ final class FakeProbeSystem: WindowTaskProbeSystem {
     if let other = overwriteOnRead { write(other); overwriteOnRead = nil }
     return text
   }
+  func preserveClipboard() {
+    log.append("save")
+    preserved = (text, changeCount)
+  }
+  func restoreClipboard(expectedChangeCount: Int) -> Bool {
+    log.append("restore")
+    guard let preserved, changeCount == expectedChangeCount else { return false }
+    write(preserved.text ?? "")
+    return true
+  }
 
   private func write(_ value: String, counting: Bool = true) {
     if counting { changeCount += 1 }
@@ -147,10 +164,11 @@ struct CodexWindowTaskProbeCoreTests {
     clipboardIsReadOnlyAfterExactlyOneUnconcealedWrite()
     waitsForTextAfterAClearingWrite()
     rejectsDuplicateLinksAndChangesAfterACopy()
+    restoresTheClipboardOnlyAfterItsOwnLastCopy()
     print("Selected-task probe sequencing passed")
   }
 
-  static func run(_ system: FakeProbeSystem) -> Result<(windowIDs: [UInt32], taskCount: Int), WindowTaskProbeFailure> {
+  static func run(_ system: FakeProbeSystem) -> Result<(windowIDs: [UInt32], taskCount: Int, clipboardRestored: Bool), WindowTaskProbeFailure> {
     do { return .success(try WindowTaskProbe(system: system).run()) } catch {
       return .failure(error as! WindowTaskProbeFailure)
     }
@@ -165,11 +183,14 @@ struct CodexWindowTaskProbeCoreTests {
     let system = FakeProbeSystem()
     system.copies = [.write(first), .write(second)]
     guard case .success(let result) = run(system) else { fatalError("valid probe failed") }
-    precondition(result.windowIDs == [31, 32] && result.taskCount == 2)
+    precondition(result.windowIDs == [31, 32] && result.taskCount == 2 && result.clipboardRestored)
     precondition(system.posts == 2)
-    // Nothing visible happens until every precondition has passed.
+    // Nothing visible happens until every precondition has passed; the
+    // clipboard is saved immediately before.
     let visible = system.log.firstIndex(of: "visible")!
-    precondition(Array(system.log[..<visible]) == ["opt-in", "preconditions", "birth", "ids", "map"])
+    precondition(Array(system.log[..<visible])
+      == ["opt-in", "preconditions", "birth", "ids", "map", "count", "save"])
+    precondition(system.log.last == "restore" && system.text == "an earlier clipboard entry")
     precondition(system.log[visible + 1] == "birth" && system.log[visible + 2] == "focus 0")
     // Each post follows a focus, a birth recheck, and a layout recheck.
     for (index, entry) in system.log.enumerated() where entry == "post" {
@@ -218,6 +239,7 @@ struct CodexWindowTaskProbeCoreTests {
     for system in refused {
       precondition(!system.log.contains("visible") && system.posts == 0)
       precondition(!system.log.contains { $0.hasPrefix("focus") })
+      precondition(!system.log.contains("save") && !system.log.contains("restore"))
     }
   }
 
@@ -297,5 +319,29 @@ struct CodexWindowTaskProbeCoreTests {
     // Start, first focus, pre-post recheck, then the post-copy recheck.
     recycled.births = [true, true, true, false]
     precondition(failure(recycled) == .windowMappingChanged && recycled.posts == 1)
+  }
+
+  static func restoresTheClipboardOnlyAfterItsOwnLastCopy() {
+    // A failure after a copy still puts the user's clipboard back.
+    let duplicate = FakeProbeSystem()
+    duplicate.copies = [.write(first), .write(first)]
+    precondition(failure(duplicate) == .taskLinkDuplicate)
+    precondition(duplicate.log.last == "restore" && duplicate.text == "an earlier clipboard entry")
+    // Another app wrote after the last copy: its write is kept.
+    let foreign = FakeProbeSystem()
+    foreign.copies = [.write(first), .write(second)]
+    foreign.foreignWriteAfterPosts = 2
+    guard case .success(let result) = run(foreign) else { fatalError("probe failed") }
+    precondition(!result.clipboardRestored && foreign.text == "an unrelated later copy")
+    // Nothing was copied, so there is nothing to put back.
+    let unfocused = FakeProbeSystem()
+    unfocused.grantsFocus = false
+    precondition(failure(unfocused) == .windowFocusFailed)
+    precondition(unfocused.log.contains("save") && !unfocused.log.contains("restore"))
+    // A rejected copy is not attributed to ChatGPT, so it is not overwritten.
+    let rejected = FakeProbeSystem()
+    rejected.copies = [.write("https://example.com/")]
+    precondition(failure(rejected) == .copyLinkAmbiguous)
+    precondition(!rejected.log.contains("restore") && rejected.text == "https://example.com/")
   }
 }

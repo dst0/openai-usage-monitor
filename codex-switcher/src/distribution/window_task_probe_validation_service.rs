@@ -1,17 +1,23 @@
 use super::window_restore_process_identity::ProcessIdentity;
+use super::window_task_report::WindowTaskReport;
 use std::collections::HashSet;
 
 /// Same limit the native helper enforces before it focuses any window.
-const MAX_PROBED_WINDOWS: usize = 64;
+pub(super) const MAX_PROBED_WINDOWS: usize = 64;
 /// The complete response contract. The helper never outputs task IDs, so any
 /// additional field is a protocol violation rather than extra detail.
-const RESPONSE_FIELDS: [&str; 3] = ["process", "window_ids", "observed_task_count"];
+const RESPONSE_FIELDS: [&str; 4] = [
+    "process",
+    "window_ids",
+    "observed_task_count",
+    "clipboard_restored",
+];
 const PROCESS_FIELDS: [&str; 2] = ["pid", "birth_id"];
-/// Fixed failure codes the probe path of the native helper may print. They
-/// carry no task, window, or clipboard data, so they are shown verbatim; any
-/// other stderr is replaced by the generic helper error. `COMMAND_REJECTED`
-/// means the installed helper predates the probe.
-const FAILURE_CODES: [&str; 22] = [
+/// Fixed failure codes the window-task commands of the native helper may
+/// print. They carry no task, window, or clipboard data, so they are shown
+/// verbatim; any other stderr is replaced by the generic helper error.
+/// `COMMAND_REJECTED` means the installed helper predates the command.
+const FAILURE_CODES: [&str; 32] = [
     "COMMAND_REJECTED",
     "EXPLICIT_OPT_IN_REQUIRED",
     "PROBE_ACCESS_DENIED",
@@ -33,19 +39,30 @@ const FAILURE_CODES: [&str; 22] = [
     "COPY_LINK_AMBIGUOUS",
     "TASK_LINK_DUPLICATE",
     "WINDOW_MAPPING_CHANGED",
+    "NEW_WINDOW_UNAVAILABLE",
+    "NEW_WINDOW_FAILED",
+    "WINDOW_FRAME_FAILED",
+    "TASK_LINK_OPEN_FAILED",
+    "NAVIGATION_TARGET_CHANGED",
+    "TASK_NAVIGATION_FAILED",
+    "RESTORE_PLAN_INVALID",
+    "RESTORE_LAYOUT_MISMATCH",
+    "ORIGINAL_WINDOW_CHANGED",
+    "REHEARSAL_WINDOW_LEFT_OPEN",
     "PROBE_FAILED",
 ];
 /// The helper appends this to a failure raised after its first focus request.
 const AFTER_FOCUS_SUFFIX: &[u8] = b" after-focus";
 
-/// Validates the native diagnostic response without storing or logging task IDs.
+/// Validates the native diagnostic response without storing or logging task
+/// IDs, and names the fixed failures of every window-task command.
 pub(super) struct WindowTaskProbeValidationService;
 
 impl WindowTaskProbeValidationService {
     pub(super) fn parse(
         response: &serde_json::Value,
         expected: &ProcessIdentity,
-    ) -> Result<usize, String> {
+    ) -> Result<WindowTaskReport, String> {
         let fields = response
             .as_object()
             .ok_or("Task probe returned malformed data")?;
@@ -83,6 +100,9 @@ impl WindowTaskProbeValidationService {
             .as_u64()
             .and_then(|count| usize::try_from(count).ok())
             .ok_or("Task probe omitted selected-task count")?;
+        let clipboard_restored = response["clipboard_restored"]
+            .as_bool()
+            .ok_or("Task probe omitted the clipboard result")?;
         if ids.is_empty() || ids.len() > MAX_PROBED_WINDOWS || ids.len() != observed {
             return Err("Task probe window count is ambiguous".into());
         }
@@ -97,12 +117,17 @@ impl WindowTaskProbeValidationService {
                 return Err("Task probe has duplicate window ID".into());
             }
         }
-        Ok(ids.len())
+        Ok(WindowTaskReport {
+            windows: ids.len(),
+            verified: observed,
+            clipboard_restored,
+        })
     }
 
-    /// Names a known probe failure; `None` leaves the generic helper error.
-    /// A failure after the first focus request says what may have changed.
-    pub(super) fn failure(stderr: &[u8]) -> Option<String> {
+    /// Names a known failure of the command `label` describes; `None` leaves
+    /// the generic helper error. A failure after the first focus request says
+    /// what may have changed.
+    pub(super) fn failure(stderr: &[u8], label: &str) -> Option<String> {
         let line = stderr.strip_suffix(b"\n").unwrap_or(stderr);
         let (code, after_focus) = match line.strip_suffix(AFTER_FOCUS_SUFFIX) {
             Some(code) => (code, true),
@@ -113,11 +138,11 @@ impl WindowTaskProbeValidationService {
             .find(|known| known.as_bytes() == code)?;
         Some(if after_focus {
             format!(
-                "Task probe failed: {known} after it began focusing ChatGPT windows; \
+                "{label} failed: {known} after it began focusing ChatGPT windows; \
                  the clipboard may now hold a copied task link"
             )
         } else {
-            format!("Task probe failed: {known}")
+            format!("{label} failed: {known}")
         })
     }
 }

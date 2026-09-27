@@ -38,13 +38,13 @@ impl ProbeFixture {
     }
 
     /// Writes a helper that answers `inspect-process` for PID 4242, accepts
-    /// the probe only with its exact argument list, records that it ran,
-    /// then runs `probe_body`.
-    fn helper(&self, probe_body: &str) -> SystemWindowRestoreBackend {
+    /// `command` only with its exact argument list, records that it ran,
+    /// then runs `body`.
+    fn helper_for(&self, command: &str, body: &str) -> SystemWindowRestoreBackend {
         let helper = self.root.join("window-helper");
         let probed = self.probed();
         let script = format!(
-            "#!/bin/sh\ncase \"$1\" in\n  inspect-process) [ \"$#\" = 3 ] && [ \"$2\" = --expected-pid ] && [ \"$3\" = 4242 ] || exit 2; printf '%s' '{{\"pid\":4242,\"birth_id\":\"{BIRTH}\"}}' ;;\n  probe-selected-tasks) [ \"$#\" = 7 ] && [ \"$2\" = --expected-pid ] && [ \"$3\" = 4242 ] && [ \"$4\" = --expected-birth ] && [ \"$5\" = '{BIRTH}' ] && [ \"$6\" = --allow-focus-and-clipboard ] && [ \"$7\" = yes ] || {{ printf 'ARGUMENTS_REJECTED\\n' >&2; exit 2; }}\n    : > '{}'\n    {probe_body} ;;\n  *) exit 3 ;;\nesac\n",
+            "#!/bin/sh\ncase \"$1\" in\n  inspect-process) [ \"$#\" = 3 ] && [ \"$2\" = --expected-pid ] && [ \"$3\" = 4242 ] || exit 2; printf '%s' '{{\"pid\":4242,\"birth_id\":\"{BIRTH}\"}}' ;;\n  {command}) [ \"$#\" = 7 ] && [ \"$2\" = --expected-pid ] && [ \"$3\" = 4242 ] && [ \"$4\" = --expected-birth ] && [ \"$5\" = '{BIRTH}' ] && [ \"$6\" = --allow-focus-and-clipboard ] && [ \"$7\" = yes ] || {{ printf 'ARGUMENTS_REJECTED\\n' >&2; exit 2; }}\n    : > '{}'\n    {body} ;;\n  *) exit 3 ;;\nesac\n",
             probed.display()
         );
         std::fs::write(&helper, script).unwrap();
@@ -52,7 +52,11 @@ impl ProbeFixture {
         SystemWindowRestoreBackend::with_helper(helper)
     }
 
-    fn run(&self, probe_body: &str) -> Result<usize, String> {
+    fn helper(&self, probe_body: &str) -> SystemWindowRestoreBackend {
+        self.helper_for("probe-selected-tasks", probe_body)
+    }
+
+    fn run(&self, probe_body: &str) -> Result<WindowTaskReport, String> {
         let backend = self.helper(probe_body);
         WindowTaskProbeService::run(
             true,
@@ -72,9 +76,15 @@ impl Drop for ProbeFixture {
 
 fn success_body(extra: &str) -> String {
     format!(
-        "printf '%s' '{{\"process\":{{\"pid\":4242,\"birth_id\":\"{BIRTH}\"}},\"window_ids\":[31,32],\"observed_task_count\":2{extra}}}'"
+        "printf '%s' '{{\"process\":{{\"pid\":4242,\"birth_id\":\"{BIRTH}\"}},\"window_ids\":[31,32],\"observed_task_count\":2,\"clipboard_restored\":true{extra}}}'"
     )
 }
+
+const TWO_WINDOWS: WindowTaskReport = WindowTaskReport {
+    windows: 2,
+    verified: 2,
+    clipboard_restored: true,
+};
 
 fn unreachable_home() -> Result<PathBuf, String> {
     panic!("the Codex home must not be resolved before the opt-in")
@@ -188,7 +198,7 @@ fn a_custom_keymap_stops_the_probe_before_it_reaches_desktop() {
     );
     assert!(result
         .unwrap_err()
-        .contains("default Copy deeplink shortcut"));
+        .contains("rebind Copy deeplink or the L key"));
 }
 
 #[test]
@@ -228,7 +238,7 @@ fn requires_exactly_one_desktop_process_before_resolving_the_helper() {
         );
         assert_eq!(
             result,
-            Err("Task probe requires exactly one ChatGPT main process".into())
+            Err("Window-task commands require exactly one ChatGPT main process".into())
         );
     }
     let result = WindowTaskProbeService::run(
@@ -271,18 +281,24 @@ fn holds_the_operation_lock_until_the_helper_has_answered() {
         || Ok(vec![4242]),
         || Ok(backend),
     );
-    assert_eq!(result, Ok(2));
+    assert_eq!(result, Ok(TWO_WINDOWS));
     assert!(released.get(), "the operation lock was never released");
 }
 
 #[test]
 fn passes_the_explicit_opt_in_and_exact_process_to_the_helper() {
     let fixture = ProbeFixture::new("args");
-    assert_eq!(fixture.run(&success_body("")), Ok(2));
+    assert_eq!(fixture.run(&success_body("")), Ok(TWO_WINDOWS));
     assert!(fixture.probed().exists());
-    let summary = WindowTaskProbeService::summary(2);
+    let summary = WindowTaskProbeService::summary(TWO_WINDOWS);
     assert!(summary.starts_with("Task probe: 2 ChatGPT window(s)"));
     assert!(summary.contains("No restart"));
+    assert!(summary.contains("were put back"));
+    let kept = WindowTaskProbeService::summary(WindowTaskReport {
+        clipboard_restored: false,
+        ..TWO_WINDOWS
+    });
+    assert!(kept.contains("was not put back") && kept.contains("last copied link"));
 }
 
 #[test]
@@ -331,4 +347,78 @@ fn a_changed_process_identity_is_rejected() {
             "Task probe process identity changed; {POSSIBLE_VISIBLE_CHANGE}"
         ))
     );
+}
+
+fn rehearsal_body(verified: u64) -> String {
+    format!(
+        "printf '%s' '{{\"process\":{{\"pid\":4242,\"birth_id\":\"{BIRTH}\"}},\"window_ids\":[31,32],\"verified_count\":{verified},\"clipboard_restored\":true}}'"
+    )
+}
+
+fn rehearse(fixture: &ProbeFixture, body: &str) -> Result<WindowTaskReport, String> {
+    let backend = fixture.helper_for("rehearse-window-task-restore", body);
+    WindowTaskProbeService::rehearse(
+        true,
+        || Ok(fixture.home()),
+        || Ok(()),
+        || Ok(vec![4242]),
+        || Ok(backend),
+    )
+}
+
+#[test]
+fn the_rehearsal_shares_every_probe_precondition() {
+    assert_eq!(
+        WindowTaskProbeService::rehearse(
+            false,
+            unreachable_home,
+            unreachable_lock,
+            unreachable_pids,
+            unreachable_backend,
+        ),
+        Err(OPT_IN_REQUIRED.into())
+    );
+    let fixture = ProbeFixture::new("rehearse-keymap");
+    std::fs::write(fixture.home().join("keybindings.json"), CUSTOM_BINDING).unwrap();
+    assert!(WindowTaskProbeService::rehearse(
+        true,
+        || Ok(fixture.home()),
+        || Ok(()),
+        unreachable_pids,
+        unreachable_backend,
+    )
+    .is_err());
+    // The owner's unrelated dictation override does not block it.
+    std::fs::write(
+        fixture.home().join("keybindings.json"),
+        r#"[{"command":"globalDictationHold","key":"Command+Shift+D"}]"#,
+    )
+    .unwrap();
+    assert_eq!(rehearse(&fixture, &rehearsal_body(2)), Ok(TWO_WINDOWS));
+    assert!(fixture.probed().exists());
+}
+
+#[test]
+fn a_rehearsal_that_did_not_verify_every_window_fails() {
+    let fixture = ProbeFixture::new("rehearse-partial");
+    assert_eq!(
+        rehearse(&fixture, &rehearsal_body(1)),
+        Err(format!(
+            "Window task rehearsal did not verify every window; {POSSIBLE_VISIBLE_CHANGE}"
+        ))
+    );
+    assert_eq!(
+        rehearse(
+            &fixture,
+            "printf 'REHEARSAL_WINDOW_LEFT_OPEN after-focus\\n' >&2; exit 1"
+        ),
+        Err(
+            "Window task rehearsal failed: REHEARSAL_WINDOW_LEFT_OPEN after it began focusing \
+             ChatGPT windows; the clipboard may now hold a copied task link"
+                .into()
+        )
+    );
+    let summary = WindowTaskProbeService::rehearsal_summary(TWO_WINDOWS);
+    assert!(summary.starts_with("Task restore rehearsal: 2 of 2 ChatGPT window(s)"));
+    assert!(summary.contains("extra windows were closed") && summary.contains("No restart"));
 }

@@ -3,8 +3,7 @@ use super::window_restore_capture::WindowCapture;
 use super::window_restore_frame::WindowFrame;
 use super::window_restore_process_identity::ProcessIdentity;
 use super::window_restore_screen::ScreenIdentity;
-use super::window_task_probe_validation_service::WindowTaskProbeValidationService;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// macOS backend for the standalone, PID-bound accessibility helper.
@@ -13,22 +12,18 @@ pub struct SystemWindowRestoreBackend {
 }
 
 impl SystemWindowRestoreBackend {
-    /// Explicit diagnostic only; `WindowTaskProbeService` is its sole caller.
-    /// The native helper handles focus and clipboard; Rust validates the
-    /// counts and exact process without receiving task IDs.
-    pub fn probe_selected_tasks(&mut self, process: ProcessIdentity) -> Result<usize, String> {
-        let mut args = Self::args_for_process("probe-selected-tasks", process.clone());
-        args.extend(["--allow-focus-and-clipboard".into(), "yes".into()]);
-        let response = self.invoke_with_failure(&args, |stderr| {
-            WindowTaskProbeValidationService::failure(stderr)
-                .unwrap_or_else(|| Self::helper_failure(stderr))
-        })?;
-        WindowTaskProbeValidationService::parse(&response, &process)
+    /// The window-task commands share this helper; see `WindowTaskHelperClient`.
+    pub(super) fn helper_path(&self) -> &Path {
+        &self.helper
     }
 
-    /// Counts only WindowServer windows proven to be ChatGPT standard windows.
-    /// An unnamed visible window makes the result ambiguous and blocks shutdown.
-    pub fn capture_window_inventory(&mut self, process: ProcessIdentity) -> Result<usize, String> {
+    /// Sorted IDs of the WindowServer windows proven to be ChatGPT standard
+    /// windows. An unnamed visible window makes the result ambiguous and
+    /// blocks shutdown.
+    pub fn capture_window_inventory(
+        &mut self,
+        process: ProcessIdentity,
+    ) -> Result<Vec<u32>, String> {
         let response = self.invoke(&Self::args_for_process(
             "count-standard-windows",
             process.clone(),
@@ -39,7 +34,7 @@ impl SystemWindowRestoreBackend {
     fn parse_window_inventory(
         response: &serde_json::Value,
         expected: &ProcessIdentity,
-    ) -> Result<usize, String> {
+    ) -> Result<Vec<u32>, String> {
         if Self::parse_process(&response["process"])? != *expected {
             return Err("Window inventory process identity changed".into());
         }
@@ -61,7 +56,7 @@ impl SystemWindowRestoreBackend {
         if ids.len() > 64 {
             return Err("Window inventory exceeds the supported window limit".into());
         }
-        let mut unique = std::collections::HashSet::new();
+        let mut unique = std::collections::BTreeSet::new();
         for id in ids {
             let id = id
                 .as_u64()
@@ -72,7 +67,7 @@ impl SystemWindowRestoreBackend {
                 return Err("Window inventory contains a duplicate window ID".into());
             }
         }
-        Ok(ids.len())
+        Ok(unique.into_iter().collect())
     }
 
     pub fn capture_banner_window(
@@ -118,20 +113,12 @@ impl SystemWindowRestoreBackend {
     }
 
     fn invoke(&self, args: &[String]) -> Result<serde_json::Value, String> {
-        self.invoke_with_failure(args, Self::helper_failure)
-    }
-
-    fn invoke_with_failure(
-        &self,
-        args: &[String],
-        failure: impl FnOnce(&[u8]) -> String,
-    ) -> Result<serde_json::Value, String> {
         let output = Command::new(&self.helper)
             .args(args)
             .output()
             .map_err(|_| "Codex window restore helper could not start".to_string())?;
         if !output.status.success() {
-            return Err(failure(&output.stderr));
+            return Err(Self::helper_failure(&output.stderr));
         }
         serde_json::from_slice(&output.stdout)
             .map_err(|_| "Codex window restore helper returned invalid data".into())

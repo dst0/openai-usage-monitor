@@ -37,10 +37,10 @@ func argument(_ name: String) -> String? {
   return CommandLine.arguments[index + 1]
 }
 
-/// Set by the task probe immediately before its first focus request, so any
-/// later failure, including one raised by a shared helper, tells the caller
-/// that windows may have been focused and the clipboard replaced. The helper
-/// is single-threaded.
+/// Set by a window-task command immediately before its first focus request,
+/// so any later failure, including one raised by a shared helper, tells the
+/// caller that windows may have been focused and the clipboard replaced. The
+/// helper is single-threaded.
 final class VisibleChangeMarker: @unchecked Sendable {
   static let shared = VisibleChangeMarker()
   var started = false
@@ -316,6 +316,18 @@ struct CodexWindowRestoreMain {
     case "probe-selected-tasks":
       let process = expectedProcess()
       let data = try! JSONEncoder().encode(probeSelectedTasks(process))
+      FileHandle.standardOutput.write(data)
+    case "snapshot-window-tasks":
+      let process = expectedProcess()
+      let data = try! JSONEncoder().encode(snapshotWindowTasks(process))
+      FileHandle.standardOutput.write(data)
+    case "restore-window-tasks":
+      let process = expectedProcess()
+      let data = try! JSONEncoder().encode(restoreWindowTasks(process))
+      FileHandle.standardOutput.write(data)
+    case "rehearse-window-task-restore":
+      let process = expectedProcess()
+      let data = try! JSONEncoder().encode(rehearseWindowTaskRestore(process))
       FileHandle.standardOutput.write(data)
     case "set-position":
       let (process, window) = verifyAndWindow()

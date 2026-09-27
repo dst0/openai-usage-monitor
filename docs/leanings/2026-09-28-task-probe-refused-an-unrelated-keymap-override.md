@@ -1,0 +1,22 @@
+# 2026-09-28 — The task probe refused an unrelated keymap override
+
+- **Status:** Resolved
+- **Task/context:** Preparing to run `cxi window probe-tasks --allow-focus-and-clipboard` (PR #25) on the owner's machine as live evidence for multiwindow task restoration. Follows [the synthesized-shortcut learning](2026-09-27-synthesized-desktop-shortcut-needs-keymap-and-focus-proof.md), which rejected parsing the keymap.
+- **Unexpected observation or failure:** The probe could never run for the owner. `CopyDeeplinkKeymapService` accepted only an absent, blank, or `[]` `~/.codex/keybindings.json`, and the owner's file holds one override for an unrelated command (a dictation hold hotkey on Command+Shift+D). The probe also pinned ChatGPT 26.924.20706 while 26.924.22138 was installed, and it left the last copied task link on the user's clipboard.
+- **Evidence:** A read-only look at the owner's keymap showed a single `{command, key}` entry for `globalDictationHold`. Read-only inspection of a copy of the installed 26.924.22138 bundle showed the keymap rules: the file is an array of `{command: string, key: string | null}`; any parse or schema failure means defaults; five legacy command names are aliased and none maps to `copyDeeplink`; a command named by an entry uses exactly its entries' keys (`null` removes the binding), and every other command keeps its defaults; `CmdOrCtrl+Alt+L` is the default of `copyDeeplink` only. So an entry for another command can give Cmd+Opt+L a second meaning only by binding L itself.
+- **Approaches tried:**
+  - **Attempt:** Keep the empty-keymap rule.
+    - **Outcome:** Did not work.
+    - **Why:** It makes the diagnostic, and anything built on it, unusable for any user who customized an unrelated shortcut.
+  - **Attempt:** Reproduce ChatGPT's accelerator normalization (`cmdorctrl`/`command`/`super` to `meta`, `option` to `alt`, sorted tokens) and reject only an exact Cmd+Opt+L.
+    - **Outcome:** Rejected.
+    - **Why:** It depends on spelling rules that can change with a build, and a chord step or a non-ASCII key could still reach L.
+  - **Attempt:** Accept an entry only when it has exactly ChatGPT's two fields and types, does not name `copyDeeplink`, and binds no token spelled `l`, `keyl`, or any non-ASCII character in any chord step, with any modifiers and in any token order.
+    - **Outcome:** Worked.
+    - **Why:** This is a strict superset of every way the inspected rules could move or duplicate Cmd+Opt+L, and it needs no normalization. The build pin keeps it tied to the inspected rules.
+- **Root cause:** The first probe treated "the keymap is empty" as the only provable state because the keymap rules had not been read; they have now been read for the pinned build.
+- **Resolution:** `CopyDeeplinkKeymapService::verify_copy_binding` applies the superset rule, the helper pins 26.924.22138 (build 11645) and no longer accepts 20706 (whose rules were not re-read), and every window-task command saves the clipboard's items before its first copy and writes them back only while the pasteboard change count still equals its own last copy.
+- **Verification:** `copy_deeplink_keymap_service` tests accept the owner's override and five other unrelated overrides, and refuse every `copyDeeplink` entry, L bindings in eight spellings (including `Alt+l+Cmd` and a later chord step), a non-ASCII key, extra fields, wrong types, and malformed files; the owner-shaped keymap also passes through `WindowTaskProbeService::rehearse` in a test. Mutating the token check to look only at the last token makes the `Alt+l+Cmd` case fail. Swift tests cover clipboard restoration after success and failure, keeping a newer write by another app, and never restoring after a rejected copy; a private-pasteboard test covers multi-item, multi-type, private, oversized, and empty clipboards.
+- **Prevention/follow-up:** Re-read the keymap rules together with the Copy deeplink binding before accepting a new build.
+- **Reusable learning:** When a safety check refuses a common user configuration, read the consumer's actual rules and accept a conservative superset of the dangerous cases instead of only the pristine default.
+- **References:** `codex-switcher/src/distribution/copy_deeplink_keymap_service.rs`, `scripts/CodexWindowTaskProbeValidation.swift`, `scripts/CodexPreservedClipboard.swift`, `tests/CodexPreservedClipboardTests.swift`, `2026-09-28-desktop-restores-one-window-and-links-target-last-focused.md`.

@@ -5,6 +5,7 @@ struct WindowTaskProbeRecord: Codable {
   let process: ProcessRecord
   let window_ids: [UInt32]
   let observed_task_count: Int
+  let clipboard_restored: Bool
 }
 
 /// kVK_ANSI_L. With Command held it must type `l`; see `copyShortcutKeyIsExpected`.
@@ -20,6 +21,7 @@ struct SystemWindowTaskProbe: WindowTaskProbeSystem {
   let process: (pid: pid_t, birth: String)
   let app: AXUIElement
   let pasteboard = NSPasteboard.general
+  let clipboard = PreservedClipboard()
 
   init(process: (pid: pid_t, birth: String)) {
     self.process = process
@@ -57,7 +59,7 @@ struct SystemWindowTaskProbe: WindowTaskProbeSystem {
   func windowIDs() throws -> [UInt32] { countStandardWindows(process).window_ids }
 
   func mappedWindows(_ ids: [UInt32]) throws -> [AXUIElement] {
-    let ax = try standardWindows()
+    let ax = try accessibilityStandardWindows()
     let frames = try windowServerFrames(ids)
     guard ax.count == ids.count else { throw WindowTaskProbeFailure.windowInventoryMismatch }
     guard let mapping = uniqueWindowFrameMapping(
@@ -130,6 +132,12 @@ struct SystemWindowTaskProbe: WindowTaskProbeSystem {
 
   func pasteboardString() -> String? { pasteboard.string(forType: .string) }
 
+  func preserveClipboard() { clipboard.preserve(pasteboard) }
+
+  func restoreClipboard(expectedChangeCount: Int) -> Bool {
+    clipboard.restore(pasteboard, expectedChangeCount: expectedChangeCount)
+  }
+
   /// The running Desktop's identity, build, and version must match the
   /// inspected build, and its Info.plist must be unchanged since launch: an
   /// update replaced on disk while the old code runs would otherwise pass.
@@ -145,7 +153,7 @@ struct SystemWindowTaskProbe: WindowTaskProbeSystem {
     ) && bundleUnchangedSinceLaunch(infoModified: modified, launched: running.launchDate)
   }
 
-  private func standardWindows() throws -> [(element: AXUIElement, frame: CGRect)] {
+  private func accessibilityStandardWindows() throws -> [(element: AXUIElement, frame: CGRect)] {
     var raw: AnyObject?
     guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &raw) == .success,
       let windows = raw as? [AXUIElement] else { throw WindowTaskProbeFailure.windowAccessFailed }
@@ -190,16 +198,18 @@ struct SystemWindowTaskProbe: WindowTaskProbeSystem {
   }
 }
 
-/// Explicit, opt-in diagnostic only. It focuses windows and replaces the
-/// clipboard, and is never called by restart, distribution, or recovery.
-/// Task IDs stay in this process's memory; the record carries only a count.
+/// Explicit, opt-in diagnostic only. It focuses windows and lets ChatGPT
+/// replace the clipboard, then puts the clipboard back when nothing else
+/// wrote to it; restart, distribution, and recovery never call it. Task IDs
+/// stay in this process's memory; the record carries only a count.
 func probeSelectedTasks(_ process: (pid: pid_t, birth: String)) -> WindowTaskProbeRecord {
   let system = SystemWindowTaskProbe(process: process)
   do {
     let result = try WindowTaskProbe(system: system).run()
     return WindowTaskProbeRecord(
       process: ProcessRecord(pid: process.pid, birth_id: process.birth),
-      window_ids: result.windowIDs, observed_task_count: result.taskCount)
+      window_ids: result.windowIDs, observed_task_count: result.taskCount,
+      clipboard_restored: result.clipboardRestored)
   } catch {
     fail(((error as? WindowTaskProbeFailure) ?? .probeFailed).rawValue)
   }

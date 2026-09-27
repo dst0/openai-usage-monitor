@@ -2,6 +2,7 @@ use super::active_auth_registry_sync_service::ActiveAuthRegistrySyncService;
 use super::codex_availability_service::CodexAvailabilityService;
 use super::desktop_session_binding_service::DesktopSessionBindingService;
 use super::primary_target_selection::prioritize_primary_if_user;
+use super::restart_window_task_service::RestartWindowTaskService;
 use super::restart_worker_dispatch_service::RestartWorkerDispatchService;
 use super::*;
 use std::time::Duration;
@@ -49,9 +50,13 @@ pub(super) fn has_codex_ancestor(processes: &str, pid: u32) -> Result<bool, Stri
     RestartWorkerDispatchService::has_codex_ancestor(processes, pid)
 }
 
+/// `restore_window_tasks` is the user's explicit request to capture each
+/// window's selected task and reopen it after the relaunch; without it more
+/// than one window refuses the restart.
 pub fn restart_and_recover(
     delay_seconds: u64,
     primary_thread: Option<String>,
+    restore_window_tasks: bool,
 ) -> Result<(), String> {
     let primary = primary_thread
         .or_else(|| std::env::var("CODEX_THREAD_ID").ok())
@@ -63,6 +68,9 @@ pub fn restart_and_recover(
     ];
     if let Some(id) = &primary {
         args.extend(["--primary-thread".into(), id.clone()]);
+    }
+    if restore_window_tasks {
+        args.push("--restore-window-tasks".into());
     }
     if std::env::var_os("CODEX_RESTART_WORKER").is_none() && dispatch_self_restart(&args)? {
         return Ok(());
@@ -100,11 +108,15 @@ pub fn restart_and_recover(
         crate::recovery::preflight_desktop_dispatch()?;
     }
     let expected = banner.expected_process().clone();
-    preflight_shutdown_windows(&expected)?;
+    let mut window_tasks =
+        RestartWindowTaskService::capture_if_requested(restore_window_tasks, &expected)?;
+    let captured = RestartWindowTaskService::captured_windows(&window_tasks);
+    preflight_shutdown_windows(&expected, captured.as_deref())?;
     let checkpoint = crate::recovery::RecoveryManifestSnapshot::capture()?;
     crate::recovery::save_pending(&targets).map_err(|error| checkpoint.rollback_error(error))?;
-    preflight_shutdown_windows(&expected).map_err(|error| checkpoint.rollback_error(error))?;
-    if let Err(error) = stop_codex_app_gracefully(&expected) {
+    preflight_shutdown_windows(&expected, captured.as_deref())
+        .map_err(|error| checkpoint.rollback_error(error))?;
+    if let Err(error) = stop_codex_app_gracefully(&expected, captured.as_deref()) {
         return Err(if error.before_signal {
             checkpoint.rollback_error(error.to_string())
         } else {
@@ -164,11 +176,24 @@ pub fn restart_and_recover(
                     &operation_id,
                     "captured_restart",
                 )?;
+                RestartWindowTaskService::restore(
+                    &mut window_tasks,
+                    launched_pids[0],
+                    "after relaunch",
+                );
                 crate::recovery::recover_threads_with_banner(
                     &targets,
                     crate::recovery::RecoveryMode::CapturedRestart,
                     &mut banner,
                 )?;
+                if !targets.is_empty() {
+                    // Recovery may send its own task links to a window.
+                    RestartWindowTaskService::restore(
+                        &mut window_tasks,
+                        launched_pids[0],
+                        "after recovery",
+                    );
+                }
                 DesktopSessionBindingService::confirm_after_recovery(bound_process)
             },
         )
@@ -199,5 +224,7 @@ pub fn restart_and_recover(
             }
         }
     }
+    RestartWindowTaskService::finish(window_tasks)
+        .map_err(CodexAvailabilityService::keep_after_failure)?;
     crate::recovery::arm_automation_cooldown()
 }

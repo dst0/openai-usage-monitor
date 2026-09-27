@@ -112,7 +112,11 @@ swiftc \
     scripts/CodexWindowTaskProbeValidation.swift \
     scripts/CodexWindowTaskProbeKeyboard.swift \
     scripts/CodexWindowTaskProbeCore.swift \
+    scripts/CodexWindowTaskSessionSystem.swift \
+    scripts/CodexWindowTaskSessionCore.swift \
+    scripts/CodexPreservedClipboard.swift \
     scripts/CodexWindowTaskProbe.swift \
+    scripts/CodexWindowTaskSession.swift \
     scripts/codex-window-restore.swift \
     -o "${TMP_BIN_DIR}/codex-window-restore"
 
@@ -155,6 +159,30 @@ swiftc -parse-as-library \
     tests/CodexWindowTaskProbeCoreTests.swift \
     -o "${TMP_BIN_DIR}/codex-window-task-probe-core_test"
 "${TMP_BIN_DIR}/codex-window-task-probe-core_test"
+
+echo "👉 Running window task snapshot, restore, and rehearsal sequencing tests..."
+swiftc -parse-as-library \
+    -target "$(uname -m)-apple-macosx13.0" \
+    -framework AppKit -framework Foundation -framework ApplicationServices \
+    scripts/CodexWindowSafetyChecks.swift \
+    scripts/CodexWindowTaskProbeValidation.swift \
+    scripts/CodexWindowTaskProbeCore.swift \
+    scripts/CodexWindowTaskSessionSystem.swift \
+    scripts/CodexWindowTaskSessionCore.swift \
+    tests/CodexWindowTaskSessionCoreTests.swift \
+    -o "${TMP_BIN_DIR}/codex-window-task-session_test"
+"${TMP_BIN_DIR}/codex-window-task-session_test"
+
+echo "👉 Running preserved clipboard tests on a private pasteboard..."
+swiftc -parse-as-library \
+    -target "$(uname -m)-apple-macosx13.0" \
+    -framework AppKit -framework Foundation -framework ApplicationServices \
+    scripts/CodexWindowSafetyChecks.swift \
+    scripts/CodexWindowTaskProbeValidation.swift \
+    scripts/CodexPreservedClipboard.swift \
+    tests/CodexPreservedClipboardTests.swift \
+    -o "${TMP_BIN_DIR}/codex-preserved-clipboard_test"
+"${TMP_BIN_DIR}/codex-preserved-clipboard_test"
 
 echo ""
 echo "🎉 ALL SWIFT TEST SUITES PASSED CLEANLY!"

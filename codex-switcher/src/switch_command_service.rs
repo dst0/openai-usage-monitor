@@ -7,6 +7,7 @@ impl SwitchCommandService {
         account: String,
         no_restart: bool,
         restart: bool,
+        restore_window_tasks: bool,
         trigger: String,
     ) -> Result<(), String> {
         let accounts = storage::load_accounts()?;
@@ -25,6 +26,9 @@ impl SwitchCommandService {
                 restart_args.push("--trigger".to_string());
                 restart_args.push(switch_trigger.as_str().to_string());
             }
+            if restore_window_tasks {
+                restart_args.push("--restore-window-tasks".to_string());
+            }
             switcher::dispatch_self_restart(&restart_args)
         } else {
             Ok(false)
@@ -33,8 +37,14 @@ impl SwitchCommandService {
             if scheduled {
                 return Ok((true, None));
             }
-            switcher::switch_to_account(&account, should_restart, notify, switch_trigger)
-                .map(|outcome| (false, outcome.recovery_error))
+            switcher::switch_to_account(
+                &account,
+                should_restart,
+                notify,
+                switch_trigger,
+                restore_window_tasks,
+            )
+            .map(|outcome| (false, outcome.recovery_error))
         }) {
             Ok((scheduled, recovery_error)) => {
                 if let Some(error) = recovery_error {
