@@ -10,6 +10,7 @@ use super::{
         finalize_recovery_target, mark_dispatch_failure, mark_pre_dispatch_channel_failure,
     },
     recovery_target::{record_target_state_at, RecoveryTarget},
+    test_thread_index::indexed_before_the_pass,
 };
 use crate::switcher::ThreadRolloutState;
 use crate::{distribution::WindowProcessIdentity, recovery::RecoveryBanner};
@@ -67,10 +68,7 @@ fn failed_explicit_claim_keeps_older_owner_binding_through_manifest_finalize() {
         Some("operation-account"),
         claimed.contains(&id.to_string()),
     );
-    prune_ineligible_targets_with(env.home(), &mut manifest, |_| {
-        Ok(Some(chrono::Utc::now().timestamp()))
-    })
-    .unwrap();
+    prune_ineligible_targets_with(env.home(), &mut manifest, indexed_before_the_pass()).unwrap();
     write_manifest(&manifest).unwrap();
     assert_eq!(load_manifest().unwrap(), vec![original]);
 

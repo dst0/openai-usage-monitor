@@ -43,6 +43,8 @@ mod stored_manifest;
 mod target_dispatch;
 #[cfg(test)]
 mod test_desktop_router;
+#[cfg(test)]
+mod test_thread_index;
 mod thread_identity;
 mod thread_index_service;
 mod window_capture;

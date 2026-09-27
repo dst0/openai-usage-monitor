@@ -1,4 +1,5 @@
 use super::{CheckpointScanRegistry, ManifestPruneService, OwnerlessProbeRotation, PendingTarget};
+use crate::recovery::test_thread_index::indexed_before_the_pass;
 use chrono::{TimeZone, Utc};
 
 fn quota_fixture(
@@ -309,11 +310,12 @@ fn failed_thread_index_lookup_does_not_consume_the_rotation_turn() {
     let service = ManifestPruneService::new(&rotation, &scans);
     let mut targets = vec![first.clone(), second.clone()];
     let second_id = second.id.clone();
+    let indexed = indexed_before_the_pass();
     let result = service.run_with(&home, &mut targets, |id| {
         if id == second_id {
             Err("SQLite temporarily unavailable".into())
         } else {
-            Ok(Some(Utc::now().timestamp()))
+            indexed(id)
         }
     });
     assert!(result.is_err());
@@ -323,13 +325,53 @@ fn failed_thread_index_lookup_does_not_consume_the_rotation_turn() {
         [false, false]
     );
     // The aborted pass selected nothing, so the next pass takes the first turn.
-    service
-        .run_with(&home, &mut targets, |_| Ok(Some(Utc::now().timestamp())))
-        .unwrap();
+    service.run_with(&home, &mut targets, indexed).unwrap();
     assert_eq!(
         scanned(&scans, &[&first_rollout, &second_rollout]),
         [true, false]
     );
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+/// Waits until the wall clock enters its next second, as it did in CI between
+/// a prune pass sampling `now` and a fixture lookup that sampled it again.
+/// Sleeping runs on the monotonic clock, so recheck the wall clock after it.
+fn cross_into_the_next_second() {
+    let start = Utc::now().timestamp();
+    while Utc::now().timestamp() <= start {
+        let nanos = Utc::now().timestamp_subsec_nanos().min(999_999_999);
+        std::thread::sleep(std::time::Duration::from_nanos(u64::from(
+            1_000_000_000 - nanos,
+        )));
+    }
+}
+
+#[test]
+fn clock_tick_during_the_pass_drops_only_a_row_dated_after_it() {
+    let home = rotation_home("clock-tick");
+    let [before, after] = [1, 2].map(|index| PendingTarget {
+        awaiting_owner: false,
+        owner_account_id: None,
+        ..ownerless(&home, index).0
+    });
+    let indexed = indexed_before_the_pass();
+    let rotation = OwnerlessProbeRotation::new(4);
+    let scans = CheckpointScanRegistry::new(4);
+    let mut targets = vec![before.clone(), after.clone()];
+    ManifestPruneService::new(&rotation, &scans)
+        .run_with(&home, &mut targets, |id| {
+            if id == before.id {
+                cross_into_the_next_second();
+                indexed(id)
+            } else {
+                // The flaky fixture sampled the clock here, after the tick.
+                Ok(Some(Utc::now().timestamp()))
+            }
+        })
+        .unwrap();
+    // A row one second newer than the pass clock is never recent, so the
+    // fixture lookups must be dated before the pass, as production reads them.
+    assert_eq!(targets, [before]);
     std::fs::remove_dir_all(home).unwrap();
 }
 
