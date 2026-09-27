@@ -701,7 +701,8 @@ assert_locked_temps_preserved_in_plan() {
 # so this proves that the uninstaller's probe sees the lock a real installer
 # takes on this runner.
 ACQUIRE_INSTALL_LOCK="$(/usr/bin/awk '/^acquire_install_lock\(\) \{$/, /^\}$/' "${INSTALL_SCRIPT}")"
-[ -n "${ACQUIRE_INSTALL_LOCK}" ] || fail 'installer has no acquire_install_lock function'
+[ "$(/usr/bin/printf '%s\n' "${ACQUIRE_INSTALL_LOCK}" | /usr/bin/tail -n 2)" = '    echo "$$" > "${INSTALL_LOCK_FILE}"
+}' ] || fail 'could not extract exactly the installer acquire_install_lock function'
 LOCK_HOLDER_SCRIPT="${TEMP_ROOT}/installer-lock-holder.sh"
 {
     /usr/bin/printf '%s\n' '#!/bin/bash' 'set -euo pipefail' 'INSTALL_LOCK_FILE="$1"'
@@ -727,25 +728,27 @@ while [ ! -e "${LOCK_READY}" ]; do
     /bin/sleep 0.05
 done
 
-assert_locked_temps_preserved_in_plan 'an installer holds the install lock'
-LOCKED_UNINSTALLER="${PERL_PROBE_UNINSTALLER}"
-assert_locked_temps_preserved_in_plan 'an installer holds the install lock'
-LOCKED_UNINSTALLER="${UNINSTALL_COPY}"
 LOCKED_OUTPUT="${TEMP_ROOT}/locked-output.txt"
-if run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1; then
-    fail 'uninstall reported success while an installer held the install lock'
-fi
-for path in "${LOCKED_TEMPS[@]}"; do
-    assert_exists "${path}"
-    /usr/bin/grep -F -x "Warning: preserving installer staging because an installer holds the install lock: ${path}" \
-        "${LOCKED_OUTPUT}" >/dev/null || fail "uninstall did not report preserving ${path}"
+# Once through the perl path and once through the host's own probe.
+for LOCKED_UNINSTALLER in "${PERL_PROBE_UNINSTALLER}" "${UNINSTALL_COPY}"; do
+    assert_locked_temps_preserved_in_plan 'an installer holds the install lock'
+    install_fake_helper "${LOCKED_HOME}"
+    if run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1; then
+        fail 'uninstall reported success while an installer held the install lock'
+    fi
+    for path in "${LOCKED_TEMPS[@]}"; do
+        assert_exists "${path}"
+        /usr/bin/grep -F -x "Warning: preserving installer staging because an installer holds the install lock: ${path}" \
+            "${LOCKED_OUTPUT}" >/dev/null || fail "uninstall did not report preserving ${path}"
+    done
+    assert_exists "${SYSTEM_APPS}/.codex-monitor-backup.L0cK02/Codex Monitor.app/Contents/Info.plist"
+    assert_exists "${INSTALL_LOCK}"
+    /usr/bin/grep -F -x "Warning: lock is still held; preserving: ${INSTALL_LOCK}" "${LOCKED_OUTPUT}" >/dev/null ||
+        fail "uninstall did not keep the held install lock: $(describe_install_lock)"
+    assert_absent "${LOCKED_UNINSTALL_TEMP}"
+    make_file 600 "${LOCKED_UNINSTALL_TEMP}"
 done
-assert_exists "${SYSTEM_APPS}/.codex-monitor-backup.L0cK02/Codex Monitor.app/Contents/Info.plist"
-assert_exists "${INSTALL_LOCK}"
-/usr/bin/grep -F -x "Warning: lock is still held; preserving: ${INSTALL_LOCK}" "${LOCKED_OUTPUT}" >/dev/null ||
-    fail "uninstall did not keep the held install lock: $(describe_install_lock)"
-assert_absent "${LOCKED_UNINSTALL_TEMP}"
-make_file 600 "${LOCKED_UNINSTALL_TEMP}"
+LOCKED_UNINSTALLER="${UNINSTALL_COPY}"
 
 /usr/bin/touch "${LOCK_RELEASE}"
 wait "${LOCK_HOLDER}" || fail 'test lock holder failed'

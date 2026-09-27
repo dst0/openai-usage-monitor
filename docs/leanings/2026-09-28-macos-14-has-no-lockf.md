@@ -7,7 +7,7 @@
   - The installer printed no "Another installation" message, so its lock call had returned quietly.
 - **Evidence:**
   - A failure message extended with probe diagnostics reported: `plan: preserve ... (the install lock cannot be verified); lockf on PATH: none; /usr/bin/lockf probe status: 127; macOS 14.8.9`.
-  - Apple's `shell_cmds` source matches: the `lockf` fd form (`lockf [-s] [-t seconds] fd`) first appears in `shell_cmds-319`, and the stock macOS 14 image has no `lockf` binary at all. Where the old `lockf` exists, it rejects the fd form with `EX_USAGE`.
+  - Apple's `shell_cmds` source matches: the `lockf` fd form (`lockf [-s] [-t seconds] fd`) first appears in `shell_cmds-319`, and the stock macOS 14 image has no `lockf` binary at all. The older source (`shell_cmds-309`) would reject the fd form with `EX_USAGE`, but no shipped release with that binary was found; a third-party report says `lockf` first shipped with macOS 15.
   - `acquire_install_lock` found no `lockf` and took its `python3` `fcntl.flock` fallback, which the installer can rely on because it already requires the Command Line Tools.
   - A local check showed that perl's `flock`, Python's `fcntl.flock`, `lockf`'s fd form, and `lockf`'s `O_EXLOCK` file form all contend with each other: each probe returned 75 while another held the lock.
 - **Approaches tried:**
@@ -22,9 +22,9 @@
     - **Outcome:** Worked.
     - **Why:** `/usr/bin/perl` is present on the macOS 14.8.9 runner (the CI run of this change passes through it) and on macOS 27.2. Its `flock` is BSD `flock(2)`, the same lock the installer takes.
 - **Root cause:** The design assumed `lockf(1)` exists on every supported macOS, because it exists on the development host (macOS 27). The minimum target is macOS 13, and macOS 14 has no `lockf`. Which release first ships it was not checked; the fd form appears in `shell_cmds-319`.
-- **Resolution:** `try_flock` in `scripts/uninstall.sh` serves both the install-lock probe and `remove_unlocked_file`. The latter now distinguishes a held lock from an unknown state.
+- **Resolution:** `try_flock` in `scripts/uninstall.sh` serves both the install-lock probe and `remove_unlocked_file`. The latter now distinguishes a held lock from an unknown state. As with `lockf`, a failed unlink after a free probe is left to the caller's `remove_path`, which reports it.
 - **Verification:** The shell test now runs:
-  - the held-lock checks through both the host's probe and a copy with no `lockf` (the perl path);
+  - the held-lock checks, dry run and confirmed run, through both the host's probe and a copy with no `lockf` (the perl path);
   - a copy with neither probe (unverified; the lock file is kept);
   - a free lock removed through the perl path.
 

@@ -294,9 +294,10 @@ installer_temps() {
 }
 
 # Takes the exclusive BSD flock(2) lock on an existing file without waiting,
-# then releases it; with `unlink`, removes the file while holding it. Exit
-# status 0: taken; 75 (EX_TEMPFAIL): another process holds it; anything else:
-# unknown. Newer macOS releases ship lockf(1); macOS 14 does not, so perl's
+# then releases it; with `unlink`, also tries to remove the file while holding
+# it, ignoring a failure as lockf does (the caller removes and reports it).
+# Exit status 0: taken; 75 (EX_TEMPFAIL): another process holds it; anything
+# else: unknown. Newer macOS releases ship lockf(1); macOS 14 does not, so perl's
 # flock, the same lock, is the fallback. A file is opened only for reading.
 try_flock() {
     local path="$1"
@@ -310,17 +311,19 @@ try_flock() {
         return
     fi
     [ -x /usr/bin/perl ] || return 69
-    /usr/bin/perl -MFcntl=:flock -e '
+    /usr/bin/perl -MErrno -MFcntl=:flock -e '
         open(my $lock, "<", $ARGV[0]) or exit 71;
         flock($lock, LOCK_EX | LOCK_NB) or exit($!{EWOULDBLOCK} ? 75 : 71);
-        exit(($ARGV[1] ne "unlink" || unlink($ARGV[0])) ? 0 : 73);
+        unlink($ARGV[0]) if $ARGV[1] eq "unlink";
+        exit 0;
     ' "$path" "$action" >/dev/null 2>&1
 }
 
 # Prints nothing when no installer holds the install lock (or it does not
 # exist), otherwise why installer leftovers must be kept. The probe keeps
-# the file, and runs only when it exists, so a dry run changes nothing. An installer started with another TMPDIR uses another lock file
-# and is not detected.
+# the file, and runs only when it exists, so a dry run changes nothing. An
+# installer started with another TMPDIR uses another lock file and is not
+# detected.
 install_lock_blocker() {
     local status
     is_present "$INSTALL_LOCK_FILE" || return 0
@@ -500,6 +503,8 @@ remove_unlocked_file() {
     try_flock "$path" unlink
     status=$?
     case "$status" in
+        # The probe normally unlinked it already; this removes and reports
+        # a file it could not unlink.
         0) remove_path "$path" ;;
         75)
             warn "lock is still held; preserving: $path"
