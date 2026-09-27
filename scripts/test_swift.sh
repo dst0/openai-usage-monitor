@@ -3,13 +3,21 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=swift_module_cache.sh
+source "${SCRIPT_DIR}/swift_module_cache.sh"
 
 echo "🚀 Building and running Swift Test Suites for OpenAI Usage Monitor..."
+# Resolve an overridden module cache before any swiftc call; see
+# scripts/swift_module_cache.sh.
+canonicalize_clang_module_cache_path || exit 1
 
 TMP_BIN_DIR=$(mktemp -d /tmp/openai_swift_tests_XXXXXX)
 trap 'rm -rf "${TMP_BIN_DIR}"' EXIT
 
 cd "${REPO_DIR}"
+
+echo "👉 Running Swift module-cache path tests..."
+bash tests/swift_module_cache_path.sh
 
 echo "👉 [1/2] Running Screen Contrast, Vector Icons & Stacked Percentage Tests..."
 swiftc -parse-as-library \
@@ -112,7 +120,12 @@ swiftc \
     scripts/CodexWindowTaskProbeValidation.swift \
     scripts/CodexWindowTaskProbeKeyboard.swift \
     scripts/CodexWindowTaskProbeCore.swift \
+    scripts/CodexWindowTaskSessionSystem.swift \
+    scripts/CodexWindowTaskSessionCore.swift \
+    scripts/CodexPreservedClipboard.swift \
+    scripts/CodexWindowTaskRecords.swift \
     scripts/CodexWindowTaskProbe.swift \
+    scripts/CodexWindowTaskSession.swift \
     scripts/codex-window-restore.swift \
     -o "${TMP_BIN_DIR}/codex-window-restore"
 
@@ -155,6 +168,44 @@ swiftc -parse-as-library \
     tests/CodexWindowTaskProbeCoreTests.swift \
     -o "${TMP_BIN_DIR}/codex-window-task-probe-core_test"
 "${TMP_BIN_DIR}/codex-window-task-probe-core_test"
+
+echo "👉 Running window task snapshot, restore, and rehearsal sequencing tests..."
+swiftc -parse-as-library \
+    -target "$(uname -m)-apple-macosx13.0" \
+    -framework AppKit -framework Foundation -framework ApplicationServices \
+    scripts/CodexWindowSafetyChecks.swift \
+    scripts/CodexWindowTaskProbeValidation.swift \
+    scripts/CodexWindowTaskProbeCore.swift \
+    scripts/CodexWindowTaskSessionSystem.swift \
+    scripts/CodexWindowTaskSessionCore.swift \
+    tests/CodexWindowTaskFakeDesktop.swift \
+    tests/CodexWindowTaskSessionCoreTests.swift \
+    -o "${TMP_BIN_DIR}/codex-window-task-session_test"
+"${TMP_BIN_DIR}/codex-window-task-session_test"
+
+echo "👉 Running window task record contract tests..."
+swiftc -parse-as-library \
+    -target "$(uname -m)-apple-macosx13.0" \
+    -framework Foundation \
+    scripts/CodexWindowSafetyChecks.swift \
+    scripts/CodexWindowTaskProbeValidation.swift \
+    scripts/CodexWindowTaskProbeCore.swift \
+    scripts/CodexWindowTaskSessionSystem.swift \
+    scripts/CodexWindowTaskRecords.swift \
+    tests/CodexWindowTaskRecordsTests.swift \
+    -o "${TMP_BIN_DIR}/codex-window-task-records_test"
+"${TMP_BIN_DIR}/codex-window-task-records_test"
+
+echo "👉 Running preserved clipboard tests on a private pasteboard..."
+swiftc -parse-as-library \
+    -target "$(uname -m)-apple-macosx13.0" \
+    -framework AppKit -framework Foundation -framework ApplicationServices \
+    scripts/CodexWindowSafetyChecks.swift \
+    scripts/CodexWindowTaskProbeValidation.swift \
+    scripts/CodexPreservedClipboard.swift \
+    tests/CodexPreservedClipboardTests.swift \
+    -o "${TMP_BIN_DIR}/codex-preserved-clipboard_test"
+"${TMP_BIN_DIR}/codex-preserved-clipboard_test"
 
 echo ""
 echo "🎉 ALL SWIFT TEST SUITES PASSED CLEANLY!"

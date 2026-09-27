@@ -2,10 +2,9 @@
 use super::codex_process_probe::codex_app_pids_checked_with;
 pub(super) use super::codex_process_probe::CODEX_APP_EXECUTABLE;
 use super::codex_process_probe::{codex_app_pids_checked, shared_auth_activity_checked};
+use super::desktop_shutdown_window_guard::DesktopShutdownWindowGuard;
 use super::desktop_writer_exit_gate::DesktopWriterExitGate;
-use crate::distribution::{
-    AppStopError, SystemWindowRestoreBackend, WindowProcessIdentity, WindowProcessValidationService,
-};
+use crate::distribution::{AppStopError, WindowProcessIdentity};
 use std::process::Command;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -33,39 +32,6 @@ pub(crate) fn is_shared_auth_active_checked() -> Result<bool, String> {
     shared_auth_activity_checked()
 }
 
-fn validate_shutdown_snapshot(
-    initial_pids: &[u32],
-    expected: &WindowProcessIdentity,
-    observed: &WindowProcessIdentity,
-    window_count: usize,
-    current_pids: &[u32],
-) -> Result<(), String> {
-    if observed != expected {
-        return Err("Desktop process birth identity changed before shutdown".into());
-    }
-    if initial_pids != [expected.pid] || current_pids != [expected.pid] {
-        return Err("Desktop process set changed before shutdown".into());
-    }
-    if window_count > 1 {
-        return Err(format!(
-            "Desktop has {window_count} ChatGPT windows; exact task-per-window recovery is unavailable, refusing restart"
-        ));
-    }
-    Ok(())
-}
-
-fn signal_after_validated_snapshot(
-    initial_pids: &[u32],
-    expected: &WindowProcessIdentity,
-    observed: &WindowProcessIdentity,
-    window_count: usize,
-    current_pids: &[u32],
-    signal: impl FnOnce(u32) -> Result<(), String>,
-) -> Result<(), String> {
-    validate_shutdown_snapshot(initial_pids, expected, observed, window_count, current_pids)?;
-    signal(expected.pid)
-}
-
 fn desktop_writers_running_with(
     captured: impl FnOnce() -> Result<bool, String>,
     all_bundled: impl FnOnce() -> Result<bool, String>,
@@ -75,44 +41,26 @@ fn desktop_writers_running_with(
     Ok(captured_running || bundled_running)
 }
 
-fn checked_shutdown_snapshot(
+/// Checks the exact process and its windows without signalling it. Pass the
+/// window IDs of an explicitly requested window-task snapshot, or `None`.
+pub(crate) fn preflight_shutdown_windows(
     expected: &WindowProcessIdentity,
-) -> Result<(Vec<u32>, WindowProcessIdentity, usize, Vec<u32>), String> {
-    let initial_pids = codex_app_pids_checked()?;
-    if initial_pids.len() != 1 {
-        return Err("Desktop shutdown requires exactly one ChatGPT main process".into());
-    }
-    let mut backend = SystemWindowRestoreBackend::new()?;
-    let observed = WindowProcessValidationService::inspect(&mut backend, initial_pids[0])?;
-    let window_count = backend.capture_window_inventory(observed.clone())?;
-    WindowProcessValidationService::confirm(&mut backend, &observed)?;
-    let current_pids = codex_app_pids_checked()?;
-    validate_shutdown_snapshot(
-        &initial_pids,
-        expected,
-        &observed,
-        window_count,
-        &current_pids,
-    )?;
-    Ok((initial_pids, observed, window_count, current_pids))
-}
-
-pub(crate) fn preflight_shutdown_windows(expected: &WindowProcessIdentity) -> Result<(), String> {
-    checked_shutdown_snapshot(expected).map(|_| ())
+    captured_windows: Option<&[u32]>,
+) -> Result<(), String> {
+    DesktopShutdownWindowGuard::checked_snapshot(expected, captured_windows).map(|_| ())
 }
 
 pub(crate) fn stop_codex_app_gracefully(
     expected: &WindowProcessIdentity,
+    captured_windows: Option<&[u32]>,
 ) -> Result<(), AppStopError> {
     let writer_gate = DesktopWriterExitGate::capture(expected.pid).map_err(AppStopError::before)?;
-    let (initial_pids, observed, window_count, current_pids) =
-        checked_shutdown_snapshot(expected).map_err(AppStopError::before)?;
-    signal_after_validated_snapshot(
-        &initial_pids,
+    let snapshot = DesktopShutdownWindowGuard::checked_snapshot(expected, captured_windows)
+        .map_err(AppStopError::before)?;
+    DesktopShutdownWindowGuard::signal_after_validation(
+        &snapshot,
         expected,
-        &observed,
-        window_count,
-        &current_pids,
+        captured_windows,
         |pid| {
             let pid = i32::try_from(pid).map_err(|_| "Desktop PID is invalid")?;
             // Chromium flushes SQLite and WAL on SIGTERM, avoiding the GUI
@@ -165,10 +113,6 @@ pub(crate) fn stop_codex_app_gracefully(
 
     Ok(())
 }
-
-#[cfg(test)]
-#[path = "codex_app_stop_identity.test.rs"]
-mod stop_identity_tests;
 
 pub(crate) fn launch_codex_app() -> Result<Vec<u32>, String> {
     if is_shared_auth_active_checked()? {

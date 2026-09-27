@@ -1,25 +1,29 @@
 use super::manual_reset_attempt::ManualResetAttempt;
+use crate::state_file::{PrivateStateFileWriteService, StateFileOperations, StateFileWriteFailure};
 use crate::storage::codex_home;
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::io::Read;
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 
+const JOURNAL_FILE: &str = "manual-reset-state.json";
 const MAX_JOURNAL_BYTES: u64 = 16 * 1024;
 
-pub(super) struct ManualResetAttemptStore;
+/// The single private manual reset attempt in `CODEX_HOME`.
+pub(super) struct ManualResetAttemptStore<'a> {
+    files: &'a dyn StateFileOperations,
+}
 
-impl ManualResetAttemptStore {
-    pub(super) fn path() -> PathBuf {
-        codex_home().join("manual-reset-state.json")
+impl<'a> ManualResetAttemptStore<'a> {
+    pub(super) fn new(files: &'a dyn StateFileOperations) -> Self {
+        Self { files }
     }
 
-    pub(super) fn load() -> Result<Option<ManualResetAttempt>, String> {
-        let mut file = match OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(Self::path())
-        {
+    pub(super) fn path() -> PathBuf {
+        codex_home().join(JOURNAL_FILE)
+    }
+
+    pub(super) fn load(&self) -> Result<Option<ManualResetAttempt>, String> {
+        let mut file = match self.files.open_for_read(&Self::path()) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err("Manual reset attempt could not be opened safely".into()),
@@ -50,50 +54,52 @@ impl ManualResetAttemptStore {
         Ok(Some(attempt))
     }
 
-    /// This small state document is atomically replaced, not appended; Brotli
-    /// would obscure crash-state reads and add work to every manual reset.
-    pub(super) fn write(attempt: &ManualResetAttempt) -> Result<(), String> {
+    /// Uninstall removes an interrupted staging file only by this exact shape:
+    /// `manual-reset-state.<pid>.<16 lowercase hex>.tmp.json`.
+    fn staging_name(nonce: u64) -> String {
+        format!(
+            "manual-reset-state.{}.{nonce:016x}.tmp.json",
+            std::process::id()
+        )
+    }
+
+    /// Durably replaces the attempt. A `SyncDirectory` failure is reported
+    /// after the new record became visible, so a caller must not assume the
+    /// previous record is still in place when this returns an error.
+    pub(super) fn write(&self, attempt: &ManualResetAttempt) -> Result<(), String> {
         attempt.validate()?;
-        let path = Self::path();
-        let parent = path.parent().ok_or("Manual reset attempt has no parent")?;
-        fs::create_dir_all(parent)
-            .map_err(|_| "Manual reset directory could not be created".to_string())?;
-        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
-            .map_err(|_| "Manual reset directory permissions could not be set".to_string())?;
         let content = serde_json::to_vec(attempt)
             .map_err(|_| "Manual reset attempt could not be encoded".to_string())?;
         let mut nonce = [0u8; 8];
         getrandom::getrandom(&mut nonce)
             .map_err(|_| "Manual reset attempt nonce unavailable".to_string())?;
-        let temporary = path.with_extension(format!(
-            "{}.{:016x}.tmp.json",
-            std::process::id(),
-            u64::from_ne_bytes(nonce)
-        ));
-        let mut created = false;
-        let result = (|| {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .custom_flags(libc::O_NOFOLLOW)
-                .mode(0o600)
-                .open(&temporary)
-                .map_err(|_| "Manual reset staging file could not be created".to_string())?;
-            created = true;
-            file.write_all(&content)
-                .and_then(|_| file.sync_all())
-                .map_err(|_| "Manual reset staging file could not be saved".to_string())?;
-            fs::rename(&temporary, &path)
-                .map_err(|_| "Manual reset attempt could not be replaced".to_string())?;
-            File::open(parent)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|_| "Manual reset attempt directory sync failed".to_string())?;
-            Ok(())
-        })();
-        if result.is_err() && created {
-            let _ = fs::remove_file(&temporary);
-        }
-        result
+        PrivateStateFileWriteService::new(self.files)
+            .replace(
+                &codex_home(),
+                JOURNAL_FILE,
+                &Self::staging_name(u64::from_ne_bytes(nonce)),
+                &content,
+            )
+            .map_err(|failure| {
+                match failure {
+                    StateFileWriteFailure::PrepareDirectory(_) => {
+                        "Manual reset directory could not be prepared"
+                    }
+                    StateFileWriteFailure::CreateStaging(_) => {
+                        "Manual reset staging file could not be created"
+                    }
+                    StateFileWriteFailure::SaveStaging(_) => {
+                        "Manual reset staging file could not be saved"
+                    }
+                    StateFileWriteFailure::Replace(_) => {
+                        "Manual reset attempt could not be replaced"
+                    }
+                    StateFileWriteFailure::SyncDirectory(_) => {
+                        "Manual reset attempt directory sync failed"
+                    }
+                }
+                .to_string()
+            })
     }
 }
 

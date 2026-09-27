@@ -1,16 +1,24 @@
-# 2026-09-25 — Swift SDK/compiler mismatch blocked the local release gate
+# 2026-09-25 — Swift "SDK is not supported" error blocked the local release gate
 
-- **Status:** Open
+- **Status:** Corrected
+- **Correction:** 2026-09-28. This record blamed the failure on the compiler/SDK build difference. A controlled rerun on the unchanged toolchain disproved it (the Command Line Tools packages were installed 2026-09-14). With a writable module cache, the default macOS 27.0 SDK built all four installer targets in 3 of 3 runs and passed `./scripts/test_swift.sh`. An empty read-only cache produced the same "SDK is not supported" message with the 26.5 SDK as well (3 of 3 runs each). All 7 such errors in the 2026-09 agent transcripts followed a sandbox denial of the default module cache. The denied module cache caused the failure. The build difference is real but not decisive. Exact corrections:
+  - The title "Swift SDK/compiler mismatch blocked the local release gate" now names the reported error.
+  - In Evidence, "The compiler rejected the SDK interface. The sandbox also denied writing the default Clang module cache; the version mismatch is independently decisive." was replaced by the two sentences after the version numbers.
+  - The attempt's Why, "Local Command Line Tools compiler and SDK versions differ.", was replaced.
+  - The Root cause sentence "The selected local Command Line Tools installation is internally inconsistent." was replaced.
+  - The Reusable learning "Treat an SDK/compiler interface version mismatch as an environment release blocker; do not attribute it to unrelated Rust changes or bypass the Swift gate." was replaced.
+  - Resolution and Prevention/follow-up are unchanged, as the plan recorded at the time.
+  - Evidence: [2026-09-28 — Swift's "SDK is not supported" error came from an unwritable module cache](2026-09-28-swift-sdk-not-supported-was-unwritable-module-cache.md).
 - **Task/context:** Validating the Codex Monitor cold task recovery change before reinstalling the macOS application.
 - **Unexpected observation or failure:** `./scripts/test_swift.sh` failed while building its first suite, before any changed Swift source was compiled.
-- **Evidence:** `xcode-select -p` selected `/Library/Developer/CommandLineTools`. The active compiler reported Swift `6.4.0.34.1`; the selected macOS SDK Swift interface reported `6.4.0.31.4`. The compiler rejected the SDK interface. The sandbox also denied writing the default Clang module cache; the version mismatch is independently decisive.
+- **Evidence:** `xcode-select -p` selected `/Library/Developer/CommandLineTools`. The active compiler reported Swift `6.4.0.34.1`; the selected macOS SDK Swift interface reported `6.4.0.31.4`. Swift reported that it could not build the SDK's `Swift` module and called the SDK unsupported. The sandbox also denied writing the default Clang module cache, and that denial is what made the rebuild fail.
 - **Approaches tried:**
   - **Attempt:** Run the repository's canonical Swift test script.
     - **Outcome:** Did not work.
-    - **Why:** Local Command Line Tools compiler and SDK versions differ.
-- **Root cause:** The selected local Command Line Tools installation is internally inconsistent. The change does not touch Swift sources.
+    - **Why:** The sandbox denied the default module cache, so the SDK's Swift modules could not be rebuilt.
+- **Root cause:** The sandbox denied writes to the default module cache. The Command Line Tools compiler and SDK builds do differ, but that alone does not block compilation. The change does not touch Swift sources.
 - **Resolution:** The Rust gate passed, but local Swift release validation and reinstall remain pending until a matching Apple toolchain is selected or repaired.
 - **Verification:** `xcrun swiftc --version`, `xcode-select -p`, and the first Swift test failure establish the mismatch; the Swift suite has not passed in this checkout.
 - **Prevention/follow-up:** Require a matching Swift compiler/SDK and rerun `./scripts/test_swift.sh` before installing, signing, or promoting the application. The README prerequisites now state this gate.
-- **Reusable learning:** Treat an SDK/compiler interface version mismatch as an environment release blocker; do not attribute it to unrelated Rust changes or bypass the Swift gate.
+- **Reusable learning:** Treat a Swift toolchain failure as an environment release blocker until its first error is understood. Do not attribute it to unrelated Rust changes or bypass the Swift gate.
 - **References:** `scripts/test_swift.sh`, `README.md`.

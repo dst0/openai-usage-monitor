@@ -124,6 +124,15 @@ service call. A pending, unknown, or applied-but-uncommitted attempt blocks all
 later manual reset requests; known non-consumption and applied plus committed
 cache resolve it. Operator reconciliation requires official same-account quota
 evidence before removing the exact 0600 journal path, as described in README.
+Both reset journals are written by the shared `state_file` writer (exclusive
+0600 staging, file flush, rename, directory flush) behind the injectable
+`StateFileOperations` seam. If a manual attempt or automatic `pending` marker
+cannot be saved or read back, nothing is sent; only a record that reads back
+exactly as this write (its fresh key, or the new timestamp of a re-marked key
+that was never sent) is withdrawn (manual: `resolved`; automatic: retryable
+`journal_error`), and an unreadable or different record is left for
+reconciliation. Manual reset refuses a request that cannot be built before it
+records an attempt, as the automatic preflight does.
 Manual and automatic reset paths use one recovery operation lock and check the
 other path's unresolved journal before preparing a new request. Any unresolved
 manual attempt blocks automatic reset across local IDs; pending/unknown
@@ -139,6 +148,14 @@ refusal never leaves an unsent attempt unresolved. A refused retry of an
 existing `pending`/`unknown` attempt, or one whose request could not be built
 (`Unavailable`), is left unchanged with rotation suppressed because the first
 request may have been applied; other retries are re-marked `pending` first.
+Such a refused retry reports its own cause (`retry_refused:<cause>`,
+`retry_unavailable:<reason>`) in status while the journal stays byte-identical.
+The `Applied` follow-up (fresh usage read, Desktop recovery hand-off) runs
+through `WeeklyResetEnvironment` and never depends on saving `applied`: no
+later tick repeats it, because a visible `applied` returns early and a
+`pending` that `applied` never replaced is held by the restored pool. A failed
+`applied` write is retried after the hand-off and, if it fails again, reported
+as an applied credit.
 Credential and registry staging uses unpredictable `create_new`, `O_NOFOLLOW`,
 mode-0600 temporary files instead of reopening a predictable filename.
 Active-auth reads open with `O_NOFOLLOW`, require a private regular file, and
@@ -259,43 +276,91 @@ journal only after that restoration succeeds. The Desktop stays running.
 Every CLI or distribution restart checks the exact ChatGPT PID, birth identity,
 and WindowServer window inventory again immediately before SIGTERM. More than
 one user window, or an unidentified window that could be user-owned, stops the
-restart before credentials change. The current Desktop interfaces do not give
-Monitor a stable mapping from each window to its selected task, nor a way to
-reopen a specific task in a specific new window. This guard applies even when
+restart before credentials change, unless the user passed
+`--restore-window-tasks` to `cxi restart` or `cxi switch` and the window list
+is exactly the one whose tasks were captured. This guard applies even when
 `preserve_window_bounds_on_restart=false`; that setting controls geometry only.
+
+Desktop gives Monitor no window-to-task interface. Inspection of ChatGPT
+26.924.22138 (read-only, from a copy of its bundle) shows that it persists
+only one `electron-main-window-bounds` record, relaunches one primary window
+without a task, sends a `codex://threads/<id>` link to its most recently
+focused primary window (focus events update that choice), and opens a
+focused primary window from File > New Window when its multiwindow feature is
+on. Its IPC router has no window, route, or navigation method, and owner
+discovery answers per host connection in the main process, never per window.
+`--restore-window-tasks` builds on exactly those behaviors. Before shutdown
+the helper reads each window's task with Copy deeplink and its Accessibility
+frame, refusing the restart for a window without a task, a duplicate task, a
+minimized, full-screen, or ambiguous window, a missing New Window item while
+more than one window is open, a changed window list, or a keymap change.
+After the relaunch and once Desktop IPC answers, it reuses the relaunched
+window for one saved frame, waits up to 20 seconds for the New Window item
+(the main process adds it only once the renderer reports the feature), opens
+the others with it, sends each task link only while Accessibility shows the
+target window focused (a focus change during navigation fails as
+`NAVIGATION_TARGET_CHANGED`), checks the windows it already restored before a
+second link, and counts a window only when it is on its frame and its own
+Copy deeplink returns the planned task; a later link that moved an earlier
+window is caught by a final pass. When recovery could have sent its own task
+link (a target no restored window showed, or an incomplete restore), even when
+recovery failed, a recheck moves back only a window now showing a recovery
+task instead of its own, with the same link guard and a final pass; it
+creates, moves, and closes nothing, cannot tell recovery's link from the
+user's own navigation to a recovery task, and reactivates the app that was
+frontmost before it. The plan reaches the helper on stdin
+and the snapshot returns on stdout; each task link is handed to macOS `open`,
+as recovery already does. Every window-task helper run has a deadline and is
+killed with its process group when it passes; the helper also exits once its
+parent is gone. Restore failures, including a relaunch
+that never reached the restore, are reported with the restart result and
+never block recovery. Only a command whose raw `--trigger` is `user` accepts the flag; the
+daemon, the Monitor app, distribution, and auto-switch never pass it
+(`tests/enforce_task_probe_isolation.rs` pins every caller and the forwarded
+value). None of this has run against a live Desktop yet;
+`cxi window rehearse-task-restore --allow-focus-and-clipboard` exercises
+focus-targeted navigation and New Window in temporary extra windows without a
+restart, then gives them their opening frames back and closes only them. It
+cannot show cold-task loading, New Window timing, or window reuse after a
+relaunch.
+
 An explicit diagnostic, `cxi window probe-tasks --allow-focus-and-clipboard`,
 tests whether the installed Desktop exposes a one-to-one mapping through Copy
 deeplink. It is evidence gathering only and has not been run against a live
 multiwindow Desktop: it foregrounds each window, lets ChatGPT replace the
-clipboard with each task link, and neither persists task IDs nor authorizes
-restart. Before any visible change it requires the account's `~/.codex` as
-the Codex home (resolved from the user database, not `$HOME`), holds the
-switch/recovery operation lock for its whole run, and refuses a customized
-ChatGPT keymap, more than one ChatGPT process, a build other than 26.924.20706
-(11431) or a bundle changed since launch, a macOS App Shortcut on
-Cmd+Opt+L, a keyboard layout on which that key does not type `l` with
-Command held, missing Accessibility or event-posting access, pasteboard
-access set to deny, and minimized windows. ChatGPT 26.924.20706 binds its
-hidden `copyDeeplink` command to Cmd+Opt+L by default and reads overrides from
-`$CODEX_HOME/keybindings.json`, re-reading it whenever a window gains focus;
-an override could move that shortcut to another command, so only an absent,
-blank, or `[]` keymap is accepted, and an edit still present when the probe
-ends voids the result. A ChatGPT started with its own `CODEX_HOME` is not
-detected. The Desktop copies the link of `BrowserWindow.getFocusedWindow()`
-and otherwise falls back to its primary window, so the helper sends the
-shortcut only to the verified ChatGPT PID, reads keyboard focus live from
-Accessibility before and after each copy, and requires one clipboard write
-without a concealed or transient marker that stays unchanged while it reads
-the link. On macOS 15.4 and later the system may ask before that read; a
-prompt that takes focus makes the probe fail closed. It also rejects
-ambiguous AX/WindowServer frame matches, process/window drift, and duplicate
-or invalid task links. The helper never outputs task IDs, and the CLI prints
-only a count or a fixed failure code, adding a note when a failure may have
-followed a focus change. Each copied link is on the system clipboard, where
-other apps, clipboard history, and Universal Clipboard can see it; one
-competing write of a valid task link still cannot be attributed. A successful
-probe does not prove targeted navigation into each replacement window or
-match IPC owner client IDs to WindowServer IDs, so the shutdown guard remains.
+clipboard with each task link, puts the previous clipboard (or a newer copy made
+between its copies) back when no other app wrote after its last copy, and neither persists task IDs nor authorizes
+restart. The probe, the rehearsal, and the restore share these checks. Before
+any visible change they require the account's `~/.codex` as the Codex home
+(resolved from the user database, not `$HOME`), hold the switch/recovery
+operation lock for the whole run, and refuse a keymap entry that names
+`copyDeeplink` or binds the L key, more than one ChatGPT process, a build
+other than 26.924.22138 (11645) or a bundle changed since launch, a macOS
+App Shortcut on Cmd+Opt+L, a keyboard layout on which that key does not type
+`l` with Command held, missing Accessibility or event-posting access,
+pasteboard access set to deny, and minimized windows. ChatGPT 26.924.22138
+binds its hidden `copyDeeplink` command to Cmd+Opt+L by default (no other
+default uses it) and reads overrides from `$CODEX_HOME/keybindings.json`, an
+array of `{command, key}` entries: a command named by an entry uses exactly
+those keys, and every other command keeps its defaults. So Cmd+Opt+L still
+means Copy deeplink when no entry names `copyDeeplink` or binds L, which is
+the accepted keymap (the owner's dictation override passes). An edit still
+present when the command ends voids the result. A ChatGPT started with its
+own `CODEX_HOME` is not detected. The Desktop copies the link of
+`BrowserWindow.getFocusedWindow()` and otherwise falls back to its primary
+window, so the helper sends the shortcut only to the verified ChatGPT PID,
+reads keyboard focus live from Accessibility before and after each copy, and
+requires one clipboard write without a concealed or transient marker that
+stays unchanged while it reads the link. On macOS 15.4 and later the system
+may ask before that read; a prompt that takes focus makes the command fail
+closed. It also rejects ambiguous AX/WindowServer frame matches,
+process/window drift, and duplicate or invalid task links. The probe and the
+rehearsal never output task IDs, and the CLI prints only counts or a fixed
+failure code, adding a note when a failure may have followed a focus change.
+Each copied link is on the system clipboard, where other apps, clipboard
+history, and Universal Clipboard can see it; one competing write of a valid
+task link still cannot be attributed. Private or larger than 32 MiB clipboard
+contents are neither read nor restored.
 The helper rejects malformed or non-finite WindowServer bounds and rechecks
 the Desktop process birth immediately before each Accessibility geometry write.
 Window title and geometry heuristics alone cannot prove that a window is
@@ -380,17 +445,34 @@ An in-process logout or login that keeps the same ChatGPT PID cannot be
 identified from process identity alone. Until Desktop exposes an authoritative
 current-account read, treat that case as requiring a verified restart.
 
-On this host the Command Line Tools Swift compiler and default macOS 27.0 SDK
-have mismatched build versions. Until the tools are repaired, use
-`SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` and a writable
-`CLANG_MODULE_CACHE_PATH` for Swift tests and installation. Point it at a new,
-empty directory under the canonical `/private/tmp/...` path for each install;
-that combination is the verified workaround. One failed install reused an
-existing cache through the `/tmp` alias and hit a duplicate-module
-(`_DarwinFoundation1`) error. The successful retry changed both the path
-spelling and the cache contents, so whether the alias itself or the stale
-cache caused the failure is unverified. Verify the exact built app signature
-and running process after installation.
+On this host the Command Line Tools Swift compiler (`6.4.0.34.1`) and the
+default macOS 27.0 SDK's Swift interfaces (`6.4.0.31.4`) come from different
+builds. That difference alone does not block builds: with a writable module
+cache, the default SDK builds every installer target and passes
+`./scripts/test_swift.sh` (checked 2026-09-28). Both installed SDKs came from
+a different compiler build. So when Swift cannot rebuild one of their modules,
+for example because the module cache is not writable, it reports
+`this SDK is not supported by the compiler`. Read the error printed before
+that line. Where a sandbox denies the default cache, set
+`CLANG_MODULE_CACHE_PATH` to a writable directory.
+`SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` still works
+but is not required.
+
+Reuse a module cache only through the path spelling that built it. Clang records
+imported module files by absolute path. A cache built as `/private/tmp/x` and
+reused as `/tmp/x`, or the reverse, or through any other symlink, fails. Swift
+6.4 reports `module '_DarwinFoundation1' is defined in both ...` and crashes.
+Swift 5.10 on GitHub's `macos-14` runner reports
+`PCH was compiled with module cache path ...` instead. Fresh caches and
+same-spelling reuse work. `scripts/install.sh` and `scripts/test_swift.sh`
+resolve `CLANG_MODULE_CACHE_PATH` to its physical path before compiling, so a
+warm cache can be reused through them. They create a missing directory, pin a
+relative path to the caller's directory, and stop if the path is not a
+directory or is an empty one they cannot write. A warm read-only cache still
+compiles what it already holds, so it only gets a warning. Give other
+`swiftc`, `swift`, or `clang -fmodules` runs that share the cache the physical
+path too, and use a new directory for a cache built through another spelling.
+Verify the exact built app signature and running process after installation.
 
 ## Runtime Paths & Files
 - `~/.codex/auth.json`: Active authentication tokens used by Codex CLI and `ChatGPT.app` (0600 permissions).
@@ -403,7 +485,9 @@ and running process after installation.
 
 ## Core CLI Commands
 - `cxi status`: Check quota table across all accounts (`5H SPRINT`, `7D LIMIT`, `PLAN (MULT)`, `CREDITS`).
-- `cxi switch <account>`: Switch active account (automatically recovers eligible quota-blocked or restart-captured turns; ambiguous active turns are not dispatched by discovery-only recovery).
+- `cxi switch <account>`: Switch active account (automatically recovers eligible quota-blocked or restart-captured turns; ambiguous active turns are not dispatched by discovery-only recovery). `--restore-window-tasks` captures each ChatGPT window's task before the restart and reopens it afterwards (focuses windows, uses the clipboard; unverified live).
+- `cxi restart [--restore-window-tasks]`: Restart Desktop and verify recovery without changing accounts; the flag works as for `cxi switch`.
+- `cxi window probe-tasks --allow-focus-and-clipboard` / `cxi window rehearse-task-restore --allow-focus-and-clipboard`: explicit diagnostics for the window-to-task mapping and for the restore steps; neither restarts Desktop.
 - `cxi resume [thread-id]`: Resume an eligible quota-blocked or restart-captured thread through the Desktop owner's same-user IPC channel. Accessibility is used only for recovery visibility/banner verification, not to dispatch the turn.
 - `cxi config`: Inspect and configure auto-switch modes (`--auto-switch-enabled`, `--auto-switch-business-only`, `--auto-switch-business-priority`, `--restart-app-on-switch`, `--preserve-window-bounds`).
 - `cxi set-multiplier <account> <val>`: Set custom quota multiplier override (e.g. 20 for Pro 20x).

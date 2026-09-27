@@ -1,0 +1,8 @@
+{
+  "process": {"pid": 4242, "birth_id": "1726789012:000007"},
+  "windows": [
+    {"window_id": 31, "frame": {"x": 0.0, "y": 30.0, "width": 900.0, "height": 700.0}, "task_id": "01a00000-0000-4000-8000-00000000000a", "focused": false},
+    {"window_id": 32, "frame": {"x": 950.0, "y": 30.0, "width": 900.0, "height": 700.0}, "task_id": "01a00000-0000-4000-8000-00000000000b", "focused": true}
+  ],
+  "clipboard_restored": true
+}

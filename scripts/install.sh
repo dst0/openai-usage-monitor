@@ -280,6 +280,7 @@ fi
 source "${PROJECT_DIR}/scripts/install_bundle_swap.sh"
 source "${PROJECT_DIR}/scripts/install_launchd_helpers.sh"
 source "${PROJECT_DIR}/scripts/install_monitor_process_guard.sh"
+source "${PROJECT_DIR}/scripts/swift_module_cache.sh"
 
 BUILD_DIR="${PROJECT_DIR}/build"
 APP_DIR="${BUILD_DIR}/${BUNDLE_NAME}"
@@ -301,6 +302,9 @@ if ! command -v swiftc >/dev/null 2>&1; then
     echo "   xcode-select --install"
     exit 1
 fi
+# Every swiftc call below must reach an overridden module cache through one
+# physical spelling; a /tmp alias of a cache built as /private/tmp crashes Swift.
+canonicalize_clang_module_cache_path || exit 1
 
 if ! command -v cargo >/dev/null 2>&1; then
     if [ -f "${HOME}/.cargo/env" ]; then
@@ -425,7 +429,12 @@ if [ -f "${PROJECT_DIR}/scripts/codex-window-restore.swift" ]; then
         "${PROJECT_DIR}/scripts/CodexWindowTaskProbeValidation.swift" \
         "${PROJECT_DIR}/scripts/CodexWindowTaskProbeKeyboard.swift" \
         "${PROJECT_DIR}/scripts/CodexWindowTaskProbeCore.swift" \
+        "${PROJECT_DIR}/scripts/CodexWindowTaskSessionSystem.swift" \
+        "${PROJECT_DIR}/scripts/CodexWindowTaskSessionCore.swift" \
+        "${PROJECT_DIR}/scripts/CodexPreservedClipboard.swift" \
+        "${PROJECT_DIR}/scripts/CodexWindowTaskRecords.swift" \
         "${PROJECT_DIR}/scripts/CodexWindowTaskProbe.swift" \
+        "${PROJECT_DIR}/scripts/CodexWindowTaskSession.swift" \
         "${PROJECT_DIR}/scripts/codex-window-restore.swift"
     chmod +x "${LOCAL_BIN}/codex-window-restore"
 fi

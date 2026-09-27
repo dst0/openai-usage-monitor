@@ -113,11 +113,22 @@ APP_STAGE_ROOT="$(/usr/bin/mktemp -d "${install_dir}/.codex-monitor-install.XXXX
 APP_BACKUP_ROOT="$(/usr/bin/mktemp -d "${install_dir}/.codex-monitor-backup.XXXXXX")" || return 1
 EOF
 )"
-ACTUAL_INSTALLER_MKTEMPS="$(/bin/cat \
-    "${PROJECT_DIR}/scripts/install.sh" \
-    "${PROJECT_DIR}"/scripts/install_*.sh \
-    "${PROJECT_DIR}/scripts/wait_for_restart_worker.sh" \
-    "${PROJECT_DIR}/codex-notifier/build.sh" |
+# Scan install.sh and every script it sources or runs through
+# ${PROJECT_DIR}. It only copies uninstall.sh into the app bundle.
+INSTALLER_SCRIPTS=("${INSTALL_SCRIPT}")
+while IFS= read -r relative; do
+    [ "${relative}" != scripts/uninstall.sh ] || continue
+    [ -f "${PROJECT_DIR}/${relative}" ] || fail "installer references a missing script: ${relative}"
+    INSTALLER_SCRIPTS+=("${PROJECT_DIR}/${relative}")
+done < <(/usr/bin/grep -o '[$][{]PROJECT_DIR[}]/[A-Za-z0-9_./-]*[.]sh' "${INSTALL_SCRIPT}" |
+    /usr/bin/sed -e 's|^[$][{]PROJECT_DIR[}]/||' | /usr/bin/sort -u)
+for relative in scripts/install_bundle_swap.sh scripts/wait_for_restart_worker.sh codex-notifier/build.sh; do
+    case " ${INSTALLER_SCRIPTS[*]} " in
+        *" ${PROJECT_DIR}/${relative} "*) ;;
+        *) fail "installer script scan missed ${relative}" ;;
+    esac
+done
+ACTUAL_INSTALLER_MKTEMPS="$(/bin/cat "${INSTALLER_SCRIPTS[@]}" |
     /usr/bin/grep -F 'mktemp' | /usr/bin/sed -e 's/^[[:space:]]*//' | /usr/bin/sort)"
 [ "${ACTUAL_INSTALLER_MKTEMPS}" = "${EXPECTED_INSTALLER_MKTEMPS}" ] ||
     fail "installer mktemp templates changed; update scripts/uninstall.sh and this test:

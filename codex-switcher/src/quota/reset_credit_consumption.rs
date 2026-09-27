@@ -15,8 +15,9 @@ const MAX_RESET_RESPONSE_BYTES: u64 = 64 * 1024;
 pub(crate) enum ResetCreditConsumeOutcome {
     Applied,
     NotConsumed(String),
-    /// The service definitely rejected the request before redeeming a credit.
-    /// A later daemon tick may retry the same logical operation.
+    /// No request left this host: local validation could not build it (see
+    /// `reset_request_blocker`). A later daemon tick may retry the same
+    /// logical operation.
     Unavailable(String),
     /// The request may have reached the service. The persisted idempotency key
     /// must be reused and account switching must wait for a terminal outcome.

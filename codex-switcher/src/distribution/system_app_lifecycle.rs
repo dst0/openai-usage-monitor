@@ -56,7 +56,7 @@ impl AppLifecycle for SystemAppLifecycle {
             .ok_or("Desktop shutdown has no captured process identity")?
             .expected_process()
             .clone();
-        switcher::preflight_shutdown_windows(&expected)
+        switcher::preflight_shutdown_windows(&expected, None)
     }
 
     fn stop_app(&self) -> Result<(), AppStopError> {
@@ -78,7 +78,7 @@ impl AppLifecycle for SystemAppLifecycle {
         let mut backend = SystemWindowRestoreBackend::new().map_err(AppStopError::before)?;
         WindowProcessValidationService::confirm(&mut backend, &expected)
             .map_err(AppStopError::before)?;
-        switcher::stop_codex_app_gracefully(&expected)
+        switcher::stop_codex_app_gracefully(&expected, None)
     }
 
     fn launch_app(&self) -> Result<Vec<u32>, String> {

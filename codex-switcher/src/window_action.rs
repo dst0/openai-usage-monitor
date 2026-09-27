@@ -14,6 +14,12 @@ pub(super) enum WindowAction {
         #[arg(long)]
         allow_focus_and_clipboard: bool,
     },
+    /// Explicit diagnostic: reopen each window's chat in a temporary new window, verify it, close it
+    RehearseTaskRestore {
+        /// Allow the rehearsal to foreground ChatGPT, open and close windows, and use the clipboard
+        #[arg(long)]
+        allow_focus_and_clipboard: bool,
+    },
 }
 
 #[cfg(test)]

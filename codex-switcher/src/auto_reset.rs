@@ -4,6 +4,8 @@
 //! the quota reader. Desktop remains the sole owner of threads and is used
 //! only for post-reset task recovery.
 
+#[path = "auto_reset/applied_reset_settlement_service.rs"]
+mod applied_reset_settlement_service;
 #[path = "auto_reset/auto_reset_report.rs"]
 mod auto_reset_report;
 #[path = "auto_reset/auto_reset_status.rs"]
@@ -16,6 +18,8 @@ mod reset_journal;
 mod reset_journal_store;
 #[path = "auto_reset/reset_outcome_service.rs"]
 mod reset_outcome_service;
+#[path = "auto_reset/reset_pending_mark_service.rs"]
+mod reset_pending_mark_service;
 #[path = "auto_reset/reset_preflight.rs"]
 mod reset_preflight;
 #[path = "auto_reset/reset_preflight_service.rs"]
@@ -59,7 +63,9 @@ pub(crate) fn maybe_consume_weekly_reset(
 /// request for this account route still has an uncertain outcome. A changed
 /// cached window marker is not settlement evidence.
 pub(crate) fn unresolved_auto_reset_for(account: &AccountConfig) -> Result<bool, String> {
-    let journal = reset_journal_store::ResetJournalStore::load()?;
+    let journal =
+        reset_journal_store::ResetJournalStore::new(&crate::state_file::SystemStateFileOperations)
+            .load()?;
     Ok(weekly_reset_policy::unresolved_for_route(&journal, account))
 }
 
@@ -69,14 +75,26 @@ mod fake_weekly_reset_environment;
 #[cfg(test)]
 use reset_journal::ResetJournal;
 #[cfg(test)]
-use weekly_reset_policy::{terminal_no_spend_state, threshold_eligible, weekly_exhausted};
+use weekly_reset_policy::{
+    remaining_exceeds_threshold, terminal_no_spend_state, threshold_eligible, weekly_exhausted,
+};
+#[cfg(test)]
+fn journal_store_for(path: &std::path::Path) -> reset_journal_store::ResetJournalStore<'static> {
+    // Test journals always use the production file name inside a private
+    // temporary directory.
+    assert_eq!(path.file_name().unwrap(), "auto-reset-state.json");
+    reset_journal_store::ResetJournalStore::in_directory(
+        path.parent().unwrap().to_path_buf(),
+        &crate::state_file::SystemStateFileOperations,
+    )
+}
 #[cfg(test)]
 fn load_journal_at(path: &std::path::Path) -> Result<ResetJournal, String> {
-    reset_journal_store::ResetJournalStore::load_at(path)
+    journal_store_for(path).load()
 }
 #[cfg(test)]
 fn write_journal_at(path: &std::path::Path, journal: &ResetJournal) -> Result<(), String> {
-    reset_journal_store::ResetJournalStore::write_at(path, journal)
+    journal_store_for(path).write(journal)
 }
 
 #[cfg(test)]

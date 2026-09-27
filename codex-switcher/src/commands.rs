@@ -19,6 +19,9 @@ pub(super) enum Commands {
         /// Force restart ChatGPT desktop app on switch
         #[arg(long)]
         restart: bool,
+        /// Reopen each ChatGPT window's selected task after the restart (focuses windows and uses the clipboard)
+        #[arg(long, conflicts_with = "no_restart")]
+        restore_window_tasks: bool,
         /// Switch trigger reason (user, auto, shim)
         #[arg(long, hide = true, default_value = "user")]
         trigger: String,
@@ -61,6 +64,9 @@ pub(super) enum Commands {
         /// Restore this task first when running a self-restart
         #[arg(long)]
         primary_thread: Option<String>,
+        /// Reopen each ChatGPT window's selected task after the restart (focuses windows and uses the clipboard)
+        #[arg(long)]
+        restore_window_tasks: bool,
     },
     /// Rename an account label/nickname
     Rename {
@@ -198,3 +204,7 @@ pub(super) enum Commands {
         cancel: bool,
     },
 }
+
+#[cfg(test)]
+#[path = "commands.test.rs"]
+mod tests;

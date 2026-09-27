@@ -1,10 +1,11 @@
 use super::reset_journal::ResetJournal;
 use super::reset_journal_store::ResetJournalStore;
 use super::reset_outcome_service::ResetOutcomeService;
+use super::reset_pending_mark_service::ResetPendingMarkService;
 use super::reset_preflight::ResetPreflight;
 use super::reset_preflight_service::ResetPreflightService;
 use super::weekly_reset_environment::WeeklyResetEnvironment;
-use super::weekly_reset_policy::{now_string, report, unresolved_attempt};
+use super::weekly_reset_policy::{now_string, report, retry_refused_reason, unresolved_attempt};
 use super::AutoResetReport;
 use crate::models::{AccountConfig, Settings};
 use crate::quota::ResetCreditConsumeOutcome;
@@ -31,16 +32,18 @@ impl ResetDispatchService {
             .idempotency_key
             .clone()
             .ok_or("Auto-reset journal has no idempotency key")?;
+        let store = ResetJournalStore::new(environment.journal_files());
         let outcome_may_be_unknown = persisted && unresolved_attempt(&journal);
         let latest_active =
             match ResetPreflightService::check(settings, active, &idempotency_key, environment)? {
                 ResetPreflight::Ready(latest_active) => latest_active,
                 // A request with this key may already have reached the service.
-                // Keep the sole journal unresolved and rotation suppressed.
-                ResetPreflight::Refused { .. } if outcome_may_be_unknown => {
+                // Keep the sole journal unresolved and rotation suppressed, and
+                // report why this retry waits.
+                ResetPreflight::Refused { state, reason, .. } if outcome_may_be_unknown => {
                     return Ok(report(
                         journal.state,
-                        journal.reason,
+                        Some(retry_refused_reason(&state, reason.as_deref())),
                         journal.updated_at,
                         true,
                     ));
@@ -53,7 +56,7 @@ impl ResetDispatchService {
                     journal.state = state;
                     journal.reason = reason;
                     journal.updated_at = Some(now_string());
-                    ResetJournalStore::write(&journal)?;
+                    store.write(&journal)?;
                     return Ok(report(
                         journal.state,
                         journal.reason,
@@ -68,22 +71,27 @@ impl ResetDispatchService {
         if !outcome_may_be_unknown {
             // Persist before dispatch. A crash after the request is sent must
             // retry this exact operation rather than mint a new credit use.
-            journal.state = "pending".into();
-            journal.reason = None;
-            journal.updated_at = Some(now_string());
-            ResetJournalStore::write(&journal)?;
+            ResetPendingMarkService::new(&store).mark(&mut journal)?;
         }
         let outcome = environment.consume_reset_credit(&latest_active, &idempotency_key);
-        if outcome_may_be_unknown && matches!(outcome, ResetCreditConsumeOutcome::Unavailable(_)) {
+        if let (true, ResetCreditConsumeOutcome::Unavailable(reason)) =
+            (outcome_may_be_unknown, &outcome)
+        {
             // This retry never left the host, but the earlier request with the
             // same key may have been applied. Keep it unresolved.
             return Ok(report(
                 journal.state,
-                journal.reason,
+                Some(format!("retry_unavailable:{reason}")),
                 journal.updated_at,
                 true,
             ));
         }
-        ResetOutcomeService::handle(outcome, journal, blocked_threads, &latest_active)
+        ResetOutcomeService::handle(
+            outcome,
+            journal,
+            blocked_threads,
+            &latest_active,
+            environment,
+        )
     }
 }

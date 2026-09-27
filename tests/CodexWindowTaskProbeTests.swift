@@ -7,6 +7,7 @@ struct CodexWindowTaskProbeTests {
   static func main() {
     copiedLinkRequiresOneObservedWrite()
     copiedLinkRequiresCanonicalTaskURL()
+    taskLinksAreBuiltOnlyFromCanonicalIDs()
     windowMappingIsOneToOne()
     windowMappingFailsClosedOnAmbiguity()
     onlyTheInspectedDesktopBuildIsAccepted()
@@ -62,6 +63,18 @@ struct CodexWindowTaskProbeTests {
     }
   }
 
+  static func taskLinksAreBuiltOnlyFromCanonicalIDs() {
+    precondition(canonicalTaskID(id) == id)
+    precondition(taskLink(for: id)?.absoluteString == link)
+    for candidate in [
+      "", "new", "\(id)/", "01A00000-0000-4000-8000-00000000000F", "\(id)?hostId=x",
+      "../\(id.dropFirst(3))", "01a00000-0000-4000-8000-00000000000", " \(id)",
+    ] {
+      precondition(canonicalTaskID(candidate) == nil, "accepted \(candidate)")
+      precondition(taskLink(for: candidate) == nil, "linked \(candidate)")
+    }
+  }
+
   static func windowMappingIsOneToOne() {
     let left = CGRect(x: 0, y: 25, width: 900, height: 700)
     let right = CGRect(x: 1000, y: 25, width: 900, height: 700)
@@ -99,12 +112,15 @@ struct CodexWindowTaskProbeTests {
 
   static func onlyTheInspectedDesktopBuildIsAccepted() {
     precondition(isVerifiedDesktopBuild(
-      bundleIdentifier: "com.openai.codex", version: "26.924.20706", buildNumber: "11431"))
+      bundleIdentifier: "com.openai.codex", version: "26.924.22138", buildNumber: "11645"))
     for (identifier, version, build) in [
-      ("com.openai.codex", "26.924.20707", "11431"), ("com.openai.codex", "26.924.2070", "11431"),
-      ("com.openai.chat", "26.924.20706", "11431"), ("com.openai.codex", "26.924.20706", "11432"),
-      ("com.openai.codex", nil, "11431"), (nil, "26.924.20706", "11431"),
-      ("com.openai.codex", "26.924.20706", nil),
+      // The earlier inspected build is no longer accepted: its keymap rules
+      // were not re-read for the relaxed keymap check.
+      ("com.openai.codex", "26.924.20706", "11431"),
+      ("com.openai.codex", "26.924.22139", "11645"), ("com.openai.codex", "26.924.2213", "11645"),
+      ("com.openai.chat", "26.924.22138", "11645"), ("com.openai.codex", "26.924.22138", "11646"),
+      ("com.openai.codex", nil, "11645"), (nil, "26.924.22138", "11645"),
+      ("com.openai.codex", "26.924.22138", nil),
     ] as [(String?, String?, String?)] {
       precondition(!isVerifiedDesktopBuild(bundleIdentifier: identifier, version: version, buildNumber: build))
     }

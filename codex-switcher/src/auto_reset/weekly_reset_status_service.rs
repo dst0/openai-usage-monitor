@@ -5,6 +5,7 @@ use super::weekly_reset_policy::{
 };
 use super::AutoResetStatus;
 use crate::models::{AccountConfig, Settings};
+use crate::state_file::SystemStateFileOperations;
 
 pub(super) struct WeeklyResetStatusService;
 
@@ -29,7 +30,7 @@ impl WeeklyResetStatusService {
                 last_event_at: None,
             };
         };
-        let journal = match ResetJournalStore::load() {
+        let journal = match ResetJournalStore::new(&SystemStateFileOperations).load() {
             Ok(journal) => journal,
             Err(_) => {
                 return AutoResetStatus {
@@ -99,18 +100,19 @@ impl WeeklyResetStatusService {
     pub(super) fn clear_completed_episode_if_restored(
         settings: &Settings,
         active: Option<&AccountConfig>,
+        store: &ResetJournalStore<'_>,
     ) -> Result<(), String> {
         if !settings.auto_reset_weekly_enabled || active.is_none_or(weekly_exhausted) {
             return Ok(());
         }
         let _operation = crate::recovery::operation_lock()?;
-        let journal = ResetJournalStore::load()?;
+        let journal = store.load()?;
         // A restored pool can be the delayed effect of the very request whose
         // response was lost. Keep its key until explicit reconciliation; a
         // manual reset must still see the unresolved automatic attempt.
         if journal.episode_key.is_some() && !matches!(journal.state.as_str(), "pending" | "unknown")
         {
-            ResetJournalStore::write(&ResetJournal::default())?;
+            store.write(&ResetJournal::default())?;
         }
         Ok(())
     }

@@ -14,18 +14,35 @@ func validateCopiedTaskLink(
 ) -> String? {
   guard beforeChange < Int.max, afterChange == beforeChange + 1,
     confirmedChange == afterChange, let link else { return nil }
+  return taskID(fromLink: link)
+}
+
+/// The canonical task ID of exactly `codex://threads/<id>`, or nil.
+func taskID(fromLink link: String) -> String? {
   let bytes = Array(link.utf8)
   guard bytes.starts(with: copiedTaskLinkPrefix) else { return nil }
-  let id = bytes.dropFirst(copiedTaskLinkPrefix.count)
-  guard id.count == 36 else { return nil }
-  for (index, byte) in id.enumerated() {
+  return canonicalTaskID(String(decoding: bytes.dropFirst(copiedTaskLinkPrefix.count), as: UTF8.self))
+}
+
+/// Returns `id` only when it is a lowercase hyphenated UUID, the form
+/// ChatGPT puts in a copied task link.
+func canonicalTaskID(_ id: String) -> String? {
+  let bytes = Array(id.utf8)
+  guard bytes.count == 36 else { return nil }
+  for (index, byte) in bytes.enumerated() {
     if [8, 13, 18, 23].contains(index) {
       guard byte == 45 else { return nil }
     } else {
       guard (48...57).contains(byte) || (97...102).contains(byte) else { return nil }
     }
   }
-  return String(decoding: id, as: UTF8.self)
+  return id
+}
+
+/// The task link ChatGPT navigates to, built only from a canonical task ID.
+func taskLink(for id: String) -> URL? {
+  guard let id = canonicalTaskID(id) else { return nil }
+  return URL(string: "codex://threads/\(id)")
 }
 
 /// Pairs each WindowServer window ID with exactly one Accessibility standard
@@ -50,13 +67,15 @@ func uniqueWindowFrameMapping(
   return mapping
 }
 
-/// The only Desktop build whose Copy deeplink binding was inspected:
-/// ChatGPT 26.924.20706 binds its hidden `copyDeeplink` command to
-/// CmdOrCtrl+Alt+L by default. Another build may bind that key differently,
-/// so the probe refuses it until its bundle has been re-inspected.
+/// The only Desktop build whose Copy deeplink binding, keymap rules, task
+/// link routing, and New Window command were inspected: ChatGPT 26.924.22138
+/// binds its hidden `copyDeeplink` command to CmdOrCtrl+Alt+L by default,
+/// sends a task link to its most recently focused primary window, and opens
+/// File > New Window focused. Another build may differ, so every window-task
+/// command refuses it until its bundle has been re-inspected.
 let verifiedDesktopBundleIdentifier = "com.openai.codex"
-let verifiedDesktopVersion = "26.924.20706"
-let verifiedDesktopBuildNumber = "11431"
+let verifiedDesktopVersion = "26.924.22138"
+let verifiedDesktopBuildNumber = "11645"
 
 func isVerifiedDesktopBuild(bundleIdentifier: String?, version: String?, buildNumber: String?) -> Bool {
   bundleIdentifier == verifiedDesktopBundleIdentifier && version == verifiedDesktopVersion
@@ -93,7 +112,12 @@ private let privatePasteboardMarkers: Set<String> = [
 ]
 
 func pasteboardTypesAllowTaskRead(_ types: [String]) -> Bool {
-  types.contains("public.utf8-plain-text") && privatePasteboardMarkers.isDisjoint(with: types)
+  types.contains("public.utf8-plain-text") && !pasteboardTypesArePrivate(types)
+}
+
+/// Private contents are neither read nor preserved for restoration.
+func pasteboardTypesArePrivate(_ types: [String]) -> Bool {
+  !privatePasteboardMarkers.isDisjoint(with: types)
 }
 
 /// macOS 15.4 and later may ask the user before a programmatic pasteboard

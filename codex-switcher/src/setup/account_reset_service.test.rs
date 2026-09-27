@@ -3,6 +3,7 @@ use super::reset_account_transaction_with;
 use crate::distribution::test_account_spec::TestAccountSpec;
 use crate::distribution::test_helper::TestEnv;
 use crate::quota::ResetCreditConsumeOutcome;
+use crate::state_file::SystemStateFileOperations;
 use crate::storage::{load_accounts, update_accounts_atomically};
 use std::cell::Cell;
 use std::os::unix::fs::PermissionsExt;
@@ -43,6 +44,7 @@ fn pending_auto_reset_for_same_window_blocks_manual_remote_request() {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     let calls = Cell::new(0);
     let result = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         "main",
         |_| Ok(false),
         |_, _| {
@@ -66,6 +68,7 @@ fn malformed_auto_reset_journal_blocks_manual_remote_request() {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     let calls = Cell::new(0);
     let result = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         "main",
         |_| Ok(false),
         |_, _| {
@@ -87,6 +90,7 @@ fn incomplete_pending_auto_reset_journal_blocks_manual_remote_request() {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     let calls = Cell::new(0);
     let result = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         "main",
         |_| Ok(false),
         |_, _| {
@@ -118,6 +122,7 @@ fn corrected_weekly_marker_does_not_bypass_unknown_auto_reset() {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     let calls = Cell::new(0);
     let result = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         "main",
         |_| Ok(false),
         |_, _| {
@@ -137,6 +142,7 @@ fn corrected_weekly_marker_does_not_bypass_unknown_auto_reset() {
 fn applied_reset_preserves_concurrent_unrelated_registry_changes() {
     let env = setup();
     let result = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         "main",
         |_| Ok(false),
         |_, _| {
@@ -192,6 +198,7 @@ fn applied_reset_preserves_concurrent_unrelated_registry_changes() {
 fn applied_reset_token_conflict_keeps_new_token_and_reports_uncertain_cache() {
     let env = setup();
     let result = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         "main",
         |_| Ok(false),
         |_, _| {
@@ -219,6 +226,7 @@ fn applied_reset_token_conflict_keeps_new_token_and_reports_uncertain_cache() {
 fn applied_reset_credit_conflict_preserves_new_count() {
     let env = setup();
     let result = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         "main",
         |_| Ok(false),
         |_, _| {
@@ -246,6 +254,7 @@ fn unknown_manual_reset_blocks_a_new_request_on_the_next_invocation() {
     let env = setup();
     let calls = Cell::new(0);
     let first = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         "main",
         |_| Ok(false),
         |_, _| {
@@ -254,6 +263,7 @@ fn unknown_manual_reset_blocks_a_new_request_on_the_next_invocation() {
         },
     );
     let second = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         "main",
         |_| Ok(false),
         |_, _| {
@@ -271,6 +281,7 @@ fn applied_reset_cache_conflict_blocks_a_new_request_on_the_next_invocation() {
     let env = setup();
     let calls = Cell::new(0);
     let first = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         "main",
         |_| Ok(false),
         |_, _| {
@@ -284,6 +295,7 @@ fn applied_reset_cache_conflict_blocks_a_new_request_on_the_next_invocation() {
         },
     );
     let second = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         "main",
         |_| Ok(false),
         |_, _| {
@@ -304,6 +316,7 @@ fn pending_attempt_survives_a_crash_before_the_remote_result() {
     let env = setup();
     let crashed = std::panic::catch_unwind(|| {
         let _ = reset_account_transaction_with(
+            &ManualResetAttemptStore::new(&SystemStateFileOperations),
             "main",
             |_| Ok(false),
             |_, key| {
@@ -319,6 +332,7 @@ fn pending_attempt_survives_a_crash_before_the_remote_result() {
     });
     let calls = Cell::new(0);
     let next = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         "main",
         |_| Ok(false),
         |_, _| {
@@ -343,6 +357,7 @@ fn unsafe_manual_reset_journal_symlink_blocks_remote_request() {
     std::os::unix::fs::symlink(&victim, ManualResetAttemptStore::path()).unwrap();
     let calls = Cell::new(0);
     let result = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         "main",
         |_| Ok(false),
         |_, _| {
@@ -362,6 +377,7 @@ fn resolved_applied_attempt_allows_a_later_explicit_reset() {
     let env = setup();
     let calls = Cell::new(0);
     let first = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         "main",
         |_| Ok(false),
         |_, _| {
@@ -370,6 +386,7 @@ fn resolved_applied_attempt_allows_a_later_explicit_reset() {
         },
     );
     let second = reset_account_transaction_with(
+        &ManualResetAttemptStore::new(&SystemStateFileOperations),
         "main",
         |_| Ok(false),
         |_, _| {
@@ -382,7 +399,8 @@ fn resolved_applied_attempt_allows_a_later_explicit_reset() {
         && second.is_ok()
         && calls.get() == 2
         && current.accounts[0].last_credits == Some(0)
-        && !ManualResetAttemptStore::load()
+        && !ManualResetAttemptStore::new(&SystemStateFileOperations)
+            .load()
             .unwrap()
             .unwrap()
             .is_unresolved();

@@ -492,6 +492,7 @@ fn test_switch_to_account_rejects_relogin_needed() {
             "user@example.com:uuid-1",
             false,
             false,
+            false,
             SwitchTrigger::User,
             || Ok(desktop_running),
             || Ok(desktop_running),
