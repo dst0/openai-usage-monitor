@@ -1,0 +1,45 @@
+# 2026-09-28 — Uninstall kept a killed install's staging, and its test never ran in CI
+
+- **Status:** Resolved
+- **Task/context:** Follow-ups from the reviews of #20 on `scripts/uninstall.sh`: remove what a killed `scripts/install.sh` leaves behind, and run `tests/log_permissions_and_uninstall.sh` in CI. Earlier learning: [2026-09-27-uninstall-staging-list-missed-writers.md](2026-09-27-uninstall-staging-list-missed-writers.md).
+- **Unexpected observation or failure:**
+  - The installer's EXIT trap removes its temporary paths, but SIGKILL, a crash, or power loss skips the trap. A later confirmed uninstall and `--dry-run` both ignored every such path.
+  - The inventory held more than the reported `.codex-mon.install.*` and `.codex-monitor-{install,backup}.*`. `codesign --force` writes `<file>.cstemp` next to the file it signs. `mktemp -d -t codex-mon-install-XXXXXX` does not use `TMPDIR` on macOS: it uses `_CS_DARWIN_USER_TEMP_DIR` and keeps the prefix's `XXXXXX` literally, adding `.` and ten random characters.
+  - The installer created the remote clone before it took the install lock and released the lock before its EXIT trap deleted the clone. A free lock therefore did not prove that no installer owned a clone.
+  - Uninstall never removed two installed helpers, `~/.local/bin/codex-recovery-banner` and `~/.local/bin/codex-window-restore`. Only `codex-ui-resume` was listed.
+  - The shell test rewrote every `/Applications/` in the uninstaller copy, including `${USER_HOME}/Applications/`, so no `~/Applications` path was ever exercised.
+- **Evidence:**
+  - 3000 `mktemp` names drew only from `[0-9A-Za-z]` and kept the template length. `mktemp -d` roots are `0700`; `mktemp` files are `0600` until the installer's `chmod 755`.
+  - `codesign --sign - --force` on a 60 MB copy, killed once `.cstemp` appeared, left a 0-byte `0755` `.codex-mon.install.XyZ789.cstemp`. `swiftc -o` into a polled directory showed no temporary name there; `ln -sfn` and the shim's symlink need no temporary name either.
+  - The extended test failed first at `installer creates its remote clone before taking the install lock`. With the installer contract checks neutralised, it failed at `dry-run omitted interrupted install leftover .../.codex-mon.install.Ab3dE9`. The policy test failed at `ci.yml: no required job runs tests/log_permissions_and_uninstall.sh`.
+- **Approaches tried:**
+  - **Attempt:** Remove every matching leftover unconditionally.
+    - **Outcome:** Did not work.
+    - **Why:** Between the installer's two renames, a backup root holds the only copy of the previous app. Deleting it under a running installer defeats that installer's rollback.
+  - **Attempt:** Hold the install lock while deleting (`lockf <lock> rm -rf ...`, or `lockf <fd>`).
+    - **Outcome:** Did not work.
+    - **Why:** The file form without `-n` creates a missing lock file, which a dry run must not do, and whether the hosted macOS 14 runner's `lockf` has `-n` or the fd form was not verified. Deleting only paths listed before a successful non-blocking probe is enough, because an installer creates these names only while holding the lock.
+  - **Attempt:** List first, then probe with `lockf -k -s -t 0 <lock> /usr/bin/true`, only when the lock file exists and is this user's regular non-symlink file. Move `acquire_install_lock` before the remote clone and release the lock as the last step of `cleanup()`.
+    - **Outcome:** Worked.
+    - **Why:** Every installer temporary path now exists only while its creator holds the lock, or after that creator died. `-k` keeps the file, and exit status 75 (`EX_TEMPFAIL`) identifies a held lock. Any other failure is treated as unverified and keeps the leftovers.
+  - **Attempt:** Look for the remote clone in `TMPDIR`.
+    - **Outcome:** Did not work.
+    - **Why:** `mktemp -t` ignores `TMPDIR` when `_CS_DARWIN_USER_TEMP_DIR` exists. The uninstaller asks `getconf DARWIN_USER_TEMP_DIR`, and it warns instead of guessing when that is not absolute.
+- **Root cause:** The removal list was written from memory of the installer's final artifacts, not from its temporary paths. The installer's lock did not cover its whole temporary-path lifetime. The uninstall test ran only locally and could not see `~/Applications`.
+- **Resolution:**
+  - `scripts/uninstall.sh` gains `installer_temps` for the installer's leftovers. It requires the exact name (mktemp's alphabet and length), the current owner, and the expected type and mode, and never follows a symlink. A staging or backup root must also be empty or hold only a real `Codex Monitor.app`. It removes them only when `install_lock_blocker` is empty, and otherwise preserves each one with a warning and a failing exit.
+  - `uninstaller_temps` removes the uninstaller's own interrupted `.codex-monitor-uninstall.XXXXXX` copies. The two missing helpers join `INSTALLED_HELPERS`, which is used for both stopping and removal.
+  - `scripts/install.sh` takes the lock before the remote clone and releases it at the end of `cleanup()`.
+  - `.github/workflows/ci.yml` runs `bash tests/log_permissions_and_uninstall.sh` in the required Rust job. `ci_workflow_policy/shell_test_gate.rs` requires that step.
+- **Verification:**
+  - `tests/log_permissions_and_uninstall.sh` covers each valid leftover and a look-alike for every validated property. It also covers a held lock (dry run and confirmed run), a symlinked lock, a directory lock, a free existing lock, and an unknown or relative temporary directory.
+  - It fails when an installer `mktemp` template or the lock order changes, and when the uninstaller copy still names a real system path.
+  - Mutation runs of the uninstaller and installer are recorded in the PR.
+  - The `ci_workflow_policy` fixtures reject a missing step, a non-required job, extra step keys, and other commands.
+- **Prevention/follow-up:**
+  - `AGENTS.md` and `CODEX.md` state the lock contract, and CI now runs the uninstall test on every pull request.
+  - The remaining `tests/install_*.sh` and `tests/recovery_banner_manifest.sh` still run only locally.
+  - Whether the hosted runner's `lockf` supports the fd form that `acquire_install_lock` uses is unverified.
+  - A file owned by another uid needs root to create and is still not tested.
+- **Reusable learning:** Derive uninstall cleanup from the installer's temporary paths, including those created by the tools it runs (codesign, `mktemp -t`). Gate removal of anything an in-flight installer might need on a lock that covers the whole lifetime of those paths.
+- **References:** `scripts/uninstall.sh`, `scripts/install.sh`, `scripts/install_bundle_swap.sh`, `tests/log_permissions_and_uninstall.sh`, `.github/workflows/ci.yml`, `codex-switcher/tests/ci_workflow_policy/shell_test_gate.rs`.

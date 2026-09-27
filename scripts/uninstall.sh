@@ -11,7 +11,9 @@ set -o pipefail
 #
 # This removes this project's installed app, helper binaries, notifier, launch
 # items, app-owned state/logs, and the exact shell/skill registrations written
-# by scripts/install.sh. It deliberately preserves ChatGPT.app and Codex data
+# by scripts/install.sh. Staging, backup, and clone leftovers of a killed
+# install are removed only while no installer holds the install lock. It
+# deliberately preserves ChatGPT.app and Codex data
 # shared with it: auth.json, state_5.sqlite, sessions/, thread-writer-locks/,
 # and other transcript/database files. Source checkouts and build directories
 # are left untouched.
@@ -130,9 +132,19 @@ esac
 INSTALL_LOCK_FILE="${TMP_ROOT}/codex_monitor_install_${CURRENT_UID}.lock"
 DAEMON_PLIST="${LAUNCH_AGENTS}/${DAEMON_LABEL}.plist"
 APP_SERVICE_PLIST="${LAUNCH_AGENTS}/${APP_SERVICE_LABEL}.plist"
+# install.sh uses the first when it is writable, otherwise the second.
+APPLICATION_DIRS=(
+    "/Applications"
+    "${USER_HOME}/Applications"
+)
 APP_PATHS=(
     "/Applications/${APP_NAME}.app"
     "${USER_HOME}/Applications/${APP_NAME}.app"
+)
+INSTALLED_HELPERS=(
+    "${LOCAL_BIN}/codex-ui-resume"
+    "${LOCAL_BIN}/codex-recovery-banner"
+    "${LOCAL_BIN}/codex-window-restore"
 )
 NOTIFIER_PATH="${USER_HOME}/Applications/${NOTIFIER_NAME}.app"
 
@@ -196,6 +208,126 @@ monitor_state_temps() {
     done
 }
 
+# One character that macOS mktemp(1) substitutes for an X. Listed rather than
+# written as ranges, so no locale's collation can widen the match.
+MKTEMP_CHAR='[0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]'
+CLI_STAGING_NAME="^\\.codex-mon\\.install\\.${MKTEMP_CHAR}{6}(\\.cstemp)?\$"
+BUNDLE_STAGING_NAME="^\\.codex-monitor-(install|backup)\\.${MKTEMP_CHAR}{6}\$"
+REMOTE_CLONE_NAME="^codex-mon-install-XXXXXX\\.${MKTEMP_CHAR}{10}\$"
+UNINSTALL_COPY_NAME="^(\\.zshrc|\\.bash_profile|config\\.toml)\\.codex-monitor-uninstall\\.${MKTEMP_CHAR}{6}\$"
+INSTALL_LOCK_HELD='an installer holds the install lock'
+INSTALL_LOCK_UNVERIFIED='the install lock cannot be verified'
+TEMP_DIR_UNKNOWN='the per-user temporary directory is unknown'
+
+# The per-user temporary directory that `mktemp -t` uses, without its
+# trailing slash. Fails unless getconf names an absolute directory.
+per_user_temp_dir() {
+    local dir
+    dir="$(/usr/bin/getconf DARWIN_USER_TEMP_DIR 2>/dev/null)" || return 1
+    dir="${dir%/}"
+    case "$dir" in
+        /?*) printf '%s\n' "$dir" ;;
+        *) return 1 ;;
+    esac
+}
+
+private_directory() {
+    [ ! -L "$1" ] && [ -d "$1" ] &&
+        [ "$(/usr/bin/stat -f '%u:%Lp' "$1" 2>/dev/null || true)" = "${CURRENT_UID}:700" ]
+}
+
+# An app staging or backup root holds nothing, or only the Monitor bundle as
+# a real directory.
+holds_only_monitor_bundle() {
+    local entry
+    for entry in "$1"/* "$1"/.*; do
+        case "${entry##*/}" in .|..) continue ;; esac
+        is_present "$entry" || continue
+        [ "${entry##*/}" = "${APP_NAME}.app" ] && [ ! -L "$entry" ] && [ -d "$entry" ] || return 1
+    done
+}
+
+# Leftovers of a killed install. install.sh creates these only while it holds
+# the install lock, and its EXIT cleanup removes them before releasing it.
+# macOS mktemp(1) fills each X from MKTEMP_CHAR; `mktemp -t` keeps the Xs of
+# its prefix and appends a dot and ten such characters.
+#   ~/.local/bin/.codex-mon.install.XXXXXX         CLI staging (0600, 0755 after chmod)
+#   ~/.local/bin/.codex-mon.install.XXXXXX.cstemp  codesign's copy while signing (0755)
+#   APPLICATION_DIRS/.codex-monitor-install.XXXXXX app staging root (0700)
+#   APPLICATION_DIRS/.codex-monitor-backup.XXXXXX  prior-app backup root (0700)
+#   <per-user temp dir>/codex-mon-install-XXXXXX.XXXXXXXXXX
+#                                                  remote-install clone (0700)
+# A staging or backup root may hold only the Monitor bundle. While an install
+# runs, a backup root can hold the only copy of the previous app, so callers
+# remove these only when no installer holds the install lock.
+installer_temps() {
+    local path name metadata dir temp_dir
+    for path in "${LOCAL_BIN}"/.codex-mon.install.*; do
+        [ ! -L "$path" ] && [ -f "$path" ] || continue
+        name="${path##*/}"
+        [[ "$name" =~ $CLI_STAGING_NAME ]] || continue
+        metadata="$(/usr/bin/stat -f '%u:%Lp' "$path" 2>/dev/null || true)"
+        case "$metadata" in
+            "${CURRENT_UID}:600"|"${CURRENT_UID}:755") printf '%s\n' "$path" ;;
+        esac
+    done
+    for dir in "${APPLICATION_DIRS[@]}"; do
+        for path in "$dir"/.codex-monitor-install.* "$dir"/.codex-monitor-backup.*; do
+            name="${path##*/}"
+            [[ "$name" =~ $BUNDLE_STAGING_NAME ]] || continue
+            private_directory "$path" && holds_only_monitor_bundle "$path" || continue
+            printf '%s\n' "$path"
+        done
+    done
+    temp_dir="$(per_user_temp_dir)" || return 0
+    for path in "$temp_dir"/codex-mon-install-XXXXXX.*; do
+        name="${path##*/}"
+        [[ "$name" =~ $REMOTE_CLONE_NAME ]] || continue
+        private_directory "$path" || continue
+        printf '%s\n' "$path"
+    done
+}
+
+# Prints nothing when no installer holds the install lock (or it does not
+# exist), otherwise why installer leftovers must be kept. `lockf -k` keeps
+# the file, and it is probed only when it exists, so a dry run changes
+# nothing. An installer started with another TMPDIR uses another lock file
+# and is not detected.
+install_lock_blocker() {
+    local status
+    is_present "$INSTALL_LOCK_FILE" || return 0
+    if [ -L "$INSTALL_LOCK_FILE" ] || [ ! -f "$INSTALL_LOCK_FILE" ] ||
+       [ "$(/usr/bin/stat -f '%u' "$INSTALL_LOCK_FILE" 2>/dev/null || true)" != "$CURRENT_UID" ] ||
+       ! command -v lockf >/dev/null 2>&1; then
+        printf '%s\n' "$INSTALL_LOCK_UNVERIFIED"
+        return 0
+    fi
+    lockf -k -s -t 0 "$INSTALL_LOCK_FILE" /usr/bin/true >/dev/null 2>&1
+    status=$?
+    case "$status" in
+        0) ;;
+        75) printf '%s\n' "$INSTALL_LOCK_HELD" ;;
+        *) printf '%s\n' "$INSTALL_LOCK_UNVERIFIED" ;;
+    esac
+}
+
+# Private copies an interrupted uninstall leaves while clean_rc_file or
+# clean_codex_skill_config edits a file. A copy takes the edited file's mode,
+# so only its owner, type, and exact name are checked.
+uninstaller_temps() {
+    local path name
+    for path in \
+        "${USER_HOME}"/.zshrc.codex-monitor-uninstall.* \
+        "${USER_HOME}"/.bash_profile.codex-monitor-uninstall.* \
+        "${USER_HOME}"/.codex/config.toml.codex-monitor-uninstall.*; do
+        [ ! -L "$path" ] && [ -f "$path" ] || continue
+        name="${path##*/}"
+        [[ "$name" =~ $UNINSTALL_COPY_NAME ]] || continue
+        [ "$(/usr/bin/stat -f '%u' "$path" 2>/dev/null || true)" = "$CURRENT_UID" ] || continue
+        printf '%s\n' "$path"
+    done
+}
+
 # Exact bundle-specific Library paths only; never remove a broad Library tree.
 ALWAYS_ARTIFACT_PATHS=(
     "${USER_HOME}/Library/Preferences/com.codex.monitor.plist"
@@ -254,6 +386,20 @@ print_plan_path() {
     is_present "$1" && printf '  remove %s\n' "$1"
 }
 
+print_installer_temp_plan() {
+    local path blocker
+    blocker="$(install_lock_blocker)"
+    while IFS= read -r path; do
+        if [ -n "$blocker" ]; then
+            printf '  preserve %s (%s)\n' "$path" "$blocker"
+        else
+            printf '  remove %s\n' "$path"
+        fi
+    done < <(installer_temps)
+    per_user_temp_dir >/dev/null ||
+        printf '  preserve remote-install clones (%s)\n' "$TEMP_DIR_UNKNOWN"
+}
+
 print_plan() {
     note "This will remove installed ${APP_NAME} components for user ${USER_HOME}:"
     for path in "${APP_PATHS[@]}"; do print_plan_path "$path"; done
@@ -263,6 +409,8 @@ print_plan() {
     print_plan_path "$INSTALL_LOCK_FILE"
     for path in "${ALWAYS_STATE_PATHS[@]}"; do print_plan_path "$path"; done
     while IFS= read -r path; do print_plan_path "$path"; done < <(monitor_state_temps)
+    print_installer_temp_plan
+    while IFS= read -r path; do print_plan_path "$path"; done < <(uninstaller_temps)
     print_monitor_log_plan
     for path in "${ALWAYS_ARTIFACT_PATHS[@]}"; do print_plan_path "$path"; done
     if [ "$PURGE_DATA" -eq 0 ]; then
@@ -591,6 +739,28 @@ unregister_bundle() {
     [ -x "$lsregister" ] && "$lsregister" -u "$path" >/dev/null 2>&1 || true
 }
 
+remove_installer_temps() {
+    local path paths blocker
+    if ! per_user_temp_dir >/dev/null; then
+        warn "${TEMP_DIR_UNKNOWN}; remote-install clones were not checked"
+        FAILED=1
+    fi
+    paths="$(installer_temps)"
+    [ -n "$paths" ] || return 0
+    # List before probing the lock: installers create these paths only while
+    # holding it, so a lock found free afterwards proves that every listed
+    # path belongs to an installer that has exited.
+    blocker="$(install_lock_blocker)"
+    while IFS= read -r path; do
+        if [ -n "$blocker" ]; then
+            warn "preserving installer staging because ${blocker}: $path"
+            FAILED=1
+        else
+            remove_path "$path"
+        fi
+    done <<< "$paths"
+}
+
 note "Stopping OpenAI Codex Monitor & Switcher..."
 arm_cancellation_marker
 
@@ -630,7 +800,7 @@ fi
 for path in \
     "${USER_HOME}/.local/bin/codex-mon" \
     "${USER_HOME}/.local/bin/cxi" \
-    "${USER_HOME}/.local/bin/codex-ui-resume" \
+    "${INSTALLED_HELPERS[@]}" \
     "/Applications/${APP_NAME}.app/Contents/MacOS/CodexMonitor" \
     "${USER_HOME}/Applications/${APP_NAME}.app/Contents/MacOS/CodexMonitor" \
     "${NOTIFIER_PATH}/Contents/MacOS/notify"; do
@@ -644,9 +814,10 @@ for path in "${APP_PATHS[@]}"; do unregister_bundle "$path"; done
 unregister_bundle "$NOTIFIER_PATH"
 for path in "${APP_PATHS[@]}"; do remove_path "$path"; done
 remove_path "$NOTIFIER_PATH"
+remove_installer_temps
 
 remove_project_binary "${LOCAL_BIN}/codex-mon"
-remove_path "${LOCAL_BIN}/codex-ui-resume"
+for path in "${INSTALLED_HELPERS[@]}"; do remove_path "$path"; done
 remove_ours_symlink "${LOCAL_BIN}/cxi" "${LOCAL_BIN}/codex-mon" "codex-mon"
 remove_ours_symlink "${LOCAL_BIN}/codex" "${LOCAL_BIN}/codex-mon" "codex-mon"
 
@@ -666,6 +837,7 @@ done
 clean_rc_file "${USER_HOME}/.zshrc"
 clean_rc_file "${USER_HOME}/.bash_profile"
 clean_codex_skill_config
+while IFS= read -r path; do remove_path "$path"; done < <(uninstaller_temps)
 
 for path in "${ALWAYS_STATE_PATHS[@]}"; do
     case "$path" in

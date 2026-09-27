@@ -433,6 +433,29 @@ helper removes the other Monitor staging names by prefix and suffix as regular
 non-symlink files, without an owner or mode check. Any new or renamed staging
 writer needs a matching pattern and shell test in the same change.
 
+Leftovers of a killed install are a third list. `install.sh` takes its install
+lock (`${TMPDIR:-/tmp}/codex_monitor_install_<uid>.lock`) before creating any
+temporary path and releases it only as the last step of its EXIT cleanup. The
+uninstaller matches `~/.local/bin/.codex-mon.install.XXXXXX` and its codesign
+`.cstemp` copy (regular file, mode `0600` or `0755`),
+`.codex-monitor-install.XXXXXX` and `.codex-monitor-backup.XXXXXX` in
+`/Applications` and `~/Applications` (mode `0700` directory that is empty or
+holds only a real `Codex Monitor.app` directory), and the remote-install clone
+`codex-mon-install-XXXXXX.XXXXXXXXXX` in `getconf DARWIN_USER_TEMP_DIR` (mode
+`0700` directory). Each `X` is one of mktemp's `[0-9A-Za-z]`, the owner must be
+the current user, and symlinks are never followed. A backup can hold the only
+copy of the previous app while an install runs, so these are removed only
+when the lock file is absent or can be taken at once; a held, symlinked, or
+otherwise unverifiable lock keeps them and makes the uninstall report
+warnings. After the installer exits, a backup it kept because rollback failed
+is Monitor-owned debris and is removed with the app. An installer run with another `TMPDIR` is not detected. The
+uninstaller also removes its own interrupted
+`<file>.codex-monitor-uninstall.XXXXXX` copies of `~/.zshrc`,
+`~/.bash_profile`, and `~/.codex/config.toml` (current owner, regular file).
+`tests/log_permissions_and_uninstall.sh` fails when an installer `mktemp`
+template changes or the lock order regresses, and the required Rust CI job
+runs it on every pull request.
+
 During installation, log migration occurs only after the newly built app is
 copied to same-filesystem staging and strictly signature-verified. The exact
 Monitor app and daemon are then stopped; a Monitor PID is rechecked by executable

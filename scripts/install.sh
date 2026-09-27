@@ -209,48 +209,20 @@ cleanup() {
             /usr/bin/open "${INSTALL_DIR}/${BUNDLE_NAME}" >/dev/null 2>&1 || true
         fi
     fi
+    # Release the install lock last, once the temporary paths above are gone:
+    # the uninstaller treats a free lock as proof that no installer owns them.
+    exec 9>&-
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-if [ -z "${PROJECT_DIR}" ]; then
-    echo "🌐 Remote installation detected. Preparing temporary build environment..."
-    TMP_DIR="$(mktemp -d -t codex-mon-install-XXXXXX)"
-    CLEANUP_TMP=1
-
-    echo "📥 Fetching source code from ${REPO_URL}..."
-    if command -v git >/dev/null 2>&1; then
-        git clone --depth 1 "${REPO_URL}" "${TMP_DIR}"
-    else
-        echo "❌ Git is required to clone the repository."
-        echo "👉 Install Apple Command Line Tools by running: xcode-select --install"
-        exit 1
-    fi
-    PROJECT_DIR="${TMP_DIR}"
-    # The temporary clone is removed on exit, so remote installs must retain a
-    # small, app-owned copy of the skills before linking them into agent homes.
-    PERSISTENT_SKILL_ROOT="${HOME}/.local/share/codex-monitor/skills"
-fi
-
-source "${PROJECT_DIR}/scripts/install_bundle_swap.sh"
-source "${PROJECT_DIR}/scripts/install_launchd_helpers.sh"
-source "${PROJECT_DIR}/scripts/install_monitor_process_guard.sh"
-
-BUILD_DIR="${PROJECT_DIR}/build"
-APP_DIR="${BUILD_DIR}/${BUNDLE_NAME}"
-
-# Detect installation directory: prefer /Applications, fallback to ~/Applications
-if [ -w "/Applications" ]; then
-    INSTALL_DIR="/Applications"
-else
-    INSTALL_DIR="${HOME}/Applications"
-fi
-mkdir -p "${INSTALL_DIR}"
-
 # ------------------------------------------------------------------------------
 # Concurrency Lock: Serialize installation runs across terminal sessions & projects
 # ------------------------------------------------------------------------------
+# Take the lock before creating any temporary path (remote clone, CLI and app
+# staging, app backup); cleanup() releases it only after removing them. The
+# uninstaller removes such leftovers only while no installer holds this lock.
 INSTALL_LOCK_FILE="${TMPDIR:-/tmp}/codex_monitor_install_${UID:-$(id -u)}.lock"
 touch "${INSTALL_LOCK_FILE}"
 exec 9>>"${INSTALL_LOCK_FILE}"
@@ -285,6 +257,40 @@ acquire_install_lock() {
 }
 
 acquire_install_lock
+
+if [ -z "${PROJECT_DIR}" ]; then
+    echo "🌐 Remote installation detected. Preparing temporary build environment..."
+    TMP_DIR="$(mktemp -d -t codex-mon-install-XXXXXX)"
+    CLEANUP_TMP=1
+
+    echo "📥 Fetching source code from ${REPO_URL}..."
+    if command -v git >/dev/null 2>&1; then
+        git clone --depth 1 "${REPO_URL}" "${TMP_DIR}"
+    else
+        echo "❌ Git is required to clone the repository."
+        echo "👉 Install Apple Command Line Tools by running: xcode-select --install"
+        exit 1
+    fi
+    PROJECT_DIR="${TMP_DIR}"
+    # The temporary clone is removed on exit, so remote installs must retain a
+    # small, app-owned copy of the skills before linking them into agent homes.
+    PERSISTENT_SKILL_ROOT="${HOME}/.local/share/codex-monitor/skills"
+fi
+
+source "${PROJECT_DIR}/scripts/install_bundle_swap.sh"
+source "${PROJECT_DIR}/scripts/install_launchd_helpers.sh"
+source "${PROJECT_DIR}/scripts/install_monitor_process_guard.sh"
+
+BUILD_DIR="${PROJECT_DIR}/build"
+APP_DIR="${BUILD_DIR}/${BUNDLE_NAME}"
+
+# Detect installation directory: prefer /Applications, fallback to ~/Applications
+if [ -w "/Applications" ]; then
+    INSTALL_DIR="/Applications"
+else
+    INSTALL_DIR="${HOME}/Applications"
+fi
+mkdir -p "${INSTALL_DIR}"
 
 # ------------------------------------------------------------------------------
 # Check Prerequisites: Swift & Rust
@@ -626,9 +632,6 @@ echo "🚀 Launching ${APP_NAME}..."
 open "${INSTALL_DIR}/${BUNDLE_NAME}"
 INSTALL_SUCCEEDED=1
 WRITERS_QUIESCED=0
-
-# Release concurrency lock explicitly
-exec 9>&- 2>/dev/null || true
 
 echo ""
 echo "🎉 Installation complete!"

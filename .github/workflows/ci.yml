@@ -69,6 +69,15 @@ jobs:
         working-directory: codex-switcher
         run: cargo test --locked --verbose
 
+      # Runs a copy of scripts/uninstall.sh against temporary homes, with
+      # launchctl, osascript, defaults, lsregister, and getconf replaced by
+      # fakes, so the runner's launchd, login items, and /Applications are
+      # never touched. It builds codex-mon itself, from codex-switcher/ and
+      # with the committed Cargo.lock. The step is enforced by
+      # codex-switcher/tests/ci_workflow_policy/shell_test_gate.rs.
+      - name: Run Uninstall Shell Test
+        run: bash tests/log_permissions_and_uninstall.sh
+
   test-swift:
     name: 🍏 Swift Menu Bar App Tests
     runs-on: macos-14
