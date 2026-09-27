@@ -395,14 +395,16 @@ but is not required.
 
 Reuse a module cache only through the path spelling that built it. Clang records
 imported module files by absolute path. A cache built as `/private/tmp/x` and
-reused as `/tmp/x`, or the reverse, or through any other symlink, fails with
-`module '_DarwinFoundation1' is defined in both ...` and a compiler crash. Swift
-5.10 on GitHub's `macos-14` runner fails the same reuse with
+reused as `/tmp/x`, or the reverse, or through any other symlink, fails. Swift
+6.4 reports `module '_DarwinFoundation1' is defined in both ...` and crashes.
+Swift 5.10 on GitHub's `macos-14` runner reports
 `PCH was compiled with module cache path ...` instead. Fresh caches and
-same-spelling reuse work. `scripts/install.sh` and
-`scripts/test_swift.sh` resolve `CLANG_MODULE_CACHE_PATH` to its physical path
-before compiling, and stop if it is not a writable directory. A warm cache can
-therefore be reused through them. Give other
+same-spelling reuse work. `scripts/install.sh` and `scripts/test_swift.sh`
+resolve `CLANG_MODULE_CACHE_PATH` to its physical path before compiling, so a
+warm cache can be reused through them. They create a missing directory, pin a
+relative path to the caller's directory, and stop if the path is not a
+directory or is an empty one they cannot write. A warm read-only cache still
+compiles what it already holds, so it only gets a warning. Give other
 `swiftc`, `swift`, or `clang -fmodules` runs that share the cache the physical
 path too, and use a new directory for a cache built through another spelling.
 Verify the exact built app signature and running process after installation.

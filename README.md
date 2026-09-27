@@ -110,10 +110,12 @@ The installation script checks and guides you through the prerequisites automati
    matching Command Line Tools and rerun the test. Do not publish or reinstall a
    partially built app bundle.
    If you set `CLANG_MODULE_CACHE_PATH`, the test and install scripts use its
-   physical path (`/tmp/x` becomes `/private/tmp/x`). Reusing a module cache
-   through a different path spelling from the one that built it fails with a
-   duplicate-module error, so give other Swift or Clang runs that share the
-   cache the physical path too.
+   physical path (`/tmp/x` becomes `/private/tmp/x`). They create the
+   directory if it is missing and resolve a relative path from where you ran
+   them. They stop if the path is not a directory or is an empty one they
+   cannot write. Reusing a module cache through a different path spelling from
+   the one that built it fails, so give other Swift or Clang runs that share
+   the cache the physical path too.
 3. **Rust & Cargo** (for building the ultra-lightweight CLI core):
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh

@@ -13,9 +13,11 @@
 # directory, so the installer's later `cd` calls cannot move the cache between
 # compile steps. An unset or empty variable is left alone, as before.
 #
-# A cache the compiler cannot write fails later with the misleading
-# "this SDK is not supported by the compiler", so an unwritable directory is
-# rejected here with its real cause. See
+# A cache the compiler cannot write fails as soon as a module must be built,
+# with the misleading "this SDK is not supported by the compiler". An empty
+# unwritable directory can never work, so it is rejected here with its real
+# cause. A warm read-only cache still compiles what it already holds, so it
+# only gets a warning. See
 # docs/leanings/2026-09-28-swift-cache-spelling-mismatch-isolated.md and
 # docs/leanings/2026-09-28-swift-sdk-not-supported-was-unwritable-module-cache.md.
 
@@ -35,8 +37,11 @@ canonicalize_clang_module_cache_path() {
         return 1
     fi
     if [ ! -w "${physical}" ]; then
-        echo "❌ CLANG_MODULE_CACHE_PATH is not writable: ${requested}" >&2
-        return 1
+        if [ -z "$(/bin/ls -A -- "${physical}" 2>/dev/null)" ]; then
+            echo "❌ CLANG_MODULE_CACHE_PATH is an empty directory that is not writable: ${requested}" >&2
+            return 1
+        fi
+        echo "⚠️  CLANG_MODULE_CACHE_PATH is not writable: ${requested}. A module missing from it will fail to build, reported as \"this SDK is not supported by the compiler\"." >&2
     fi
     if [ "${physical}" != "${requested}" ]; then
         echo "ℹ️  Using the physical Swift module cache path ${physical} (CLANG_MODULE_CACHE_PATH was ${requested})."
