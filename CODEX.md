@@ -396,8 +396,8 @@ but is not required.
 Reuse a module cache only through the path spelling that built it. Clang records
 imported module files by absolute path. A cache built as `/private/tmp/x` and
 reused as `/tmp/x`, or the reverse, or through any other symlink, fails with
-`module '_DarwinFoundation1' is defined in both ...` and a compiler crash. The
-Xcode toolchain on GitHub's `macos-14` runner fails the same reuse with
+`module '_DarwinFoundation1' is defined in both ...` and a compiler crash. Swift
+5.10 on GitHub's `macos-14` runner fails the same reuse with
 `PCH was compiled with module cache path ...` instead. Fresh caches and
 same-spelling reuse work. `scripts/install.sh` and
 `scripts/test_swift.sh` resolve `CLANG_MODULE_CACHE_PATH` to its physical path
