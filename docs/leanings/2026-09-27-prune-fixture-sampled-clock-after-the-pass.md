@@ -1,0 +1,22 @@
+# 2026-09-27 — A prune fixture sampled the clock after the pass it fed
+
+- **Status:** Resolved
+- **Task/context:** Intermittent CI failure of `recovery::manifest_store_tests::middle_only_rewrite_cannot_prune_old_ownerless_checkpoint` on the macos-14 runner (run 36269139853, attempt 1), in a test untouched by the PR under test.
+- **Unexpected observation or failure:** `assert_eq!(targets.len(), 1)` failed with left 0: the prune pass dropped the ownerless retry the test expected to keep.
+- **Evidence:** The CI log timestamps the failure at `20:20:55.0008`, just after a second boundary. The test's `updated_at` lookup returned `chrono::Utc::now()`, which `ManifestPruneService::run_with_inspector` calls after it samples `now`. Forcing the lookup to cross into the next second reproduced left 0, right 1 three times out of three; with the fixture dated before the pass, the same forced tick passed three times out of three.
+- **Approaches tried:**
+  - **Attempt:** Suspect a stale cached post-checkpoint proof: mtime or ctime collisions under load, or scan-cache state shared between parallel tests.
+    - **Outcome:** Did not work.
+    - **Why:** The appended line makes the cursor continue regardless of timestamps, and the pruning decision requires a fresh pinned confirmation keyed by this test's unique path, which cannot confirm the rewritten file.
+  - **Attempt:** Accept a small negative row age in production.
+    - **Outcome:** Did not work.
+    - **Why:** Production reads SQLite before sampling `now`, so only the fixtures inverted the order; treating future-dated rows as recent would weaken the eligibility window.
+  - **Attempt:** Date every fixture row before the pass through one helper.
+    - **Outcome:** Worked.
+    - **Why:** The row is fixed before the pass samples its clock, as production does, and a minute's margin absorbs a small wall-clock step.
+- **Root cause:** The fixture's lookup sampled the wall clock after the pass sampled `now`. Across a second boundary the row was one second in the future, so `metadata_recent` was false and the ownerless target was dropped as not recent.
+- **Resolution:** `recovery::test_thread_index::indexed_before_the_pass()` replaces all 16 lookups that sampled the clock, in `manifest_store.test.rs`, `manifest_prune_service.test.rs`, and `recovery_service.test.rs`.
+- **Verification:** `recovery::manifest_prune_service::tests::clock_tick_during_the_pass_drops_only_a_row_dated_after_it` forces a tick during one pass: the row sampled after the tick is dropped and the helper's row is kept. The forced-tick reproduction above passes with the fix.
+- **Prevention/follow-up:** AGENTS.md now requires injected timestamps to be dated before the call when the code under test compares them with a clock it samples itself.
+- **Reusable learning:** Never sample the clock inside an injected lookup that code under test calls after taking its own clock sample; capture the value before the call, as production does.
+- **References:** `codex-switcher/src/recovery/test_thread_index.rs`, `codex-switcher/src/recovery/manifest_prune_service.rs`, `codex-switcher/src/recovery/manifest_prune_service.test.rs`.

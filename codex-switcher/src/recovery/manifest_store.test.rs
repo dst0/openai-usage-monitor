@@ -13,6 +13,7 @@ use super::{
         post_checkpoint_status_fresh_after_scan, save_pending, scanned_bytes_for,
     },
     stored_manifest::StoredManifest,
+    test_thread_index::indexed_before_the_pass,
 };
 use crate::distribution::test_account_spec::TestAccountSpec;
 use crate::storage::test_codex_home::TestCodexHome;
@@ -658,10 +659,7 @@ fn middle_only_rewrite_cannot_prune_old_ownerless_checkpoint() {
     let (rollout, target) = cached_proof_fixture(&home, id);
     rewrite_middle_after_cached_proof(&rollout);
     let mut targets = vec![target];
-    prune_ineligible_targets_with(&home, &mut targets, |_| {
-        Ok(Some(chrono::Utc::now().timestamp()))
-    })
-    .unwrap();
+    prune_ineligible_targets_with(&home, &mut targets, indexed_before_the_pass()).unwrap();
     assert_eq!(targets.len(), 1);
     std::fs::remove_dir_all(home).unwrap();
 }
@@ -687,10 +685,7 @@ fn completed_tail_before_checkpoint_does_not_erase_ownerless_retry() {
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
     }];
-    prune_ineligible_targets_with(&home, &mut targets, |_| {
-        Ok(Some(chrono::Utc::now().timestamp()))
-    })
-    .unwrap();
+    prune_ineligible_targets_with(&home, &mut targets, indexed_before_the_pass()).unwrap();
     assert_eq!(targets.len(), 1);
     std::fs::remove_dir_all(home).unwrap();
 }
@@ -719,10 +714,7 @@ fn prune_rotates_one_ownerless_rollout_scan_per_pass() {
         });
     }
     for expected_scanned in 1..=3 {
-        prune_ineligible_targets_with(&home, &mut targets, |_| {
-            Ok(Some(chrono::Utc::now().timestamp()))
-        })
-        .unwrap();
+        prune_ineligible_targets_with(&home, &mut targets, indexed_before_the_pass()).unwrap();
         assert_eq!(targets.len(), 3);
         assert_eq!(
             rollouts
@@ -835,15 +827,11 @@ fn ownerless_rotation_is_fair_when_other_homes_are_probed() {
         });
     }
     for _ in 0..3 {
-        prune_ineligible_targets_with(&primary, &mut primary_targets, |_| {
-            Ok(Some(chrono::Utc::now().timestamp()))
-        })
-        .unwrap();
-        for _ in 0..2 {
-            prune_ineligible_targets_with(&other, &mut other_targets, |_| {
-                Ok(Some(chrono::Utc::now().timestamp()))
-            })
+        prune_ineligible_targets_with(&primary, &mut primary_targets, indexed_before_the_pass())
             .unwrap();
+        for _ in 0..2 {
+            prune_ineligible_targets_with(&other, &mut other_targets, indexed_before_the_pass())
+                .unwrap();
         }
     }
     assert_eq!(primary_targets.len(), 3);
@@ -888,15 +876,10 @@ fn ownerless_prune_inspects_only_the_selected_tail() {
     let rotation = OwnerlessProbeRotation::new(1);
     let scans = CheckpointScanRegistry::new(4);
     ManifestPruneService::new(&rotation, &scans)
-        .run_with_inspector(
-            &home,
-            &mut targets,
-            |_| Ok(Some(chrono::Utc::now().timestamp())),
-            |_, _| {
-                tail_reads += 1;
-                crate::switcher::ThreadRolloutState::CleanCompleted
-            },
-        )
+        .run_with_inspector(&home, &mut targets, indexed_before_the_pass(), |_, _| {
+            tail_reads += 1;
+            crate::switcher::ThreadRolloutState::CleanCompleted
+        })
         .unwrap();
     assert_eq!(targets.len(), 3);
     assert_eq!(tail_reads, 1, "ownerless pruning must not read every tail");
@@ -930,10 +913,7 @@ fn manually_started_turn_retires_old_ownerless_retry() {
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
     }];
-    prune_ineligible_targets_with(&home, &mut targets, |_| {
-        Ok(Some(chrono::Utc::now().timestamp()))
-    })
-    .unwrap();
+    prune_ineligible_targets_with(&home, &mut targets, indexed_before_the_pass()).unwrap();
     assert_eq!(targets.len(), 1, "a start alone is not resumed work");
 
     let mut rollout_writer = std::fs::OpenOptions::new()
@@ -945,10 +925,7 @@ fn manually_started_turn_retires_old_ownerless_retry() {
         b"{\"type\":\"response_item\",\"payload\":{\"type\":\"reasoning\"}}\n",
     )
     .unwrap();
-    prune_ineligible_targets_with(&home, &mut targets, |_| {
-        Ok(Some(chrono::Utc::now().timestamp()))
-    })
-    .unwrap();
+    prune_ineligible_targets_with(&home, &mut targets, indexed_before_the_pass()).unwrap();
     assert!(targets.is_empty());
     std::fs::remove_dir_all(home).unwrap();
 }
@@ -973,10 +950,7 @@ fn failed_new_turn_does_not_retire_deferred_retry_as_verified_work() {
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
     }];
-    prune_ineligible_targets_with(&home, &mut targets, |_| {
-        Ok(Some(chrono::Utc::now().timestamp()))
-    })
-    .unwrap_err();
+    prune_ineligible_targets_with(&home, &mut targets, indexed_before_the_pass()).unwrap_err();
     assert_eq!(targets.len(), 1);
     std::fs::remove_dir_all(home).unwrap();
 }
@@ -1013,10 +987,7 @@ fn incomplete_failed_turn_cannot_retire_ownerless_checkpoint() {
     assert_eq!(saved[0].offset, old.offset);
     assert_eq!(saved[0].owner_account_id, old.owner_account_id);
     let mut pruned = saved;
-    prune_ineligible_targets_with(&home, &mut pruned, |_| {
-        Ok(Some(chrono::Utc::now().timestamp()))
-    })
-    .unwrap();
+    prune_ineligible_targets_with(&home, &mut pruned, indexed_before_the_pass()).unwrap();
     assert_eq!(pruned.len(), 1);
 
     let mut writer = std::fs::OpenOptions::new()
@@ -1030,10 +1001,7 @@ fn incomplete_failed_turn_cannot_retire_ownerless_checkpoint() {
     drop(writer);
     save_pending(&[id.into()]).unwrap();
     assert!(load_manifest().unwrap()[0].awaiting_owner);
-    prune_ineligible_targets_with(&home, &mut pruned, |_| {
-        Ok(Some(chrono::Utc::now().timestamp()))
-    })
-    .unwrap_err();
+    prune_ineligible_targets_with(&home, &mut pruned, indexed_before_the_pass()).unwrap_err();
     assert_eq!(pruned.len(), 1);
 }
 
@@ -1071,10 +1039,7 @@ fn oversized_completed_failure_cannot_retire_ownerless_checkpoint() {
     assert_eq!(saved[0].offset, old.offset);
     assert_eq!(saved[0].owner_account_id, old.owner_account_id);
     let mut pruned = vec![old];
-    prune_ineligible_targets_with(&home, &mut pruned, |_| {
-        Ok(Some(chrono::Utc::now().timestamp()))
-    })
-    .unwrap_err();
+    prune_ineligible_targets_with(&home, &mut pruned, indexed_before_the_pass()).unwrap_err();
     assert_eq!(pruned.len(), 1);
 }
 
@@ -1108,10 +1073,7 @@ fn new_agent_work_does_not_discard_an_existing_queued_follow_up() {
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
     }];
-    prune_ineligible_targets_with(&home, &mut targets, |_| {
-        Ok(Some(chrono::Utc::now().timestamp()))
-    })
-    .unwrap();
+    prune_ineligible_targets_with(&home, &mut targets, indexed_before_the_pass()).unwrap();
     assert_eq!(targets.len(), 1);
     std::fs::remove_dir_all(home).unwrap();
 }

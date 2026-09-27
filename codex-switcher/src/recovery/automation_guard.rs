@@ -8,6 +8,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 pub(crate) const AUTOMATION_COOLDOWN: Duration = Duration::from_secs(30);
+/// `O_CLOFORK` from macOS `sys/fcntl.h` (XNU since macOS 11), which `libc`
+/// does not export for Apple targets.
+const O_CLOFORK: libc::c_int = 0x0800_0000;
 
 pub(crate) fn operation_id_for_banner(reason: &str) -> String {
     if let Ok(operation_id) = std::env::var("CODEX_RESTART_OPERATION") {
@@ -39,6 +42,11 @@ pub(crate) fn operation_id_for_banner(reason: &str) -> String {
     )
 }
 
+/// The flock belongs to the open file description. A child that any thread
+/// creates with fork(2) or posix_spawn(3) copies every descriptor without
+/// close-on-fork, `O_CLOEXEC` ones included, until it execs, so it could keep
+/// a released lock held and refuse the next operation. `O_CLOFORK` keeps the
+/// lock out of every child without weakening its exclusion.
 pub fn operation_lock() -> Result<File, String> {
     let file = OpenOptions::new()
         .create(true)
@@ -46,6 +54,7 @@ pub fn operation_lock() -> Result<File, String> {
         .read(true)
         .write(true)
         .mode(0o600)
+        .custom_flags(O_CLOFORK)
         .open(storage::codex_home().join("desktop-recovery.lock"))
         .map_err(|e| e.to_string())?;
     file.try_lock_exclusive()

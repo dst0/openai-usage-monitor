@@ -1,0 +1,31 @@
+# 2026-09-27 — A released flock stays held while another thread spawns a child
+
+- **Status:** Resolved
+- **Task/context:** Intermittent CI failure of `switcher::tests::test_switch_to_account_rejects_relogin_needed` on the macos-14 runner (run 36269139853, attempt 2), in a test untouched by the PR under test.
+- **Unexpected observation or failure:** A `switch_to_account_with` call in the test's unique `TestCodexHome` failed with "Another desktop switch/recovery is in progress". The log shows only the assertion line, which both loop iterations reach. It must have been the second call, after the first call's lock had been dropped: the first call takes the first lock ever held in a fresh home, and no thread outside the test takes the lock. Six local full-suite runs and 480 isolated runs had passed.
+- **Evidence:** A standalone C probe on macOS 27.2 closed an `O_CLOEXEC` flock and immediately re-took it from a new descriptor while four threads looped `posix_spawn` of `/usr/bin/true`: 117–147 of 20,000 re-locks failed, 89 with `fork`+`exec`, and 0 without spawner threads. Opening with `O_CLOFORK` made both spawn modes 0 of 20,000. XNU `fdt_fork` (xnu-10002, macOS 14) copies `FP_CLOEXEC` descriptors into an ordinary fork or spawn child, closing them later in `fdt_exec`, but skips `FP_CLOFORK` ones. Instrumenting `operation_lock()` for one full suite found ten tests that take it at least twice in one home. In the failing CI log, `switcher` tests that spawn `/usr/bin/sqlite3` for their fixtures (`test_append_eligible_pending_rejects_stale_and_completed_tasks`, `user_thread_lookup_fails_closed_for_missing_archived_and_subagent_rows`) and `thread_detection_service` tests were running on parallel threads when it failed; the log cannot show which spawn overlapped the release.
+- **Approaches tried:**
+  - **Attempt:** Hypothesis (b), a leaked background thread from an earlier test resolving this test's home and taking the lock.
+    - **Outcome:** Did not work.
+    - **Why:** The descriptor-copy mechanism alone reproduced the exact refusal deterministically, and no production path takes the lock from a detached thread in these tests.
+  - **Attempt:** Split the test so each home takes the lock once.
+    - **Outcome:** Partial.
+    - **Why:** It would fix one test, but nine others must re-take the lock on the same state, and production could still refuse spuriously.
+  - **Attempt:** Release with `flock(LOCK_UN)` in a guard's `Drop`, as `RecoveryBannerOwner` does.
+    - **Outcome:** Partial.
+    - **Why:** Unlocking the shared description also releases the copy a forked child holds, so it fixes the refusal. But `operation_lock()` returns a `File` that about a dozen callers keep or pass as `&File`, so it needs a new guard type across all of them, where one open flag gives the same result.
+  - **Attempt:** Retry `try_lock_exclusive` briefly, or switch to `fcntl` record locks.
+    - **Outcome:** Did not work.
+    - **Why:** A retry is timing-dependent and changes the refusal contract; record locks are per process, so two threads of one process would not exclude each other.
+  - **Attempt:** Open `desktop-recovery.lock` with `O_CLOFORK`.
+    - **Outcome:** Worked.
+    - **Why:** No child ever receives the lock's open file description, so dropping the `File` releases the flock immediately; exclusion between holders is unchanged.
+- **Root cause:** flock belongs to the open file description. Rust sets only `O_CLOEXEC`, and XNU copies such descriptors into a child that any thread creates with `fork` or `posix_spawn` until it execs. A child spawned by a concurrent test therefore kept the dropped lock held, and the next `try_lock_exclusive` in the same home failed.
+- **Resolution:** `operation_lock()` adds `O_CLOFORK` (`0x0800_0000` from `sys/fcntl.h`, which `libc` 0.2.189 does not export for Apple; defined in XNU since macOS 11, below the README's macOS 13 floor).
+- **Verification:** `recovery::automation_guard_tests::a_concurrently_forked_child_cannot_keep_a_released_operation_lock` forks a child that holds every inherited descriptor, drops the lock, and re-takes it. Before the fix it failed with the exact CI error; after it, it passes. `operation_lock_still_refuses_a_second_holder` shows exclusion is unchanged. A load run with parallel suites beside CPU hogs is recorded in the PR.
+- **Prevention/follow-up:** AGENTS.md now requires `O_CLOFORK` on the operation lock and forbids duplicating its descriptor, because a duplicate from `try_clone` or `F_DUPFD_CLOEXEC` does not keep close-on-fork. The following sites are unaffected because they release with `flock(LOCK_UN)`, which a forked copy cannot keep held: `RecoveryBannerOwner`, the successful probe in `thread_detection_service`, and historical log redaction. The daemon loop lock is held for the daemon's lifetime. Two sites release only by closing and keep the same production-only exposure; no current test exercises them:
+  - `target_dispatch::writer_is_locked` probes a Desktop writer lock.
+  - `desktop_external_binding_service::read_private_json` takes a shared lock that the auth and registry staging writers' exclusive locks can refuse.
+  - Separately, the Swift window-bounds check in `Sources/AppDelegate+WindowBounds.swift` opens `desktop-recovery.lock` without `O_CLOEXEC` and briefly takes it with `LOCK_NB`, so a `cxi` operation starting in that instant is refused.
+- **Reusable learning:** On macOS, a non-blocking flock that must be re-acquirable as soon as it is dropped needs `O_CLOFORK`; `O_CLOEXEC` does not stop a concurrently spawned child from holding it until exec.
+- **References:** `codex-switcher/src/recovery/automation_guard.rs`, `codex-switcher/src/recovery/automation_guard.test.rs`, XNU `bsd/kern/kern_descrip.c` (`fdt_fork`, `fdt_exec`).

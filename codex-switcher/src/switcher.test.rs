@@ -497,7 +497,10 @@ fn test_switch_to_account_rejects_relogin_needed() {
             || Ok(desktop_running),
         )
         .unwrap_err();
-        assert!(err.contains("requires re-login"), "{err}");
+        assert!(
+            err.contains("requires re-login"),
+            "desktop_running={desktop_running}: {err}"
+        );
         assert!(err.contains("cxi relogin"));
     }
     assert_eq!(
