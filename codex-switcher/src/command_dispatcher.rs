@@ -18,8 +18,15 @@ impl CommandDispatcher {
                 account,
                 no_restart,
                 restart,
+                restore_window_tasks,
                 trigger,
-            }) => SwitchCommandService::switch_account(account, no_restart, restart, trigger),
+            }) => SwitchCommandService::switch_account(
+                account,
+                no_restart,
+                restart,
+                restore_window_tasks,
+                trigger,
+            ),
             Some(Commands::Distribute {
                 trigger,
                 reason,
@@ -37,7 +44,10 @@ impl CommandDispatcher {
             Some(Commands::Restart {
                 delay_seconds,
                 primary_thread,
-            }) => switcher::restart_and_recover(delay_seconds, primary_thread),
+                restore_window_tasks,
+            }) => {
+                switcher::restart_and_recover(delay_seconds, primary_thread, restore_window_tasks)
+            }
             Some(Commands::Rename {
                 account,
                 new_name,

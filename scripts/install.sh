@@ -423,7 +423,12 @@ if [ -f "${PROJECT_DIR}/scripts/codex-window-restore.swift" ]; then
         "${PROJECT_DIR}/scripts/CodexWindowTaskProbeValidation.swift" \
         "${PROJECT_DIR}/scripts/CodexWindowTaskProbeKeyboard.swift" \
         "${PROJECT_DIR}/scripts/CodexWindowTaskProbeCore.swift" \
+        "${PROJECT_DIR}/scripts/CodexWindowTaskSessionSystem.swift" \
+        "${PROJECT_DIR}/scripts/CodexWindowTaskSessionCore.swift" \
+        "${PROJECT_DIR}/scripts/CodexPreservedClipboard.swift" \
+        "${PROJECT_DIR}/scripts/CodexWindowTaskRecords.swift" \
         "${PROJECT_DIR}/scripts/CodexWindowTaskProbe.swift" \
+        "${PROJECT_DIR}/scripts/CodexWindowTaskSession.swift" \
         "${PROJECT_DIR}/scripts/codex-window-restore.swift"
     chmod +x "${LOCAL_BIN}/codex-window-restore"
 fi

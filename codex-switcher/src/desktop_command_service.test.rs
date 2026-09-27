@@ -14,3 +14,13 @@ fn task_probe_command_refuses_without_the_opt_in_flag() {
         Err("Explicit --allow-focus-and-clipboard is required".into())
     );
 }
+
+#[test]
+fn rehearsal_command_refuses_without_the_opt_in_flag() {
+    assert_eq!(
+        DesktopCommandService::window(Some(WindowAction::RehearseTaskRestore {
+            allow_focus_and_clipboard: false,
+        })),
+        Err("Explicit --allow-focus-and-clipboard is required".into())
+    );
+}

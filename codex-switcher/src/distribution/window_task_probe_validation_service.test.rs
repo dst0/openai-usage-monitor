@@ -10,8 +10,17 @@ fn response(window_ids: serde_json::Value, count: u64) -> serde_json::Value {
     json!({
         "process": {"pid": 4242, "birth_id": "1726789012:000007"},
         "window_ids": window_ids,
-        "observed_task_count": count
+        "observed_task_count": count,
+        "clipboard_restored": true
     })
+}
+
+fn report(count: usize, clipboard_restored: bool) -> WindowTaskReport {
+    WindowTaskReport {
+        windows: count,
+        verified: count,
+        clipboard_restored,
+    }
 }
 
 #[test]
@@ -19,8 +28,16 @@ fn accepts_only_a_complete_count_for_the_exact_process() {
     let valid = response(json!([31, 32]), 2);
     assert_eq!(
         WindowTaskProbeValidationService::parse(&valid, &expected()),
-        Ok(2)
+        Ok(report(2, true))
     );
+    let mut kept = valid.clone();
+    kept["clipboard_restored"] = json!(false);
+    assert_eq!(
+        WindowTaskProbeValidationService::parse(&kept, &expected()),
+        Ok(report(2, false))
+    );
+    kept["clipboard_restored"] = json!("false");
+    assert!(WindowTaskProbeValidationService::parse(&kept, &expected()).is_err());
     let mut changed = valid.clone();
     changed["process"]["birth_id"] = json!("1726789012:000008");
     assert!(WindowTaskProbeValidationService::parse(&changed, &expected()).is_err());
@@ -59,7 +76,7 @@ fn window_limit_matches_the_native_helper() {
     let over_limit: Vec<u32> = (1..=65).collect();
     assert_eq!(
         WindowTaskProbeValidationService::parse(&response(json!(at_limit), 64), &expected()),
-        Ok(64)
+        Ok(report(64, true))
     );
     assert!(
         WindowTaskProbeValidationService::parse(&response(json!(over_limit), 65), &expected())
@@ -94,15 +111,20 @@ fn response_may_not_carry_extra_or_missing_fields() {
 #[test]
 fn only_fixed_failure_codes_are_named() {
     assert_eq!(
-        WindowTaskProbeValidationService::failure(b"WINDOW_FOCUS_FAILED\n").as_deref(),
+        WindowTaskProbeValidationService::failure(b"WINDOW_FOCUS_FAILED\n", "Task probe")
+            .as_deref(),
         Some("Task probe failed: WINDOW_FOCUS_FAILED")
     );
     assert_eq!(
-        WindowTaskProbeValidationService::failure(b"COMMAND_REJECTED").as_deref(),
+        WindowTaskProbeValidationService::failure(b"COMMAND_REJECTED", "Task probe").as_deref(),
         Some("Task probe failed: COMMAND_REJECTED")
     );
     assert_eq!(
-        WindowTaskProbeValidationService::failure(b"COPY_LINK_AMBIGUOUS after-focus\n").as_deref(),
+        WindowTaskProbeValidationService::failure(
+            b"COPY_LINK_AMBIGUOUS after-focus\n",
+            "Task probe"
+        )
+        .as_deref(),
         Some(
             "Task probe failed: COPY_LINK_AMBIGUOUS after it began focusing ChatGPT windows; \
              the clipboard may now hold a copied task link"
@@ -118,12 +140,17 @@ fn only_fixed_failure_codes_are_named() {
         b"window_focus_failed\n",
         b"",
     ] {
-        assert_eq!(WindowTaskProbeValidationService::failure(unknown), None);
+        assert_eq!(
+            WindowTaskProbeValidationService::failure(unknown, "Task probe"),
+            None
+        );
     }
 }
 
-/// Codes the probe path reaches through helper functions it shares with the
-/// restart guard (`expectedProcess`, `countStandardWindows`).
+/// Codes the window-task commands reach through helper functions they share
+/// with the restart guard (`expectedProcess` fails with a literal code;
+/// `countStandardWindows` throws the enum case so a command can still put
+/// the clipboard back).
 const SHARED_HELPER_CODES: [&str; 4] = [
     "PROCESS_IDENTITY_REJECTED",
     "WINDOW_ACCESS_FAILED",
@@ -138,6 +165,35 @@ fn failed_codes(source: &str) -> BTreeSet<String> {
         .filter(|line| !line.trim_start().starts_with("//"))
         .flat_map(|line| line.split("fail(\"").skip(1))
         .map(|rest| rest.split('"').next().unwrap().to_string())
+        .collect()
+}
+
+/// Raw values of the enum cases a source throws as
+/// `WindowTaskProbeFailure.name`, looked up in the enum declaration.
+fn thrown_codes(source: &str, core: &str) -> BTreeSet<String> {
+    let cases: std::collections::BTreeMap<String, String> = core
+        .lines()
+        .map(str::trim_start)
+        .filter_map(|line| line.strip_prefix("case "))
+        .filter_map(|line| line.split_once(" = \""))
+        .map(|(name, rest)| {
+            (
+                name.to_string(),
+                rest.split('"').next().unwrap().to_string(),
+            )
+        })
+        .collect();
+    source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .flat_map(|line| line.split("throw WindowTaskProbeFailure.").skip(1))
+        .map(|rest| {
+            let name: String = rest.chars().take_while(|c| c.is_alphanumeric()).collect();
+            cases
+                .get(&name)
+                .unwrap_or_else(|| panic!("thrown case {name} is not declared"))
+                .clone()
+        })
         .collect()
 }
 
@@ -170,7 +226,8 @@ fn failure_codes_match_the_native_helper() {
     assert!(probe.len() >= 20, "probe failure scan found {probe:?}");
     let unnamed: Vec<_> = probe.difference(&known).collect();
     assert!(unnamed.is_empty(), "unnamed: {unnamed:?}");
-    let helper_shared = failed_codes(&helper);
+    let mut helper_shared = failed_codes(&helper);
+    helper_shared.extend(thrown_codes(&helper, &core));
     let mut emitted = probe.clone();
     emitted.extend(helper_shared.iter().cloned());
     let stale: Vec<_> = known.difference(&emitted).collect();
@@ -198,4 +255,16 @@ fn after_focus_marker_matches_the_native_helper() {
         .contains("func beginVisibleChanges() { VisibleChangeMarker.shared.started = true }"));
     assert!(helper_source("CodexWindowTaskProbeCore.swift")
         .contains("    system.beginVisibleChanges()\n"));
+}
+
+#[test]
+fn the_probe_record_matches_the_shared_fixture() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../tests/fixtures/window-tasks/probe-result.json");
+    let response: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(
+        WindowTaskProbeValidationService::parse(&response, &expected()),
+        Ok(report(2, true))
+    );
 }

@@ -34,3 +34,20 @@ fn task_probe_opt_in_takes_no_value_and_belongs_only_to_the_probe() {
     assert!(window_action(&["restore", "--allow-focus-and-clipboard"]).is_err());
     assert_eq!(window_action(&[]).unwrap(), None);
 }
+
+#[test]
+fn rehearsal_opt_in_defaults_to_refused_and_takes_no_value() {
+    assert_eq!(
+        window_action(&["rehearse-task-restore"]).unwrap(),
+        Some(WindowAction::RehearseTaskRestore {
+            allow_focus_and_clipboard: false
+        })
+    );
+    assert_eq!(
+        window_action(&["rehearse-task-restore", "--allow-focus-and-clipboard"]).unwrap(),
+        Some(WindowAction::RehearseTaskRestore {
+            allow_focus_and_clipboard: true
+        })
+    );
+    assert!(window_action(&["rehearse-task-restore", "--allow-focus-and-clipboard=true"]).is_err());
+}

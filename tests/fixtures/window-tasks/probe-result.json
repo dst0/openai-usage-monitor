@@ -1,0 +1,6 @@
+{
+  "process": {"pid": 4242, "birth_id": "1726789012:000007"},
+  "window_ids": [31, 32],
+  "observed_task_count": 2,
+  "clipboard_restored": true
+}

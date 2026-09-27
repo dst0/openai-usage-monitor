@@ -2,11 +2,6 @@ import ApplicationServices
 import Cocoa
 import Darwin
 
-struct ProcessRecord: Codable {
-  let pid: Int32
-  let birth_id: String
-}
-
 struct Rect: Codable {
   let x: CGFloat
   let y: CGFloat
@@ -37,10 +32,10 @@ func argument(_ name: String) -> String? {
   return CommandLine.arguments[index + 1]
 }
 
-/// Set by the task probe immediately before its first focus request, so any
-/// later failure, including one raised by a shared helper, tells the caller
-/// that windows may have been focused and the clipboard replaced. The helper
-/// is single-threaded.
+/// Set by a window-task command immediately before its first focus request,
+/// so any later failure, including one raised by a shared helper, tells the
+/// caller that windows may have been focused and the clipboard replaced. The
+/// helper is single-threaded.
 final class VisibleChangeMarker: @unchecked Sendable {
   static let shared = VisibleChangeMarker()
   var started = false
@@ -175,20 +170,22 @@ func captureBannerWindow(_ process: (pid: pid_t, birth: String)) -> CaptureRecor
   )
 }
 
-func standardWindowFrames(_ pid: pid_t) -> [CGRect] {
+/// Throws instead of exiting, so a window-task command that already changed
+/// focus or the clipboard can still put the clipboard back.
+func standardWindowFrames(_ pid: pid_t) throws -> [CGRect] {
   let app = AXUIElementCreateApplication(pid)
   var rawWindows: AnyObject?
   guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &rawWindows) == .success,
-    let windows = rawWindows as? [AXUIElement] else { fail("WINDOW_ACCESS_FAILED") }
+    let windows = rawWindows as? [AXUIElement] else { throw WindowTaskProbeFailure.windowAccessFailed }
   var frames: [CGRect] = []
   for window in windows {
     var rawSubrole: AnyObject?
     guard AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &rawSubrole) == .success,
-      let subrole = rawSubrole as? String else { fail("WINDOW_ACCESS_FAILED") }
+      let subrole = rawSubrole as? String else { throw WindowTaskProbeFailure.windowAccessFailed }
     guard subrole == kAXStandardWindowSubrole as String else { continue }
     guard let position = decodeAXPoint(copyAXValue(window, kAXPositionAttribute as String)),
       let size = decodeAXSize(copyAXValue(window, kAXSizeAttribute as String)),
-      size.width >= 300, size.height >= 250 else { fail("WINDOW_GEOMETRY_FAILED") }
+      size.width >= 300, size.height >= 250 else { throw WindowTaskProbeFailure.windowGeometryFailed }
     frames.append(CGRect(origin: position, size: size))
   }
   return frames
@@ -197,11 +194,11 @@ func standardWindowFrames(_ pid: pid_t) -> [CGRect] {
 /// Reads every ChatGPT window in this process, including windows on another
 /// Space. An unidentified visible layer-0 window is ambiguous; it must not be
 /// treated as proof that the user had only one window open.
-func countStandardWindows(_ process: (pid: pid_t, birth: String)) -> WindowInventoryRecord {
-  let axFrames = standardWindowFrames(process.pid)
+func countStandardWindows(_ process: (pid: pid_t, birth: String)) throws -> WindowInventoryRecord {
+  let axFrames = try standardWindowFrames(process.pid)
   guard let windows = CGWindowListCopyWindowInfo(
     [.optionAll, .excludeDesktopElements], kCGNullWindowID
-  ) as? [[String: Any]] else { fail("WINDOW_ACCESS_FAILED") }
+  ) as? [[String: Any]] else { throw WindowTaskProbeFailure.windowAccessFailed }
   var ids = Set<UInt32>()
   var cgFrames: [CGRect] = []
   var ambiguous = 0
@@ -237,15 +234,17 @@ func countStandardWindows(_ process: (pid: pid_t, birth: String)) -> WindowInven
     if !ids.insert(number.uint32Value).inserted { ambiguous += 1 }
     cgFrames.append(CGRect(x: x, y: y, width: width, height: height))
   }
-  guard processBirth(process.pid) == process.birth else { fail("PROCESS_IDENTITY_REJECTED") }
+  guard processBirth(process.pid) == process.birth else {
+    throw WindowTaskProbeFailure.processIdentityRejected
+  }
   var unmatched = cgFrames
   for frame in axFrames {
     guard let index = unmatched.firstIndex(where: { framesMatch($0, frame) }) else {
-      fail("WINDOW_INVENTORY_MISMATCH")
+      throw WindowTaskProbeFailure.windowInventoryMismatch
     }
     unmatched.remove(at: index)
   }
-  guard unmatched.isEmpty, ambiguous == 0 else { fail("WINDOW_INVENTORY_MISMATCH") }
+  guard unmatched.isEmpty, ambiguous == 0 else { throw WindowTaskProbeFailure.windowInventoryMismatch }
   return WindowInventoryRecord(
     process: ProcessRecord(pid: process.pid, birth_id: process.birth),
     window_ids: ids.sorted(), ax_standard_count: axFrames.count, ambiguous_count: ambiguous
@@ -311,11 +310,27 @@ struct CodexWindowRestoreMain {
       FileHandle.standardOutput.write(data)
     case "count-standard-windows":
       let process = expectedProcess()
-      let data = try! JSONEncoder().encode(countStandardWindows(process))
+      let inventory: WindowInventoryRecord
+      do { inventory = try countStandardWindows(process) } catch {
+        fail(((error as? WindowTaskProbeFailure) ?? .probeFailed).rawValue)
+      }
+      let data = try! JSONEncoder().encode(inventory)
       FileHandle.standardOutput.write(data)
     case "probe-selected-tasks":
       let process = expectedProcess()
       let data = try! JSONEncoder().encode(probeSelectedTasks(process))
+      FileHandle.standardOutput.write(data)
+    case "snapshot-window-tasks":
+      let process = expectedProcess()
+      let data = try! JSONEncoder().encode(snapshotWindowTasks(process))
+      FileHandle.standardOutput.write(data)
+    case "restore-window-tasks":
+      let process = expectedProcess()
+      let data = try! JSONEncoder().encode(restoreWindowTasks(process))
+      FileHandle.standardOutput.write(data)
+    case "rehearse-window-task-restore":
+      let process = expectedProcess()
+      let data = try! JSONEncoder().encode(rehearseWindowTaskRestore(process))
       FileHandle.standardOutput.write(data)
     case "set-position":
       let (process, window) = verifyAndWindow()

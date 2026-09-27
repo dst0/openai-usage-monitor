@@ -5,6 +5,14 @@ use crate::{recovery, storage, switcher};
 pub(super) struct DesktopCommandService;
 
 impl DesktopCommandService {
+    /// The Codex home ChatGPT itself uses; window-task commands need it.
+    fn desktop_codex_home() -> Result<std::path::PathBuf, String> {
+        WindowTaskProbeService::desktop_codex_home(
+            storage::codex_home(),
+            WindowTaskProbeService::account_home(),
+        )
+    }
+
     pub(super) fn window(action: Option<WindowAction>) -> Result<(), String> {
         match action.unwrap_or(WindowAction::Status) {
             WindowAction::Status => {
@@ -55,19 +63,27 @@ impl DesktopCommandService {
             WindowAction::ProbeTasks {
                 allow_focus_and_clipboard,
             } => {
-                let count = WindowTaskProbeService::run(
+                let report = WindowTaskProbeService::run(
                     allow_focus_and_clipboard,
-                    || {
-                        WindowTaskProbeService::desktop_codex_home(
-                            storage::codex_home(),
-                            WindowTaskProbeService::account_home(),
-                        )
-                    },
+                    Self::desktop_codex_home,
                     recovery::operation_lock,
                     switcher::current_codex_app_pids_checked,
                     SystemWindowRestoreBackend::new,
                 )?;
-                println!("{}", WindowTaskProbeService::summary(count));
+                println!("{}", WindowTaskProbeService::summary(report));
+                Ok(())
+            }
+            WindowAction::RehearseTaskRestore {
+                allow_focus_and_clipboard,
+            } => {
+                let report = WindowTaskProbeService::rehearse(
+                    allow_focus_and_clipboard,
+                    Self::desktop_codex_home,
+                    recovery::operation_lock,
+                    switcher::current_codex_app_pids_checked,
+                    SystemWindowRestoreBackend::new,
+                )?;
+                println!("{}", WindowTaskProbeService::rehearsal_summary(report));
                 Ok(())
             }
         }

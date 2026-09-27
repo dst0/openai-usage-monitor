@@ -7,6 +7,7 @@ impl SwitchCommandService {
         account: String,
         no_restart: bool,
         restart: bool,
+        restore_window_tasks: bool,
         trigger: String,
     ) -> Result<(), String> {
         let accounts = storage::load_accounts()?;
@@ -14,17 +15,23 @@ impl SwitchCommandService {
         let notify = accounts.settings.notify_on_switch;
         let switch_trigger: switcher::SwitchTrigger =
             trigger.parse().unwrap_or(switcher::SwitchTrigger::User);
+        switcher::RestartWorkerArgsService::check_window_task_request(
+            &trigger,
+            restore_window_tasks,
+        )?;
+        let restarts = should_restart && switcher::is_codex_app_running_checked()?;
+        if restore_window_tasks && !restarts {
+            println!(
+                "ℹ️ --restore-window-tasks has no effect: this switch does not restart a running Desktop."
+            );
+        }
         println!("🔄 Switching to account '{}'...", account);
-        let dispatch = if should_restart && switcher::is_codex_app_running_checked()? {
-            let mut restart_args = vec![
-                "switch".to_string(),
-                account.clone(),
-                "--restart".to_string(),
-            ];
-            if switch_trigger != switcher::SwitchTrigger::User {
-                restart_args.push("--trigger".to_string());
-                restart_args.push(switch_trigger.as_str().to_string());
-            }
+        let dispatch = if restarts {
+            let restart_args = switcher::RestartWorkerArgsService::switch(
+                &account,
+                switch_trigger,
+                restore_window_tasks,
+            )?;
             switcher::dispatch_self_restart(&restart_args)
         } else {
             Ok(false)
@@ -33,8 +40,14 @@ impl SwitchCommandService {
             if scheduled {
                 return Ok((true, None));
             }
-            switcher::switch_to_account(&account, should_restart, notify, switch_trigger)
-                .map(|outcome| (false, outcome.recovery_error))
+            switcher::switch_to_account(
+                &account,
+                should_restart,
+                notify,
+                switch_trigger,
+                restore_window_tasks,
+            )
+            .map(|outcome| (false, outcome.recovery_error))
         }) {
             Ok((scheduled, recovery_error)) => {
                 if let Some(error) = recovery_error {

@@ -79,6 +79,13 @@ pub(crate) fn preflight_desktop_dispatch() -> Result<(), String> {
     Ok(())
 }
 
+/// Waits, like recovery does, until a relaunched Desktop's IPC router
+/// answers; a task link sent earlier can be dropped before the thread loads.
+pub(crate) fn wait_for_desktop_ipc() -> Result<(), String> {
+    drop(DesktopIpc::connect_with_retry(Duration::from_secs(90))?);
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "recovery/automation_guard.test.rs"]
 mod automation_guard_tests;
