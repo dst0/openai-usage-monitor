@@ -147,8 +147,10 @@ fn only_fixed_failure_codes_are_named() {
     }
 }
 
-/// Codes the probe path reaches through helper functions it shares with the
-/// restart guard (`expectedProcess`, `countStandardWindows`).
+/// Codes the window-task commands reach through helper functions they share
+/// with the restart guard (`expectedProcess` fails with a literal code;
+/// `countStandardWindows` throws the enum case so a command can still put
+/// the clipboard back).
 const SHARED_HELPER_CODES: [&str; 4] = [
     "PROCESS_IDENTITY_REJECTED",
     "WINDOW_ACCESS_FAILED",
@@ -163,6 +165,35 @@ fn failed_codes(source: &str) -> BTreeSet<String> {
         .filter(|line| !line.trim_start().starts_with("//"))
         .flat_map(|line| line.split("fail(\"").skip(1))
         .map(|rest| rest.split('"').next().unwrap().to_string())
+        .collect()
+}
+
+/// Raw values of the enum cases a source throws as
+/// `WindowTaskProbeFailure.name`, looked up in the enum declaration.
+fn thrown_codes(source: &str, core: &str) -> BTreeSet<String> {
+    let cases: std::collections::BTreeMap<String, String> = core
+        .lines()
+        .map(str::trim_start)
+        .filter_map(|line| line.strip_prefix("case "))
+        .filter_map(|line| line.split_once(" = \""))
+        .map(|(name, rest)| {
+            (
+                name.to_string(),
+                rest.split('"').next().unwrap().to_string(),
+            )
+        })
+        .collect();
+    source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .flat_map(|line| line.split("throw WindowTaskProbeFailure.").skip(1))
+        .map(|rest| {
+            let name: String = rest.chars().take_while(|c| c.is_alphanumeric()).collect();
+            cases
+                .get(&name)
+                .unwrap_or_else(|| panic!("thrown case {name} is not declared"))
+                .clone()
+        })
         .collect()
 }
 
@@ -195,7 +226,8 @@ fn failure_codes_match_the_native_helper() {
     assert!(probe.len() >= 20, "probe failure scan found {probe:?}");
     let unnamed: Vec<_> = probe.difference(&known).collect();
     assert!(unnamed.is_empty(), "unnamed: {unnamed:?}");
-    let helper_shared = failed_codes(&helper);
+    let mut helper_shared = failed_codes(&helper);
+    helper_shared.extend(thrown_codes(&helper, &core));
     let mut emitted = probe.clone();
     emitted.extend(helper_shared.iter().cloned());
     let stale: Vec<_> = known.difference(&emitted).collect();

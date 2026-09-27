@@ -56,7 +56,7 @@ struct SystemWindowTaskProbe: WindowTaskProbeSystem {
 
   func processBirthMatches() -> Bool { processBirth(process.pid) == process.birth }
 
-  func windowIDs() throws -> [UInt32] { countStandardWindows(process).window_ids }
+  func windowIDs() throws -> [UInt32] { try countStandardWindows(process).window_ids }
 
   func mappedWindows(_ ids: [UInt32]) throws -> [AXUIElement] {
     let ax = try accessibilityStandardWindows()
