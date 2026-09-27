@@ -529,7 +529,12 @@ holds only a real `Codex Monitor.app` directory), and the remote-install clone
 `0700` directory). Each `X` is one of mktemp's `[0-9A-Za-z]`, the owner must be
 the current user, and symlinks are never followed. A backup can hold the only
 copy of the previous app while an install runs, so these are removed only
-when the lock file is absent or can be taken at once; a held, symlinked, or
+when the lock file is absent or its BSD `flock` can be taken at once. The
+probe uses `/usr/bin/lockf` where it exists (newer macOS releases) and
+`/usr/bin/perl`'s `flock` on macOS 14, which ships no `lockf`; with neither,
+the lock is unverified. The Monitor lock files (`daemon.lock`, `codex.lock`,
+`monitor.lock`, `desktop-recovery.lock`, and the install lock) use the same
+probe before removal. A held, symlinked, or
 otherwise unverifiable lock keeps them and makes the uninstall report
 warnings. After the installer exits, a backup it kept because rollback failed
 is Monitor-owned debris and is removed with the app. An installer run with another `TMPDIR` is not detected. The

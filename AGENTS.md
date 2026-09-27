@@ -77,8 +77,11 @@
   a symlink, and a staging or backup root only when it is empty or holds just
   a real `Codex Monitor.app`. Because a backup can hold the only copy of the
   previous app during an install, it removes them only when the install lock
-  is absent or can be taken at once; a held or unverifiable lock preserves
-  them with a warning. It also removes its own interrupted
+  is absent or its BSD `flock` can be taken at once; a held or unverifiable
+  lock preserves them with a warning. macOS 14 ships no `lockf(1)`: the
+  installer then locks through `python3`, and the uninstaller probes (and
+  removes Monitor lock files) with `/usr/bin/lockf` where present and perl's
+  `flock` otherwise. It also removes its own interrupted
   `.codex-monitor-uninstall.XXXXXX` copies. A new installer `mktemp` template
   fails the shell test until the uninstaller covers it.
 - `scripts/install.sh` and `scripts/test_swift.sh` resolve a set

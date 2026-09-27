@@ -408,7 +408,9 @@ Each `X` is a letter or digit, as `mktemp` fills it. The name, your user, the
 type and mode must all match, and nothing is followed through a symlink.
 While an installation runs, a backup directory can hold the only copy of the
 previous app. The uninstaller therefore removes these only when no installer
-holds the lock; otherwise, or when the lock cannot be verified, it keeps them,
+holds the lock. It checks with `lockf`, or with perl's `flock` on macOS 14,
+which has no `lockf`. If an installer holds the lock, or the lock cannot be
+verified, it keeps them,
 names them, and finishes with a warning, so rerun it after the installation
 ends. Once the installer has exited, a backup is leftover Monitor data and is
 removed like the app, including one the installer kept because it could not

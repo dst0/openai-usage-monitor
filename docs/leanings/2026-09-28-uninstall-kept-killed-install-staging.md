@@ -33,7 +33,7 @@
   - `.github/workflows/ci.yml` runs `bash tests/log_permissions_and_uninstall.sh` in the required Rust job. `ci_workflow_policy/shell_test_gate.rs` requires that step.
 - **Verification:**
   - `tests/log_permissions_and_uninstall.sh` covers each valid leftover and a look-alike for every validated property. It also covers a held lock (dry run and confirmed run), a symlinked lock, a directory lock, a free existing lock, and an unknown or relative temporary directory.
-  - The held-lock scenario takes the lock with `install.sh`'s own `acquire_install_lock` (its `lockf` fd form on fd 9), so CI proves that the uninstaller's file-form probe sees a real installer's lock on the hosted runner.
+  - The held-lock scenario takes the lock with `install.sh`'s own `acquire_install_lock`, so CI proves that the uninstaller's probe sees the lock a real installer takes on the hosted runner. There, macOS 14 has no `lockf`: the installer locks through `python3` and the uninstaller probes with perl. See [2026-09-28-macos-14-has-no-lockf.md](2026-09-28-macos-14-has-no-lockf.md).
   - It fails when an installer `mktemp` template or the lock order changes, and when the uninstaller copy still names a real system path. It derives the installer scripts it scans from `install.sh`'s `${PROJECT_DIR}` references.
   - Mutation runs of the uninstaller and installer are recorded in the PR.
   - The `ci_workflow_policy` fixtures reject a missing step, a non-required job, extra step keys, and other commands.

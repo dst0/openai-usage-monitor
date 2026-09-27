@@ -293,10 +293,33 @@ installer_temps() {
     done
 }
 
+# Takes the exclusive BSD flock(2) lock on an existing file without waiting,
+# then releases it; with `unlink`, removes the file while holding it. Exit
+# status 0: taken; 75 (EX_TEMPFAIL): another process holds it; anything else:
+# unknown. Newer macOS releases ship lockf(1); macOS 14 does not, so perl's
+# flock, the same lock, is the fallback. A file is opened only for reading.
+try_flock() {
+    local path="$1"
+    local action="${2:-keep}"
+    if [ -x /usr/bin/lockf ]; then
+        if [ "$action" = unlink ]; then
+            /usr/bin/lockf -s -t 0 "$path" /usr/bin/true >/dev/null 2>&1
+        else
+            /usr/bin/lockf -k -s -t 0 "$path" /usr/bin/true >/dev/null 2>&1
+        fi
+        return
+    fi
+    [ -x /usr/bin/perl ] || return 69
+    /usr/bin/perl -MFcntl=:flock -e '
+        open(my $lock, "<", $ARGV[0]) or exit 71;
+        flock($lock, LOCK_EX | LOCK_NB) or exit($!{EWOULDBLOCK} ? 75 : 71);
+        exit(($ARGV[1] ne "unlink" || unlink($ARGV[0])) ? 0 : 73);
+    ' "$path" "$action" >/dev/null 2>&1
+}
+
 # Prints nothing when no installer holds the install lock (or it does not
-# exist), otherwise why installer leftovers must be kept. `lockf -k` keeps
-# the file, and it is probed only when it exists, so a dry run changes
-# nothing. An installer started with another TMPDIR uses another lock file
+# exist), otherwise why installer leftovers must be kept. The probe keeps
+# the file, and runs only when it exists, so a dry run changes nothing. An installer started with another TMPDIR uses another lock file
 # and is not detected.
 install_lock_blocker() {
     local status
@@ -306,9 +329,7 @@ install_lock_blocker() {
         printf '%s\n' "$INSTALL_LOCK_UNVERIFIED"
         return 0
     fi
-    # 75 (EX_TEMPFAIL) means another process holds the lock. Any other
-    # failure, including a missing lockf, leaves the state unverified.
-    /usr/bin/lockf -k -s -t 0 "$INSTALL_LOCK_FILE" /usr/bin/true >/dev/null 2>&1
+    try_flock "$INSTALL_LOCK_FILE"
     status=$?
     case "$status" in
         0) ;;
@@ -475,17 +496,20 @@ remove_unlocked_file() {
         remove_path "$path"
         return
     fi
-    if [ ! -x /usr/bin/lockf ]; then
-        warn "lockf is unavailable; preserving possible lock file: $path"
-        FAILED=1
-        return
-    fi
-    if ! /usr/bin/lockf -t 0 "$path" /usr/bin/true >/dev/null 2>&1; then
-        warn "lock is still held; preserving: $path"
-        FAILED=1
-        return
-    fi
-    remove_path "$path"
+    local status
+    try_flock "$path" unlink
+    status=$?
+    case "$status" in
+        0) remove_path "$path" ;;
+        75)
+            warn "lock is still held; preserving: $path"
+            FAILED=1
+            ;;
+        *)
+            warn "cannot tell whether the lock is held; preserving: $path"
+            FAILED=1
+            ;;
+    esac
 }
 
 arm_cancellation_marker() {

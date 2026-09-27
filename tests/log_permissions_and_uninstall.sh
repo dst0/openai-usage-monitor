@@ -662,14 +662,25 @@ run_locked_uninstall() {
         "${LOCKED_UNINSTALLER}" "$@"
 }
 
-# What the uninstaller's probe sees, for failure messages.
+# What the uninstaller's probe can use, for failure messages.
 describe_install_lock() {
-    local status=0
-    /usr/bin/lockf -k -s -t 0 "${INSTALL_LOCK}" /usr/bin/true >/dev/null 2>&1 || status=$?
-    /usr/bin/printf 'lockf on PATH: %s; /usr/bin/lockf probe status: %s; lock: %s; macOS %s' \
-        "$(command -v lockf || echo none)" "${status}" \
+    /usr/bin/printf 'lockf on PATH: %s; /usr/bin/perl: %s; lock: %s; macOS %s' \
+        "$(command -v lockf || echo none)" "$([ -x /usr/bin/perl ] && echo present || echo missing)" \
         "$(/bin/ls -ld "${INSTALL_LOCK}" 2>&1 || true)" "$(/usr/bin/sw_vers -productVersion 2>/dev/null || echo unknown)"
 }
+
+# The uninstaller probes the lock with lockf(1) where it exists (newer macOS)
+# and with perl's flock otherwise (macOS 14 has no lockf). This copy has no lockf,
+# so the perl path runs on every host; the plain copy uses whichever the host
+# has. NO_PROBE_UNINSTALLER has neither.
+PERL_PROBE_UNINSTALLER="${TEMP_ROOT}/uninstall-perl-probe.sh"
+NO_PROBE_UNINSTALLER="${TEMP_ROOT}/uninstall-no-probe.sh"
+/usr/bin/sed -e "s|/usr/bin/lockf|${TEMP_ROOT}/missing-lockf|g" "${UNINSTALL_COPY}" > "${PERL_PROBE_UNINSTALLER}"
+/usr/bin/sed -e "s|/usr/bin/perl|${TEMP_ROOT}/missing-perl|g" "${PERL_PROBE_UNINSTALLER}" > "${NO_PROBE_UNINSTALLER}"
+/bin/chmod 755 "${PERL_PROBE_UNINSTALLER}" "${NO_PROBE_UNINSTALLER}"
+/usr/bin/grep -F '/usr/bin/lockf' "${UNINSTALL_COPY}" >/dev/null &&
+    /usr/bin/grep -F '/usr/bin/perl' "${UNINSTALL_COPY}" >/dev/null ||
+    fail 'uninstaller no longer names the lock probes this test replaces'
 
 assert_locked_temps_preserved_in_plan() {
     local reason="$1"
@@ -717,6 +728,9 @@ while [ ! -e "${LOCK_READY}" ]; do
 done
 
 assert_locked_temps_preserved_in_plan 'an installer holds the install lock'
+LOCKED_UNINSTALLER="${PERL_PROBE_UNINSTALLER}"
+assert_locked_temps_preserved_in_plan 'an installer holds the install lock'
+LOCKED_UNINSTALLER="${UNINSTALL_COPY}"
 LOCKED_OUTPUT="${TEMP_ROOT}/locked-output.txt"
 if run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1; then
     fail 'uninstall reported success while an installer held the install lock'
@@ -727,6 +741,9 @@ for path in "${LOCKED_TEMPS[@]}"; do
         "${LOCKED_OUTPUT}" >/dev/null || fail "uninstall did not report preserving ${path}"
 done
 assert_exists "${SYSTEM_APPS}/.codex-monitor-backup.L0cK02/Codex Monitor.app/Contents/Info.plist"
+assert_exists "${INSTALL_LOCK}"
+/usr/bin/grep -F -x "Warning: lock is still held; preserving: ${INSTALL_LOCK}" "${LOCKED_OUTPUT}" >/dev/null ||
+    fail "uninstall did not keep the held install lock: $(describe_install_lock)"
 assert_absent "${LOCKED_UNINSTALL_TEMP}"
 make_file 600 "${LOCKED_UNINSTALL_TEMP}"
 
@@ -761,19 +778,33 @@ make_file 600 "${LOCKED_UNINSTALL_TEMP}"
 /bin/mkdir "${INSTALL_LOCK}"
 assert_locked_temps_preserved_in_plan 'the install lock cannot be verified'
 /bin/rmdir "${INSTALL_LOCK}"
-# Nor can a free lock file be probed without lockf.
+# Nor can a free lock file be probed with neither lockf nor perl: the
+# confirmed run keeps the leftovers and the lock file itself.
 /usr/bin/touch "${INSTALL_LOCK}"
-LOCKED_UNINSTALLER="${TEMP_ROOT}/uninstall-without-lockf.sh"
-/usr/bin/sed -e "s|/usr/bin/lockf|${TEMP_ROOT}/missing-lockf|g" "${UNINSTALL_COPY}" > "${LOCKED_UNINSTALLER}"
-/bin/chmod 755 "${LOCKED_UNINSTALLER}"
+LOCKED_UNINSTALLER="${NO_PROBE_UNINSTALLER}"
 assert_locked_temps_preserved_in_plan 'the install lock cannot be verified'
+install_fake_helper "${LOCKED_HOME}"
+if run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1; then
+    fail 'uninstall reported success without a way to probe the install lock'
+fi
+for path in "${LOCKED_TEMPS[@]}"; do
+    assert_exists "${path}"
+done
+assert_exists "${INSTALL_LOCK}"
+/usr/bin/grep -F -x "Warning: cannot tell whether the lock is held; preserving: ${INSTALL_LOCK}" \
+    "${LOCKED_OUTPUT}" >/dev/null || fail 'uninstall removed or did not report an unprobed lock file'
+make_file 600 "${LOCKED_UNINSTALL_TEMP}"
 LOCKED_UNINSTALLER="${UNINSTALL_COPY}"
 /bin/rm -f "${INSTALL_LOCK}"
 
 # A lock file that exists but is not held proves the installer has exited.
+# This run takes the perl path, which also unlinks the free lock file; the
+# symlinked-lock run above took the host's own probe.
 /usr/bin/touch "${INSTALL_LOCK}"
 install_fake_helper "${LOCKED_HOME}"
+LOCKED_UNINSTALLER="${PERL_PROBE_UNINSTALLER}"
 run_locked_uninstall --yes >/dev/null
+LOCKED_UNINSTALLER="${UNINSTALL_COPY}"
 for path in "${LOCKED_TEMPS[@]}"; do
     assert_absent "${path}"
 done
