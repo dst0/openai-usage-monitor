@@ -21,7 +21,7 @@
     - **Why:** The file form without `-n` creates a missing lock file, which a dry run must not do, and whether the hosted macOS 14 runner's `lockf` has `-n` or the fd form was not verified. Deleting only paths listed before a successful non-blocking probe is enough, because an installer creates these names only while holding the lock.
   - **Attempt:** List first, then probe with `lockf -k -s -t 0 <lock> /usr/bin/true`, only when the lock file exists and is this user's regular non-symlink file. Move `acquire_install_lock` before the remote clone and release the lock as the last step of `cleanup()`.
     - **Outcome:** Worked.
-    - **Why:** Every installer temporary path now exists only while its creator holds the lock, or after that creator died. `-k` keeps the file, and exit status 75 (`EX_TEMPFAIL`) identifies a held lock. Any other failure is treated as unverified and keeps the leftovers.
+    - **Why:** Every installer temporary path now exists only while its creator holds the lock, or after that creator died. `-k` keeps the file, and exit status 75 (`EX_TEMPFAIL`) identifies a held lock. Any other failure, including a missing `lockf` (127), is treated as unverified and keeps the leftovers. A separate "is `lockf` installed" check was redundant for that reason and was removed.
   - **Attempt:** Look for the remote clone in `TMPDIR`.
     - **Outcome:** Did not work.
     - **Why:** `mktemp -t` ignores `TMPDIR` when `_CS_DARWIN_USER_TEMP_DIR` exists. The uninstaller asks `getconf DARWIN_USER_TEMP_DIR`, and it warns instead of guessing when that is not absolute.
@@ -33,13 +33,13 @@
   - `.github/workflows/ci.yml` runs `bash tests/log_permissions_and_uninstall.sh` in the required Rust job. `ci_workflow_policy/shell_test_gate.rs` requires that step.
 - **Verification:**
   - `tests/log_permissions_and_uninstall.sh` covers each valid leftover and a look-alike for every validated property. It also covers a held lock (dry run and confirmed run), a symlinked lock, a directory lock, a free existing lock, and an unknown or relative temporary directory.
-  - It fails when an installer `mktemp` template or the lock order changes, and when the uninstaller copy still names a real system path.
+  - The held-lock scenario takes the lock with `install.sh`'s own `acquire_install_lock` (its `lockf` fd form on fd 9), so CI proves that the uninstaller's file-form probe sees a real installer's lock on the hosted runner.
+  - It fails when an installer `mktemp` template or the lock order changes, and when the uninstaller copy still names a real system path. It derives the installer scripts it scans from `install.sh`'s `${PROJECT_DIR}` references.
   - Mutation runs of the uninstaller and installer are recorded in the PR.
   - The `ci_workflow_policy` fixtures reject a missing step, a non-required job, extra step keys, and other commands.
 - **Prevention/follow-up:**
   - `AGENTS.md` and `CODEX.md` state the lock contract, and CI now runs the uninstall test on every pull request.
   - The remaining `tests/install_*.sh` and `tests/recovery_banner_manifest.sh` still run only locally.
-  - Whether the hosted runner's `lockf` supports the fd form that `acquire_install_lock` uses is unverified.
   - A file owned by another uid needs root to create and is still not tested.
 - **Reusable learning:** Derive uninstall cleanup from the installer's temporary paths, including those created by the tools it runs (codesign, `mktemp -t`). Gate removal of anything an in-flight installer might need on a lock that covers the whole lifetime of those paths.
 - **References:** `scripts/uninstall.sh`, `scripts/install.sh`, `scripts/install_bundle_swap.sh`, `tests/log_permissions_and_uninstall.sh`, `.github/workflows/ci.yml`, `codex-switcher/tests/ci_workflow_policy/shell_test_gate.rs`.

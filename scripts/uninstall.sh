@@ -252,7 +252,7 @@ holds_only_monitor_bundle() {
 # macOS mktemp(1) fills each X from MKTEMP_CHAR; `mktemp -t` keeps the Xs of
 # its prefix and appends a dot and ten such characters.
 #   ~/.local/bin/.codex-mon.install.XXXXXX         CLI staging (0600, 0755 after chmod)
-#   ~/.local/bin/.codex-mon.install.XXXXXX.cstemp  codesign's copy while signing (0755)
+#   ~/.local/bin/.codex-mon.install.XXXXXX.cstemp  codesign's copy while signing (0755 only)
 #   APPLICATION_DIRS/.codex-monitor-install.XXXXXX app staging root (0700)
 #   APPLICATION_DIRS/.codex-monitor-backup.XXXXXX  prior-app backup root (0700)
 #   <per-user temp dir>/codex-mon-install-XXXXXX.XXXXXXXXXX
@@ -266,10 +266,15 @@ installer_temps() {
         [ ! -L "$path" ] && [ -f "$path" ] || continue
         name="${path##*/}"
         [[ "$name" =~ $CLI_STAGING_NAME ]] || continue
+        # codesign creates its copy with the mode of the file it signs, which
+        # install.sh has already made 0755.
         metadata="$(/usr/bin/stat -f '%u:%Lp' "$path" 2>/dev/null || true)"
         case "$metadata" in
-            "${CURRENT_UID}:600"|"${CURRENT_UID}:755") printf '%s\n' "$path" ;;
+            "${CURRENT_UID}:755") ;;
+            "${CURRENT_UID}:600") [[ "$name" != *.cstemp ]] || continue ;;
+            *) continue ;;
         esac
+        printf '%s\n' "$path"
     done
     for dir in "${APPLICATION_DIRS[@]}"; do
         for path in "$dir"/.codex-monitor-install.* "$dir"/.codex-monitor-backup.*; do
@@ -297,12 +302,13 @@ install_lock_blocker() {
     local status
     is_present "$INSTALL_LOCK_FILE" || return 0
     if [ -L "$INSTALL_LOCK_FILE" ] || [ ! -f "$INSTALL_LOCK_FILE" ] ||
-       [ "$(/usr/bin/stat -f '%u' "$INSTALL_LOCK_FILE" 2>/dev/null || true)" != "$CURRENT_UID" ] ||
-       ! command -v lockf >/dev/null 2>&1; then
+       [ "$(/usr/bin/stat -f '%u' "$INSTALL_LOCK_FILE" 2>/dev/null || true)" != "$CURRENT_UID" ]; then
         printf '%s\n' "$INSTALL_LOCK_UNVERIFIED"
         return 0
     fi
-    lockf -k -s -t 0 "$INSTALL_LOCK_FILE" /usr/bin/true >/dev/null 2>&1
+    # 75 (EX_TEMPFAIL) means another process holds the lock. Any other
+    # failure, including a missing lockf, leaves the state unverified.
+    /usr/bin/lockf -k -s -t 0 "$INSTALL_LOCK_FILE" /usr/bin/true >/dev/null 2>&1
     status=$?
     case "$status" in
         0) ;;
@@ -469,12 +475,12 @@ remove_unlocked_file() {
         remove_path "$path"
         return
     fi
-    if ! command -v lockf >/dev/null 2>&1; then
+    if [ ! -x /usr/bin/lockf ]; then
         warn "lockf is unavailable; preserving possible lock file: $path"
         FAILED=1
         return
     fi
-    if ! lockf -t 0 "$path" /usr/bin/true >/dev/null 2>&1; then
+    if ! /usr/bin/lockf -t 0 "$path" /usr/bin/true >/dev/null 2>&1; then
         warn "lock is still held; preserving: $path"
         FAILED=1
         return

@@ -369,8 +369,10 @@ VALID_INSTALLER_TEMPS=(
 make_file 600 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Ab3dE9"
 make_file 755 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Zz09aQ"
 make_file 755 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Zz09aQ.cstemp"
-# Staged new bundle; backup holding the only copy of the prior app (killed
-# between the two renames); an empty stage root and backup root.
+# A staged new bundle, a backup holding a prior bundle (as after a kill
+# between the two renames, or a failed rollback; the uninstaller does not
+# depend on whether the installed app is present), and an empty stage root
+# and backup root.
 make_staging_root 700 "${SYSTEM_APPS}/.codex-monitor-install.Q1w2E3" 'Codex Monitor.app/'
 make_staging_root 700 "${SYSTEM_APPS}/.codex-monitor-backup.R4t5Y6" 'Codex Monitor.app/'
 make_staging_root 700 "${USER_APPS}/.codex-monitor-install.U7i8O9"
@@ -402,6 +404,7 @@ lookalike_file 600 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Ab3dé9"
 lookalike_file 600 "${LOCAL_BIN_FIXTURE}/codex-mon.install.Ab3dE9"
 lookalike_file 644 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Mo644d"
 lookalike_file 644 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Ce644x.cstemp"
+lookalike_file 600 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Ce600x.cstemp"
 lookalike_file 755 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Ab3dE9.cstem"
 lookalike_file 755 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Ab3dE.cstemp"
 lookalike_root 755 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.DirDir"
@@ -653,9 +656,10 @@ INSTALL_LOCK="${TEMP_ROOT}/tmp/codex_monitor_install_$(/usr/bin/id -u).lock"
 LOCK_READY="${TEMP_ROOT}/lock-ready"
 LOCK_RELEASE="${TEMP_ROOT}/lock-release"
 
+LOCKED_UNINSTALLER="${UNINSTALL_COPY}"
 run_locked_uninstall() {
     HOME="${LOCKED_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
-        "${UNINSTALL_COPY}" "$@"
+        "${LOCKED_UNINSTALLER}" "$@"
 }
 
 assert_locked_temps_preserved_in_plan() {
@@ -673,19 +677,33 @@ assert_locked_temps_preserved_in_plan() {
         fail "dry-run gated the uninstaller's own copy on the install lock (${reason})"
 }
 
-# Hold the lock exactly as install.sh does: a BSD flock on the lock file.
-/usr/bin/lockf -k "${INSTALL_LOCK}" /bin/sh -c '
-    /usr/bin/touch "$1"
-    attempt=0
-    while [ ! -e "$2" ] && [ "${attempt}" -lt 1200 ]; do
-        /bin/sleep 0.05
-        attempt=$((attempt + 1))
-    done' sh "${LOCK_READY}" "${LOCK_RELEASE}" &
+# Hold the lock with install.sh's own acquire_install_lock and its fd 9 setup,
+# so this proves that the uninstaller's probe sees the lock a real installer
+# takes on this runner.
+ACQUIRE_INSTALL_LOCK="$(/usr/bin/awk '/^acquire_install_lock\(\) \{$/, /^\}$/' "${INSTALL_SCRIPT}")"
+[ -n "${ACQUIRE_INSTALL_LOCK}" ] || fail 'installer has no acquire_install_lock function'
+LOCK_HOLDER_SCRIPT="${TEMP_ROOT}/installer-lock-holder.sh"
+{
+    /usr/bin/printf '%s\n' '#!/bin/bash' 'set -euo pipefail' 'INSTALL_LOCK_FILE="$1"'
+    /usr/bin/printf '%s\n' "${ACQUIRE_INSTALL_LOCK}"
+    /bin/cat <<'EOF'
+touch "${INSTALL_LOCK_FILE}"
+exec 9>>"${INSTALL_LOCK_FILE}"
+acquire_install_lock
+/usr/bin/touch "$2"
+attempt=0
+while [ ! -e "$3" ] && [ "${attempt}" -lt 1200 ]; do
+    /bin/sleep 0.05
+    attempt=$((attempt + 1))
+done
+EOF
+} > "${LOCK_HOLDER_SCRIPT}"
+/bin/bash "${LOCK_HOLDER_SCRIPT}" "${INSTALL_LOCK}" "${LOCK_READY}" "${LOCK_RELEASE}" &
 LOCK_HOLDER=$!
 attempt=0
 while [ ! -e "${LOCK_READY}" ]; do
     attempt=$((attempt + 1))
-    [ "${attempt}" -lt 200 ] || fail 'test lock holder did not start'
+    [ "${attempt}" -lt 200 ] || fail "installer's acquire_install_lock did not take the lock on this system"
     /bin/sleep 0.05
 done
 
@@ -734,6 +752,14 @@ make_file 600 "${LOCKED_UNINSTALL_TEMP}"
 /bin/mkdir "${INSTALL_LOCK}"
 assert_locked_temps_preserved_in_plan 'the install lock cannot be verified'
 /bin/rmdir "${INSTALL_LOCK}"
+# Nor can a free lock file be probed without lockf.
+/usr/bin/touch "${INSTALL_LOCK}"
+LOCKED_UNINSTALLER="${TEMP_ROOT}/uninstall-without-lockf.sh"
+/usr/bin/sed -e "s|/usr/bin/lockf|${TEMP_ROOT}/missing-lockf|g" "${UNINSTALL_COPY}" > "${LOCKED_UNINSTALLER}"
+/bin/chmod 755 "${LOCKED_UNINSTALLER}"
+assert_locked_temps_preserved_in_plan 'the install lock cannot be verified'
+LOCKED_UNINSTALLER="${UNINSTALL_COPY}"
+/bin/rm -f "${INSTALL_LOCK}"
 
 # A lock file that exists but is not held proves the installer has exited.
 /usr/bin/touch "${INSTALL_LOCK}"

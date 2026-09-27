@@ -395,7 +395,8 @@ installer creates its temporary paths only while it holds its install lock (a
 file in `$TMPDIR`) and removes them before releasing it:
 
 - `~/.local/bin/.codex-mon.install.XXXXXX` (the CLI being installed, mode
-  `0600` or `0755`) and codesign's `.codex-mon.install.XXXXXX.cstemp` copy;
+  `0600` or `0755`) and codesign's `.codex-mon.install.XXXXXX.cstemp` copy
+  (mode `0755`);
 - `.codex-monitor-install.XXXXXX` and `.codex-monitor-backup.XXXXXX` in
   `/Applications` or `~/Applications` (mode `0700`, empty or holding only
   `Codex Monitor.app`);

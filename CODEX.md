@@ -520,8 +520,8 @@ writer needs a matching pattern and shell test in the same change.
 Leftovers of a killed install are a third list. `install.sh` takes its install
 lock (`${TMPDIR:-/tmp}/codex_monitor_install_<uid>.lock`) before creating any
 temporary path and releases it only as the last step of its EXIT cleanup. The
-uninstaller matches `~/.local/bin/.codex-mon.install.XXXXXX` and its codesign
-`.cstemp` copy (regular file, mode `0600` or `0755`),
+uninstaller matches `~/.local/bin/.codex-mon.install.XXXXXX` (regular file,
+mode `0600` or `0755`) and its codesign `.cstemp` copy (regular file, `0755`),
 `.codex-monitor-install.XXXXXX` and `.codex-monitor-backup.XXXXXX` in
 `/Applications` and `~/Applications` (mode `0700` directory that is empty or
 holds only a real `Codex Monitor.app` directory), and the remote-install clone
