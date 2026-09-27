@@ -14,6 +14,11 @@ func validateCopiedTaskLink(
 ) -> String? {
   guard beforeChange < Int.max, afterChange == beforeChange + 1,
     confirmedChange == afterChange, let link else { return nil }
+  return taskID(fromLink: link)
+}
+
+/// The canonical task ID of exactly `codex://threads/<id>`, or nil.
+func taskID(fromLink link: String) -> String? {
   let bytes = Array(link.utf8)
   guard bytes.starts(with: copiedTaskLinkPrefix) else { return nil }
   return canonicalTaskID(String(decoding: bytes.dropFirst(copiedTaskLinkPrefix.count), as: UTF8.self))

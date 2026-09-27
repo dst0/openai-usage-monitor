@@ -30,6 +30,7 @@ pub struct WindowTaskRestartSession {
     snapshot: WindowTaskSnapshot,
     failures: Vec<String>,
     relaunch_attempted: bool,
+    relaunch_complete: bool,
     clipboard_kept: bool,
 }
 
@@ -45,7 +46,7 @@ impl WindowTaskRestartSession {
         let home = desktop_codex_home?;
         let keymap = CopyDeeplinkKeymapService::verify_copy_binding(&home)?;
         let timeout = WindowTaskCommand::Snapshot.timeout(inventory.len());
-        let snapshot = WindowTaskHelperClient::new(backend)
+        let (snapshot, clipboard_restored) = WindowTaskHelperClient::new(backend)
             .run(WindowTaskCommand::Snapshot, expected, None, timeout)
             .and_then(|response| WindowTaskSessionValidationService::snapshot(&response, expected))
             .map_err(|error| WindowTaskProbeService::with_visible_change_caveat(&error))?;
@@ -61,7 +62,8 @@ impl WindowTaskRestartSession {
             snapshot,
             failures: Vec::new(),
             relaunch_attempted: false,
-            clipboard_kept: false,
+            relaunch_complete: false,
+            clipboard_kept: !clipboard_restored,
         })
     }
 
@@ -91,6 +93,9 @@ impl WindowTaskRestartSession {
         match ready().and_then(|()| self.restore_now(process, backend, phase)) {
             Ok(report) => {
                 self.clipboard_kept |= !report.clipboard_restored;
+                if phase == WindowTaskRestorePhase::AfterRelaunch {
+                    self.relaunch_complete = report.is_complete();
+                }
                 if !report.is_complete() {
                     self.failures.push(format!(
                         "{}: {} of {} window(s) verified on their task",
@@ -110,6 +115,22 @@ impl WindowTaskRestartSession {
             self.relaunch_attempted = true;
         }
         self.failures.push(format!("{}: {error}", phase.label()));
+    }
+
+    /// Recovery sends a task link only for a task no window has open (and
+    /// then reopens its primary task). After a complete relaunch restore
+    /// that showed every recovery target, no such link is sent, so no
+    /// recheck is needed and no window is focused again.
+    pub fn needs_recheck(&self, recovery_targets: &[String]) -> bool {
+        !recovery_targets.is_empty()
+            && (!self.relaunch_complete
+                || recovery_targets.iter().any(|target| {
+                    !self
+                        .snapshot
+                        .windows
+                        .iter()
+                        .any(|window| &window.task_id == target)
+                }))
     }
 
     /// Whether a restore left ChatGPT's last copied link on the clipboard

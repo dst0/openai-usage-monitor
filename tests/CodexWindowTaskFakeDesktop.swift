@@ -28,6 +28,13 @@ final class FakeDesktop: WindowTaskSessionSystem {
   var setFrameIgnored = false
   var fullScreen: Set<Int> = []
   var openTaskLinkFails = false
+  /// This many copies of a shown task answer late, after the reader's wait.
+  var lateCopies = 0
+  var lateCopyDelay: TimeInterval = 2
+  var lateWrites: [(at: TimeInterval, text: String)] = []
+  /// The frontmost application: 0 is ChatGPT, anything else another app.
+  var frontmost: Int32? = 0
+  var activations: [Int32] = []
   /// Desktop navigates without focusing the window it navigates.
   var navigationKeepsFocus = false
   /// New Window makes the new window Accessibility's focused window without
@@ -103,13 +110,21 @@ final class FakeDesktop: WindowTaskSessionSystem {
   func requestFocus(_ window: Int) {
     guard alive.contains(window) else { return }
     log.append("focus \(window)")
+    frontmost = 0
     axOnlyFocus = nil
     focus(window)
   }
   func hasKeyboardFocus(_ window: Int) -> Bool { focused == window }
   func copyShortcutKeyIsExpected() -> Bool { true }
   func postCopyShortcut() -> Bool {
-    if let focused, let task = tasks[focused] { write("codex://threads/\(task)") }
+    if let focused, let task = tasks[focused] {
+      if lateCopies > 0 {
+        lateCopies -= 1
+        lateWrites.append((clock + lateCopyDelay, "codex://threads/\(task)"))
+      } else {
+        write("codex://threads/\(task)")
+      }
+    }
     copyPosts += 1
     if let move = focusMove, move.afterCopy == copyPosts { focus(move.to) }
     return true
@@ -120,6 +135,9 @@ final class FakeDesktop: WindowTaskSessionSystem {
   func preserveClipboard() {
     log.append("save")
     preserved = (text, changeCount)
+  }
+  func pasteboardHoldsTaskLink() -> Bool {
+    pasteboardTypesAllowTaskRead(types) && text.flatMap { taskID(fromLink: $0) } != nil
   }
   func restoreClipboard(expectedChangeCount: Int) -> Bool {
     guard let preserved, changeCount == expectedChangeCount else { return false }
@@ -139,6 +157,12 @@ final class FakeDesktop: WindowTaskSessionSystem {
   }
   func newWindowItemAvailable() -> Bool { newWindowAvailable && clock >= newWindowItemFrom }
   func isFullScreen(_ window: Int) -> Bool { fullScreen.contains(window) }
+  func frontmostApplication() -> Int32? { frontmost }
+  func isDesktop(_ application: Int32) -> Bool { application == 0 }
+  func activate(_ application: Int32) {
+    activations.append(application)
+    frontmost = application
+  }
   func pressNewWindow() -> Bool {
     guard newWindowItemAvailable() else { return false }
     let window = addWindow(persistedFrame, task: nil)
@@ -172,6 +196,9 @@ final class FakeDesktop: WindowTaskSessionSystem {
 
   /// Desktop shows and focuses the window it navigates.
   private func deliverLinks() {
+    let dueWrites = lateWrites.filter { $0.at <= clock }
+    lateWrites.removeAll { $0.at <= clock }
+    for late in dueWrites { write(late.text) }
     let due = pending.filter { $0.at <= clock }
     pending.removeAll { $0.at <= clock }
     for link in due where alive.contains(link.window) {

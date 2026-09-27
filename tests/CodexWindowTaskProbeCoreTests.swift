@@ -138,6 +138,9 @@ final class FakeProbeSystem: WindowTaskProbeSystem {
     log.append("save")
     preserved = (text, changeCount)
   }
+  func pasteboardHoldsTaskLink() -> Bool {
+    pasteboardTypesAllowTaskRead(types) && text.flatMap { taskID(fromLink: $0) } != nil
+  }
   func restoreClipboard(expectedChangeCount: Int) -> Bool {
     log.append("restore")
     guard let preserved, changeCount == expectedChangeCount else { return false }

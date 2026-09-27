@@ -155,7 +155,8 @@ pub(super) fn switch_to_account_with(
         // second checkpoint is the verification boundary: it excludes work and
         // abort records flushed by the old Desktop from post-restart proof.
         if let Err(error) = crate::recovery::save_pending(&running_threads) {
-            return Err(CodexAvailabilityService::relaunch_previous_state(error));
+            let error = CodexAvailabilityService::relaunch_previous_state(error);
+            return Err(RestartWindowTaskService::with_windows(error, window_tasks));
         }
     }
 
@@ -250,7 +251,11 @@ pub(super) fn switch_to_account_with(
             }
             Err(error) => {
                 drop(recovery_banner.take());
-                Some(CodexAvailabilityService::keep_after_failure(error))
+                let error = CodexAvailabilityService::keep_after_failure(error);
+                Some(RestartWindowTaskService::with_windows(
+                    error,
+                    window_tasks.take(),
+                ))
             }
         }
     } else {

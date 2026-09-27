@@ -36,10 +36,10 @@ impl RestartWindowTaskService {
     }
 
     /// Reopens each captured task in its own window of the relaunched
-    /// process, runs `recover`, then, when recovery had targets, moves back
-    /// any window recovery moved onto one of them, even when recovery failed.
-    /// Window failures are recorded in the session; recovery's result is
-    /// returned unchanged.
+    /// process, runs `recover`, then, when recovery could have sent its own
+    /// task link, moves back any window it moved onto one of its targets,
+    /// even when recovery failed. Window failures are recorded in the
+    /// session; recovery's result is returned unchanged.
     pub(super) fn around_recovery(
         session: &mut Option<WindowTaskRestartSession>,
         process: &WindowProcessIdentity,
@@ -67,7 +67,10 @@ impl RestartWindowTaskService {
         let phase = WindowTaskRestorePhase::AfterRelaunch;
         Self::restore(session, process, phase, &backend, &ready);
         let recovered = recover();
-        if !recovery_targets.is_empty() {
+        if session
+            .as_ref()
+            .is_some_and(|session| session.needs_recheck(recovery_targets))
+        {
             let phase = WindowTaskRestorePhase::AfterRecovery(recovery_targets);
             Self::restore(session, process, phase, &backend, &ready);
         }
@@ -100,6 +103,11 @@ impl RestartWindowTaskService {
             (None, Err(window)) => Some(window),
             (Some(error), Err(window)) => Some(format!("{error}; {window}")),
         }
+    }
+
+    /// A restart failure after shutdown, with the windows it left behind.
+    pub(super) fn with_windows(error: String, session: Option<WindowTaskRestartSession>) -> String {
+        Self::append_failure(Some(error), Self::finish(session)).unwrap_or_default()
     }
 
     pub(super) fn finish(session: Option<WindowTaskRestartSession>) -> Result<(), String> {

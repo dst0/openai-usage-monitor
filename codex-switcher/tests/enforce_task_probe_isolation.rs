@@ -43,7 +43,7 @@ const SWIFT_SESSION: &str = "scripts/CodexWindowTaskSession.swift";
 
 /// (token, the only repository files that may contain it). Tokens are
 /// compared with whitespace removed because rustfmt may wrap a call.
-const RULES: [(&str, &[&str]); 31] = [
+const RULES: [(&str, &[&str]); 32] = [
     // Explicit diagnostics.
     (
         "\"probe-selected-tasks\"",
@@ -126,6 +126,10 @@ const RULES: [(&str, &[&str]); 31] = [
     ),
     (
         "switcher::switch_to_account(&account,should_restart,notify,switch_trigger,restore_window_tasks,)",
+        &[SWITCH_COMMAND],
+    ),
+    (
+        "RestartWorkerArgsService::check_window_task_request(&trigger,restore_window_tasks,)",
         &[SWITCH_COMMAND],
     ),
     (

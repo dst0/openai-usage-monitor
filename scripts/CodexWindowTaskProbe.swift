@@ -24,8 +24,16 @@ struct SystemWindowTaskProbe: WindowTaskProbeSystem {
     AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), accessibilityMessagingTimeout)
   }
 
+  /// The helper runs in its own process group, so Ctrl-C and launchd's
+  /// cleanup of the calling job do not reach it. Once the process that
+  /// started it is gone, it stops at the next wait.
+  let parent = getppid()
+
   func now() -> TimeInterval { ProcessInfo.processInfo.systemUptime }
-  func pause(_ seconds: TimeInterval) { Thread.sleep(forTimeInterval: seconds) }
+  func pause(_ seconds: TimeInterval) {
+    if getppid() != parent { exit(1) }
+    Thread.sleep(forTimeInterval: seconds)
+  }
   func isOptedIn() -> Bool { argument("--allow-focus-and-clipboard") == "yes" }
 
   func unmetPrecondition() -> WindowTaskProbeFailure? {
@@ -126,6 +134,11 @@ struct SystemWindowTaskProbe: WindowTaskProbeSystem {
   func pasteboardString() -> String? { pasteboard.string(forType: .string) }
 
   func preserveClipboard() { clipboard.preserve(pasteboard) }
+
+  func pasteboardHoldsTaskLink() -> Bool {
+    guard pasteboardOffersTaskText(), let text = pasteboardString() else { return false }
+    return taskID(fromLink: text) != nil
+  }
 
   func restoreClipboard(expectedChangeCount: Int) -> Bool {
     clipboard.restore(pasteboard, expectedChangeCount: expectedChangeCount)

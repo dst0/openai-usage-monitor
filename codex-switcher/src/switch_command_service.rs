@@ -16,16 +16,17 @@ impl SwitchCommandService {
         let switch_trigger: switcher::SwitchTrigger =
             trigger.parse().unwrap_or(switcher::SwitchTrigger::User);
         switcher::RestartWorkerArgsService::check_window_task_request(
-            switch_trigger,
+            &trigger,
             restore_window_tasks,
         )?;
-        if restore_window_tasks && !should_restart {
+        let restarts = should_restart && switcher::is_codex_app_running_checked()?;
+        if restore_window_tasks && !restarts {
             println!(
-                "ℹ️ --restore-window-tasks has no effect: Desktop is not restarted by this switch."
+                "ℹ️ --restore-window-tasks has no effect: this switch does not restart a running Desktop."
             );
         }
         println!("🔄 Switching to account '{}'...", account);
-        let dispatch = if should_restart && switcher::is_codex_app_running_checked()? {
+        let dispatch = if restarts {
             let restart_args = switcher::RestartWorkerArgsService::switch(
                 &account,
                 switch_trigger,

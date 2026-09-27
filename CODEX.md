@@ -285,15 +285,19 @@ target window focused (a focus change during navigation fails as
 `NAVIGATION_TARGET_CHANGED`), checks the windows it already restored before a
 second link, and counts a window only when it is on its frame and its own
 Copy deeplink returns the planned task; a later link that moved an earlier
-window is caught by a final pass. Whenever recovery had targets, even when
-recovery failed, a recheck moves back only a window that recovery's own task
-link moved onto a recovery task; it creates, moves, and closes nothing and
-leaves the user's later changes alone. The plan reaches the helper on stdin
+window is caught by a final pass. When recovery could have sent its own task
+link (a target no restored window showed, or an incomplete restore), even when
+recovery failed, a recheck moves back only a window now showing a recovery
+task instead of its own, with the same link guard and a final pass; it
+creates, moves, and closes nothing, cannot tell recovery's link from the
+user's own navigation to a recovery task, and reactivates the app that was
+frontmost before it. The plan reaches the helper on stdin
 and the snapshot returns on stdout; each task link is handed to macOS `open`,
-as recovery already does. Every helper run has a deadline and is killed with
-its process group when it passes. Restore failures, including a relaunch
+as recovery already does. Every window-task helper run has a deadline and is
+killed with its process group when it passes; the helper also exits once its
+parent is gone. Restore failures, including a relaunch
 that never reached the restore, are reported with the restart result and
-never block recovery. Only a user-triggered command accepts the flag; the
+never block recovery. Only a command whose raw `--trigger` is `user` accepts the flag; the
 daemon, the Monitor app, distribution, and auto-switch never pass it
 (`tests/enforce_task_probe_isolation.rs` pins every caller and the forwarded
 value). None of this has run against a live Desktop yet;

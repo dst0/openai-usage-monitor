@@ -392,3 +392,45 @@ fn a_restore_answered_by_another_process_is_rejected() {
         .unwrap_err()
         .contains("Window task helper process identity changed"));
 }
+
+#[test]
+fn a_snapshot_that_left_a_link_on_the_clipboard_is_reported() {
+    let fixture = Fixture::new("snapshot-clipboard");
+    let body = snapshot_body(BIRTH).replace(
+        "\"clipboard_restored\":true",
+        "\"clipboard_restored\":false",
+    );
+    let backend = fixture.backend(&body, &restore_body("[true,true]"));
+    let session = capture(&fixture, &backend).unwrap();
+    assert!(session.clipboard_kept());
+}
+
+#[test]
+fn a_recheck_is_needed_only_when_recovery_could_send_a_link() {
+    let fixture = Fixture::new("needs-recheck");
+    let complete = fixture.backend(&snapshot_body(BIRTH), &restore_body("[true,true]"));
+    let mut session = capture(&fixture, &complete).unwrap();
+    let shown = [A.to_string(), B.to_string()];
+    let cold = ["01a00000-0000-4000-8000-00000000000c".to_string()];
+    // Before any restore nothing is known to be shown.
+    assert!(session.needs_recheck(&shown));
+    session.restore(
+        &relaunched(),
+        &complete,
+        || Ok(()),
+        WindowTaskRestorePhase::AfterRelaunch,
+    );
+    assert!(!session.needs_recheck(&shown));
+    assert!(!session.needs_recheck(&[]));
+    assert!(session.needs_recheck(&cold));
+    // After an incomplete relaunch restore a shown task may still be cold.
+    let partial = fixture.backend(&snapshot_body(BIRTH), &restore_body("[true,false]"));
+    let mut incomplete = capture(&fixture, &partial).unwrap();
+    incomplete.restore(
+        &relaunched(),
+        &partial,
+        || Ok(()),
+        WindowTaskRestorePhase::AfterRelaunch,
+    );
+    assert!(incomplete.needs_recheck(&shown));
+}

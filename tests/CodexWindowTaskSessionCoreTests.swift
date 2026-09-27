@@ -19,6 +19,7 @@ struct CodexWindowTaskSessionCoreTests {
     aReplacedProcessGetsNoFurtherWindowChanges()
     aNewWindowWithoutKeyboardFocusIsNotALinkTarget()
     aSecondLinkIsNotSentAfterTheFirstMovedAnotherWindow()
+    aLateCopyFromChatGPTIsNotKeptAsTheUsersClipboard()
     planLimitsAreInclusive()
     restoreAfterRelaunchCreatesOneWindowPerExtraEntry()
     restoreKeepsARelaunchedWindowThatAlreadyHasAPlannedFrame()
@@ -33,6 +34,7 @@ struct CodexWindowTaskSessionCoreTests {
     aTaskThatNeverMountsIsReportedUnverified()
     aLaterLinkThatMovedAnEarlierWindowIsCaught()
     recheckMovesBackOnlyWindowsThatRecoveryMoved()
+    recheckGivesTheUserTheirAppBackAndGuardsItsLinks()
     rehearsalOpensChecksAndClosesOnlyItsOwnWindows()
     rehearsalCleansUpAfterEveryFailure()
     rehearsalFramesStayDistinctAndUsable()
@@ -152,6 +154,16 @@ struct CodexWindowTaskSessionCoreTests {
     desktop.newWindowsFocusedWithoutKey = true
     precondition(failure(restore(desktop, [(a, f0), (b, f1)])) == .newWindowFailed)
     precondition(desktop.linksSent.count == 1 && desktop.tasks[1] == nil)
+  }
+
+  static func aLateCopyFromChatGPTIsNotKeptAsTheUsersClipboard() {
+    // The first copy after the task loads answers after the reader stopped
+    // waiting; its link must not replace the user's saved clipboard.
+    let desktop = relaunched()
+    desktop.lateCopies = 1
+    guard case .success(let result) = restore(desktop, [(a, f0)]) else { fatalError("restore failed") }
+    precondition(result.verified == [true] && result.clipboardRestored)
+    precondition(desktop.text == "user clipboard", "kept \(desktop.text ?? "nil")")
   }
 
   static func aSecondLinkIsNotSentAfterTheFirstMovedAnotherWindow() {
@@ -376,6 +388,40 @@ struct CodexWindowTaskSessionCoreTests {
     guard case .success(let failed) = restore(
       stuck, [(a, f0)], mode: .recheck(recoveryTaskIDs: [r])) else { fatalError("recheck threw") }
     precondition(failed.verified == [false])
+  }
+
+  static func recheckGivesTheUserTheirAppBackAndGuardsItsLinks() {
+    // The user moved to another app while recovery ran; nothing needs
+    // fixing, and that app is frontmost again afterwards.
+    let away = FakeDesktop()
+    away.addWindow(f0, task: a)
+    away.addWindow(f1, task: b)
+    away.frontmost = 7
+    guard case .success(let idle) = restore(
+      away, [(a, f0), (b, f1)], mode: .recheck(recoveryTaskIDs: [r])) else { fatalError("recheck failed") }
+    precondition(idle.verified == [true, true] && away.linksSent.isEmpty)
+    precondition(away.frontmost == 7 && away.activations == [7])
+    // A misrouted link that does not move focus: the second link is not
+    // sent once an already checked window has changed, and the user's
+    // app still comes back.
+    let misrouted = FakeDesktop()
+    misrouted.addWindow(f0, task: a)
+    misrouted.addWindow(f1, task: r)
+    misrouted.linksGoTo = 0
+    misrouted.navigationKeepsFocus = true
+    misrouted.frontmost = 7
+    precondition(failure(restore(
+      misrouted, [(a, f0), (b, f1)], mode: .recheck(recoveryTaskIDs: [r]))) == .navigationTargetChanged)
+    precondition(misrouted.linksSent.count == 1 && misrouted.frontmost == 7)
+    precondition(misrouted.text == "user clipboard")
+    // Moving one window back also moved an earlier one: the final pass says so.
+    let crossed = FakeDesktop()
+    crossed.addWindow(f0, task: a)
+    crossed.addWindow(f1, task: r)
+    crossed.crossTalk = (0, x)
+    guard case .success(let result) = restore(
+      crossed, [(a, f0), (b, f1)], mode: .recheck(recoveryTaskIDs: [r])) else { fatalError("recheck threw") }
+    precondition(result.verified == [false, true])
   }
 
   static func rehearsalOpensChecksAndClosesOnlyItsOwnWindows() {

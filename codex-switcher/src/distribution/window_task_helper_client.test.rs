@@ -231,11 +231,16 @@ fn deadlines_grow_with_the_window_count() {
     );
     assert_eq!(
         WindowTaskCommand::Restore.timeout(3),
-        Duration::from_secs(240)
+        Duration::from_secs(30 + 3 * 88)
     );
     assert_eq!(
         WindowTaskCommand::Rehearse.timeout(0),
-        Duration::from_secs(110)
+        Duration::from_secs(30 + 76)
     );
     assert!(WindowTaskCommand::Probe.timeout(64) > WindowTaskCommand::Probe.timeout(1));
+    // Rechecking every other window makes the restore budget grow faster
+    // than the window count.
+    let ten = WindowTaskCommand::Restore.timeout(10).as_secs() - 30;
+    let five = WindowTaskCommand::Restore.timeout(5).as_secs() - 30;
+    assert!(ten > 2 * five, "{ten} vs {five}");
 }

@@ -98,7 +98,8 @@ fn windows_are_rechecked_after_recovery_even_when_recovery_fails() {
     let fixture = Fixture::new("recovery-failed");
     let mut session = fixture.session();
     let order = RefCell::new(Vec::new());
-    let targets = [A.to_string()];
+    // A target no window showed: recovery opens it with a task link.
+    let targets = ["01a00000-0000-4000-8000-00000000000c".to_string()];
     let result = RestartWindowTaskService::around_recovery_with(
         &mut session,
         &process(),
@@ -177,4 +178,41 @@ fn window_failures_are_added_to_other_restart_failures() {
         ),
         Some("recovery failed; windows".into())
     );
+}
+
+#[test]
+fn a_failure_after_shutdown_names_the_windows_left_behind() {
+    let fixture = Fixture::new("after-shutdown");
+    let message = RestartWindowTaskService::with_windows("launch failed".into(), fixture.session());
+    assert!(
+        message.starts_with("launch failed; Window tasks were not fully restored"),
+        "{message}"
+    );
+    assert!(
+        message.contains("never reached the window restore"),
+        "{message}"
+    );
+    assert_eq!(
+        RestartWindowTaskService::with_windows("launch failed".into(), None),
+        "launch failed"
+    );
+}
+
+#[test]
+fn no_recheck_runs_when_recovery_could_not_have_sent_a_link() {
+    let fixture = Fixture::new("no-recheck");
+    let mut session = fixture.session();
+    // Both recovery targets are captured tasks that the relaunch restore
+    // showed, so recovery sends no task link and no window is touched again.
+    let targets = [A.to_string(), B.to_string()];
+    RestartWindowTaskService::around_recovery_with(
+        &mut session,
+        &process(),
+        &targets,
+        || Ok(fixture.backend()),
+        || Ok(()),
+        || Ok(()),
+    )
+    .unwrap();
+    assert_eq!(fixture.modes(), ["relaunch"]);
 }

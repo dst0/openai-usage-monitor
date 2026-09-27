@@ -76,13 +76,21 @@ impl<'a> WindowTaskHelperClient<'a> {
         let status = Self::wait(&mut child, timeout);
         let stdout = stdout.recv_timeout(DRAIN_TIMEOUT).unwrap_or_default();
         let stderr = stderr.recv_timeout(DRAIN_TIMEOUT).unwrap_or_default();
-        let Some(status) = status else {
-            return Err(format!(
-                "{} timed out after {}s; the helper was stopped, and ChatGPT windows may have been \
-                 focused and the clipboard may hold a copied task link",
-                command.label(),
-                timeout.as_secs()
-            ));
+        let status = match status {
+            Ok(Some(status)) => status,
+            Ok(None) => {
+                return Err(format!(
+                    "{} timed out after {}s; the helper was stopped",
+                    command.label(),
+                    timeout.as_secs()
+                ))
+            }
+            Err(()) => {
+                return Err(format!(
+                    "{} could not be waited for; the helper was stopped",
+                    command.label()
+                ))
+            }
         };
         if !status.success() {
             return Err(
@@ -94,24 +102,29 @@ impl<'a> WindowTaskHelperClient<'a> {
             .map_err(|_| "Codex window restore helper returned invalid data".into())
     }
 
-    /// The exit status, or `None` after killing the helper's whole process
-    /// group once `timeout` passes.
-    fn wait(child: &mut Child, timeout: Duration) -> Option<std::process::ExitStatus> {
+    /// The exit status; `Ok(None)` after killing the helper's whole process
+    /// group once `timeout` passes, `Err` when its status cannot be read.
+    fn wait(child: &mut Child, timeout: Duration) -> Result<Option<std::process::ExitStatus>, ()> {
         let deadline = Instant::now() + timeout;
-        loop {
+        let outcome = loop {
             match child.try_wait() {
-                Ok(Some(status)) => return Some(status),
+                Ok(Some(status)) => return Ok(Some(status)),
                 Ok(None) if Instant::now() < deadline => thread::sleep(POLL_INTERVAL),
-                _ => break,
+                // One last look, so an exit right at the deadline counts.
+                Ok(None) => match child.try_wait() {
+                    Ok(Some(status)) => return Ok(Some(status)),
+                    _ => break Ok(None),
+                },
+                Err(_) => break Err(()),
             }
-        }
+        };
         if let Ok(group) = libc::pid_t::try_from(child.id()) {
             // SAFETY: signals only the group this call created for the helper.
             unsafe { libc::kill(-group, libc::SIGKILL) };
         }
         let _ = child.kill();
         let _ = child.wait();
-        None
+        outcome
     }
 
     fn drain(pipe: Option<impl Read + Send + 'static>) -> mpsc::Receiver<Vec<u8>> {

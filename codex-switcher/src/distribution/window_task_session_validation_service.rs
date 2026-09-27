@@ -29,13 +29,14 @@ const MIN_WINDOW_HEIGHT: f64 = 250.0;
 pub(super) struct WindowTaskSessionValidationService;
 
 impl WindowTaskSessionValidationService {
+    /// The snapshot and whether the helper put the user's clipboard back.
     pub(super) fn snapshot(
         response: &Value,
         expected: &ProcessIdentity,
-    ) -> Result<WindowTaskSnapshot, String> {
+    ) -> Result<(WindowTaskSnapshot, bool), String> {
         let fields = Self::exact(response, &SNAPSHOT_FIELDS, "Window task snapshot")?;
         Self::process(&fields["process"], expected)?;
-        Self::clipboard(&fields["clipboard_restored"])?;
+        let clipboard_restored = Self::clipboard(&fields["clipboard_restored"])?;
         let windows = fields["windows"]
             .as_array()
             .filter(|windows| !windows.is_empty() && windows.len() <= MAX_PROBED_WINDOWS)
@@ -56,10 +57,11 @@ impl WindowTaskSessionValidationService {
         if entries.iter().filter(|entry| entry.focused).count() > 1 {
             return Err("Window task snapshot has more than one focused window".into());
         }
-        Ok(WindowTaskSnapshot {
+        let snapshot = WindowTaskSnapshot {
             process: expected.clone(),
             windows: entries,
-        })
+        };
+        Ok((snapshot, clipboard_restored))
     }
 
     pub(super) fn restore(

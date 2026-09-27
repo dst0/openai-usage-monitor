@@ -35,11 +35,33 @@ extension SystemWindowTaskProbe: WindowTaskSessionSystem {
     return AXUIElementPerformAction(item, kAXPressAction as CFString) == .success
   }
 
-  /// Unreadable counts as full screen, so the snapshot fails closed.
+  /// A window that does not have the attribute is not full screen; any
+  /// other read failure counts as full screen, so the snapshot fails closed.
   func isFullScreen(_ window: AXUIElement) -> Bool {
-    guard let raw = copyAXValue(window, "AXFullScreen") else { return false }
-    guard CFGetTypeID(raw) == CFBooleanGetTypeID() else { return true }
-    return raw as! Bool
+    var raw: AnyObject?
+    switch AXUIElementCopyAttributeValue(window, "AXFullScreen" as CFString, &raw) {
+    case .success:
+      guard let raw, CFGetTypeID(raw) == CFBooleanGetTypeID() else { return true }
+      return raw as! Bool
+    case .attributeUnsupported, .noValue: return false
+    default: return true
+    }
+  }
+
+  func frontmostApplication() -> Int32? {
+    var raw: AnyObject?
+    var pid: pid_t = 0
+    guard AXUIElementCopyAttributeValue(
+      AXUIElementCreateSystemWide(), kAXFocusedApplicationAttribute as CFString, &raw) == .success,
+      let raw, CFGetTypeID(raw) == AXUIElementGetTypeID(),
+      AXUIElementGetPid(raw as! AXUIElement, &pid) == .success else { return nil }
+    return pid
+  }
+
+  func isDesktop(_ application: Int32) -> Bool { application == process.pid }
+
+  func activate(_ application: Int32) {
+    _ = NSRunningApplication(processIdentifier: application)?.activate(options: [])
   }
 
   private func newWindowItem() -> AXUIElement? {

@@ -15,6 +15,11 @@ protocol WindowTaskSessionSystem: WindowTaskProbeSystem {
   func pressNewWindow() -> Bool
   /// A full-screen window has its own Space and cannot be placed by frame.
   func isFullScreen(_ window: Window) -> Bool
+  /// The process of the system-wide frontmost application, if readable.
+  func frontmostApplication() -> Int32?
+  func isDesktop(_ application: Int32) -> Bool
+  /// Best effort; macOS may decline to activate another app.
+  func activate(_ application: Int32)
   /// The verified process's focused standard window, if any.
   func focusedWindow() -> Window?
   /// Every standard window of the verified process, without the WindowServer

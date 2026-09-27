@@ -93,30 +93,55 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
   /// After recovery, which may have sent its own task link to the most
   /// recently focused window. Only a planned window that now shows one of
   /// recovery's tasks instead of its own is navigated back; nothing is
-  /// created, moved, or closed, and focus returns to wherever it is now.
+  /// created, moved, or closed. A window without a unique planned frame, or
+  /// whose link cannot be read, is not on a recovery task link recovery sent
+  /// and is left as it is. Afterwards the app that was frontmost before the
+  /// recheck is activated again, or ChatGPT's focused window if it was.
   private func recheck(
     _ plan: [PlannedWindowTask], recoveryTasks: Set<String>
   ) throws -> WindowTaskRestoreResult {
     let (_, windows) = try reader.prepare()
     let frames = try frames(of: windows)
     let current = system.focusedWindow()
+    let frontmost = system.frontmostApplication()
     var verified = Array(repeating: true, count: plan.count)
+    var checked: [(window: System.Window, taskID: String)] = []
+    var movedBack: [Int: System.Window] = [:]
     reader.beginVisibleChanges()
+    defer {
+      if let frontmost, !system.isDesktop(frontmost) {
+        system.activate(frontmost)
+      } else {
+        refocus(current)
+      }
+    }
     do {
       for index in plan.indices {
         let matches = windows.indices.filter { framesMatch(frames[$0], plan[index].frame) }
         guard matches.count == 1 else { continue }
         let window = windows[matches[0]]
         try reader.focus(window)
-        guard let shown = try? reader.copyTaskLink(), shown != plan[index].taskID,
-          recoveryTasks.contains(shown) else { continue }
-        verified[index] = try show(plan[index].taskID, in: window, alreadyShowingIsPossible: false)
+        let shown = try? reader.copyTaskLink()
+        if let shown, shown != plan[index].taskID, recoveryTasks.contains(shown) {
+          verified[index] = try show(
+            plan[index].taskID, in: window, alreadyShowingIsPossible: false, unchanged: checked)
+          movedBack[index] = window
+        }
+        if verified[index], shown == plan[index].taskID || movedBack[index] != nil {
+          checked.append((window, plan[index].taskID))
+        }
       }
-      refocus(current)
+      // A later link must not have moved a window this pass already checked.
+      if !movedBack.isEmpty {
+        for (window, task) in checked {
+          guard let index = plan.firstIndex(where: { $0.taskID == task }) else { continue }
+          try reader.focus(window)
+          verified[index] = (try? reader.copyTaskLink()) == task
+        }
+      }
       return WindowTaskRestoreResult(
         verified: verified, clipboardRestored: reader.finishVisibleChanges())
     } catch {
-      refocus(current)
       _ = reader.finishVisibleChanges()
       throw error
     }

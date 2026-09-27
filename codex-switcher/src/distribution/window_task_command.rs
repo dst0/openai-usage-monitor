@@ -37,16 +37,18 @@ impl WindowTaskCommand {
         })
     }
 
-    /// How long the helper may run for `windows` windows. The per-window
-    /// budgets cover the helper's own waits: focus (1 s), each copy (1.5 s),
-    /// and for a restore New Window (up to 25 s) and two navigations of 12 s.
+    /// How long the helper may run for `windows` windows. The budgets cover
+    /// the helper's own waits: focus (1 s) and each copy (1.5 s); for a
+    /// restore or rehearsal also New Window (up to 25 s), two navigations of
+    /// up to 14 s, and, before a second link and in the final pass, one copy
+    /// from every other window, so that part grows with the window count.
     pub(super) fn timeout(self, windows: usize) -> Duration {
+        let windows = windows.max(1) as u64;
         let per_window = match self {
             Self::Probe | Self::Snapshot => 5,
-            Self::Restore => 70,
-            Self::Rehearse => 80,
+            Self::Restore | Self::Rehearse => 70 + 6 * windows,
         };
-        Duration::from_secs(30 + per_window * windows.max(1) as u64)
+        Duration::from_secs(30 + per_window * windows)
     }
 
     /// Names the operation in every failure the helper reports.

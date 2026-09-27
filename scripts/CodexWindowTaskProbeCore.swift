@@ -90,6 +90,9 @@ protocol WindowTaskProbeSystem {
   /// Writes the preserved items back only while the change count still
   /// equals `expectedChangeCount`, so a newer write by another app wins.
   func restoreClipboard(expectedChangeCount: Int) -> Bool
+  /// Whether the clipboard now holds exactly a canonical task link, read
+  /// only when its types allow it.
+  func pasteboardHoldsTaskLink() -> Bool
 }
 
 /// Focus and copy steps shared by every window-task command. Task IDs stay
@@ -174,12 +177,26 @@ final class WindowTaskReader<System: WindowTaskProbeSystem> {
   /// exactly one write that offers unconcealed plain text.
   func copyTaskLink() throws -> String {
     let before = system.pasteboardChangeCount()
-    if let known = lastKnownChange, before != known {
+    if let known = lastKnownChange, before != known, !system.pasteboardHoldsTaskLink() {
+      // Another app wrote since this run last looked: that newer copy is
+      // what comes back. A task link there is ChatGPT's late answer to an
+      // earlier shortcut, not the user's copy, so it is not kept.
       system.preserveClipboard()
       preservedChange = before
       lastOwnChange = nil
     }
-    defer { lastKnownChange = system.pasteboardChangeCount() }
+    lastKnownChange = before
+    do {
+      let task = try copyOnce(before: before)
+      lastKnownChange = lastOwnChange
+      return task
+    } catch {
+      lastKnownChange = system.pasteboardChangeCount()
+      throw error
+    }
+  }
+
+  private func copyOnce(before: Int) throws -> String {
     guard system.postCopyShortcut() else { throw WindowTaskProbeFailure.copyLinkEventFailed }
     _ = waitFor(probeClipboardTimeout) {
       let count = system.pasteboardChangeCount()

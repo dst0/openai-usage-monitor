@@ -41,8 +41,15 @@ fn the_switch_worker_gets_the_flag_only_when_the_user_requested_it() {
     );
     for trigger in [SwitchTrigger::Auto, SwitchTrigger::Shim] {
         assert!(Args::switch("work", trigger, true).is_err());
-        assert!(Args::check_window_task_request(trigger, true).is_err());
-        assert!(Args::check_window_task_request(trigger, false).is_ok());
+        assert!(Args::check_window_task_request(trigger.as_str(), true).is_err());
+        assert!(Args::check_window_task_request(trigger.as_str(), false).is_ok());
     }
-    assert!(Args::check_window_task_request(SwitchTrigger::User, true).is_ok());
+    assert!(Args::check_window_task_request("user", true).is_ok());
+    // An unknown trigger parses as a user switch but cannot ask for it.
+    for raw in ["automatic", "", "USER", "user "] {
+        assert!(
+            Args::check_window_task_request(raw, true).is_err(),
+            "{raw:?}"
+        );
+    }
 }

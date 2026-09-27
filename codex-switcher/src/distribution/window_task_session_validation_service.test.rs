@@ -27,11 +27,12 @@ fn snapshot(windows: Vec<Value>) -> Value {
 
 #[test]
 fn a_complete_snapshot_is_parsed_in_capture_order() {
-    let parsed = WindowTaskSessionValidationService::snapshot(
+    let (parsed, clipboard_restored) = WindowTaskSessionValidationService::snapshot(
         &snapshot(vec![window(52, 0.0, A, false), window(31, 950.0, B, true)]),
         &expected(),
     )
     .unwrap();
+    assert!(clipboard_restored);
     assert_eq!(parsed.process, expected());
     assert_eq!(
         parsed
@@ -234,7 +235,7 @@ fn fixture(name: &str) -> Value {
 /// `tests/CodexWindowTaskRecordsTests.swift`.
 #[test]
 fn the_helper_records_rust_validates_match_the_shared_fixtures() {
-    let snapshot =
+    let (snapshot, _) =
         WindowTaskSessionValidationService::snapshot(&fixture("snapshot.json"), &expected())
             .unwrap();
     assert_eq!(snapshot.window_ids(), vec![31, 32]);

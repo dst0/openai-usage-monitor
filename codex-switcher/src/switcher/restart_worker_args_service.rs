@@ -30,7 +30,7 @@ impl RestartWorkerArgsService {
         trigger: SwitchTrigger,
         restore_window_tasks: bool,
     ) -> Result<Vec<String>, String> {
-        Self::check_window_task_request(trigger, restore_window_tasks)?;
+        Self::check_window_task_request(trigger.as_str(), restore_window_tasks)?;
         let mut args = vec![
             "switch".to_string(),
             account.to_string(),
@@ -46,12 +46,14 @@ impl RestartWorkerArgsService {
     }
 
     /// Window-task restoration focuses the user's windows and uses their
-    /// clipboard, so only the user may ask for it.
+    /// clipboard, so only the user may ask for it. `trigger` is the raw
+    /// `--trigger` text: an unknown value, which parses as a user switch,
+    /// is refused too.
     pub(crate) fn check_window_task_request(
-        trigger: SwitchTrigger,
+        trigger: &str,
         restore_window_tasks: bool,
     ) -> Result<(), String> {
-        if restore_window_tasks && trigger != SwitchTrigger::User {
+        if restore_window_tasks && trigger != SwitchTrigger::User.as_str() {
             return Err(
                 "--restore-window-tasks is accepted only from a user-triggered switch".into(),
             );

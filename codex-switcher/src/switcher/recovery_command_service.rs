@@ -119,7 +119,8 @@ pub fn restart_and_recover(
     // cannot be falsely verified by work flushed during shutdown.
     if let Err(error) = crate::recovery::save_pending(&targets) {
         drop(banner);
-        return Err(CodexAvailabilityService::relaunch_previous_state(error));
+        let error = CodexAvailabilityService::relaunch_previous_state(error);
+        return Err(RestartWindowTaskService::with_windows(error, window_tasks));
     }
     let current_account = (|| -> Result<String, String> {
         let mut accounts = crate::storage::load_accounts()?;
@@ -133,20 +134,23 @@ pub fn restart_and_recover(
         Ok(id) => id,
         Err(error) => {
             drop(banner);
-            return Err(CodexAvailabilityService::relaunch_previous_state(error));
+            let error = CodexAvailabilityService::relaunch_previous_state(error);
+            return Err(RestartWindowTaskService::with_windows(error, window_tasks));
         }
     };
     if current_account != cli_account_id {
         drop(banner);
-        return Err(CodexAvailabilityService::relaunch_previous_state(
+        let error = CodexAvailabilityService::relaunch_previous_state(
             "CLI account changed during Desktop restart".into(),
-        ));
+        );
+        return Err(RestartWindowTaskService::with_windows(error, window_tasks));
     }
     let launched_pids = match launch_codex_app() {
         Ok(pids) => pids,
         Err(error) => {
             drop(banner);
-            return Err(CodexAvailabilityService::keep_after_failure(error));
+            let error = CodexAvailabilityService::keep_after_failure(error);
+            return Err(RestartWindowTaskService::with_windows(error, window_tasks));
         }
     };
     crate::runtime_print!("RESTART_LAUNCHED new_pids={launched_pids:?}");
