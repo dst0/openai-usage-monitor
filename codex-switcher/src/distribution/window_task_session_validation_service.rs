@@ -11,7 +11,7 @@ use std::collections::HashSet;
 const SNAPSHOT_FIELDS: [&str; 3] = ["process", "windows", "clipboard_restored"];
 const ENTRY_FIELDS: [&str; 4] = ["window_id", "frame", "task_id", "focused"];
 const FRAME_FIELDS: [&str; 4] = ["x", "y", "width", "height"];
-const RESTORE_FIELDS: [&str; 4] = ["process", "window_ids", "verified", "clipboard_restored"];
+const RESTORE_FIELDS: [&str; 3] = ["process", "verified", "clipboard_restored"];
 const REHEARSAL_FIELDS: [&str; 4] = [
     "process",
     "window_ids",
@@ -70,19 +70,15 @@ impl WindowTaskSessionValidationService {
         let fields = Self::exact(response, &RESTORE_FIELDS, "Window task restore")?;
         Self::process(&fields["process"], expected)?;
         let clipboard_restored = Self::clipboard(&fields["clipboard_restored"])?;
-        let window_ids = Self::window_ids(&fields["window_ids"])?;
         let verified: Vec<bool> = fields["verified"]
             .as_array()
             .map(|flags| flags.iter().filter_map(Value::as_bool).collect())
             .unwrap_or_default();
-        if window_ids.len() != planned
-            || verified.len() != planned
-            || fields["verified"].as_array().map(Vec::len) != Some(planned)
+        if verified.len() != planned || fields["verified"].as_array().map(Vec::len) != Some(planned)
         {
             return Err("Window task restore does not match its plan".into());
         }
         Ok(WindowTaskRestoreReport {
-            window_ids,
             verified,
             clipboard_restored,
         })

@@ -2,17 +2,27 @@ use super::system_window_restore_backend::SystemWindowRestoreBackend;
 use super::window_restore_process_identity::ProcessIdentity;
 use super::window_task_command::WindowTaskCommand;
 use super::window_task_probe_validation_service::WindowTaskProbeValidationService;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 const HELPER_REJECTED: &str = "Codex window restore helper rejected the request";
 /// The largest restore plan the helper reads from stdin.
 const MAX_INPUT_BYTES: usize = 256 * 1024;
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// After the helper's group is killed its pipes close; readers get this
+/// long to drain before the call returns without them.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Runs one window-task command of the native helper for an exact process.
 /// Input, such as a restore plan with task IDs, goes through stdin, never
-/// argv, so it does not appear in the process table.
+/// argv. The helper runs in its own process group and is killed with every
+/// descendant when its deadline passes, so a pasteboard prompt nobody answers
+/// or an unresponsive Accessibility server cannot hold a restart forever.
 pub(super) struct WindowTaskHelperClient<'a> {
     helper: &'a Path,
 }
@@ -29,6 +39,7 @@ impl<'a> WindowTaskHelperClient<'a> {
         command: WindowTaskCommand,
         process: &ProcessIdentity,
         input: Option<&[u8]>,
+        timeout: Duration,
     ) -> Result<serde_json::Value, String> {
         if input.is_some_and(|input| input.len() > MAX_INPUT_BYTES) {
             return Err(format!("{} plan is too large", command.label()));
@@ -43,6 +54,7 @@ impl<'a> WindowTaskHelperClient<'a> {
                 "--allow-focus-and-clipboard",
                 "yes",
             ])
+            .process_group(0)
             .stdin(if input.is_some() {
                 Stdio::piped()
             } else {
@@ -53,20 +65,65 @@ impl<'a> WindowTaskHelperClient<'a> {
             .spawn()
             .map_err(|_| "Codex window restore helper could not start".to_string())?;
         if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+            let input = input.to_vec();
             // A helper that exits without reading is reported by its status.
-            let _ = stdin.write_all(input);
+            thread::spawn(move || {
+                let _ = stdin.write_all(&input);
+            });
         }
-        let output = child
-            .wait_with_output()
-            .map_err(|_| "Codex window restore helper could not finish".to_string())?;
-        if !output.status.success() {
+        let stdout = Self::drain(child.stdout.take());
+        let stderr = Self::drain(child.stderr.take());
+        let status = Self::wait(&mut child, timeout);
+        let stdout = stdout.recv_timeout(DRAIN_TIMEOUT).unwrap_or_default();
+        let stderr = stderr.recv_timeout(DRAIN_TIMEOUT).unwrap_or_default();
+        let Some(status) = status else {
+            return Err(format!(
+                "{} timed out after {}s; the helper was stopped, and ChatGPT windows may have been \
+                 focused and the clipboard may hold a copied task link",
+                command.label(),
+                timeout.as_secs()
+            ));
+        };
+        if !status.success() {
             return Err(
-                WindowTaskProbeValidationService::failure(&output.stderr, command.label())
+                WindowTaskProbeValidationService::failure(&stderr, command.label())
                     .unwrap_or_else(|| HELPER_REJECTED.into()),
             );
         }
-        serde_json::from_slice(&output.stdout)
+        serde_json::from_slice(&stdout)
             .map_err(|_| "Codex window restore helper returned invalid data".into())
+    }
+
+    /// The exit status, or `None` after killing the helper's whole process
+    /// group once `timeout` passes.
+    fn wait(child: &mut Child, timeout: Duration) -> Option<std::process::ExitStatus> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return Some(status),
+                Ok(None) if Instant::now() < deadline => thread::sleep(POLL_INTERVAL),
+                _ => break,
+            }
+        }
+        if let Ok(group) = libc::pid_t::try_from(child.id()) {
+            // SAFETY: signals only the group this call created for the helper.
+            unsafe { libc::kill(-group, libc::SIGKILL) };
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        None
+    }
+
+    fn drain(pipe: Option<impl Read + Send + 'static>) -> mpsc::Receiver<Vec<u8>> {
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut bytes);
+            }
+            let _ = sender.send(bytes);
+        });
+        receiver
     }
 }
 

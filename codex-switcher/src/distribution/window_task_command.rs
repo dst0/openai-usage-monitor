@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 /// The native helper's window-task commands. Each one focuses ChatGPT
 /// windows and lets ChatGPT write task links to the clipboard, so the helper
 /// refuses each unless it receives `--allow-focus-and-clipboard yes`.
@@ -33,6 +35,18 @@ impl WindowTaskCommand {
                 .strip_prefix(command.label())
                 .is_some_and(|rest| rest.starts_with(" failed: "))
         })
+    }
+
+    /// How long the helper may run for `windows` windows. The per-window
+    /// budgets cover the helper's own waits: focus (1 s), each copy (1.5 s),
+    /// and for a restore New Window (up to 25 s) and two navigations of 12 s.
+    pub(super) fn timeout(self, windows: usize) -> Duration {
+        let per_window = match self {
+            Self::Probe | Self::Snapshot => 5,
+            Self::Restore => 70,
+            Self::Rehearse => 80,
+        };
+        Duration::from_secs(30 + per_window * windows.max(1) as u64)
     }
 
     /// Names the operation in every failure the helper reports.

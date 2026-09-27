@@ -333,6 +333,12 @@ struct CodexWindowTaskProbeCoreTests {
     foreign.foreignWriteAfterPosts = 2
     guard case .success(let result) = run(foreign) else { fatalError("probe failed") }
     precondition(!result.clipboardRestored && foreign.text == "an unrelated later copy")
+    // A copy made by the user between two probe copies is what comes back.
+    let between = FakeProbeSystem()
+    between.copies = [.write(first), .write(second)]
+    between.foreignWriteAfterPosts = 1
+    guard case .success(let kept) = run(between) else { fatalError("probe failed") }
+    precondition(kept.clipboardRestored && between.text == "an unrelated later copy")
     // Nothing was copied, so there is nothing to put back.
     let unfocused = FakeProbeSystem()
     unfocused.grantsFocus = false

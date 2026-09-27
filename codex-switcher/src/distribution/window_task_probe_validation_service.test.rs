@@ -256,3 +256,15 @@ fn after_focus_marker_matches_the_native_helper() {
     assert!(helper_source("CodexWindowTaskProbeCore.swift")
         .contains("    system.beginVisibleChanges()\n"));
 }
+
+#[test]
+fn the_probe_record_matches_the_shared_fixture() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../tests/fixtures/window-tasks/probe-result.json");
+    let response: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(
+        WindowTaskProbeValidationService::parse(&response, &expected()),
+        Ok(report(2, true))
+    );
+}

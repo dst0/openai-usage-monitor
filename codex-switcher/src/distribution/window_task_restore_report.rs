@@ -1,9 +1,9 @@
-/// What the helper verified after placing each planned window: every
-/// window's WindowServer ID in plan order, and whether that window copied
-/// its planned task link.
+/// What the helper verified for each planned window, in plan order: after
+/// the relaunch, that the window is on its frame and copied its planned
+/// task link; after recovery, that recovery did not leave it on one of its
+/// own tasks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WindowTaskRestoreReport {
-    pub window_ids: Vec<u32>,
     pub verified: Vec<bool>,
     pub clipboard_restored: bool,
 }

@@ -12,6 +12,8 @@ struct CodexPreservedClipboardTests {
     neverReadsOrRestoresPrivateContents()
     skipsAClipboardOverTheLimit()
     restoresAnEmptyClipboardOnlyOnce()
+    aPrivateMarkerOnAnyItemBlocksPreservation()
+    aLaterPreserveReplacesTheEarlierItems()
     print("Preserved clipboard passed")
   }
 
@@ -101,5 +103,32 @@ struct CodexPreservedClipboardTests {
     let again = link(board)
     precondition(!clipboard.restore(board, expectedChangeCount: again))
     precondition(board.string(forType: .string)?.hasPrefix("codex://threads/") == true)
+  }
+
+  static func aPrivateMarkerOnAnyItemBlocksPreservation() {
+    for marker in ["de.petermaurer.TransientPasteboardType", "com.agilebits.onepassword"] {
+      let board = pasteboard()
+      defer { board.releaseGlobally() }
+      write(board, [[.string: Data("plain".utf8)], [NSPasteboard.PasteboardType(marker): Data([1])]])
+      let clipboard = PreservedClipboard()
+      clipboard.preserve(board)
+      precondition(!clipboard.restore(board, expectedChangeCount: link(board)), marker)
+    }
+  }
+
+  static func aLaterPreserveReplacesTheEarlierItems() {
+    let board = pasteboard()
+    defer { board.releaseGlobally() }
+    write(board, [[.string: Data("first".utf8)]])
+    let clipboard = PreservedClipboard()
+    clipboard.preserve(board)
+    write(board, [[.string: Data("secret".utf8), NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"): Data()]])
+    clipboard.preserve(board)
+    // The newer contents were private, so nothing, not "first", comes back.
+    precondition(!clipboard.restore(board, expectedChangeCount: link(board)))
+    write(board, [[.string: Data("second".utf8)]])
+    clipboard.preserve(board)
+    precondition(clipboard.restore(board, expectedChangeCount: link(board)))
+    precondition(board.string(forType: .string) == "second")
   }
 }

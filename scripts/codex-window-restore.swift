@@ -2,11 +2,6 @@ import ApplicationServices
 import Cocoa
 import Darwin
 
-struct ProcessRecord: Codable {
-  let pid: Int32
-  let birth_id: String
-}
-
 struct Rect: Codable {
   let x: CGFloat
   let y: CGFloat

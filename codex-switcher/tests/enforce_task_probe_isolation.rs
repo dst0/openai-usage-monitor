@@ -22,6 +22,9 @@ const PROBE_TEST: &str = "codex-switcher/src/distribution/window_task_probe_serv
 const RESTART_SESSION: &str = "codex-switcher/src/distribution/window_task_restart_session.rs";
 const RESTART_TEST: &str = "codex-switcher/src/distribution/window_task_restart_session.test.rs";
 const RESTART_STEPS: &str = "codex-switcher/src/switcher/restart_window_task_service.rs";
+const RESTART_STEPS_TEST: &str = "codex-switcher/src/switcher/restart_window_task_service.test.rs";
+const WORKER_ARGS: &str = "codex-switcher/src/switcher/restart_worker_args_service.rs";
+const WORKER_ARGS_TEST: &str = "codex-switcher/src/switcher/restart_worker_args_service.test.rs";
 const RESTART_COMMAND: &str = "codex-switcher/src/switcher/recovery_command_service.rs";
 const SWITCH_SERVICE: &str = "codex-switcher/src/switcher/account_switch_service.rs";
 const SWITCH_COMMAND: &str = "codex-switcher/src/switch_command_service.rs";
@@ -40,7 +43,7 @@ const SWIFT_SESSION: &str = "scripts/CodexWindowTaskSession.swift";
 
 /// (token, the only repository files that may contain it). Tokens are
 /// compared with whitespace removed because rustfmt may wrap a call.
-const RULES: [(&str, &[&str]); 23] = [
+const RULES: [(&str, &[&str]); 31] = [
     // Explicit diagnostics.
     (
         "\"probe-selected-tasks\"",
@@ -100,7 +103,34 @@ const RULES: [(&str, &[&str]); 23] = [
     ),
     (
         "WindowTaskRestartSession::capture(",
-        &[RESTART_STEPS, RESTART_TEST],
+        &[RESTART_STEPS, RESTART_TEST, RESTART_STEPS_TEST],
+    ),
+    // The entry points that carry the request take it as a plain boolean,
+    // so every caller is pinned: only CLI parsing may pass it.
+    ("restart_and_recover(", &[DISPATCHER, RESTART_COMMAND]),
+    ("switch_to_account(", &[SWITCH_COMMAND, SWITCH_SERVICE]),
+    ("SwitchCommandService::switch_account(", &[DISPATCHER]),
+    // Both restarts forward the user's request itself, never a constant,
+    // and both restore around recovery with the Desktop IPC readiness wait.
+    (
+        "RestartWindowTaskService::capture_if_requested(restore_window_tasks,&expected)",
+        &[RESTART_COMMAND, SWITCH_SERVICE],
+    ),
+    (
+        "RestartWorkerArgsService::restart(delay_seconds,primary.as_deref(),restore_window_tasks)",
+        &[RESTART_COMMAND],
+    ),
+    (
+        "RestartWorkerArgsService::switch(&account,switch_trigger,restore_window_tasks,)",
+        &[SWITCH_COMMAND],
+    ),
+    (
+        "switcher::switch_to_account(&account,should_restart,notify,switch_trigger,restore_window_tasks,)",
+        &[SWITCH_COMMAND],
+    ),
+    (
+        "RestartWindowTaskService::around_recovery(",
+        &[RESTART_COMMAND, SWITCH_SERVICE, RESTART_STEPS_TEST],
     ),
     (
         "RestartWindowTaskService::capture_if_requested(",
@@ -115,7 +145,8 @@ const RULES: [(&str, &[&str]); 23] = [
         &[
             RESTART_SESSION,
             RESTART_STEPS,
-            RESTART_COMMAND,
+            WORKER_ARGS,
+            WORKER_ARGS_TEST,
             SWITCH_COMMAND,
             SHUTDOWN_GUARD,
             SHUTDOWN_GUARD_TEST,
@@ -134,6 +165,7 @@ const RULES: [(&str, &[&str]); 23] = [
             SWITCH_COMMAND,
             RESTART_COMMAND,
             SWITCH_SERVICE,
+            WORKER_ARGS,
         ],
     ),
     (

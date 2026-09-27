@@ -422,6 +422,7 @@ if [ -f "${PROJECT_DIR}/scripts/codex-window-restore.swift" ]; then
         "${PROJECT_DIR}/scripts/CodexWindowTaskSessionSystem.swift" \
         "${PROJECT_DIR}/scripts/CodexWindowTaskSessionCore.swift" \
         "${PROJECT_DIR}/scripts/CodexPreservedClipboard.swift" \
+        "${PROJECT_DIR}/scripts/CodexWindowTaskRecords.swift" \
         "${PROJECT_DIR}/scripts/CodexWindowTaskProbe.swift" \
         "${PROJECT_DIR}/scripts/CodexWindowTaskSession.swift" \
         "${PROJECT_DIR}/scripts/codex-window-restore.swift"

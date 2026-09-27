@@ -77,6 +77,7 @@ pub mod window_task_probe_service;
 mod window_task_probe_validation_service;
 pub mod window_task_report;
 pub mod window_task_restart_session;
+pub mod window_task_restore_phase;
 pub mod window_task_restore_report;
 mod window_task_session_validation_service;
 pub mod window_task_snapshot;
@@ -124,6 +125,7 @@ pub use window_restore_tolerance::RestoreTolerance;
 pub use window_task_probe_service::WindowTaskProbeService;
 pub use window_task_report::WindowTaskReport;
 pub use window_task_restart_session::WindowTaskRestartSession;
+pub use window_task_restore_phase::WindowTaskRestorePhase;
 
 #[cfg(test)]
 pub mod test_account_spec;

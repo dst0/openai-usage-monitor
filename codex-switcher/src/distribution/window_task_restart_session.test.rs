@@ -77,8 +77,12 @@ fn snapshot_body(birth: &str) -> String {
 
 fn restore_body(verified: &str) -> String {
     format!(
-        "printf '%s' '{{\"process\":{{\"pid\":5151,\"birth_id\":\"{RELAUNCHED_BIRTH}\"}},\"window_ids\":[41,42],\"verified\":{verified},\"clipboard_restored\":true}}'"
+        "printf '%s' '{{\"process\":{{\"pid\":5151,\"birth_id\":\"{RELAUNCHED_BIRTH}\"}},\"verified\":{verified},\"clipboard_restored\":true}}'"
     )
+}
+
+fn relaunched() -> ProcessIdentity {
+    ProcessIdentity::new(5151, RELAUNCHED_BIRTH).unwrap()
 }
 
 fn capture(
@@ -166,11 +170,16 @@ fn capture_fails_closed_on_any_mismatch_or_helper_failure() {
 }
 
 #[test]
-fn restore_sends_the_plan_to_the_relaunched_process_through_stdin() {
+fn restore_sends_the_plan_to_the_pinned_relaunched_process_through_stdin() {
     let fixture = Fixture::new("restore");
-    let mut backend = fixture.backend(&snapshot_body(BIRTH), &restore_body("[true,true]"));
+    let backend = fixture.backend(&snapshot_body(BIRTH), &restore_body("[true,true]"));
     let mut session = capture(&fixture, &backend).unwrap();
-    session.restore(5151, &mut backend, || Ok(()), "after relaunch");
+    session.restore(
+        &relaunched(),
+        &backend,
+        || Ok(()),
+        WindowTaskRestorePhase::AfterRelaunch,
+    );
     assert_eq!(
         std::fs::read_to_string(fixture.path("restore-args")).unwrap(),
         format!("restore-window-tasks --expected-pid 5151 --expected-birth {RELAUNCHED_BIRTH} --allow-focus-and-clipboard yes\n")
@@ -181,20 +190,40 @@ fn restore_sends_the_plan_to_the_relaunched_process_through_stdin() {
     assert_eq!(plan["windows"][1]["task_id"], B);
     assert_eq!(plan["windows"][1]["frame"]["x"], 950.0);
     assert_eq!(plan["focus_index"], 1);
+    assert_eq!(plan["mode"], "relaunch");
+    // After recovery only recovery's own tasks may be moved back.
+    let recovery = [B.to_string()];
+    session.restore(
+        &relaunched(),
+        &backend,
+        || Ok(()),
+        WindowTaskRestorePhase::AfterRecovery(&recovery),
+    );
+    let plan: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixture.path("plan")).unwrap()).unwrap();
+    assert_eq!(plan["mode"], "recheck");
+    assert_eq!(plan["recovery_task_ids"], serde_json::json!([B]));
+    assert!(!session.clipboard_kept());
     assert_eq!(session.finish(), Ok(()));
 }
 
 #[test]
 fn restore_failures_are_recorded_without_task_ids() {
     let fixture = Fixture::new("restore-fail");
-    let mut backend = fixture.backend(&snapshot_body(BIRTH), &restore_body("[true,false]"));
+    let backend = fixture.backend(&snapshot_body(BIRTH), &restore_body("[true,false]"));
     let mut session = capture(&fixture, &backend).unwrap();
-    session.restore(5151, &mut backend, || Ok(()), "after relaunch");
     session.restore(
-        5151,
-        &mut backend,
+        &relaunched(),
+        &backend,
+        || Ok(()),
+        WindowTaskRestorePhase::AfterRelaunch,
+    );
+    let recovery = [A.to_string()];
+    session.restore(
+        &relaunched(),
+        &backend,
         || Err("Desktop IPC is not ready".into()),
-        "after recovery",
+        WindowTaskRestorePhase::AfterRecovery(&recovery),
     );
     assert_eq!(
         fixture.restore_calls(),
@@ -202,7 +231,7 @@ fn restore_failures_are_recorded_without_task_ids() {
         "an unready Desktop gets no task link"
     );
     session.record_failure(
-        "after recovery",
+        WindowTaskRestorePhase::AfterRecovery(&recovery),
         "Codex window restore helper is not installed",
     );
     let error = session.finish().unwrap_err();
@@ -219,12 +248,65 @@ fn restore_failures_are_recorded_without_task_ids() {
 }
 
 #[test]
+fn captured_windows_that_never_reached_a_restore_are_a_failure() {
+    let fixture = Fixture::new("never-restored");
+    let backend = fixture.backend(&snapshot_body(BIRTH), &restore_body("[true,true]"));
+    let session = capture(&fixture, &backend).unwrap();
+    let error = session.finish().unwrap_err();
+    assert!(
+        error.contains("the relaunched Desktop never reached the window restore"),
+        "{error}"
+    );
+    // A recovery pass alone does not count as the relaunch restore.
+    let mut rechecked = capture(&fixture, &backend).unwrap();
+    rechecked.restore(
+        &relaunched(),
+        &backend,
+        || Ok(()),
+        WindowTaskRestorePhase::AfterRecovery(&[]),
+    );
+    assert!(rechecked.finish().is_err());
+    // A relaunch pass that could not start still counts as reached.
+    let mut missing = capture(&fixture, &backend).unwrap();
+    missing.record_failure(
+        WindowTaskRestorePhase::AfterRelaunch,
+        "helper is not installed",
+    );
+    let error = missing.finish().unwrap_err();
+    assert!(!error.contains("never reached"), "{error}");
+}
+
+#[test]
+fn a_clipboard_left_as_a_link_is_reported() {
+    let fixture = Fixture::new("clipboard");
+    let body = restore_body("[true,true]").replace(
+        "\"clipboard_restored\":true",
+        "\"clipboard_restored\":false",
+    );
+    let backend = fixture.backend(&snapshot_body(BIRTH), &body);
+    let mut session = capture(&fixture, &backend).unwrap();
+    session.restore(
+        &relaunched(),
+        &backend,
+        || Ok(()),
+        WindowTaskRestorePhase::AfterRelaunch,
+    );
+    assert!(session.clipboard_kept());
+    assert_eq!(session.finish(), Ok(()));
+}
+
+#[test]
 fn a_keymap_changed_before_restore_stops_the_shortcut() {
     let fixture = Fixture::new("restore-keymap");
-    let mut backend = fixture.backend(&snapshot_body(BIRTH), &restore_body("[true,true]"));
+    let backend = fixture.backend(&snapshot_body(BIRTH), &restore_body("[true,true]"));
     let mut session = capture(&fixture, &backend).unwrap();
     std::fs::write(fixture.home().join("keybindings.json"), "[]").unwrap();
-    session.restore(5151, &mut backend, || Ok(()), "after relaunch");
+    session.restore(
+        &relaunched(),
+        &backend,
+        || Ok(()),
+        WindowTaskRestorePhase::AfterRelaunch,
+    );
     assert_eq!(fixture.restore_calls(), 0);
     assert!(session.finish().unwrap_err().contains(KEYMAP_CHANGED));
 }
@@ -232,15 +314,81 @@ fn a_keymap_changed_before_restore_stops_the_shortcut() {
 #[test]
 fn a_named_restore_failure_is_reported_for_its_phase() {
     let fixture = Fixture::new("restore-named");
-    let mut backend = fixture.backend(
+    let backend = fixture.backend(
         &snapshot_body(BIRTH),
         "printf 'NEW_WINDOW_UNAVAILABLE after-focus\\n' >&2; exit 1",
     );
     let mut session = capture(&fixture, &backend).unwrap();
-    session.restore(5151, &mut backend, || Ok(()), "after relaunch");
+    session.restore(
+        &relaunched(),
+        &backend,
+        || Ok(()),
+        WindowTaskRestorePhase::AfterRelaunch,
+    );
     let error = session.finish().unwrap_err();
     assert!(
         error.contains("after relaunch: Window task restore failed: NEW_WINDOW_UNAVAILABLE"),
         "{error}"
     );
+}
+
+#[test]
+fn capture_compares_window_ids_not_just_their_count() {
+    let fixture = Fixture::new("capture-ids");
+    let backend = fixture.backend(&snapshot_body(BIRTH), "exit 9");
+    assert_eq!(
+        WindowTaskRestartSession::capture(&expected(), Ok(fixture.home()), &backend, &[31, 33])
+            .err(),
+        Some(WINDOWS_CHANGED.into())
+    );
+}
+
+#[test]
+fn a_valid_keymap_edit_during_capture_or_restore_still_voids_it() {
+    // Even an edit that leaves Copy deeplink alone changes what ChatGPT
+    // re-read while the helper focused its windows.
+    let fixture = Fixture::new("keymap-valid-edit");
+    let keymap = fixture.home().join("keybindings.json");
+    let edit = format!(
+        "printf '%s' '[{{\"command\":\"toggleSidebar\",\"key\":\"CmdOrCtrl+B\"}}]' > '{}'; touch -m -t 203001010000 '{}'; ",
+        keymap.display(),
+        keymap.display()
+    );
+    let edited = fixture.backend(&(edit.clone() + &snapshot_body(BIRTH)), "exit 9");
+    assert_eq!(
+        capture(&fixture, &edited).err(),
+        Some(KEYMAP_CHANGED.into())
+    );
+    std::fs::remove_file(&keymap).unwrap();
+    let backend = fixture.backend(
+        &snapshot_body(BIRTH),
+        &(edit + &restore_body("[true,true]")),
+    );
+    let mut session = capture(&fixture, &backend).unwrap();
+    session.restore(
+        &relaunched(),
+        &backend,
+        || Ok(()),
+        WindowTaskRestorePhase::AfterRelaunch,
+    );
+    assert_eq!(fixture.restore_calls(), 1);
+    assert!(session.finish().unwrap_err().contains(KEYMAP_CHANGED));
+}
+
+#[test]
+fn a_restore_answered_by_another_process_is_rejected() {
+    let fixture = Fixture::new("restore-identity");
+    let body = restore_body("[true,true]").replace(RELAUNCHED_BIRTH, "1726789999:000002");
+    let backend = fixture.backend(&snapshot_body(BIRTH), &body);
+    let mut session = capture(&fixture, &backend).unwrap();
+    session.restore(
+        &relaunched(),
+        &backend,
+        || Ok(()),
+        WindowTaskRestorePhase::AfterRelaunch,
+    );
+    assert!(session
+        .finish()
+        .unwrap_err()
+        .contains("Window task helper process identity changed"));
 }

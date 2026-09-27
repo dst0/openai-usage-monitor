@@ -1,177 +1,38 @@
 import CoreGraphics
 import Foundation
 
-/// A scripted Desktop for `WindowTaskSession`: windows with frames and
-/// selected tasks, keyboard focus, Desktop's most recently focused window
-/// (where a task link lands), File > New Window, and a pasteboard. It models
-/// the routing inspected in ChatGPT 26.924.22138, not a live app.
-final class FakeDesktop: WindowTaskSessionSystem {
-  typealias Window = Int
-  var log: [String] = []
-  var clock: TimeInterval = 0
-  var frames: [Int: CGRect] = [:]
-  /// The task each window shows; a window without one is on the home page.
-  var tasks: [Int: String] = [:]
-  var alive: [Int] = []
-  var focused: Int?
-  var lastActive: Int?
-  var nextWindow = 0
-  var persistedFrame = CGRect(x: 10, y: 40, width: 1200, height: 800)
-  var newWindowAvailable = true
-  var newWindowsAreKeyed = true
-  var closeSucceeds = true
-  var setFrameSucceeds = true
-  /// Seconds before a link lands; nil means Desktop never mounts the task.
-  var navigationDelay: TimeInterval? = 1
-  /// Sends every link to this window instead of the most recently focused.
-  var linksGoTo: Int?
-  /// Moves this window to this task whenever a link lands in another window.
-  var crossTalk: (window: Int, task: String)?
-  /// Moves keyboard focus after the given copy shortcut, as a click would.
-  var focusMove: (afterCopy: Int, to: Int)?
-  var copyPosts = 0
-  /// New Window opens a second, unexpected window as well.
-  var newWindowOpensTwo = false
-  var pending: [(at: TimeInterval, window: Int, task: String)] = []
-  var linksSent: [(focused: Int?, task: String)] = []
-  var changeCount = 500
-  var text: String? = "user clipboard"
-  var types = ["public.utf8-plain-text"]
-  var preserved: (text: String?, count: Int)?
-
-  @discardableResult
-  func addWindow(_ frame: CGRect, task: String?) -> Int {
-    let window = nextWindow
-    nextWindow += 1
-    alive.append(window)
-    frames[window] = frame
-    tasks[window] = task
-    return window
-  }
-
-  func focus(_ window: Int) {
-    focused = window
-    lastActive = window
-  }
-
-  func now() -> TimeInterval { clock }
-  func pause(_ seconds: TimeInterval) {
-    clock += seconds
-    deliverLinks()
-  }
-  func isOptedIn() -> Bool { true }
-  func unmetPrecondition() -> WindowTaskProbeFailure? { nil }
-  func processBirthMatches() -> Bool { true }
-  func windowIDs() throws -> [UInt32] { alive.map { UInt32(100 + $0) } }
-  func mappedWindows(_ ids: [UInt32]) throws -> [Int] {
-    let windows = ids.map { Int($0) - 100 }
-    // Like the real mapping, equal frames cannot be told apart.
-    for window in windows
-    where windows.filter({ framesMatch(frames[$0]!, frames[window]!) }).count > 1 {
-      throw WindowTaskProbeFailure.windowMappingAmbiguous
-    }
-    return windows
-  }
-  func sameWindow(_ left: Int, _ right: Int) -> Bool { left == right }
-  func beginVisibleChanges() { log.append("visible") }
-  func requestFocus(_ window: Int) {
-    guard alive.contains(window) else { return }
-    focus(window)
-  }
-  func hasKeyboardFocus(_ window: Int) -> Bool { focused == window }
-  func copyShortcutKeyIsExpected() -> Bool { true }
-  func postCopyShortcut() -> Bool {
-    if let focused, let task = tasks[focused] { write("codex://threads/\(task)") }
-    copyPosts += 1
-    if let move = focusMove, move.afterCopy == copyPosts { focus(move.to) }
-    return true
-  }
-  func pasteboardChangeCount() -> Int { changeCount }
-  func pasteboardOffersTaskText() -> Bool { pasteboardTypesAllowTaskRead(types) }
-  func pasteboardString() -> String? { text }
-  func preserveClipboard() {
-    log.append("save")
-    preserved = (text, changeCount)
-  }
-  func restoreClipboard(expectedChangeCount: Int) -> Bool {
-    guard let preserved, changeCount == expectedChangeCount else { return false }
-    write(preserved.text ?? "")
-    log.append("restored")
-    return true
-  }
-  func frame(_ window: Int) -> CGRect? { frames[window] }
-  func setFrame(_ window: Int, _ frame: CGRect) -> Bool {
-    log.append("frame \(window)")
-    guard setFrameSucceeds else { return false }
-    frames[window] = frame
-    return true
-  }
-  func pressNewWindow() -> Bool {
-    guard newWindowAvailable else { return false }
-    let window = addWindow(persistedFrame, task: nil)
-    log.append("new \(window)")
-    if newWindowOpensTwo { addWindow(persistedFrame.offsetBy(dx: 300, dy: 0), task: nil) }
-    if newWindowsAreKeyed { focus(window) }
-    return true
-  }
-  func focusedWindow() -> Int? { focused }
-  func standardWindows() throws -> [Int] { alive }
-  func openTaskLink(_ taskID: String) -> Bool {
-    linksSent.append((focused, taskID))
-    if let delay = navigationDelay, let target = linksGoTo ?? lastActive {
-      pending.append((clock + delay, target, taskID))
-    }
-    return true
-  }
-  func closeWindow(_ window: Int) -> Bool {
-    log.append("close \(window)")
-    guard closeSucceeds else { return false }
-    alive.removeAll { $0 == window }
-    if focused == window { focused = alive.last }
-    return true
-  }
-  func isWindowAlive(_ window: Int) -> Bool { alive.contains(window) }
-
-  /// Desktop shows and focuses the window it navigates.
-  private func deliverLinks() {
-    let due = pending.filter { $0.at <= clock }
-    pending.removeAll { $0.at <= clock }
-    for link in due where alive.contains(link.window) {
-      tasks[link.window] = link.task
-      focus(link.window)
-      if let crossTalk, crossTalk.window != link.window { tasks[crossTalk.window] = crossTalk.task }
-    }
-  }
-
-  private func write(_ value: String) {
-    changeCount += 1
-    text = value
-    types = ["public.utf8-plain-text"]
-  }
-}
-
 @main
 struct CodexWindowTaskSessionCoreTests {
   static let a = "01a00000-0000-4000-8000-00000000000a"
   static let b = "01a00000-0000-4000-8000-00000000000b"
   static let c = "01a00000-0000-4000-8000-00000000000c"
   static let x = "01a00000-0000-4000-8000-0000000000ee"
+  static let r = "01a00000-0000-4000-8000-0000000000ff"
   static let f0 = CGRect(x: 0, y: 30, width: 900, height: 700)
   static let f1 = CGRect(x: 950, y: 30, width: 900, height: 700)
   static let f2 = CGRect(x: 0, y: 760, width: 900, height: 600)
 
   static func main() {
     snapshotRecordsEachWindowAndRestoresFocusAndClipboard()
+    snapshotRefusesWindowsItCouldNotRecreate()
+    aFailedSnapshotPutsFocusAndClipboardBack()
+    aReplacedProcessGetsNoFurtherWindowChanges()
+    aNewWindowWithoutKeyboardFocusIsNotALinkTarget()
+    aSecondLinkIsNotSentAfterTheFirstMovedAnotherWindow()
+    planLimitsAreInclusive()
     restoreAfterRelaunchCreatesOneWindowPerExtraEntry()
     restoreKeepsARelaunchedWindowThatAlreadyHasAPlannedFrame()
-    recheckAfterRecoveryNavigatesOnlyWindowsThatDrifted()
+    restoreWaitsForNewWindowAfterARelaunch()
     mismatchedLayoutsAndInvalidPlansChangeNothing()
     missingOrBackgroundNewWindowsFailClosed()
+    newWindowNeedsTheAnchorFocusedAndTheSameProcess()
     focusIsRetakenBeforeEveryLink()
-    aWindowThatCannotBePlacedStopsTheRestore()
+    aWindowThatCannotBePlacedStillGetsItsTaskButIsNotVerified()
+    aFailedRestoreGivesFocusBackToThePlannedWindow()
     aLinkLandingInAnotherWindowIsCaught()
     aTaskThatNeverMountsIsReportedUnverified()
     aLaterLinkThatMovedAnEarlierWindowIsCaught()
+    recheckMovesBackOnlyWindowsThatRecoveryMoved()
     rehearsalOpensChecksAndClosesOnlyItsOwnWindows()
     rehearsalCleansUpAfterEveryFailure()
     rehearsalFramesStayDistinctAndUsable()
@@ -183,11 +44,21 @@ struct CodexWindowTaskSessionCoreTests {
   }
 
   static func restore(
-    _ desktop: FakeDesktop, _ entries: [(String, CGRect)], focus: Int? = nil
+    _ desktop: FakeDesktop, _ entries: [(String, CGRect)], focus: Int? = nil,
+    mode: WindowTaskRestoreMode = .relaunch
   ) -> Result<WindowTaskRestoreResult, WindowTaskProbeFailure> {
     do {
-      return .success(try WindowTaskSession(system: desktop).restore(plan(entries), focusIndex: focus))
+      return .success(try WindowTaskSession(system: desktop).restore(
+        plan(entries), focusIndex: focus, mode: mode))
     } catch {
+      return .failure(error as! WindowTaskProbeFailure)
+    }
+  }
+
+  static func snapshot(
+    _ desktop: FakeDesktop
+  ) -> Result<(entries: [WindowTaskEntry], clipboardRestored: Bool), WindowTaskProbeFailure> {
+    do { return .success(try WindowTaskSession(system: desktop).snapshot()) } catch {
       return .failure(error as! WindowTaskProbeFailure)
     }
   }
@@ -214,17 +85,97 @@ struct CodexWindowTaskSessionCoreTests {
   }
 
   static func snapshotRecordsEachWindowAndRestoresFocusAndClipboard() {
+    // Focus starts on the first window, so reading the last one moves it.
     let desktop = FakeDesktop()
-    desktop.addWindow(f0, task: a)
-    desktop.focus(desktop.addWindow(f1, task: b))
-    let result = try! WindowTaskSession(system: desktop).snapshot()
+    desktop.focus(desktop.addWindow(f0, task: a))
+    desktop.addWindow(f1, task: b)
+    guard case .success(let result) = snapshot(desktop) else { fatalError("snapshot failed") }
     precondition(result.entries.map { $0.windowID } == [100, 101])
     precondition(result.entries.map { $0.taskID } == [a, b])
     precondition(result.entries.map { $0.frame } == [f0, f1])
-    precondition(result.entries.map { $0.focused } == [false, true])
-    precondition(desktop.focused == 1 && desktop.linksSent.isEmpty)
+    precondition(result.entries.map { $0.focused } == [true, false])
+    precondition(desktop.focused == 0 && desktop.linksSent.isEmpty)
     precondition(result.clipboardRestored && desktop.text == "user clipboard")
     precondition(!desktop.log.contains { $0.hasPrefix("new") || $0.hasPrefix("frame") })
+  }
+
+  static func snapshotRefusesWindowsItCouldNotRecreate() {
+    let full = FakeDesktop()
+    full.addWindow(f0, task: a)
+    full.addWindow(f1, task: b)
+    full.fullScreen = [1]
+    precondition(failure(snapshot(full)) == .windowFullScreen)
+    let noNewWindow = FakeDesktop()
+    noNewWindow.addWindow(f0, task: a)
+    noNewWindow.addWindow(f1, task: b)
+    noNewWindow.newWindowAvailable = false
+    precondition(failure(snapshot(noNewWindow)) == .newWindowUnavailable)
+    for desktop in [full, noNewWindow] {
+      precondition(!desktop.log.contains("visible") && desktop.copyPosts == 0)
+    }
+    // One window needs no New Window after the relaunch.
+    let single = FakeDesktop()
+    single.addWindow(f0, task: a)
+    single.newWindowAvailable = false
+    guard case .success = snapshot(single) else { fatalError("single-window snapshot failed") }
+  }
+
+  static func aFailedSnapshotPutsFocusAndClipboardBack() {
+    // The second window is on the home page, so it copies no link.
+    let desktop = FakeDesktop()
+    desktop.focus(desktop.addWindow(f0, task: a))
+    desktop.addWindow(f1, task: nil)
+    precondition(failure(snapshot(desktop)) == .copyLinkMissing)
+    precondition(desktop.focused == 0, "focus must return to the window that had it")
+    precondition(desktop.text == "user clipboard" && desktop.log.contains("restored"))
+    precondition(!desktop.log.contains { $0.hasPrefix("new") || $0.hasPrefix("frame") })
+    // Two windows on one task could hide a copy from the wrong window.
+    let twins = FakeDesktop()
+    twins.addWindow(f0, task: a)
+    twins.addWindow(f1, task: a)
+    precondition(failure(snapshot(twins)) == .taskLinkDuplicate)
+  }
+
+  static func aReplacedProcessGetsNoFurtherWindowChanges() {
+    let desktop = FakeDesktop()
+    desktop.focus(desktop.addWindow(f0, task: a))
+    desktop.birthFailsAfterLog = "new"
+    precondition(failure(rehearse(desktop)) == .rehearsalWindowLeftOpen)
+    let opened = desktop.log.firstIndex { $0.hasPrefix("new") }!
+    let after = desktop.log[(opened + 1)...]
+    precondition(!after.contains { $0.hasPrefix("frame") || $0.hasPrefix("close") || $0.hasPrefix("focus") })
+    precondition(desktop.linksSent.isEmpty)
+  }
+
+  static func aNewWindowWithoutKeyboardFocusIsNotALinkTarget() {
+    let desktop = relaunched()
+    desktop.newWindowsFocusedWithoutKey = true
+    precondition(failure(restore(desktop, [(a, f0), (b, f1)])) == .newWindowFailed)
+    precondition(desktop.linksSent.count == 1 && desktop.tasks[1] == nil)
+  }
+
+  static func aSecondLinkIsNotSentAfterTheFirstMovedAnotherWindow() {
+    // Desktop sends the link to window 0 and leaves focus where it was.
+    let desktop = FakeDesktop()
+    desktop.addWindow(f0, task: a)
+    desktop.addWindow(f1, task: x)
+    desktop.linksGoTo = 0
+    desktop.navigationKeepsFocus = true
+    precondition(failure(restore(desktop, [(a, f0), (b, f1)])) == .navigationTargetChanged)
+    precondition(desktop.linksSent.count == 1, "no second link after a misrouted first one")
+  }
+
+  static func planLimitsAreInclusive() {
+    let windows = (0..<64).map { index -> (String, CGRect) in
+      (String(format: "01a00000-0000-4000-8000-%012x", index),
+       CGRect(x: CGFloat(index * 10), y: 30, width: 300, height: 250))
+    }
+    let desktop = FakeDesktop()
+    desktop.addWindow(CGRect(x: 2000, y: 900, width: 900, height: 700), task: a)
+    guard case .success(let result) = restore(desktop, windows, mode: .recheck(recoveryTaskIDs: []))
+    else { fatalError("a 64-window plan was refused") }
+    precondition(result.verified.count == 64)
+    precondition(frameIsUsable(CGRect(x: 0, y: 0, width: 300, height: 250)))
   }
 
   static func restoreAfterRelaunchCreatesOneWindowPerExtraEntry() {
@@ -232,7 +183,7 @@ struct CodexWindowTaskSessionCoreTests {
     guard case .success(let result) = restore(desktop, [(a, f0), (b, f1), (c, f2)], focus: 1) else {
       fatalError("restore failed")
     }
-    precondition(result.verified == [true, true, true] && result.windowIDs == [100, 101, 102])
+    precondition(result.verified == [true, true, true])
     precondition(desktop.alive == [0, 1, 2])
     precondition(desktop.tasks[0] == a && desktop.tasks[1] == b && desktop.tasks[2] == c)
     precondition(desktop.frames[0] == f0 && desktop.frames[1] == f1 && desktop.frames[2] == f2)
@@ -244,28 +195,28 @@ struct CodexWindowTaskSessionCoreTests {
   }
 
   static func restoreKeepsARelaunchedWindowThatAlreadyHasAPlannedFrame() {
-    // Desktop reopens at the frame of the window it closed last.
+    // Desktop reopens at the frame of the window it saved last.
     let desktop = relaunched(at: f2)
     guard case .success(let result) = restore(desktop, [(a, f0), (b, f1), (c, f2)]) else {
       fatalError("restore failed")
     }
     precondition(result.verified == [true, true, true])
     precondition(desktop.tasks[0] == c && desktop.frames[0] == f2)
-    precondition(result.windowIDs == [101, 102, 100])
+    precondition(desktop.tasks[1] == a && desktop.frames[1] == f0)
+    precondition(desktop.frameHistory[0] == nil, "a window already on its frame is not moved")
   }
 
-  static func recheckAfterRecoveryNavigatesOnlyWindowsThatDrifted() {
-    let desktop = FakeDesktop()
-    desktop.addWindow(f0, task: a)
-    desktop.addWindow(f1, task: x)
-    desktop.focus(desktop.addWindow(f2, task: c))
-    guard case .success(let result) = restore(desktop, [(a, f0), (b, f1), (c, f2)], focus: 2) else {
-      fatalError("recheck failed")
+  static func restoreWaitsForNewWindowAfterARelaunch() {
+    let late = relaunched()
+    late.newWindowItemFrom = 8
+    guard case .success(let result) = restore(late, [(a, f0), (b, f1)]) else {
+      fatalError("restore did not wait for New Window")
     }
-    precondition(result.verified == [true, true, true])
-    precondition(desktop.linksSent.count == 1 && desktop.linksSent[0].focused == 1)
-    precondition(desktop.tasks[1] == b && desktop.focused == 2)
-    precondition(!desktop.log.contains { $0.hasPrefix("new") || $0.hasPrefix("frame") })
+    precondition(result.verified == [true, true] && late.alive.count == 2)
+    let never = relaunched()
+    never.newWindowItemFrom = .infinity
+    precondition(failure(restore(never, [(a, f0), (b, f1)])) == .newWindowUnavailable)
+    precondition(never.clock >= newWindowItemTimeout && never.alive == [0])
   }
 
   static func mismatchedLayoutsAndInvalidPlansChangeNothing() {
@@ -296,9 +247,9 @@ struct CodexWindowTaskSessionCoreTests {
   static func missingOrBackgroundNewWindowsFailClosed() {
     let missing = relaunched()
     missing.newWindowAvailable = false
-    precondition(failure(restore(missing, [(a, f0), (b, f1)])) == .newWindowUnavailable)
+    precondition(failure(restore(missing, [(a, f0), (b, f1)], focus: 0)) == .newWindowUnavailable)
     precondition(missing.tasks[0] == a && missing.linksSent.count == 1)
-    precondition(missing.log.contains("restored"))
+    precondition(missing.log.contains("restored") && missing.focused == 0)
     // A window opened in the background is not Desktop's link target.
     let background = relaunched()
     background.newWindowsAreKeyed = false
@@ -309,6 +260,24 @@ struct CodexWindowTaskSessionCoreTests {
     doubled.newWindowOpensTwo = true
     precondition(failure(restore(doubled, [(a, f0), (b, f1)])) == .newWindowFailed)
     precondition(doubled.linksSent.count == 1)
+  }
+
+  static func newWindowNeedsTheAnchorFocusedAndTheSameProcess() {
+    let desktop = FakeDesktop()
+    desktop.addWindow(f0, task: a)
+    desktop.focus(desktop.addWindow(f1, task: b))
+    guard case .success = rehearse(desktop) else { fatalError("rehearsal failed") }
+    // Each window opens while its original has focus, never another window.
+    precondition(desktop.log.filter { $0.hasPrefix("new") } == ["new 2 after focus 0", "new 3 after focus 1"])
+    // A process replaced after the anchor was focused gets no New Window
+    // press. Birth checks: plan preparation (1), window 0's focus and
+    // recheck (2, 3), the anchor's focus and recheck (4, 5), then the check
+    // immediately before the press (6).
+    let recycled = FakeDesktop()
+    recycled.focus(recycled.addWindow(f0, task: a))
+    recycled.birthFailsFromCheck = 6
+    precondition(failure(restore(recycled, [(a, f0), (b, f1)])) == .processIdentityRejected)
+    precondition(!recycled.log.contains { $0.hasPrefix("new") })
   }
 
   static func focusIsRetakenBeforeEveryLink() {
@@ -325,18 +294,32 @@ struct CodexWindowTaskSessionCoreTests {
     precondition(result.verified == [true, true] && desktop.tasks[0] == a && desktop.tasks[1] == b)
   }
 
-  static func aWindowThatCannotBePlacedStopsTheRestore() {
-    let desktop = relaunched()
-    desktop.setFrameSucceeds = false
-    precondition(failure(restore(desktop, [(a, f0), (b, f1)])) == .windowFrameFailed)
-    // Nothing is navigated into a window that is not where the plan says.
-    precondition(desktop.linksSent.isEmpty && desktop.log.contains("frame 0"))
+  static func aWindowThatCannotBePlacedStillGetsItsTaskButIsNotVerified() {
+    for ignored in [false, true] {
+      let desktop = relaunched()
+      desktop.setFrameSucceeds = ignored
+      desktop.setFrameIgnored = ignored
+      guard case .success(let result) = restore(desktop, [(a, f0), (b, f1)]) else {
+        fatalError("restore threw")
+      }
+      precondition(result.verified == [false, false], "ignored=\(ignored)")
+      precondition(desktop.tasks[0] == a && desktop.tasks[1] == b, "tasks still restored")
+    }
     // A window already on its planned frame is never moved.
     let placed = FakeDesktop()
     placed.focus(placed.addWindow(f0, task: a))
     placed.setFrameSucceeds = false
     guard case .success(let result) = restore(placed, [(a, f0)]) else { fatalError("restore failed") }
     precondition(result.verified == [true] && !placed.log.contains("frame 0"))
+  }
+
+  static func aFailedRestoreGivesFocusBackToThePlannedWindow() {
+    let desktop = FakeDesktop()
+    desktop.addWindow(f0, task: a)
+    desktop.addWindow(f1, task: x)
+    desktop.openTaskLinkFails = true
+    precondition(failure(restore(desktop, [(a, f0), (b, f1)], focus: 0)) == .taskLinkOpenFailed)
+    precondition(desktop.focused == 0 && desktop.text == "user clipboard")
   }
 
   static func aLinkLandingInAnotherWindowIsCaught() {
@@ -366,6 +349,35 @@ struct CodexWindowTaskSessionCoreTests {
     precondition(result.verified == [false, true])
   }
 
+  static func recheckMovesBackOnlyWindowsThatRecoveryMoved() {
+    // Window 0 kept its task, recovery sent its task link to window 1, the
+    // user moved window 2 elsewhere and opened window 3; entry 3's window
+    // was closed.
+    let desktop = FakeDesktop()
+    desktop.focus(desktop.addWindow(f0, task: a))
+    desktop.addWindow(f1, task: r)
+    desktop.addWindow(f2, task: x)
+    desktop.addWindow(CGRect(x: 1900, y: 30, width: 900, height: 700), task: nil)
+    let f3 = CGRect(x: 950, y: 760, width: 900, height: 600)
+    let d = "01a00000-0000-4000-8000-00000000000d"
+    guard case .success(let result) = restore(
+      desktop, [(a, f0), (b, f1), (c, f2), (d, f3)], focus: 0,
+      mode: .recheck(recoveryTaskIDs: [r])) else { fatalError("recheck failed") }
+    precondition(result.verified == [true, true, true, true])
+    precondition(desktop.tasks[1] == b && desktop.tasks[2] == x && desktop.tasks[3] == nil)
+    precondition(desktop.linksSent.count == 1 && desktop.linksSent[0].focused == 1)
+    precondition(!desktop.log.contains { $0.hasPrefix("new") || $0.hasPrefix("frame") })
+    // Focus returns to the window the user had, not the plan's.
+    precondition(desktop.focused == 0 && desktop.text == "user clipboard")
+    // A window recovery moved that cannot be brought back is reported.
+    let stuck = FakeDesktop()
+    stuck.addWindow(f0, task: r)
+    stuck.navigationDelay = nil
+    guard case .success(let failed) = restore(
+      stuck, [(a, f0)], mode: .recheck(recoveryTaskIDs: [r])) else { fatalError("recheck threw") }
+    precondition(failed.verified == [false])
+  }
+
   static func rehearsalOpensChecksAndClosesOnlyItsOwnWindows() {
     let desktop = FakeDesktop()
     desktop.focus(desktop.addWindow(f0, task: a))
@@ -376,6 +388,11 @@ struct CodexWindowTaskSessionCoreTests {
     precondition(desktop.linksSent.map { $0.focused } == [2, 3])
     precondition(desktop.log.contains("close 3") && desktop.log.contains("close 2"))
     precondition(desktop.focused == 0 && desktop.text == "user clipboard")
+    // Each rehearsal window got its opening frame back before it closed,
+    // so Desktop saves the same bounds it would have saved anyway.
+    for window in [2, 3] {
+      precondition(desktop.frameHistory[window]?.last == desktop.persistedFrame, "\(window)")
+    }
   }
 
   static func rehearsalCleansUpAfterEveryFailure() {
@@ -389,12 +406,14 @@ struct CodexWindowTaskSessionCoreTests {
     stuck.addWindow(f0, task: a)
     stuck.closeSucceeds = false
     precondition(failure(rehearse(stuck)) == .rehearsalWindowLeftOpen)
+    // A link that also moved an original is reported, and the original is
+    // navigated back to its own task first.
     let changed = FakeDesktop()
     changed.addWindow(f0, task: a)
     changed.addWindow(f1, task: b)
     changed.crossTalk = (0, x)
     precondition(failure(rehearse(changed)) == .originalWindowChanged)
-    precondition(changed.alive == [0, 1])
+    precondition(changed.alive == [0, 1] && changed.tasks[0] == a)
     let background = FakeDesktop()
     background.addWindow(f0, task: a)
     background.newWindowsAreKeyed = false
@@ -407,6 +426,20 @@ struct CodexWindowTaskSessionCoreTests {
     precondition(rehearsalFrame(for: f0, avoiding: [f0]) == shifted)
     precondition(rehearsalFrame(for: f0, avoiding: [f0, shifted])
       == f0.offsetBy(dx: -rehearsalFrameOffset, dy: -rehearsalFrameOffset))
+    // Three originals whose first choices collide: A's is taken by C, so A
+    // moves back, onto the frame B would pick first.
+    let origin = CGRect(x: 100, y: 100, width: 900, height: 700)
+    let desktop = FakeDesktop()
+    desktop.addWindow(origin, task: a)
+    desktop.addWindow(origin.offsetBy(dx: -80, dy: -80), task: b)
+    desktop.addWindow(origin.offsetBy(dx: 40, dy: 40), task: c)
+    guard case .success = rehearse(desktop) else { fatalError("rehearsal failed") }
+    let placed = [3, 4, 5].compactMap { desktop.frameHistory[$0]?.first }
+    precondition(placed.count == 3)
+    for (index, frame) in placed.enumerated() {
+      precondition(!placed[..<index].contains { framesMatch($0, frame) }, "rehearsal frames collide")
+      precondition(![0, 1, 2].contains { framesMatch(desktop.frames[$0]!, frame) })
+    }
     precondition(frameIsUsable(f0))
     precondition(!frameIsUsable(CGRect(x: 0, y: 0, width: 299, height: 700)))
     precondition(!frameIsUsable(CGRect(x: 0, y: 0, width: 900, height: 249)))

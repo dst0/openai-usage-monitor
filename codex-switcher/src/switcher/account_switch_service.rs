@@ -218,23 +218,18 @@ pub(super) fn switch_to_account_with(
                                 );
                             restored?;
                             verified?;
-                            RestartWindowTaskService::restore(
+                            RestartWindowTaskService::around_recovery(
                                 &mut window_tasks,
-                                launched_pids[0],
-                                "after relaunch",
-                            );
-                            crate::recovery::recover_threads_with_banner(
+                                bound_process,
                                 &running_threads,
-                                crate::recovery::RecoveryMode::CapturedRestart,
-                                recovery_banner.as_mut().unwrap(),
+                                || {
+                                    crate::recovery::recover_threads_with_banner(
+                                        &running_threads,
+                                        crate::recovery::RecoveryMode::CapturedRestart,
+                                        recovery_banner.as_mut().unwrap(),
+                                    )
+                                },
                             )?;
-                            if !running_threads.is_empty() {
-                                RestartWindowTaskService::restore(
-                                    &mut window_tasks,
-                                    launched_pids[0],
-                                    "after recovery",
-                                );
-                            }
                             DesktopSessionBindingService::confirm_after_recovery(bound_process)
                         },
                     )
@@ -249,7 +244,8 @@ pub(super) fn switch_to_account_with(
                         "{recovery}; desktop stability also failed: {stability}"
                     )),
                 };
-                RestartWindowTaskService::append_failure(restart_error, window_tasks.take())
+                let windows = RestartWindowTaskService::finish(window_tasks.take());
+                RestartWindowTaskService::append_failure(restart_error, windows)
                     .map(CodexAvailabilityService::keep_after_failure)
             }
             Err(error) => {

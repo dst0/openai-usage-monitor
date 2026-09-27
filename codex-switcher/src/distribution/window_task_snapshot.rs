@@ -18,8 +18,10 @@ impl WindowTaskSnapshot {
     }
 
     /// The helper's restore plan, sent on its stdin: each window's task and
-    /// frame in capture order, and which one should end up focused.
-    pub fn restore_plan(&self) -> serde_json::Value {
+    /// frame in capture order, and which one should end up focused. Without
+    /// recovery tasks it rebuilds the layout after a relaunch; with them it
+    /// only moves back a window that recovery moved onto one of those tasks.
+    pub fn restore_plan(&self, recovery_task_ids: Option<&[String]>) -> serde_json::Value {
         let windows: Vec<serde_json::Value> = self
             .windows
             .iter()
@@ -38,6 +40,8 @@ impl WindowTaskSnapshot {
         serde_json::json!({
             "windows": windows,
             "focus_index": self.windows.iter().position(|window| window.focused),
+            "mode": if recovery_task_ids.is_some() { "recheck" } else { "relaunch" },
+            "recovery_task_ids": recovery_task_ids.unwrap_or_default(),
         })
     }
 }

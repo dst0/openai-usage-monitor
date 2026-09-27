@@ -275,29 +275,40 @@ discovery answers per host connection in the main process, never per window.
 `--restore-window-tasks` builds on exactly those behaviors. Before shutdown
 the helper reads each window's task with Copy deeplink and its Accessibility
 frame, refusing the restart for a window without a task, a duplicate task, a
-minimized or ambiguous window, a changed window list, or a keymap change.
-After the relaunch and once Desktop IPC answers, it places the relaunched
-window on one saved frame, opens the others with New Window, sends each task
-link only while Accessibility shows the target window focused (a focus change
-during navigation fails as `NAVIGATION_TARGET_CHANGED`), and counts a window
-only when its own Copy deeplink returns the planned task; a later link that
-moved an earlier window is caught by a final pass. When recovery had targets,
-the same restore runs again afterwards, because recovery may send its own
-task link. Task IDs stay in memory and cross the helper boundary only through
-stdout and stdin. Restore failures are reported with the restart result and
-never block recovery. The daemon, the Monitor app, distribution, and
-auto-switch never pass the flag (`tests/enforce_task_probe_isolation.rs`).
-None of this has run against a live Desktop yet;
-`cxi window rehearse-task-restore --allow-focus-and-clipboard` exercises the
-same steps in temporary extra windows without a restart, then closes only
-the windows it opened.
+minimized, full-screen, or ambiguous window, a missing New Window item while
+more than one window is open, a changed window list, or a keymap change.
+After the relaunch and once Desktop IPC answers, it reuses the relaunched
+window for one saved frame, waits up to 20 seconds for the New Window item
+(the main process adds it only once the renderer reports the feature), opens
+the others with it, sends each task link only while Accessibility shows the
+target window focused (a focus change during navigation fails as
+`NAVIGATION_TARGET_CHANGED`), checks the windows it already restored before a
+second link, and counts a window only when it is on its frame and its own
+Copy deeplink returns the planned task; a later link that moved an earlier
+window is caught by a final pass. Whenever recovery had targets, even when
+recovery failed, a recheck moves back only a window that recovery's own task
+link moved onto a recovery task; it creates, moves, and closes nothing and
+leaves the user's later changes alone. The plan reaches the helper on stdin
+and the snapshot returns on stdout; each task link is handed to macOS `open`,
+as recovery already does. Every helper run has a deadline and is killed with
+its process group when it passes. Restore failures, including a relaunch
+that never reached the restore, are reported with the restart result and
+never block recovery. Only a user-triggered command accepts the flag; the
+daemon, the Monitor app, distribution, and auto-switch never pass it
+(`tests/enforce_task_probe_isolation.rs` pins every caller and the forwarded
+value). None of this has run against a live Desktop yet;
+`cxi window rehearse-task-restore --allow-focus-and-clipboard` exercises
+focus-targeted navigation and New Window in temporary extra windows without a
+restart, then gives them their opening frames back and closes only them. It
+cannot show cold-task loading, New Window timing, or window reuse after a
+relaunch.
 
 An explicit diagnostic, `cxi window probe-tasks --allow-focus-and-clipboard`,
 tests whether the installed Desktop exposes a one-to-one mapping through Copy
 deeplink. It is evidence gathering only and has not been run against a live
 multiwindow Desktop: it foregrounds each window, lets ChatGPT replace the
-clipboard with each task link, puts the previous clipboard back when no other
-app wrote after its last copy, and neither persists task IDs nor authorizes
+clipboard with each task link, puts the previous clipboard (or a newer copy made
+between its copies) back when no other app wrote after its last copy, and neither persists task IDs nor authorizes
 restart. The probe, the rehearsal, and the restore share these checks. Before
 any visible change they require the account's `~/.codex` as the Codex home
 (resolved from the user database, not `$HOME`), hold the switch/recovery

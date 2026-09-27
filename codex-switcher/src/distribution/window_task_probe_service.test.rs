@@ -44,7 +44,7 @@ impl ProbeFixture {
         let helper = self.root.join("window-helper");
         let probed = self.probed();
         let script = format!(
-            "#!/bin/sh\ncase \"$1\" in\n  inspect-process) [ \"$#\" = 3 ] && [ \"$2\" = --expected-pid ] && [ \"$3\" = 4242 ] || exit 2; printf '%s' '{{\"pid\":4242,\"birth_id\":\"{BIRTH}\"}}' ;;\n  {command}) [ \"$#\" = 7 ] && [ \"$2\" = --expected-pid ] && [ \"$3\" = 4242 ] && [ \"$4\" = --expected-birth ] && [ \"$5\" = '{BIRTH}' ] && [ \"$6\" = --allow-focus-and-clipboard ] && [ \"$7\" = yes ] || {{ printf 'ARGUMENTS_REJECTED\\n' >&2; exit 2; }}\n    : > '{}'\n    {body} ;;\n  *) exit 3 ;;\nesac\n",
+            "#!/bin/sh\ncase \"$1\" in\n  inspect-process) [ \"$#\" = 3 ] && [ \"$2\" = --expected-pid ] && [ \"$3\" = 4242 ] || exit 2; printf '%s' '{{\"pid\":4242,\"birth_id\":\"{BIRTH}\"}}' ;;\n  count-standard-windows) [ \"$#\" = 5 ] && [ \"$3\" = 4242 ] && [ \"$5\" = '{BIRTH}' ] || exit 2; printf '%s' '{{\"process\":{{\"pid\":4242,\"birth_id\":\"{BIRTH}\"}},\"window_ids\":[31,32],\"ax_standard_count\":2,\"ambiguous_count\":0}}' ;;\n  {command}) [ \"$#\" = 7 ] && [ \"$2\" = --expected-pid ] && [ \"$3\" = 4242 ] && [ \"$4\" = --expected-birth ] && [ \"$5\" = '{BIRTH}' ] && [ \"$6\" = --allow-focus-and-clipboard ] && [ \"$7\" = yes ] || {{ printf 'ARGUMENTS_REJECTED\\n' >&2; exit 2; }}\n    : > '{}'\n    {body} ;;\n  *) exit 3 ;;\nesac\n",
             probed.display()
         );
         std::fs::write(&helper, script).unwrap();

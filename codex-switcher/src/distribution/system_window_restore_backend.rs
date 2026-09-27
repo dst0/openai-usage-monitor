@@ -108,7 +108,7 @@ impl SystemWindowRestoreBackend {
 
     /// A backend around an explicit helper, such as a temporary test fake.
     #[cfg(test)]
-    pub(super) fn with_helper(helper: PathBuf) -> Self {
+    pub(crate) fn with_helper(helper: PathBuf) -> Self {
         Self { helper }
     }
 

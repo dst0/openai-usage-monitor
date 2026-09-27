@@ -35,21 +35,27 @@ fn window_ids_are_sorted_for_the_shutdown_guard() {
 fn the_plan_keeps_capture_order_and_names_the_focused_window() {
     let snapshot = snapshot(vec![entry(52, 0.0, A, false), entry(31, 950.0, B, true)]);
     assert_eq!(
-        snapshot.restore_plan(),
+        snapshot.restore_plan(None),
         serde_json::json!({
             "windows": [
                 {"task_id": A, "frame": {"x": 0.0, "y": 30.0, "width": 900.0, "height": 700.0}},
                 {"task_id": B, "frame": {"x": 950.0, "y": 30.0, "width": 900.0, "height": 700.0}},
             ],
             "focus_index": 1,
+            "mode": "relaunch",
+            "recovery_task_ids": [],
         })
     );
+    let recovery = [B.to_string()];
+    let recheck = snapshot.restore_plan(Some(&recovery));
+    assert_eq!(recheck["mode"], "recheck");
+    assert_eq!(recheck["recovery_task_ids"], serde_json::json!([B]));
     let unfocused = super::WindowTaskSnapshot {
         windows: vec![entry(52, 0.0, A, false)],
         ..snapshot
     };
     assert_eq!(
-        unfocused.restore_plan()["focus_index"],
+        unfocused.restore_plan(None)["focus_index"],
         serde_json::Value::Null
     );
 }

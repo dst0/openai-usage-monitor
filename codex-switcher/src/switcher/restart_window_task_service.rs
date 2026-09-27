@@ -1,6 +1,6 @@
 use crate::distribution::{
     SystemWindowRestoreBackend, WindowProcessIdentity, WindowTaskProbeService,
-    WindowTaskRestartSession,
+    WindowTaskRestartSession, WindowTaskRestorePhase,
 };
 
 /// Carries an explicit `--restore-window-tasks` request through `cxi restart`
@@ -36,28 +36,66 @@ impl RestartWindowTaskService {
     }
 
     /// Reopens each captured task in its own window of the relaunched
-    /// process; records, never raises, a failure.
-    pub(super) fn restore(session: &mut Option<WindowTaskRestartSession>, pid: u32, phase: &str) {
+    /// process, runs `recover`, then, when recovery had targets, moves back
+    /// any window recovery moved onto one of them, even when recovery failed.
+    /// Window failures are recorded in the session; recovery's result is
+    /// returned unchanged.
+    pub(super) fn around_recovery(
+        session: &mut Option<WindowTaskRestartSession>,
+        process: &WindowProcessIdentity,
+        recovery_targets: &[String],
+        recover: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        Self::around_recovery_with(
+            session,
+            process,
+            recovery_targets,
+            SystemWindowRestoreBackend::new,
+            crate::recovery::wait_for_desktop_ipc,
+            recover,
+        )
+    }
+
+    fn around_recovery_with(
+        session: &mut Option<WindowTaskRestartSession>,
+        process: &WindowProcessIdentity,
+        recovery_targets: &[String],
+        backend: impl Fn() -> Result<SystemWindowRestoreBackend, String>,
+        ready: impl Fn() -> Result<(), String>,
+        recover: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        let phase = WindowTaskRestorePhase::AfterRelaunch;
+        Self::restore(session, process, phase, &backend, &ready);
+        let recovered = recover();
+        if !recovery_targets.is_empty() {
+            let phase = WindowTaskRestorePhase::AfterRecovery(recovery_targets);
+            Self::restore(session, process, phase, &backend, &ready);
+        }
+        recovered
+    }
+
+    fn restore(
+        session: &mut Option<WindowTaskRestartSession>,
+        process: &WindowProcessIdentity,
+        phase: WindowTaskRestorePhase,
+        backend: &impl Fn() -> Result<SystemWindowRestoreBackend, String>,
+        ready: &impl Fn() -> Result<(), String>,
+    ) {
         let Some(session) = session.as_mut() else {
             return;
         };
-        match SystemWindowRestoreBackend::new() {
-            Ok(mut backend) => session.restore(
-                pid,
-                &mut backend,
-                crate::recovery::wait_for_desktop_ipc,
-                phase,
-            ),
+        match backend() {
+            Ok(backend) => session.restore(process, &backend, ready, phase),
             Err(error) => session.record_failure(phase, &error),
         }
     }
 
-    /// Adds the window-task outcome to a restart's other failure, if any.
+    /// Adds a window-task failure to a restart's other failure, if any.
     pub(super) fn append_failure(
         error: Option<String>,
-        session: Option<WindowTaskRestartSession>,
+        windows: Result<(), String>,
     ) -> Option<String> {
-        match (error, Self::finish(session)) {
+        match (error, windows) {
             (error, Ok(())) => error,
             (None, Err(window)) => Some(window),
             (Some(error), Err(window)) => Some(format!("{error}; {window}")),
@@ -68,6 +106,11 @@ impl RestartWindowTaskService {
         let Some(session) = session else {
             return Ok(());
         };
+        if session.clipboard_kept() {
+            crate::runtime_print!(
+                "WINDOW_TASKS_CLIPBOARD_NOT_RESTORED the clipboard may hold a copied task link"
+            );
+        }
         let count = session.window_count();
         session.finish()?;
         crate::runtime_print!("WINDOW_TASKS_RESTORED windows={count}");

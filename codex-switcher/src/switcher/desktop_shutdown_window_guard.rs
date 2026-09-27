@@ -1,15 +1,8 @@
 use super::codex_process_probe::codex_app_pids_checked;
+use super::shutdown_window_snapshot::ShutdownWindowSnapshot;
 use crate::distribution::{
     SystemWindowRestoreBackend, WindowProcessIdentity, WindowProcessValidationService,
 };
-
-/// What the guard saw immediately before a shutdown signal.
-pub(super) struct ShutdownWindowSnapshot {
-    initial_pids: Vec<u32>,
-    observed: WindowProcessIdentity,
-    window_ids: Vec<u32>,
-    current_pids: Vec<u32>,
-}
 
 /// Refuses to stop Desktop unless the exact process is unchanged and its
 /// windows can come back: at most one window, or exactly the windows whose

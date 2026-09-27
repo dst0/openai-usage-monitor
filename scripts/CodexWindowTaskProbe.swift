@@ -1,13 +1,6 @@
 import ApplicationServices
 import Cocoa
 
-struct WindowTaskProbeRecord: Codable {
-  let process: ProcessRecord
-  let window_ids: [UInt32]
-  let observed_task_count: Int
-  let clipboard_restored: Bool
-}
-
 /// kVK_ANSI_L. With Command held it must type `l`; see `copyShortcutKeyIsExpected`.
 private let copyDeepLinkKeyCode: CGKeyCode = 37
 private let copyDeepLinkCharacter = "l"

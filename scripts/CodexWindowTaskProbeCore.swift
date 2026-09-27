@@ -41,6 +41,8 @@ enum WindowTaskProbeFailure: String, Error {
   case originalWindowChanged = "ORIGINAL_WINDOW_CHANGED"
   /// A rehearsal could not close a window it opened.
   case rehearsalWindowLeftOpen = "REHEARSAL_WINDOW_LEFT_OPEN"
+  /// A full-screen window cannot be restored to its frame.
+  case windowFullScreen = "WINDOW_FULL_SCREEN"
   /// Any error that is not one of the cases above; none is expected.
   case probeFailed = "PROBE_FAILED"
 }
@@ -98,6 +100,10 @@ final class WindowTaskReader<System: WindowTaskProbeSystem> {
   /// ChatGPT; the clipboard is restored only while it is still current.
   private var lastOwnChange: Int?
   private var preservedChange: Int?
+  /// The count this process last observed. A different count before the
+  /// next copy means another app wrote in between; that newer content is
+  /// what gets preserved and restored.
+  private var lastKnownChange: Int?
 
   init(system: System) { self.system = system }
 
@@ -116,6 +122,7 @@ final class WindowTaskReader<System: WindowTaskProbeSystem> {
 
   func beginVisibleChanges() {
     preservedChange = system.pasteboardChangeCount()
+    lastKnownChange = preservedChange
     system.preserveClipboard()
     system.beginVisibleChanges()
   }
@@ -167,6 +174,12 @@ final class WindowTaskReader<System: WindowTaskProbeSystem> {
   /// exactly one write that offers unconcealed plain text.
   func copyTaskLink() throws -> String {
     let before = system.pasteboardChangeCount()
+    if let known = lastKnownChange, before != known {
+      system.preserveClipboard()
+      preservedChange = before
+      lastOwnChange = nil
+    }
+    defer { lastKnownChange = system.pasteboardChangeCount() }
     guard system.postCopyShortcut() else { throw WindowTaskProbeFailure.copyLinkEventFailed }
     _ = waitFor(probeClipboardTimeout) {
       let count = system.pasteboardChangeCount()

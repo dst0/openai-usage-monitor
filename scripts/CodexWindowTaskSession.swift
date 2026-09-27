@@ -26,16 +26,30 @@ extension SystemWindowTaskProbe: WindowTaskSessionSystem {
     return moved == .success && resized == .success && placed == .success
   }
 
+  func newWindowItemAvailable() -> Bool { newWindowItem() != nil }
+
   /// Presses exactly one enabled File > New Window item of this process.
   /// Desktop shows that item only when its multiwindow feature is on.
   func pressNewWindow() -> Bool {
+    guard let item = newWindowItem() else { return false }
+    return AXUIElementPerformAction(item, kAXPressAction as CFString) == .success
+  }
+
+  /// Unreadable counts as full screen, so the snapshot fails closed.
+  func isFullScreen(_ window: AXUIElement) -> Bool {
+    guard let raw = copyAXValue(window, "AXFullScreen") else { return false }
+    guard CFGetTypeID(raw) == CFBooleanGetTypeID() else { return true }
+    return raw as! Bool
+  }
+
+  private func newWindowItem() -> AXUIElement? {
     guard let bar = axElement(app, kAXMenuBarAttribute as String),
       let file = onlyChild(of: bar, titled: fileMenuTitle),
       let menus = axChildren(file), menus.count == 1,
       let item = onlyChild(of: menus[0], titled: newWindowMenuTitle),
       (copyAXValue(item, kAXEnabledAttribute as String) as? Bool) == true
-    else { return false }
-    return AXUIElementPerformAction(item, kAXPressAction as CFString) == .success
+    else { return nil }
+    return item
   }
 
   func focusedWindow() -> AXUIElement? {
@@ -106,59 +120,6 @@ func axChildren(_ element: AXUIElement) -> [AXUIElement]? {
   axArray(element, kAXChildrenAttribute as String)
 }
 
-struct FrameRecord: Codable {
-  let x: CGFloat
-  let y: CGFloat
-  let width: CGFloat
-  let height: CGFloat
-
-  init(_ frame: CGRect) {
-    x = frame.minX
-    y = frame.minY
-    width = frame.width
-    height = frame.height
-  }
-
-  var rect: CGRect { CGRect(x: x, y: y, width: width, height: height) }
-}
-
-struct WindowTaskEntryRecord: Codable {
-  let window_id: UInt32
-  let frame: FrameRecord
-  let task_id: String
-  let focused: Bool
-}
-
-struct WindowTaskSnapshotRecord: Codable {
-  let process: ProcessRecord
-  let windows: [WindowTaskEntryRecord]
-  let clipboard_restored: Bool
-}
-
-struct PlannedWindowTaskRecord: Codable {
-  let task_id: String
-  let frame: FrameRecord
-}
-
-struct WindowTaskRestorePlanRecord: Codable {
-  let windows: [PlannedWindowTaskRecord]
-  let focus_index: Int?
-}
-
-struct WindowTaskRestoreRecord: Codable {
-  let process: ProcessRecord
-  let window_ids: [UInt32]
-  let verified: [Bool]
-  let clipboard_restored: Bool
-}
-
-struct WindowTaskRehearsalRecord: Codable {
-  let process: ProcessRecord
-  let window_ids: [UInt32]
-  let verified_count: Int
-  let clipboard_restored: Bool
-}
-
 /// Before a restart: every window's task, frame, and focus. The task IDs go
 /// to the calling Monitor process on stdout and nowhere else.
 func snapshotWindowTasks(_ process: (pid: pid_t, birth: String)) -> WindowTaskSnapshotRecord {
@@ -181,22 +142,23 @@ func snapshotWindowTasks(_ process: (pid: pid_t, birth: String)) -> WindowTaskSn
 func restoreWindowTasks(_ process: (pid: pid_t, birth: String)) -> WindowTaskRestoreRecord {
   let input = FileHandle.standardInput.readData(ofLength: maximumRestorePlanBytes + 1)
   guard input.count <= maximumRestorePlanBytes,
-    let plan = try? JSONDecoder().decode(WindowTaskRestorePlanRecord.self, from: input) else {
+    let plan = try? JSONDecoder().decode(WindowTaskRestorePlanRecord.self, from: input),
+    let mode = restoreMode(plan) else {
     fail(WindowTaskProbeFailure.restorePlanInvalid.rawValue)
   }
   let session = WindowTaskSession(system: SystemWindowTaskProbe(process: process))
   do {
     let result = try session.restore(
       plan.windows.map { PlannedWindowTask(taskID: $0.task_id, frame: $0.frame.rect) },
-      focusIndex: plan.focus_index)
+      focusIndex: plan.focus_index, mode: mode)
     return WindowTaskRestoreRecord(
       process: ProcessRecord(pid: process.pid, birth_id: process.birth),
-      window_ids: result.windowIDs, verified: result.verified,
-      clipboard_restored: result.clipboardRestored)
+      verified: result.verified, clipboard_restored: result.clipboardRestored)
   } catch {
     fail(((error as? WindowTaskProbeFailure) ?? .probeFailed).rawValue)
   }
 }
+
 
 /// Explicit diagnostic: opens, navigates, checks, and closes one extra window
 /// per original. It carries only counts back to the caller.

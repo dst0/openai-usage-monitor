@@ -1,10 +1,10 @@
 use super::copy_deeplink_keymap_service::CopyDeeplinkKeymapService;
 use super::system_window_restore_backend::SystemWindowRestoreBackend;
-use super::window_process_validation_service::WindowProcessValidationService;
 use super::window_restore_process_identity::ProcessIdentity;
 use super::window_task_command::WindowTaskCommand;
 use super::window_task_helper_client::WindowTaskHelperClient;
 use super::window_task_probe_service::WindowTaskProbeService;
+use super::window_task_restore_phase::WindowTaskRestorePhase;
 use super::window_task_restore_report::WindowTaskRestoreReport;
 use super::window_task_session_validation_service::WindowTaskSessionValidationService;
 use super::window_task_snapshot::WindowTaskSnapshot;
@@ -29,6 +29,8 @@ pub struct WindowTaskRestartSession {
     keymap: Option<SystemTime>,
     snapshot: WindowTaskSnapshot,
     failures: Vec<String>,
+    relaunch_attempted: bool,
+    clipboard_kept: bool,
 }
 
 impl WindowTaskRestartSession {
@@ -42,8 +44,9 @@ impl WindowTaskRestartSession {
     ) -> Result<Self, String> {
         let home = desktop_codex_home?;
         let keymap = CopyDeeplinkKeymapService::verify_copy_binding(&home)?;
+        let timeout = WindowTaskCommand::Snapshot.timeout(inventory.len());
         let snapshot = WindowTaskHelperClient::new(backend)
-            .run(WindowTaskCommand::Snapshot, expected, None)
+            .run(WindowTaskCommand::Snapshot, expected, None, timeout)
             .and_then(|response| WindowTaskSessionValidationService::snapshot(&response, expected))
             .map_err(|error| WindowTaskProbeService::with_visible_change_caveat(&error))?;
         if CopyDeeplinkKeymapService::verify_copy_binding(&home) != Ok(keymap) {
@@ -57,6 +60,8 @@ impl WindowTaskRestartSession {
             keymap,
             snapshot,
             failures: Vec::new(),
+            relaunch_attempted: false,
+            clipboard_kept: false,
         })
     }
 
@@ -70,62 +75,90 @@ impl WindowTaskRestartSession {
     }
 
     /// Once after the relaunch, and again after recovery, which may send its
-    /// own task links. `ready` waits until Desktop can mount a task (its IPC
-    /// router answers); without it a task link can be dropped.
+    /// own task links. `process` is the relaunched Desktop the caller pinned.
+    /// `ready` waits until Desktop can mount a task (its IPC router answers);
+    /// without it a task link can be dropped.
     pub fn restore(
         &mut self,
-        pid: u32,
-        backend: &mut SystemWindowRestoreBackend,
+        process: &ProcessIdentity,
+        backend: &SystemWindowRestoreBackend,
         ready: impl FnOnce() -> Result<(), String>,
-        phase: &str,
+        phase: WindowTaskRestorePhase,
     ) {
-        let result = ready().and_then(|()| self.restore_now(pid, backend));
-        match result {
-            Ok(report) if report.is_complete() => {}
-            Ok(report) => self.failures.push(format!(
-                "{phase}: {} of {} window(s) verified on their task",
-                report.verified_count(),
-                report.verified.len()
-            )),
-            Err(error) => self.failures.push(format!("{phase}: {error}")),
+        if phase == WindowTaskRestorePhase::AfterRelaunch {
+            self.relaunch_attempted = true;
+        }
+        match ready().and_then(|()| self.restore_now(process, backend, phase)) {
+            Ok(report) => {
+                self.clipboard_kept |= !report.clipboard_restored;
+                if !report.is_complete() {
+                    self.failures.push(format!(
+                        "{}: {} of {} window(s) verified on their task",
+                        phase.label(),
+                        report.verified_count(),
+                        report.verified.len()
+                    ));
+                }
+            }
+            Err(error) => self.failures.push(format!("{}: {error}", phase.label())),
         }
     }
 
     /// Records a step that could not run, such as a missing helper.
-    pub fn record_failure(&mut self, phase: &str, error: &str) {
-        self.failures.push(format!("{phase}: {error}"));
+    pub fn record_failure(&mut self, phase: WindowTaskRestorePhase, error: &str) {
+        if phase == WindowTaskRestorePhase::AfterRelaunch {
+            self.relaunch_attempted = true;
+        }
+        self.failures.push(format!("{}: {error}", phase.label()));
     }
 
-    /// The outcome once the restart is over.
+    /// Whether a restore left ChatGPT's last copied link on the clipboard
+    /// because it could not put the user's contents back.
+    pub fn clipboard_kept(&self) -> bool {
+        self.clipboard_kept
+    }
+
+    /// The outcome once the restart is over. Captured windows that never
+    /// reached a restore, because the relaunch or binding failed first, are
+    /// a failure too.
     pub fn finish(self) -> Result<(), String> {
-        if self.failures.is_empty() {
+        let mut failures = self.failures;
+        if !self.relaunch_attempted {
+            failures.insert(
+                0,
+                "the relaunched Desktop never reached the window restore".into(),
+            );
+        }
+        if failures.is_empty() {
             return Ok(());
         }
         Err(format!(
             "Window tasks were not fully restored ({}); every task is unchanged and can be reopened from the sidebar",
-            self.failures.join("; ")
+            failures.join("; ")
         ))
     }
 
     fn restore_now(
         &self,
-        pid: u32,
-        backend: &mut SystemWindowRestoreBackend,
+        process: &ProcessIdentity,
+        backend: &SystemWindowRestoreBackend,
+        phase: WindowTaskRestorePhase,
     ) -> Result<WindowTaskRestoreReport, String> {
         if CopyDeeplinkKeymapService::verify_copy_binding(&self.home) != Ok(self.keymap) {
             return Err(KEYMAP_CHANGED.into());
         }
-        let process = WindowProcessValidationService::inspect(backend, pid)?;
-        let plan = serde_json::to_vec(&self.snapshot.restore_plan())
+        let recovery_tasks = match phase {
+            WindowTaskRestorePhase::AfterRelaunch => None,
+            WindowTaskRestorePhase::AfterRecovery(tasks) => Some(tasks),
+        };
+        let plan = serde_json::to_vec(&self.snapshot.restore_plan(recovery_tasks))
             .map_err(|_| "Window task restore plan could not be encoded".to_string())?;
+        let windows = self.snapshot.windows.len();
+        let timeout = WindowTaskCommand::Restore.timeout(windows);
         let report = WindowTaskHelperClient::new(backend)
-            .run(WindowTaskCommand::Restore, &process, Some(&plan))
+            .run(WindowTaskCommand::Restore, process, Some(&plan), timeout)
             .and_then(|response| {
-                WindowTaskSessionValidationService::restore(
-                    &response,
-                    &process,
-                    self.snapshot.windows.len(),
-                )
+                WindowTaskSessionValidationService::restore(&response, process, windows)
             })
             .map_err(|error| WindowTaskProbeService::with_visible_change_caveat(&error))?;
         if CopyDeeplinkKeymapService::verify_copy_binding(&self.home) != Ok(self.keymap) {

@@ -7,9 +7,14 @@ protocol WindowTaskSessionSystem: WindowTaskProbeSystem {
   func frame(_ window: Window) -> CGRect?
   /// Moves and resizes the window; the caller reads the frame back.
   func setFrame(_ window: Window, _ frame: CGRect) -> Bool
+  /// Whether File > New Window exists and is enabled, without pressing it.
+  /// Desktop inserts the item only once its multiwindow feature is on.
+  func newWindowItemAvailable() -> Bool
   /// Presses File > New Window in the verified process. False when the item
   /// is missing or disabled.
   func pressNewWindow() -> Bool
+  /// A full-screen window has its own Space and cannot be placed by frame.
+  func isFullScreen(_ window: Window) -> Bool
   /// The verified process's focused standard window, if any.
   func focusedWindow() -> Window?
   /// Every standard window of the verified process, without the WindowServer
@@ -35,13 +40,23 @@ struct PlannedWindowTask {
   let frame: CGRect
 }
 
+/// After the relaunch every planned window is rebuilt. After recovery only
+/// windows that recovery moved onto one of its own tasks are moved back:
+/// windows the user changed, closed, or opened meanwhile are left alone.
+enum WindowTaskRestoreMode {
+  case relaunch
+  case recheck(recoveryTaskIDs: Set<String>)
+}
+
 struct WindowTaskRestoreResult {
-  let windowIDs: [UInt32]
   let verified: [Bool]
   let clipboardRestored: Bool
 }
 
 let newWindowTimeout: TimeInterval = 5
+/// After a relaunch, Desktop adds File > New Window only once its renderer
+/// reports the multiwindow feature.
+let newWindowItemTimeout: TimeInterval = 20
 /// Desktop reads the thread before it navigates; a cold task after a
 /// relaunch can take several seconds.
 let taskNavigationTimeout: TimeInterval = 12

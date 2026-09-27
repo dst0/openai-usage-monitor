@@ -139,45 +139,39 @@ fn errors_never_carry_a_task_id() {
     }
 }
 
-fn restore(ids: Value, verified: Value) -> Value {
-    json!({"process": process(), "window_ids": ids, "verified": verified, "clipboard_restored": false})
+fn restore(verified: Value) -> Value {
+    json!({"process": process(), "verified": verified, "clipboard_restored": false})
 }
 
 #[test]
 fn a_restore_report_must_cover_every_planned_window() {
     assert_eq!(
-        WindowTaskSessionValidationService::restore(
-            &restore(json!([101, 100]), json!([true, false])),
-            &expected(),
-            2
-        ),
+        WindowTaskSessionValidationService::restore(&restore(json!([true, false])), &expected(), 2),
         Ok(WindowTaskRestoreReport {
-            window_ids: vec![101, 100],
             verified: vec![true, false],
             clipboard_restored: false,
         })
     );
-    for (ids, verified) in [
-        (json!([101]), json!([true, true])),
-        (json!([101, 100]), json!([true])),
-        (json!([101, 101]), json!([true, true])),
-        (json!([101, 0]), json!([true, true])),
-        (json!([101, 100]), json!([true, "yes"])),
-        (json!([101, 100, 102]), json!([true, true, true])),
+    for verified in [
+        json!([true]),
+        json!([true, true, true]),
+        json!([true, "yes"]),
+        json!([true, null]),
+        json!("true"),
+        json!(null),
     ] {
         assert!(
-            WindowTaskSessionValidationService::restore(
-                &restore(ids.clone(), verified),
-                &expected(),
-                2
-            )
-            .is_err(),
-            "accepted {ids}"
+            WindowTaskSessionValidationService::restore(&restore(verified.clone()), &expected(), 2)
+                .is_err(),
+            "accepted {verified}"
         );
     }
-    let mut extra = restore(json!([101]), json!([true]));
+    let mut extra = restore(json!([true]));
     extra["task_ids"] = json!([A]);
     assert!(WindowTaskSessionValidationService::restore(&extra, &expected(), 1).is_err());
+    let mut ids = restore(json!([true]));
+    ids["window_ids"] = json!([101]);
+    assert!(WindowTaskSessionValidationService::restore(&ids, &expected(), 1).is_err());
 }
 
 #[test]
@@ -207,4 +201,71 @@ fn a_rehearsal_is_accepted_only_when_every_window_verified() {
         )
         .is_err());
     }
+}
+
+#[test]
+fn restore_and_rehearsal_responses_must_name_the_exact_process() {
+    let mut restore = restore(json!([true]));
+    restore["process"]["birth_id"] = json!("1726789012:000008");
+    assert_eq!(
+        WindowTaskSessionValidationService::restore(&restore, &expected(), 1),
+        Err("Window task helper process identity changed".into())
+    );
+    let rehearsal = json!({
+        "process": {"pid": 4243, "birth_id": "1726789012:000007"},
+        "window_ids": [31],
+        "verified_count": 1,
+        "clipboard_restored": true
+    });
+    assert_eq!(
+        WindowTaskSessionValidationService::rehearsal(&rehearsal, &expected()),
+        Err("Window task helper process identity changed".into())
+    );
+}
+
+fn fixture(name: &str) -> Value {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../tests/fixtures/window-tasks")
+        .join(name);
+    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+
+/// The same fixtures are encoded by the Swift helper's records in
+/// `tests/CodexWindowTaskRecordsTests.swift`.
+#[test]
+fn the_helper_records_rust_validates_match_the_shared_fixtures() {
+    let snapshot =
+        WindowTaskSessionValidationService::snapshot(&fixture("snapshot.json"), &expected())
+            .unwrap();
+    assert_eq!(snapshot.window_ids(), vec![31, 32]);
+    assert_eq!(snapshot.windows[1].task_id, B);
+    assert!(snapshot.windows[1].focused);
+    assert_eq!(
+        WindowTaskSessionValidationService::restore(
+            &fixture("restore-result.json"),
+            &expected(),
+            2
+        ),
+        Ok(WindowTaskRestoreReport {
+            verified: vec![true, false],
+            clipboard_restored: true,
+        })
+    );
+    assert_eq!(
+        WindowTaskSessionValidationService::rehearsal(
+            &fixture("rehearsal-result.json"),
+            &expected()
+        ),
+        Ok(WindowTaskReport {
+            windows: 2,
+            verified: 2,
+            clipboard_restored: false
+        })
+    );
+    // The plan Rust sends is the one the Swift test decodes.
+    let recovery = [B.to_string()];
+    assert_eq!(
+        snapshot.restore_plan(Some(&recovery)),
+        fixture("restore-plan.json")
+    );
 }

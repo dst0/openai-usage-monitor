@@ -3,6 +3,7 @@ use super::codex_availability_service::CodexAvailabilityService;
 use super::desktop_session_binding_service::DesktopSessionBindingService;
 use super::primary_target_selection::prioritize_primary_if_user;
 use super::restart_window_task_service::RestartWindowTaskService;
+use super::restart_worker_args_service::RestartWorkerArgsService;
 use super::restart_worker_dispatch_service::RestartWorkerDispatchService;
 use super::*;
 use std::time::Duration;
@@ -61,17 +62,8 @@ pub fn restart_and_recover(
     let primary = primary_thread
         .or_else(|| std::env::var("CODEX_THREAD_ID").ok())
         .map(|id| clean_thread_id(&id));
-    let mut args = vec![
-        "restart".into(),
-        "--delay-seconds".into(),
-        delay_seconds.max(5).to_string(),
-    ];
-    if let Some(id) = &primary {
-        args.extend(["--primary-thread".into(), id.clone()]);
-    }
-    if restore_window_tasks {
-        args.push("--restore-window-tasks".into());
-    }
+    let args =
+        RestartWorkerArgsService::restart(delay_seconds, primary.as_deref(), restore_window_tasks);
     if std::env::var_os("CODEX_RESTART_WORKER").is_none() && dispatch_self_restart(&args)? {
         return Ok(());
     }
@@ -176,55 +168,55 @@ pub fn restart_and_recover(
                     &operation_id,
                     "captured_restart",
                 )?;
-                RestartWindowTaskService::restore(
+                RestartWindowTaskService::around_recovery(
                     &mut window_tasks,
-                    launched_pids[0],
-                    "after relaunch",
-                );
-                crate::recovery::recover_threads_with_banner(
+                    bound_process,
                     &targets,
-                    crate::recovery::RecoveryMode::CapturedRestart,
-                    &mut banner,
+                    || {
+                        crate::recovery::recover_threads_with_banner(
+                            &targets,
+                            crate::recovery::RecoveryMode::CapturedRestart,
+                            &mut banner,
+                        )
+                    },
                 )?;
-                if !targets.is_empty() {
-                    // Recovery may send its own task links to a window.
-                    RestartWindowTaskService::restore(
-                        &mut window_tasks,
-                        launched_pids[0],
-                        "after recovery",
-                    );
-                }
                 DesktopSessionBindingService::confirm_after_recovery(bound_process)
             },
         )
     };
     drop(banner);
     let stability_result = crate::recovery::verify_desktop_stable(&launched_pids, true);
-    match (recovery_result, stability_result) {
-        (Ok(()), Ok(())) => {}
-        (Err(recovery), Ok(())) => {
-            return Err(CodexAvailabilityService::keep_after_failure(recovery))
-        }
-        (Ok(()), Err(stability)) => {
-            return Err(CodexAvailabilityService::keep_after_failure(stability))
-        }
-        (Err(recovery), Err(stability)) => {
-            return Err(CodexAvailabilityService::keep_after_failure(format!(
-                "{recovery}; desktop stability also failed: {stability}"
-            )))
-        }
+    let windows = RestartWindowTaskService::finish(window_tasks);
+    let failure = match (recovery_result, stability_result) {
+        (Ok(()), Ok(())) => None,
+        (Err(recovery), Ok(())) => Some(recovery),
+        (Ok(()), Err(stability)) => Some(stability),
+        (Err(recovery), Err(stability)) => Some(format!(
+            "{recovery}; desktop stability also failed: {stability}"
+        )),
     };
+    if let Some(failure) = failure {
+        let failure = RestartWindowTaskService::append_failure(Some(failure), windows);
+        return Err(CodexAvailabilityService::keep_after_failure(
+            failure.unwrap_or_default(),
+        ));
+    }
     for target in &targets {
         match inspect_thread_rollout_state(&crate::storage::codex_home(), target) {
             ThreadRolloutState::ActiveInProgress | ThreadRolloutState::CleanCompleted => {}
             state => {
-                return Err(format!(
+                let delayed = format!(
                     "Recovered task {target} ended in delayed state {state:?} during stabilization"
-                ))
+                );
+                return Err(
+                    RestartWindowTaskService::append_failure(Some(delayed), windows)
+                        .unwrap_or_default(),
+                );
             }
         }
     }
-    RestartWindowTaskService::finish(window_tasks)
-        .map_err(CodexAvailabilityService::keep_after_failure)?;
-    crate::recovery::arm_automation_cooldown()
+    // Desktop and recovery are fine: re-arm the cooldown before reporting
+    // windows that did not come back.
+    crate::recovery::arm_automation_cooldown()?;
+    windows
 }

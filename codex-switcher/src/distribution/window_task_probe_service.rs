@@ -43,11 +43,12 @@ impl WindowTaskProbeService {
             operation_lock,
             desktop_pids,
             backend,
-            |backend, process| {
+            |backend, process, windows| {
                 let response = WindowTaskHelperClient::new(backend).run(
                     WindowTaskCommand::Probe,
                     &process,
                     None,
+                    WindowTaskCommand::Probe.timeout(windows),
                 )?;
                 WindowTaskProbeValidationService::parse(&response, &process)
             },
@@ -67,11 +68,12 @@ impl WindowTaskProbeService {
             operation_lock,
             desktop_pids,
             backend,
-            |backend, process| {
+            |backend, process, windows| {
                 let response = WindowTaskHelperClient::new(backend).run(
                     WindowTaskCommand::Rehearse,
                     &process,
                     None,
+                    WindowTaskCommand::Rehearse.timeout(windows),
                 )?;
                 WindowTaskSessionValidationService::rehearsal(&response, &process)
             },
@@ -88,7 +90,7 @@ impl WindowTaskProbeService {
         operation_lock: impl FnOnce() -> Result<Operation, String>,
         desktop_pids: impl FnOnce() -> Result<Vec<u32>, String>,
         backend: impl FnOnce() -> Result<SystemWindowRestoreBackend, String>,
-        command: impl FnOnce(&SystemWindowRestoreBackend, ProcessIdentity) -> Result<T, String>,
+        command: impl FnOnce(&SystemWindowRestoreBackend, ProcessIdentity, usize) -> Result<T, String>,
     ) -> Result<T, String> {
         if !allow_focus_and_clipboard {
             return Err(OPT_IN_REQUIRED.into());
@@ -102,8 +104,10 @@ impl WindowTaskProbeService {
         };
         let mut backend = backend()?;
         let process = WindowProcessValidationService::inspect(&mut backend, pid)?;
-        let result =
-            command(&backend, process).map_err(|error| Self::with_visible_change_caveat(&error));
+        // The read-only inventory sizes the helper's deadline.
+        let windows = backend.capture_window_inventory(process.clone())?.len();
+        let result = command(&backend, process, windows)
+            .map_err(|error| Self::with_visible_change_caveat(&error));
         // ChatGPT re-reads its keymap whenever one of its windows gains
         // focus, which the probe itself causes; an edit meanwhile voids it.
         if CopyDeeplinkKeymapService::verify_copy_binding(&home) != Ok(keymap) {

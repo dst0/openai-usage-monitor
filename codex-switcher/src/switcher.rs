@@ -38,8 +38,12 @@ mod primary_target_selection;
 mod recovery_command_service;
 #[path = "switcher/restart_window_task_service.rs"]
 mod restart_window_task_service;
+#[path = "switcher/restart_worker_args_service.rs"]
+mod restart_worker_args_service;
 #[path = "switcher/restart_worker_dispatch_service.rs"]
 mod restart_worker_dispatch_service;
+#[path = "switcher/shutdown_window_snapshot.rs"]
+mod shutdown_window_snapshot;
 #[path = "switcher/switch_outcome.rs"]
 mod switch_outcome;
 #[path = "switcher/switch_restart_target_service.rs"]
@@ -73,6 +77,7 @@ pub(crate) use pinned_thread_link_launch_spec::is_identity_change as is_fatal_th
 pub use recovery_command_service::{
     dispatch_self_restart, restart_and_recover, resume_thread_interactive,
 };
+pub(crate) use restart_worker_args_service::RestartWorkerArgsService;
 pub use switch_outcome::SwitchOutcome;
 pub use switch_trigger::SwitchTrigger;
 pub(crate) use thread_detection_service::quota_failure_timestamp;

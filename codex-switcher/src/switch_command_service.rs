@@ -15,20 +15,22 @@ impl SwitchCommandService {
         let notify = accounts.settings.notify_on_switch;
         let switch_trigger: switcher::SwitchTrigger =
             trigger.parse().unwrap_or(switcher::SwitchTrigger::User);
+        switcher::RestartWorkerArgsService::check_window_task_request(
+            switch_trigger,
+            restore_window_tasks,
+        )?;
+        if restore_window_tasks && !should_restart {
+            println!(
+                "ℹ️ --restore-window-tasks has no effect: Desktop is not restarted by this switch."
+            );
+        }
         println!("🔄 Switching to account '{}'...", account);
         let dispatch = if should_restart && switcher::is_codex_app_running_checked()? {
-            let mut restart_args = vec![
-                "switch".to_string(),
-                account.clone(),
-                "--restart".to_string(),
-            ];
-            if switch_trigger != switcher::SwitchTrigger::User {
-                restart_args.push("--trigger".to_string());
-                restart_args.push(switch_trigger.as_str().to_string());
-            }
-            if restore_window_tasks {
-                restart_args.push("--restore-window-tasks".to_string());
-            }
+            let restart_args = switcher::RestartWorkerArgsService::switch(
+                &account,
+                switch_trigger,
+                restore_window_tasks,
+            )?;
             switcher::dispatch_self_restart(&restart_args)
         } else {
             Ok(false)

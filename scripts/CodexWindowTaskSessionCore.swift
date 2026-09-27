@@ -21,6 +21,7 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
   func snapshot() throws -> (entries: [WindowTaskEntry], clipboardRestored: Bool) {
     let (ids, windows) = try reader.prepare()
     let frames = try frames(of: windows)
+    try requireRestorable(windows)
     let focused = focusedIndex(in: windows)
     reader.beginVisibleChanges()
     do {
@@ -42,9 +43,14 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
   /// after a relaunch, takes the first entry; New Window creates every entry
   /// left without a window. Each window is navigated only when its copied
   /// link differs from its planned task.
-  func restore(_ plan: [PlannedWindowTask], focusIndex: Int?) throws -> WindowTaskRestoreResult {
+  func restore(
+    _ plan: [PlannedWindowTask], focusIndex: Int?, mode: WindowTaskRestoreMode = .relaunch
+  ) throws -> WindowTaskRestoreResult {
     guard planIsValid(plan, focusIndex: focusIndex) else {
       throw WindowTaskProbeFailure.restorePlanInvalid
+    }
+    if case .recheck(let recoveryTasks) = mode {
+      return try recheck(plan, recoveryTasks: recoveryTasks)
     }
     let (_, windows) = try reader.prepare()
     var assigned = try assign(windows, to: plan)
@@ -56,12 +62,18 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
         let existed = assigned[index] != nil
         if let existing = assigned[index] {
           window = existing
-          try place(window, plan[index].frame)
         } else {
-          window = try createWindow(anchor: assigned.values.first!, frame: plan[index].frame)
+          window = try createWindow(anchor: assigned.values.first!, frame: nil)
           assigned[index] = window
         }
-        verified[index] = try show(plan[index].taskID, in: window, alreadyShowingIsPossible: existed)
+        // A window that cannot take its frame still gets its task, but it
+        // does not count as restored.
+        let placed = (try? place(window, plan[index].frame)) != nil
+        let earlier = plan.indices.filter { $0 < index && verified[$0] }
+          .map { (assigned[$0]!, plan[$0].taskID) }
+        let shown = try show(
+          plan[index].taskID, in: window, alreadyShowingIsPossible: existed, unchanged: earlier)
+        verified[index] = placed && shown
       }
       // A later link must not have moved an earlier window off its task.
       for index in plan.indices where verified[index] {
@@ -69,11 +81,42 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
         verified[index] = (try? reader.copyTaskLink()) == plan[index].taskID
       }
       refocus(focusIndex.flatMap { assigned[$0] })
-      let ids = try windowIDs(in: plan.indices.map { assigned[$0]! })
       return WindowTaskRestoreResult(
-        windowIDs: ids, verified: verified, clipboardRestored: reader.finishVisibleChanges())
+        verified: verified, clipboardRestored: reader.finishVisibleChanges())
     } catch {
       refocus(focusIndex.flatMap { assigned[$0] })
+      _ = reader.finishVisibleChanges()
+      throw error
+    }
+  }
+
+  /// After recovery, which may have sent its own task link to the most
+  /// recently focused window. Only a planned window that now shows one of
+  /// recovery's tasks instead of its own is navigated back; nothing is
+  /// created, moved, or closed, and focus returns to wherever it is now.
+  private func recheck(
+    _ plan: [PlannedWindowTask], recoveryTasks: Set<String>
+  ) throws -> WindowTaskRestoreResult {
+    let (_, windows) = try reader.prepare()
+    let frames = try frames(of: windows)
+    let current = system.focusedWindow()
+    var verified = Array(repeating: true, count: plan.count)
+    reader.beginVisibleChanges()
+    do {
+      for index in plan.indices {
+        let matches = windows.indices.filter { framesMatch(frames[$0], plan[index].frame) }
+        guard matches.count == 1 else { continue }
+        let window = windows[matches[0]]
+        try reader.focus(window)
+        guard let shown = try? reader.copyTaskLink(), shown != plan[index].taskID,
+          recoveryTasks.contains(shown) else { continue }
+        verified[index] = try show(plan[index].taskID, in: window, alreadyShowingIsPossible: false)
+      }
+      refocus(current)
+      return WindowTaskRestoreResult(
+        verified: verified, clipboardRestored: reader.finishVisibleChanges())
+    } catch {
+      refocus(current)
       _ = reader.finishVisibleChanges()
       throw error
     }
@@ -87,7 +130,7 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
     let frames = try frames(of: windows)
     let focused = focusedIndex(in: windows)
     reader.beginVisibleChanges()
-    var created: [System.Window] = []
+    var created: [(window: System.Window, frame: CGRect?)] = []
     var occupied = frames
     var verified = 0
     var failure: Error?
@@ -97,7 +140,9 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
         let frame = rehearsalFrame(for: frames[index], avoiding: occupied)
         occupied.append(frame)
         let window = try createWindow(anchor: windows[index], frame: frame, created: &created)
-        guard try show(tasks[index], in: window, alreadyShowingIsPossible: false) else {
+        guard try show(
+          tasks[index], in: window, alreadyShowingIsPossible: false,
+          unchanged: Array(zip(windows, tasks))) else {
           throw WindowTaskProbeFailure.taskNavigationFailed
         }
         verified += 1
@@ -105,6 +150,8 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
       for (window, task) in zip(windows, tasks) {
         try reader.focus(window)
         guard try reader.copyTaskLink() == task else {
+          // Put the user's window back on its task before reporting.
+          _ = try? show(task, in: window, alreadyShowingIsPossible: false)
           throw WindowTaskProbeFailure.originalWindowChanged
         }
       }
@@ -155,16 +202,21 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
     return assigned
   }
 
-  private func createWindow(anchor: System.Window, frame: CGRect) throws -> System.Window {
-    var created: [System.Window] = []
+  private func createWindow(anchor: System.Window, frame: CGRect?) throws -> System.Window {
+    var created: [(window: System.Window, frame: CGRect?)] = []
     return try createWindow(anchor: anchor, frame: frame, created: &created)
   }
 
   /// An active app keys its new window, which is then Desktop's most recently
-  /// focused window; a window opened in the background might not be.
+  /// focused window; a window opened in the background might not be. Each
+  /// window that appears is recorded with the frame Desktop gave it.
   private func createWindow(
-    anchor: System.Window, frame: CGRect, created: inout [System.Window]
+    anchor: System.Window, frame: CGRect?, created: inout [(window: System.Window, frame: CGRect?)]
   ) throws -> System.Window {
+    // After a relaunch the item appears only once the renderer is ready.
+    guard reader.waitFor(newWindowItemTimeout, { system.newWindowItemAvailable() }) else {
+      throw WindowTaskProbeFailure.newWindowUnavailable
+    }
     try reader.focus(anchor)
     let before = try system.standardWindows()
     guard system.processBirthMatches() else { throw WindowTaskProbeFailure.processIdentityRejected }
@@ -181,12 +233,12 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
     let fresh = ((try? system.standardWindows()) ?? []).filter { window in
       !before.contains { system.sameWindow($0, window) }
     }
-    for window in fresh where !created.contains(where: { system.sameWindow($0, window) }) {
-      created.append(window)
+    for window in fresh where !created.contains(where: { system.sameWindow($0.window, window) }) {
+      created.append((window, system.frame(window)))
     }
     guard appeared, let window = opened, fresh.count == 1,
       system.sameWindow(fresh[0], window) else { throw WindowTaskProbeFailure.newWindowFailed }
-    try place(window, frame)
+    if let frame { try place(window, frame) }
     return window
   }
 
@@ -199,15 +251,27 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
 
   /// True once `window` copies `taskID`. A link is sent only while the window
   /// has keyboard focus, and focus must stay there while Desktop navigates.
-  /// A window that may already show the task is checked first.
+  /// A window that may already show the task is checked first. Before a
+  /// second link, the windows in `unchanged` must still show their tasks: a
+  /// first link that landed elsewhere without moving focus stops here
+  /// instead of moving another window too.
   private func show(
-    _ taskID: String, in window: System.Window, alreadyShowingIsPossible: Bool
+    _ taskID: String, in window: System.Window, alreadyShowingIsPossible: Bool,
+    unchanged: [(window: System.Window, taskID: String)] = []
   ) throws -> Bool {
     if alreadyShowingIsPossible {
       try reader.focus(window)
       if (try? reader.copyTaskLink()) == taskID { return true }
     }
-    for _ in 0..<taskNavigationAttempts {
+    for attempt in 0..<taskNavigationAttempts {
+      if attempt > 0 {
+        for other in unchanged {
+          try reader.focus(other.window)
+          guard (try? reader.copyTaskLink()) == other.taskID else {
+            throw WindowTaskProbeFailure.navigationTargetChanged
+          }
+        }
+      }
       try reader.focus(window)
       guard system.openTaskLink(taskID) else { throw WindowTaskProbeFailure.taskLinkOpenFailed }
       let deadline = system.now() + taskNavigationTimeout
@@ -220,9 +284,13 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
     return false
   }
 
-  private func close(_ windows: [System.Window]) -> Bool {
+  /// Desktop saves a primary window's frame when it closes; putting back
+  /// the frame it opened with keeps a rehearsal from changing where the next
+  /// window opens.
+  private func close(_ windows: [(window: System.Window, frame: CGRect?)]) -> Bool {
     var closed = true
-    for window in windows.reversed() where system.isWindowAlive(window) {
+    for (window, frame) in windows.reversed() where system.isWindowAlive(window) {
+      if let frame, system.processBirthMatches() { _ = system.setFrame(window, frame) }
       guard system.processBirthMatches(), system.closeWindow(window),
         reader.waitFor(windowCloseTimeout, { !system.isWindowAlive(window) }) else {
         closed = false
@@ -230,6 +298,17 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
       }
     }
     return closed
+  }
+
+  /// Before any visible change: a window that could not be recreated
+  /// refuses the snapshot, so the restart never starts.
+  private func requireRestorable(_ windows: [System.Window]) throws {
+    guard !windows.contains(where: { system.isFullScreen($0) }) else {
+      throw WindowTaskProbeFailure.windowFullScreen
+    }
+    guard windows.count == 1 || system.newWindowItemAvailable() else {
+      throw WindowTaskProbeFailure.newWindowUnavailable
+    }
   }
 
   private func refocus(_ window: System.Window?) {
@@ -250,18 +329,5 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
   private func focusedIndex(in windows: [System.Window]) -> Int? {
     guard let focused = system.focusedWindow() else { return nil }
     return windows.firstIndex { system.sameWindow($0, focused) }
-  }
-
-  /// WindowServer IDs for `windows`, in order, through the same frame-based
-  /// mapping the snapshot used.
-  private func windowIDs(in windows: [System.Window]) throws -> [UInt32] {
-    let ids = try system.windowIDs()
-    let mapped = try system.mappedWindows(ids)
-    return try windows.map { window in
-      guard let index = mapped.firstIndex(where: { system.sameWindow($0, window) }) else {
-        throw WindowTaskProbeFailure.windowMappingChanged
-      }
-      return ids[index]
-    }
   }
 }

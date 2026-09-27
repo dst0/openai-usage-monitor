@@ -115,6 +115,7 @@ swiftc \
     scripts/CodexWindowTaskSessionSystem.swift \
     scripts/CodexWindowTaskSessionCore.swift \
     scripts/CodexPreservedClipboard.swift \
+    scripts/CodexWindowTaskRecords.swift \
     scripts/CodexWindowTaskProbe.swift \
     scripts/CodexWindowTaskSession.swift \
     scripts/codex-window-restore.swift \
@@ -169,9 +170,23 @@ swiftc -parse-as-library \
     scripts/CodexWindowTaskProbeCore.swift \
     scripts/CodexWindowTaskSessionSystem.swift \
     scripts/CodexWindowTaskSessionCore.swift \
+    tests/CodexWindowTaskFakeDesktop.swift \
     tests/CodexWindowTaskSessionCoreTests.swift \
     -o "${TMP_BIN_DIR}/codex-window-task-session_test"
 "${TMP_BIN_DIR}/codex-window-task-session_test"
+
+echo "👉 Running window task record contract tests..."
+swiftc -parse-as-library \
+    -target "$(uname -m)-apple-macosx13.0" \
+    -framework Foundation \
+    scripts/CodexWindowSafetyChecks.swift \
+    scripts/CodexWindowTaskProbeValidation.swift \
+    scripts/CodexWindowTaskProbeCore.swift \
+    scripts/CodexWindowTaskSessionSystem.swift \
+    scripts/CodexWindowTaskRecords.swift \
+    tests/CodexWindowTaskRecordsTests.swift \
+    -o "${TMP_BIN_DIR}/codex-window-task-records_test"
+"${TMP_BIN_DIR}/codex-window-task-records_test"
 
 echo "👉 Running preserved clipboard tests on a private pasteboard..."
 swiftc -parse-as-library \
