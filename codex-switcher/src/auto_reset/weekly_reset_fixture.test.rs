@@ -13,6 +13,7 @@ pub(super) const ACCOUNT_ID: &str = "user@example.invalid:account-id";
 pub(super) const BLOCKED_TASK: &str = "01a07d3c-3008-75c2-87a6-2c5c75f0e4a1";
 pub(super) const OTHER_TASK: &str = "01a07d3c-3008-75c2-87a6-2c5c75f0e4a2";
 pub(super) const PRIOR_KEY: &str = "00000000-0000-4000-8000-000000000001";
+pub(super) const PRIOR_EVENT: &str = "2026-01-01T00:00:00Z";
 
 /// Hermetic `CODEX_HOME` holding one weekly-exhausted active account whose
 /// registry, settings, and live auth agree with the daemon's snapshot.
@@ -63,7 +64,7 @@ pub(super) fn prior_attempt(state: &str) -> ResetJournal {
         idempotency_key: Some(PRIOR_KEY.into()),
         state: state.into(),
         reason: Some("synthetic_prior_reason".into()),
-        updated_at: Some("2026-01-01T00:00:00Z".into()),
+        updated_at: Some(PRIOR_EVENT.into()),
         ..ResetJournal::default()
     }
 }
