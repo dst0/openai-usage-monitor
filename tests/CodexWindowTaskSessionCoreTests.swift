@@ -168,6 +168,7 @@ struct CodexWindowTaskSessionCoreTests {
     mismatchedLayoutsAndInvalidPlansChangeNothing()
     missingOrBackgroundNewWindowsFailClosed()
     focusIsRetakenBeforeEveryLink()
+    aWindowThatCannotBePlacedStopsTheRestore()
     aLinkLandingInAnotherWindowIsCaught()
     aTaskThatNeverMountsIsReportedUnverified()
     aLaterLinkThatMovedAnEarlierWindowIsCaught()
@@ -322,6 +323,20 @@ struct CodexWindowTaskSessionCoreTests {
       fatalError("restore failed")
     }
     precondition(result.verified == [true, true] && desktop.tasks[0] == a && desktop.tasks[1] == b)
+  }
+
+  static func aWindowThatCannotBePlacedStopsTheRestore() {
+    let desktop = relaunched()
+    desktop.setFrameSucceeds = false
+    precondition(failure(restore(desktop, [(a, f0), (b, f1)])) == .windowFrameFailed)
+    // Nothing is navigated into a window that is not where the plan says.
+    precondition(desktop.linksSent.isEmpty && desktop.log.contains("frame 0"))
+    // A window already on its planned frame is never moved.
+    let placed = FakeDesktop()
+    placed.focus(placed.addWindow(f0, task: a))
+    placed.setFrameSucceeds = false
+    guard case .success(let result) = restore(placed, [(a, f0)]) else { fatalError("restore failed") }
+    precondition(result.verified == [true] && !placed.log.contains("frame 0"))
   }
 
   static func aLinkLandingInAnotherWindowIsCaught() {
