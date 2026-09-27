@@ -103,15 +103,17 @@ The installation script checks and guides you through the prerequisites automati
    ```bash
    xcode-select --install
    ```
-   The selected Swift compiler and macOS SDK must come from a matching toolchain.
-   Run `./scripts/test_swift.sh` before installing; if Swift reports an SDK/compiler
-   version mismatch, repair or select matching Command Line Tools and rerun the
-   test. Do not publish or reinstall a partially built app bundle.
-   If you set `CLANG_MODULE_CACHE_PATH`, point it at a new, empty directory for
-   each installation; a new directory under the canonical `/private/tmp/...`
-   path is the verified workaround. Whether reusing a cache through the `/tmp`
-   alias, or reusing a cache at all, caused the duplicate-module failure seen
-   once is still unverified.
+   Run `./scripts/test_swift.sh` before installing. If Swift reports
+   `this SDK is not supported by the compiler`, read the error printed before
+   it first: an unwritable module cache produces the same message, so set
+   `CLANG_MODULE_CACHE_PATH` to a writable directory. Otherwise repair or select
+   matching Command Line Tools and rerun the test. Do not publish or reinstall a
+   partially built app bundle.
+   If you set `CLANG_MODULE_CACHE_PATH`, the test and install scripts use its
+   physical path (`/tmp/x` becomes `/private/tmp/x`). Reusing a module cache
+   through a different path spelling from the one that built it fails with a
+   duplicate-module error, so give other Swift or Clang runs that share the
+   cache the physical path too.
 3. **Rust & Cargo** (for building the ultra-lightweight CLI core):
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh

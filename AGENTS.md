@@ -69,6 +69,14 @@
   suffix as regular non-symlink files, without an owner or mode check. A
   change that adds or renames a staging writer must extend one of those lists
   and `tests/log_permissions_and_uninstall.sh` in the same change.
+- `scripts/install.sh` and `scripts/test_swift.sh` resolve a set
+  `CLANG_MODULE_CACHE_PATH` to its physical path before their first `swiftc`
+  (`scripts/swift_module_cache.sh`). Reusing a module cache through another
+  spelling of its directory, such as `/tmp` for `/private/tmp`, crashes Swift
+  with a duplicate-module error. Give ad hoc Swift or Clang runs that share a
+  cache the physical path too. Where a sandbox denies the default module
+  cache, a writable `CLANG_MODULE_CACHE_PATH` is enough. The compiler/SDK build
+  difference recorded in `CODEX.md` does not need an `SDKROOT` override.
 - “No traces” means no persistent Monitor-owned installation artifacts. Shell
   history, unified logs, LaunchServices/TCC records, APFS snapshots, and
   backups are outside the app's ownership and are not forensic-erased.

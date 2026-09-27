@@ -380,17 +380,29 @@ An in-process logout or login that keeps the same ChatGPT PID cannot be
 identified from process identity alone. Until Desktop exposes an authoritative
 current-account read, treat that case as requiring a verified restart.
 
-On this host the Command Line Tools Swift compiler and default macOS 27.0 SDK
-have mismatched build versions. Until the tools are repaired, use
-`SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` and a writable
-`CLANG_MODULE_CACHE_PATH` for Swift tests and installation. Point it at a new,
-empty directory under the canonical `/private/tmp/...` path for each install;
-that combination is the verified workaround. One failed install reused an
-existing cache through the `/tmp` alias and hit a duplicate-module
-(`_DarwinFoundation1`) error. The successful retry changed both the path
-spelling and the cache contents, so whether the alias itself or the stale
-cache caused the failure is unverified. Verify the exact built app signature
-and running process after installation.
+On this host the Command Line Tools Swift compiler (`6.4.0.34.1`) and the
+default macOS 27.0 SDK's Swift interfaces (`6.4.0.31.4`) come from different
+builds. That difference alone does not block builds: with a writable module
+cache, the default SDK builds every installer target and passes
+`./scripts/test_swift.sh` (checked 2026-09-28). Both installed SDKs came from
+a different compiler build. So when Swift cannot rebuild one of their modules,
+for example because the module cache is not writable, it reports
+`this SDK is not supported by the compiler`. Read the error printed before
+that line. Where a sandbox denies the default cache, set
+`CLANG_MODULE_CACHE_PATH` to a writable directory.
+`SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` still works
+but is not required.
+
+Reuse a module cache only through the path spelling that built it. Clang records
+imported module files by absolute path. A cache built as `/private/tmp/x` and
+reused as `/tmp/x`, or the reverse, or through any other symlink, fails with
+`module '_DarwinFoundation1' is defined in both ...` and a compiler crash.
+Fresh caches and same-spelling reuse work. `scripts/install.sh` and
+`scripts/test_swift.sh` resolve `CLANG_MODULE_CACHE_PATH` to its physical path
+before compiling, so a warm cache can be reused through them. Give other
+`swiftc`, `swift`, or `clang -fmodules` runs that share the cache the physical
+path too, and use a new directory for a cache built through another spelling.
+Verify the exact built app signature and running process after installation.
 
 ## Runtime Paths & Files
 - `~/.codex/auth.json`: Active authentication tokens used by Codex CLI and `ChatGPT.app` (0600 permissions).
