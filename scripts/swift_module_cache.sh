@@ -11,18 +11,31 @@
 # Resolving the variable to its physical spelling keeps every run of these
 # scripts on one spelling. It also pins a relative path to the caller's
 # directory, so the installer's later `cd` calls cannot move the cache between
-# compile steps. An unset or empty variable is left alone: Swift then uses its
-# own default cache. See
-# docs/leanings/2026-09-28-swift-cache-spelling-mismatch-isolated.md.
+# compile steps. An unset or empty variable is left alone, as before.
+#
+# A cache the compiler cannot write fails later with the misleading
+# "this SDK is not supported by the compiler", so an unwritable directory is
+# rejected here with its real cause. See
+# docs/leanings/2026-09-28-swift-cache-spelling-mismatch-isolated.md and
+# docs/leanings/2026-09-28-swift-sdk-not-supported-was-unwritable-module-cache.md.
 
 canonicalize_clang_module_cache_path() {
     local requested="${CLANG_MODULE_CACHE_PATH:-}"
-    local physical=""
+    local target="" physical=""
     [ -n "${requested}" ] || return 0
-    if ! /bin/mkdir -p -- "${requested}" 2>/dev/null ||
-        ! physical="$(CDPATH='' cd -P -- "${requested}" 2>/dev/null && /bin/pwd -P)" ||
+    # "./" keeps a relative operand away from CDPATH and from `cd -`.
+    case "${requested}" in
+        /*) target="${requested}" ;;
+        *) target="./${requested}" ;;
+    esac
+    if ! /bin/mkdir -p -- "${target}" 2>/dev/null ||
+        ! physical="$(CDPATH='' cd -P -- "${target}" 2>/dev/null && /bin/pwd -P)" ||
         [ -z "${physical}" ]; then
         echo "❌ CLANG_MODULE_CACHE_PATH is not a usable directory: ${requested}" >&2
+        return 1
+    fi
+    if [ ! -w "${physical}" ]; then
+        echo "❌ CLANG_MODULE_CACHE_PATH is not writable: ${requested}" >&2
         return 1
     fi
     if [ "${physical}" != "${requested}" ]; then

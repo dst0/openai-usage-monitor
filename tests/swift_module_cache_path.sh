@@ -108,6 +108,37 @@ expect "rejected path is left unchanged" "${actual#*|}" "${TEMP_ROOT}/file|set"
 /usr/bin/grep -q 'CLANG_MODULE_CACHE_PATH' "${TEMP_ROOT}/helper.err" \
     || fail "rejection did not explain which variable was unusable"
 
+# A symlink to a file is no better than the file itself.
+/bin/ln -s file "${TEMP_ROOT}/file-link"
+actual="$(run_helper "CLANG_MODULE_CACHE_PATH=${TEMP_ROOT}/file-link")"
+case "${actual}" in
+    0\|*) fail "a symlink to a regular file was accepted: ${actual}" ;;
+esac
+
+# Operands that `cd` would treat specially stay plain relative directories.
+/bin/mkdir -p "${TEMP_ROOT}/odd"
+actual="$(cd "${TEMP_ROOT}/odd" && OLDPWD="${TEMP_ROOT}/elsewhere" run_helper CLANG_MODULE_CACHE_PATH=-)"
+expect "a directory named '-' is not OLDPWD" "${actual}" "0|${TEMP_ROOT}/odd/-|set"
+actual="$(cd "${TEMP_ROOT}/odd" && run_helper CLANG_MODULE_CACHE_PATH=-P)"
+expect "a leading dash is a name, not an option" "${actual}" "0|${TEMP_ROOT}/odd/-P|set"
+actual="$(run_helper "CLANG_MODULE_CACHE_PATH=${ALIAS}/with space")"
+expect "spaces survive resolution" "${actual}" "0|${REAL}/with space|set"
+
+# An unwritable cache would surface later as "this SDK is not supported by the
+# compiler"; reject it up front with its real cause. Root can write anyway.
+if [ "$(/usr/bin/id -u)" != 0 ]; then
+    /bin/mkdir -p "${REAL}/readonly"
+    /bin/chmod 555 "${REAL}/readonly"
+    actual="$(run_helper "CLANG_MODULE_CACHE_PATH=${ALIAS}/readonly")"
+    /bin/chmod 755 "${REAL}/readonly"
+    case "${actual}" in
+        0\|*) fail "a read-only cache directory was accepted: ${actual}" ;;
+    esac
+    expect "read-only path is left unchanged" "${actual#*|}" "${ALIAS}/readonly|set"
+    /usr/bin/grep -q 'not writable' "${TEMP_ROOT}/helper.err" \
+        || fail "read-only rejection did not name the cause"
+fi
+
 # The macOS /tmp symlink itself resolves to /private/tmp.
 if [ -L /tmp ] && [ "$(cd -P /tmp && /bin/pwd -P)" = /private/tmp ]; then
     TMP_ALIAS_ROOT="$(/usr/bin/mktemp -d /tmp/codex-swift-module-cache-alias.XXXXXX)"
@@ -146,10 +177,15 @@ if [ "$(uname -s)" = Darwin ] && command -v swiftc >/dev/null 2>&1; then
 
     # Informational control, run last so it cannot disturb the checks above:
     # does this toolchain still fail when the raw alias spelling is reused?
+    # Swift 6.4 reports a duplicate module; older Clang (GitHub's macos-14
+    # image) rejects the recorded module cache path instead.
+    echo "control toolchain: $(swiftc --version 2>&1 | /usr/bin/head -n 1)"
     if compile "${ALIAS}/cache" "${TEMP_ROOT}/control" "${TEMP_ROOT}/control.log"; then
         echo "control: raw alias reuse compiled on this toolchain"
     elif /usr/bin/grep -q 'is defined in both' "${TEMP_ROOT}/control.log"; then
         echo "control: raw alias reuse reproduced the duplicate-module failure"
+    elif /usr/bin/grep -q 'was compiled with module cache path' "${TEMP_ROOT}/control.log"; then
+        echo "control: raw alias reuse reproduced the module-cache-path mismatch failure"
     else
         echo "control: raw alias reuse failed differently:"
         /usr/bin/grep -m3 'error' "${TEMP_ROOT}/control.log" || true
