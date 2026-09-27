@@ -3,13 +3,21 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=swift_module_cache.sh
+source "${SCRIPT_DIR}/swift_module_cache.sh"
 
 echo "🚀 Building and running Swift Test Suites for OpenAI Usage Monitor..."
+# Resolve an overridden module cache before any swiftc call; see
+# scripts/swift_module_cache.sh.
+canonicalize_clang_module_cache_path || exit 1
 
 TMP_BIN_DIR=$(mktemp -d /tmp/openai_swift_tests_XXXXXX)
 trap 'rm -rf "${TMP_BIN_DIR}"' EXIT
 
 cd "${REPO_DIR}"
+
+echo "👉 Running Swift module-cache path tests..."
+bash tests/swift_module_cache_path.sh
 
 echo "👉 [1/2] Running Screen Contrast, Vector Icons & Stacked Percentage Tests..."
 swiftc -parse-as-library \
