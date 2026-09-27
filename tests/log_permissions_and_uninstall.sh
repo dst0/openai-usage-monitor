@@ -662,13 +662,22 @@ run_locked_uninstall() {
         "${LOCKED_UNINSTALLER}" "$@"
 }
 
+# What the uninstaller's probe sees, for failure messages.
+describe_install_lock() {
+    local status=0
+    /usr/bin/lockf -k -s -t 0 "${INSTALL_LOCK}" /usr/bin/true >/dev/null 2>&1 || status=$?
+    /usr/bin/printf 'lockf on PATH: %s; /usr/bin/lockf probe status: %s; lock: %s; macOS %s' \
+        "$(command -v lockf || echo none)" "${status}" \
+        "$(/bin/ls -ld "${INSTALL_LOCK}" 2>&1 || true)" "$(/usr/bin/sw_vers -productVersion 2>/dev/null || echo unknown)"
+}
+
 assert_locked_temps_preserved_in_plan() {
     local reason="$1"
     local output="${TEMP_ROOT}/locked-dry-run.txt"
     run_locked_uninstall --dry-run > "${output}"
     for path in "${LOCKED_TEMPS[@]}"; do
         /usr/bin/grep -F -x "  preserve ${path} (${reason})" "${output}" >/dev/null ||
-            fail "dry-run did not preserve ${path} (${reason})"
+            fail "dry-run did not preserve ${path} (${reason}); plan: $(/usr/bin/grep -F "${path}" "${output}" || true); $(describe_install_lock)"
         /usr/bin/grep -F -x "  remove ${path}" "${output}" >/dev/null &&
             fail "dry-run listed ${path} for removal (${reason})"
         [ -e "${path}" ] || fail "dry-run removed ${path}"
