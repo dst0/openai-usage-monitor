@@ -233,7 +233,9 @@ if [ "$(uname -s)" = Darwin ] && command -v swiftc >/dev/null 2>&1; then
     # does this toolchain still fail when the raw alias spelling is reused?
     # Swift 6.4 reports a duplicate module; Swift 5.10 (GitHub's macos-14
     # image) rejects the recorded module cache path instead.
-    echo "control toolchain: $(swiftc --version 2>&1 | /usr/bin/head -n 1)"
+    # `swiftc --version` leaves an empty swift-driver TemporaryDirectory.* in
+    # TMPDIR (Swift 6.4), so give it this test's root instead.
+    echo "control toolchain: $(TMPDIR="${TEMP_ROOT}/" swiftc --version 2>&1 | /usr/bin/head -n 1)"
     if compile "${ALIAS}/cache" "${TEMP_ROOT}/control" "${TEMP_ROOT}/control.log"; then
         echo "control: raw alias reuse compiled on this toolchain"
     elif /usr/bin/grep -q 'is defined in both' "${TEMP_ROOT}/control.log"; then
