@@ -336,7 +336,7 @@ cxi recovery-preflight
 5. **Registers macOS Login Item** for seamless launch on Mac startup.
 6. **Configures 24/7 background `launchd` daemon** (`~/Library/LaunchAgents/com.codex.switcher.plist`).
 7. **Integrates AI Agent Skills** into `~/.codex/skills`, `~/.claude/skills`, and `~/.agents/skills`; a one-line remote install retains their source under `~/.local/share/codex-monitor/skills` because its temporary clone is removed.
-8. **Builds the optional `Codex Notifier.app`** in `~/Applications`, the `codex-ui-resume` helper in `~/.local/bin`, and bundles the confirmation-gated uninstaller inside the Monitor app.
+8. **Builds the optional `Codex Notifier.app`** in `~/Applications`, the `codex-ui-resume`, `codex-recovery-banner`, and `codex-window-restore` helpers in `~/.local/bin`, and bundles the confirmation-gated uninstaller inside the Monitor app.
 9. **Launches the Menu Bar app immediately.**
 
 The installer does not install or modify the official Codex Desktop app and
@@ -381,13 +381,43 @@ showing the exact scope. Runtime status/recovery files and logs are removed by
 the normal uninstall; the account registry is kept unless the purge is explicit.
 
 It removes only this project's installed components: `Codex Monitor.app`,
-`Codex Notifier.app`, `cxi`/`codex-mon`/`codex`/`codex-ui-resume`, the
+`Codex Notifier.app`, `cxi`/`codex-mon`/`codex` and the `codex-ui-resume`,
+`codex-recovery-banner`, and `codex-window-restore` helpers, the
 `com.codex.switcher` LaunchAgent and restart worker, the Monitor Login Item,
 Monitor preferences, app-specific support/cache/saved-state directories, the
 copied help file, Monitor logs/journals, the remote-install skill cache, and
 skill links that point to this project. The script is idempotent and does not remove
 anything merely because it happens to be named `codex` unless it is the exact
 shim installed by this project.
+
+It also removes what a killed installer or uninstaller left behind. The
+installer creates its temporary paths only while it holds its install lock (a
+file in `$TMPDIR`) and removes them before releasing it:
+
+- `~/.local/bin/.codex-mon.install.XXXXXX` (the CLI being installed, mode
+  `0600` or `0755`) and codesign's `.codex-mon.install.XXXXXX.cstemp` copy
+  (mode `0755`);
+- `.codex-monitor-install.XXXXXX` and `.codex-monitor-backup.XXXXXX` in
+  `/Applications` or `~/Applications` (mode `0700`, empty or holding only
+  `Codex Monitor.app`);
+- a one-line remote install's clone,
+  `codex-mon-install-XXXXXX.XXXXXXXXXX` in the per-user temporary directory
+  (`getconf DARWIN_USER_TEMP_DIR`, mode `0700`).
+
+Each `X` is a letter or digit, as `mktemp` fills it. The name, your user, the
+type and mode must all match, and nothing is followed through a symlink.
+While an installation runs, a backup directory can hold the only copy of the
+previous app. The uninstaller therefore removes these only when no installer
+holds the lock. It checks with `lockf`, or with perl's `flock` on macOS 14,
+which has no `lockf`. If an installer holds the lock, or the lock cannot be
+verified, it keeps them,
+names them, and finishes with a warning, so rerun it after the installation
+ends. Once the installer has exited, a backup is leftover Monitor data and is
+removed like the app, including one the installer kept because it could not
+roll back. An installer started with a different `TMPDIR` uses a different lock
+file and is not detected. The uninstaller also removes the private copies it
+edits in place of `~/.zshrc`, `~/.bash_profile`, and `~/.codex/config.toml`
+(`<file>.codex-monitor-uninstall.XXXXXX`) if an earlier run was interrupted.
 
 By design, uninstall does **not** delete the official OpenAI Codex Desktop app,
 its bundled app-server, shared `~/.codex/auth.json`, `state_5.sqlite`,

@@ -2,12 +2,14 @@
 //! permissions, actions pinned to full commit SHAs, explicit job timeouts and
 //! concurrency, an exact Rust toolchain, a committed `Cargo.lock` that every
 //! workflow and repository script builds with `--locked`, cache keys that hash
-//! committed files, an all-targets Clippy gate, and required branch-protection
-//! checks that always report. Rule logic lives in `ci_workflow_policy/rules.rs`,
-//! with the checkout, trigger, required-job, locked-cargo, lockfile, cache-key,
-//! Clippy gate, and inherited-settings rules in `checkout.rs`, `triggers.rs`,
+//! committed files, an all-targets Clippy gate, required shell tests, and
+//! required branch-protection checks that always report. Rule logic lives in
+//! `ci_workflow_policy/rules.rs`, with the checkout, trigger, required-job,
+//! locked-cargo, lockfile, cache-key, Clippy gate, shell-test gate, and
+//! inherited-settings rules in `checkout.rs`, `triggers.rs`,
 //! `required_checks.rs`, `locked_cargo.rs`, `lockfile.rs`, `cache_keys.rs`,
-//! `clippy_gate.rs`, and `inherited_settings.rs`, and `yaml_limits.rs`
+//! `clippy_gate.rs`, `shell_test_gate.rs`, and `inherited_settings.rs`, and
+//! `yaml_limits.rs`
 //! rejecting YAML the line reader (`yaml_lines.rs`, `yaml_values.rs`,
 //! `workflow_jobs.rs`) cannot read. `shell_lines.rs` reads shell command lines
 //! for the locked-cargo rule, and `git_repo.rs` answers what the repository
@@ -67,6 +69,9 @@ mod clippy_gate;
 #[path = "ci_workflow_policy/inherited_settings.rs"]
 mod inherited_settings;
 
+#[path = "ci_workflow_policy/shell_test_gate.rs"]
+mod shell_test_gate;
+
 #[path = "ci_workflow_policy/fixtures.rs"]
 mod fixtures;
 
@@ -123,6 +128,9 @@ fn every_workflow_meets_ci_baseline() {
                 &text, &contexts, branch,
             ));
             found.extend(clippy_gate::clippy_gate_violations(&text, &contexts));
+            found.extend(shell_test_gate::shell_test_gate_violations(
+                &text, &contexts,
+            ));
             found.extend(inherited_settings::inherited_setting_violations(
                 &text, &contexts,
             ));
@@ -238,6 +246,20 @@ fn repository_scripts_run_cargo_locked() {
         "unlocked cargo invocations:\n{}",
         violations.join("\n")
     );
+}
+
+/// Each required shell test must be committed. CI runs a clean checkout, so a
+/// gate naming an untracked local script would pass this policy locally and
+/// then fail in CI with a missing file.
+#[test]
+fn required_shell_tests_are_committed_scripts() {
+    let scripts = repo().tracked_files("*.sh").expect("list tracked scripts");
+    for script in shell_test_gate::REQUIRED_SHELL_TESTS {
+        assert!(
+            scripts.iter().any(|s| s == script),
+            "{script} is not a tracked script: {scripts:?}"
+        );
+    }
 }
 
 #[test]
