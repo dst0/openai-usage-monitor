@@ -128,9 +128,11 @@ Both reset journals are written by the shared `state_file` writer (exclusive
 0600 staging, file flush, rename, directory flush) behind the injectable
 `StateFileOperations` seam. If a manual attempt or automatic `pending` marker
 cannot be saved or read back, nothing is sent; only a record that reads back
-exactly as this attempt (fresh key) is withdrawn (manual: `resolved`;
-automatic: retryable `journal_error`), and an unreadable or different record
-is left for reconciliation.
+exactly as this write (its fresh key, or the new timestamp of a re-marked key
+that was never sent) is withdrawn (manual: `resolved`; automatic: retryable
+`journal_error`), and an unreadable or different record is left for
+reconciliation. Manual reset refuses a request that cannot be built before it
+records an attempt, as the automatic preflight does.
 Manual and automatic reset paths use one recovery operation lock and check the
 other path's unresolved journal before preparing a new request. Any unresolved
 manual attempt blocks automatic reset across local IDs; pending/unknown
@@ -149,9 +151,11 @@ request may have been applied; other retries are re-marked `pending` first.
 Such a refused retry reports its own cause (`retry_refused:<cause>`,
 `retry_unavailable:<reason>`) in status while the journal stays byte-identical.
 The `Applied` follow-up (fresh usage read, Desktop recovery hand-off) runs
-through `WeeklyResetEnvironment`; a visible but unflushed `applied` journal
-still hands off recovery and is rewritten, while one that never replaced
-`pending` leaves recovery to the same-key retry.
+through `WeeklyResetEnvironment` and never depends on saving `applied`: no
+later tick repeats it, because a visible `applied` returns early and a
+`pending` that `applied` never replaced is held by the restored pool. A failed
+`applied` write is retried after the hand-off and, if it fails again, reported
+as an applied credit.
 Credential and registry staging uses unpredictable `create_new`, `O_NOFOLLOW`,
 mode-0600 temporary files instead of reopening a predictable filename.
 Active-auth reads open with `O_NOFOLLOW`, require a private regular file, and

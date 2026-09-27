@@ -49,3 +49,7 @@ impl StateFileOperations for SystemStateFileOperations {
             .open(path)
     }
 }
+
+#[cfg(test)]
+#[path = "system_state_file_operations.test.rs"]
+mod tests;

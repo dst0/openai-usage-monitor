@@ -52,3 +52,36 @@ fn journal_directory_sync_failure_is_reported_not_swallowed() {
     assert!(error.contains("could not be synced"), "{error}");
     assert!(files.unfired().is_empty());
 }
+
+/// Uninstall and the Monitor log cleanup remove an interrupted staging file
+/// only by its `.auto-reset-state.` prefix and `.tmp` suffix
+/// (`MonitorLogCleanupService::is_temp_file`); a renamed staging file would
+/// be left behind as a trace.
+#[test]
+fn staging_name_matches_the_cleanup_pattern() {
+    let home = TestCodexHome::new("auto_journal_staging_name");
+    let files = FakeStateFileOperations::new();
+    ResetJournalStore::in_directory(home.path().to_path_buf(), &files)
+        .write(&pending())
+        .unwrap();
+    let staging = files
+        .calls()
+        .into_iter()
+        .find(|(operation, _)| *operation == "create_staging")
+        .expect("a staging file was created")
+        .1;
+
+    assert_eq!(staging.parent(), Some(home.path()));
+    let name = staging.file_name().unwrap().to_str().unwrap();
+    let middle = name
+        .strip_prefix(".auto-reset-state.")
+        .and_then(|rest| rest.strip_suffix(".tmp"))
+        .unwrap_or_else(|| panic!("{name} escapes the cleanup pattern"));
+    let (pid, sequence) = middle.split_once('.').expect("pid.sequence");
+    assert!(
+        [pid, sequence]
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())),
+        "{name}"
+    );
+}

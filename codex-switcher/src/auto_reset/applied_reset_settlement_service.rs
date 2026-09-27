@@ -27,15 +27,11 @@ impl<'a, E: WeeklyResetEnvironment> AppliedResetSettlementService<'a, E> {
         journal.state = "applied".into();
         journal.reason = None;
         journal.updated_at = Some(now_string());
-        // If `applied` never replaced `pending`, the same-key retry receives
-        // the service's idempotent success and recovers then. If it is visible
-        // but was not flushed, the next tick sees `applied` and never retries,
-        // so the paid-for hand-off must happen now and the write is repeated.
-        let unflushed = match self.store.write(&journal) {
-            Ok(()) => false,
-            Err(_) if self.store.load().is_ok_and(|saved| saved == journal) => true,
-            Err(error) => return Err(error),
-        };
+        // The credit is spent, so the paid-for hand-off must not depend on the
+        // journal: no later tick repeats it. A visible `applied` returns early,
+        // and a `pending` that `applied` never replaced is held once the fresh
+        // quota shows the restored pool. A failed write is repeated afterwards.
+        let first_write = self.store.write(&journal);
         let quota_refresh_reason = match self.environment.read_usage(latest_active) {
             Ok(usage)
                 if usage.account_id.as_deref() == Some(latest_active.account_id.as_str())
@@ -58,9 +54,13 @@ impl<'a, E: WeeklyResetEnvironment> AppliedResetSettlementService<'a, E> {
                 Some(format!("{quota_reason};{recovery_reason}"))
             }
         };
-        if unflushed || journal.reason.is_some() {
+        if first_write.is_err() || journal.reason.is_some() {
             journal.updated_at = Some(now_string());
-            self.store.write(&journal)?;
+            self.store.write(&journal).map_err(|error| {
+                format!(
+                    "{error}; the reset credit was applied and its tasks were handed to recovery"
+                )
+            })?;
         }
         Ok(report(
             journal.state,

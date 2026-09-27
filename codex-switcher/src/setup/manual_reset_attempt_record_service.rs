@@ -43,9 +43,10 @@ impl<'s, 'f> ManualResetAttemptRecordService<'s, 'f> {
                 withdrawn.mark_resolved();
                 match self.store.write(&withdrawn) {
                     Ok(()) => "the unsent attempt was withdrawn".into(),
-                    Err(_) => {
-                        format!("the unsent attempt could not be durably withdrawn; {RECONCILE}")
-                    }
+                    Err(_) => format!(
+                        "the unsent attempt could not be durably withdrawn; if it still shows \
+                         pending, {RECONCILE}"
+                    ),
                 }
             }
             Ok(Some(saved)) if saved.is_unresolved() => {

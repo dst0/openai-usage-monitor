@@ -22,6 +22,12 @@ fn exhausted_other() -> AccountConfig {
     account
 }
 
+fn on_disk() -> (String, Option<String>) {
+    let journal = load_journal_at(&crate::storage::codex_home().join("auto-reset-state.json"))
+        .expect("readable journal");
+    (journal.state, journal.reason)
+}
+
 fn settled_retry() -> FakeWeeklyResetEnvironment {
     FakeWeeklyResetEnvironment::new(&[BLOCKED_TASK]).with_outcome(
         ResetCreditConsumeOutcome::NotConsumed("nothing_to_reset".into()),
@@ -113,8 +119,14 @@ fn marker_that_never_replaced_the_journal_changes_nothing() {
 #[test]
 fn unreadable_marker_is_left_unresolved() {
     let home = Home::prepare();
+    // The load skips `open_for_read` while no journal exists, so the first
+    // open is the withdrawal's own read of the marker; the hook pins that.
     let files = FakeStateFileOperations::new()
         .fail("sync_directory", MARKER_WRITE)
+        .before("open_for_read", 1, || {
+            let (state, _) = on_disk();
+            assert_eq!(state, "pending", "fault hit the wrong read")
+        })
         .fail("open_for_read", 1);
     let environment = blocked_with(files);
     let result = run(&environment);
@@ -194,5 +206,30 @@ fn outcome_write_after_the_request_is_never_withdrawn() {
     assert!(result.is_err(), "an unflushed outcome reported success");
     assert_eq!(journal.state, "unknown");
     assert_eq!(route_blocked, Ok(true));
+    assert!(environment.journal_fake().unfired().is_empty());
+}
+
+/// The withdrawal became visible but could not be flushed: nothing is left
+/// unresolved on disk, and the message only says it may still show pending.
+#[test]
+fn unflushed_withdrawal_is_reported() {
+    let home = Home::prepare();
+    let files = FakeStateFileOperations::new()
+        .fail("sync_directory", MARKER_WRITE)
+        .fail("sync_directory", WITHDRAWAL_WRITE);
+    let environment = blocked_with(files);
+    let result = run(&environment);
+    let journal = load_journal_at(&home.journal_path()).unwrap();
+    let route_blocked = unresolved_auto_reset_for(&snapshot());
+    drop(home);
+
+    assert!(environment.requests().is_empty());
+    assert_eq!(journal.state, "journal_error");
+    assert_eq!(route_blocked, Ok(false));
+    let error = result.expect_err("an unflushed marker must not report success");
+    assert!(
+        error.contains("could not be durably withdrawn and may still"),
+        "{error}"
+    );
     assert!(environment.journal_fake().unfired().is_empty());
 }

@@ -57,6 +57,16 @@ fn recorded_state() -> Option<String> {
     value["state"].as_str().map(str::to_string)
 }
 
+/// Pins a call-numbered fault to the read it is meant for: this command's
+/// unsent attempt is the record on disk at that call.
+fn expect_pending_on_disk() {
+    assert_eq!(
+        recorded_state().as_deref(),
+        Some("pending"),
+        "fault hit the wrong read"
+    );
+}
+
 /// Proves the next explicit reset is no longer blocked and does send.
 fn next_reset_sends() -> bool {
     reset_with(&FakeStateFileOperations::new()) == (Ok(("main".into(), true)), 1)
@@ -95,7 +105,9 @@ fn unflushed_attempt_is_withdrawn_before_any_request() {
 #[test]
 fn transient_readback_failure_withdraws_the_unsent_attempt() {
     let env = setup();
-    let files = FakeStateFileOperations::new().fail("open_for_read", READBACK);
+    let files = FakeStateFileOperations::new()
+        .before("open_for_read", READBACK, expect_pending_on_disk)
+        .fail("open_for_read", READBACK);
     let (result, sent) = reset_with(&files);
     let state = recorded_state();
     let blocks_automatic = crate::setup::unresolved_manual_reset();
@@ -118,6 +130,7 @@ fn transient_readback_failure_withdraws_the_unsent_attempt() {
 fn unreadable_attempt_is_left_for_reconciliation() {
     let env = setup();
     let files = FakeStateFileOperations::new()
+        .before("open_for_read", WITHDRAWAL_READ, expect_pending_on_disk)
         .fail("open_for_read", READBACK)
         .fail("open_for_read", WITHDRAWAL_READ);
     let (result, sent) = reset_with(&files);
@@ -200,5 +213,82 @@ fn attempt_that_never_replaced_the_record_changes_nothing() {
     assert!(error.contains("no reset request was sent"), "{error}");
     assert_eq!(before, after, "the previous resolved record was rewritten");
     assert_eq!(blocks_automatic, Ok(false));
+    assert!(files.unfired().is_empty());
+}
+
+/// A request that cannot be built never leaves the host (`Unavailable`), so
+/// it must be refused before an attempt is recorded, as the automatic
+/// preflight does; recording first could strand `pending` if the later
+/// `resolved` write failed.
+#[test]
+fn unbuildable_request_is_refused_before_anything_is_recorded() {
+    let env = setup();
+    crate::storage::update_accounts_atomically(|registry| {
+        registry.accounts[0].tokens.account_id = Some("mismatched-route".into());
+        Ok(())
+    })
+    .unwrap();
+    let files = FakeStateFileOperations::new();
+    let (result, sent) = reset_with(&files);
+    let recorded = recorded_state();
+    let blocks_automatic = crate::setup::unresolved_manual_reset();
+    drop(env);
+
+    assert_eq!(sent, 0);
+    assert_eq!(recorded, None, "an unbuildable attempt was recorded");
+    assert!(
+        !files.operations().contains(&"replace"),
+        "an unbuildable attempt was written"
+    );
+    assert_eq!(blocks_automatic, Ok(false));
+    let error = result.expect_err("an unbuildable request must be refused");
+    assert!(
+        error.contains("active_account_route_mismatch")
+            && error.contains("no reset request was sent"),
+        "{error}"
+    );
+}
+
+/// The withdrawal record became visible but its directory could not be
+/// flushed: the message must not claim the attempt is still pending.
+#[test]
+fn unflushed_withdrawal_is_reported_without_claiming_pending() {
+    let env = setup();
+    let files = FakeStateFileOperations::new()
+        .fail("sync_directory", PENDING_WRITE)
+        .fail("sync_directory", WITHDRAWAL_WRITE);
+    let (result, sent) = reset_with(&files);
+    let state = recorded_state();
+    drop(env);
+
+    assert_eq!(sent, 0);
+    assert_eq!(state.as_deref(), Some("resolved"));
+    let error = result.expect_err("an unflushed attempt must not be sent");
+    assert!(
+        error.contains("could not be durably withdrawn; if it still shows pending"),
+        "{error}"
+    );
+    assert!(files.unfired().is_empty());
+}
+
+/// A readback that finds no record has nothing of this command's to withdraw.
+#[test]
+fn readback_that_finds_no_record_withdraws_nothing() {
+    let env = setup();
+    let files = FakeStateFileOperations::new().before("open_for_read", READBACK, || {
+        std::fs::remove_file(ManualResetAttemptStore::path()).unwrap()
+    });
+    let (result, sent) = reset_with(&files);
+    let state = recorded_state();
+    drop(env);
+
+    assert_eq!(sent, 0);
+    assert_eq!(state, None);
+    let error = result.expect_err("a missing readback must not be sent");
+    assert!(
+        error.contains("readback did not match")
+            && error.contains("no unresolved attempt is recorded"),
+        "{error}"
+    );
     assert!(files.unfired().is_empty());
 }

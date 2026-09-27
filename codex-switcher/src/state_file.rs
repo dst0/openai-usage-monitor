@@ -1,8 +1,10 @@
 //! Durable replacement of small private state documents such as the manual
 //! and automatic reset journals. Each document is staged exclusively with
 //! owner-only permissions, flushed, renamed over its final name, and its
-//! directory is flushed so the rename survives power loss. Every filesystem
-//! call goes through `StateFileOperations`, so tests can fail any step.
+//! directory is flushed so the rename survives power loss. Every write step,
+//! and opening a document for reading, goes through `StateFileOperations`, so
+//! tests can fail any of them; metadata checks and reads from an opened file
+//! use the real descriptor.
 
 #[path = "state_file/private_state_file_write_service.rs"]
 mod private_state_file_write_service;
@@ -21,3 +23,6 @@ pub(crate) use system_state_file_operations::SystemStateFileOperations;
 #[cfg(test)]
 #[path = "state_file/fake_state_file_operations.test.rs"]
 pub(crate) mod fake_state_file_operations;
+#[cfg(test)]
+#[path = "state_file/fake_state_file_operations_contract.test.rs"]
+mod fake_state_file_operations_contract;

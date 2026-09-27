@@ -54,6 +54,15 @@ impl<'a> ManualResetAttemptStore<'a> {
         Ok(Some(attempt))
     }
 
+    /// Uninstall removes an interrupted staging file only by this exact shape:
+    /// `manual-reset-state.<pid>.<16 lowercase hex>.tmp.json`.
+    fn staging_name(nonce: u64) -> String {
+        format!(
+            "manual-reset-state.{}.{nonce:016x}.tmp.json",
+            std::process::id()
+        )
+    }
+
     /// Durably replaces the attempt. A `SyncDirectory` failure is reported
     /// after the new record became visible, so a caller must not assume the
     /// previous record is still in place when this returns an error.
@@ -64,14 +73,13 @@ impl<'a> ManualResetAttemptStore<'a> {
         let mut nonce = [0u8; 8];
         getrandom::getrandom(&mut nonce)
             .map_err(|_| "Manual reset attempt nonce unavailable".to_string())?;
-        // Uninstall matches this exact interrupted-staging name.
-        let staging = format!(
-            "manual-reset-state.{}.{:016x}.tmp.json",
-            std::process::id(),
-            u64::from_ne_bytes(nonce)
-        );
         PrivateStateFileWriteService::new(self.files)
-            .replace(&codex_home(), JOURNAL_FILE, &staging, &content)
+            .replace(
+                &codex_home(),
+                JOURNAL_FILE,
+                &Self::staging_name(u64::from_ne_bytes(nonce)),
+                &content,
+            )
             .map_err(|failure| {
                 match failure {
                     StateFileWriteFailure::PrepareDirectory(_) => {

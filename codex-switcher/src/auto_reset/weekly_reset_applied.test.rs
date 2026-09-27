@@ -1,6 +1,7 @@
 use super::fixture::{
-    edit_account, run, snapshot, write_live_tokens, Home, BLOCKED_TASK, OTHER_TASK,
+    edit_account, run, settings, snapshot, write_live_tokens, Home, BLOCKED_TASK, OTHER_TASK,
 };
+use super::WeeklyResetService;
 use crate::auto_reset::fake_weekly_reset_environment::FakeWeeklyResetEnvironment;
 use crate::auto_reset::{load_journal_at, unresolved_auto_reset_for};
 use crate::models::WhamUsageResponse;
@@ -208,9 +209,11 @@ fn visible_but_unflushed_applied_journal_still_hands_off_recovery() {
         );
         assert_eq!(journal.state, "applied", "{failed_syncs:?}");
         match result {
-            Err(error) if reported => {
-                assert!(error.contains("could not be synced"), "{error}")
-            }
+            Err(error) if reported => assert!(
+                error.contains("could not be synced")
+                    && error.contains("the reset credit was applied"),
+                "{error}"
+            ),
             Ok(report) if !reported => {
                 assert!(report.status.state == "applied" && report.suppress_auto_switch)
             }
@@ -223,33 +226,74 @@ fn visible_but_unflushed_applied_journal_still_hands_off_recovery() {
     }
 }
 
-/// If `applied` never replaced `pending`, the same-key retry will see the
-/// service's idempotent success and recover then; recovering now would leave
-/// the task unblocked and the `pending` retry waiting for it forever.
+/// If `applied` never replaced `pending`, no later tick settles the attempt:
+/// the fresh quota shows the restored pool, so the same-key retry is held. The
+/// hand-off therefore happens now, and the `applied` write is repeated.
 #[test]
-fn applied_journal_that_never_landed_defers_recovery_to_the_same_key_retry() {
-    let home = Home::prepare();
-    let files = FakeStateFileOperations::new().fail("replace", 2);
-    let environment = applied(&[BLOCKED_TASK])
-        .with_usage(restored())
-        .with_journal_files(files);
-    let result = run(&environment);
-    let journal = load_journal_at(&home.journal_path()).unwrap();
-    let route_blocked = unresolved_auto_reset_for(&snapshot());
-    let retry = applied(&[BLOCKED_TASK]).with_usage(restored());
-    let retried = run(&retry).unwrap();
-    drop(home);
+fn applied_journal_that_never_landed_still_hands_off_recovery() {
+    for (failed_renames, lands) in [(&[2][..], true), (&[2, 3][..], false)] {
+        let home = Home::prepare();
+        let files = failed_renames
+            .iter()
+            .fold(FakeStateFileOperations::new(), |files, nth| {
+                files.fail("replace", *nth)
+            });
+        let environment = applied(&[BLOCKED_TASK])
+            .with_usage(restored())
+            .with_journal_files(files);
+        let result = run(&environment);
+        let journal = load_journal_at(&home.journal_path()).unwrap();
+        let route_blocked = unresolved_auto_reset_for(&snapshot());
+        // The daemon persists the restored pool from its next quota read.
+        edit_account(|a| a.last_weekly_percentage = Some(100.0));
+        let mut restored_snapshot = snapshot();
+        restored_snapshot.last_weekly_percentage = Some(100.0);
+        let later = applied(&[BLOCKED_TASK]).with_usage(restored());
+        let later_report =
+            WeeklyResetService::maybe_consume_weekly_reset(&settings(), &restored_snapshot, &later);
+        drop(home);
 
-    assert!(result.is_err(), "an unsaved outcome reported success");
-    assert!(environment.recoveries().is_empty() && environment.usage_reads().is_empty());
-    assert_eq!(journal.state, "pending");
-    assert_eq!(route_blocked, Ok(true));
-    let key = journal.idempotency_key.expect("pending key");
-    assert_eq!(
-        retry.requests(),
-        vec![("pending".to_string(), Some(key.clone()), key)],
-        "the retry must reuse the key whose outcome was not saved"
-    );
-    assert_eq!(retry.recoveries().len(), 1);
-    assert_eq!(retried.status.state, "applied");
+        let label = format!("{failed_renames:?}");
+        assert_eq!(environment.requests().len(), 1, "{label}");
+        assert_eq!(
+            environment.recoveries(),
+            vec![("pending".to_string(), vec![BLOCKED_TASK.to_string()])],
+            "{label}: recovery waited on the journal"
+        );
+        assert_eq!(environment.usage_reads().len(), 1, "{label}");
+        assert!(
+            later.requests().is_empty() && later.recoveries().is_empty(),
+            "{label}"
+        );
+        let later_report = later_report.unwrap();
+        if lands {
+            assert!(
+                result.is_ok_and(|report| report.status.state == "applied"),
+                "{label}"
+            );
+            assert_eq!(journal.state, "applied", "{label}");
+            assert_eq!(route_blocked, Ok(false), "{label}");
+            assert_eq!(later_report.status.state, "ready", "{label}");
+        } else {
+            // Both writes failed: the applied credit is reported, and the
+            // attempt stays unresolved for reconciliation, failing closed.
+            let error = result.expect_err("an unsaved outcome must be reported");
+            assert!(
+                error.contains("the reset credit was applied"),
+                "{label}: {error}"
+            );
+            assert_eq!(journal.state, "pending", "{label}");
+            assert_eq!(route_blocked, Ok(true), "{label}");
+            assert_eq!(
+                (
+                    later_report.status.state.as_str(),
+                    later_report.status.reason.as_deref(),
+                    later_report.suppress_auto_switch
+                ),
+                ("pending", Some("retry_refused:weekly_pool_available"), true),
+                "{label}"
+            );
+        }
+        assert!(environment.journal_fake().unfired().is_empty(), "{label}");
+    }
 }

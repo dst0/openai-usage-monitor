@@ -85,6 +85,11 @@ where
         ));
     }
     let idempotency_key = crate::auto_reset::new_idempotency_key()?;
+    // A request that cannot be built would never leave this host; refuse it
+    // before recording an attempt that could then be stranded.
+    crate::quota::reset_request_blocker(&target, &idempotency_key).map_err(|reason| {
+        format!("Reset request cannot be built ({reason}); no reset request was sent")
+    })?;
     let mut attempt = ManualResetAttempt::pending(
         target.id.clone(),
         available_credits,
