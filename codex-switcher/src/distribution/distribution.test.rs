@@ -16,6 +16,86 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 #[test]
+fn automatic_task_capture_failure_keeps_desktop_and_auth_unchanged() {
+    let env = TestEnv::new("auto_task_capture_failure");
+    env.populate(
+        vec![
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                sprint_pct: 0.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                credits: 1,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+        ],
+        Some("old"),
+        Some("old"),
+    );
+    let prior_auth = read_active_auth_json().unwrap();
+    let mock = Arc::new(MockAppLifecycle::new(true));
+    *mock.task_capture_error.lock().unwrap() = Some("WINDOW_ACCESS_FAILED".into());
+
+    let error = DistributionCoordinator::with_lifecycle(mock.clone())
+        .execute(DistributionRequest::auto("quota_exhausted"))
+        .unwrap_err();
+    assert!(error.contains("WINDOW_ACCESS_FAILED"), "{error}");
+    assert_eq!(mock.task_capture_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.abort_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(mock.launch_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(read_active_auth_json().unwrap(), prior_auth);
+    assert!(!env.home().join("distribution-journal.json").exists());
+}
+
+#[test]
+fn automatic_restore_failure_reports_partial_after_recovery() {
+    let env = TestEnv::new("auto_task_restore_failure");
+    env.populate(
+        vec![
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                sprint_pct: 0.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                credits: 1,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+        ],
+        Some("old"),
+        Some("old"),
+    );
+    let mock = Arc::new(MockAppLifecycle::new(true));
+    *mock.task_finish_error.lock().unwrap() = Some("Window tasks were not fully restored".into());
+    let outcome = DistributionCoordinator::with_lifecycle(mock.clone())
+        .execute(DistributionRequest::auto("quota_exhausted"))
+        .unwrap();
+    assert_eq!(outcome.status, DistributionStatus::PartialSuccess);
+    assert_eq!(mock.task_capture_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.task_restore_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(mock.recovery_calls.load(Ordering::SeqCst), 1);
+    assert!(outcome.recovery_error.unwrap().contains("Window tasks"));
+}
+
+#[test]
 fn test_candidate_skip_reasons() {
     let env = TestEnv::new("skip_reasons");
 
@@ -820,10 +900,11 @@ fn replaced_desktop_process_cannot_claim_the_target_account() {
     let original_active_id = load_accounts().unwrap().active_account_id;
     let mock = Arc::new(MockAppLifecycle::new(true));
     mock.change_process_birth_after_launch();
-    let outcome = DistributionCoordinator::with_lifecycle(mock)
+    let outcome = DistributionCoordinator::with_lifecycle(mock.clone())
         .execute(DistributionRequest::auto("quota_exhausted"))
         .unwrap();
     assert_eq!(outcome.status, DistributionStatus::Failed);
+    assert_eq!(mock.task_restore_calls.load(Ordering::SeqCst), 0);
     assert_eq!(
         load_accounts().unwrap().active_account_id,
         original_active_id
@@ -940,7 +1021,7 @@ fn test_at_most_one_desktop_restart() {
         "SHUTDOWN",
         "RELAUNCH",
         "RECOVERY_START",
-        "RECOVERY_VERIFIED",
+        "RECOVERY_NOT_REQUESTED",
         "OUTCOME",
     ] {
         assert!(

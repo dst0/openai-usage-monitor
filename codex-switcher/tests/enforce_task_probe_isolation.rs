@@ -3,9 +3,10 @@
 //! rehearsal and restore) open windows and send task links. The probe and
 //! the rehearsal must remain explicit CLI diagnostics. The snapshot and
 //! restore commands may run only inside `cxi restart` and `cxi switch` when
-//! the user passes `--restore-window-tasks`. Distribution, recovery, the
-//! daemon, the Monitor app, launch agents, workflows, and scripts must never
-//! reach any of them. This scan fails when any file outside the listed ones
+//! the user passes `--restore-window-tasks`, or in a running Desktop account
+//! distribution after its exact window snapshot succeeds. Distribution uses
+//! the Rust lifecycle only; the daemon, Monitor app, launch agents, workflows,
+//! and scripts must never call the helper directly. This scan fails when any file outside the listed ones
 //! names a command or its entry point, so that a new caller gets a
 //! deliberate safety review instead of silently turning a diagnostic or an
 //! explicit request into automation. It also fails when a listed file stops
@@ -20,6 +21,11 @@ const CLIENT_TEST: &str = "codex-switcher/src/distribution/window_task_helper_cl
 const PROBE_SERVICE: &str = "codex-switcher/src/distribution/window_task_probe_service.rs";
 const PROBE_TEST: &str = "codex-switcher/src/distribution/window_task_probe_service.test.rs";
 const RESTART_SESSION: &str = "codex-switcher/src/distribution/window_task_restart_session.rs";
+const DISTRIBUTION_TASKS: &str =
+    "codex-switcher/src/distribution/distribution_window_task_service.rs";
+// Guarded relaunch of the previous account restores its captured windows.
+const DISTRIBUTION_ROLLBACK: &str =
+    "codex-switcher/src/distribution/distribution_desktop_rollback_service.rs";
 const RESTART_TEST: &str = "codex-switcher/src/distribution/window_task_restart_session.test.rs";
 const RESTART_STEPS: &str = "codex-switcher/src/switcher/restart_window_task_service.rs";
 const RESTART_STEPS_TEST: &str = "codex-switcher/src/switcher/restart_window_task_service.test.rs";
@@ -103,7 +109,7 @@ const RULES: [(&str, &[&str]); 32] = [
     ),
     (
         "WindowTaskRestartSession::capture(",
-        &[RESTART_STEPS, RESTART_TEST, RESTART_STEPS_TEST],
+        &[RESTART_STEPS, RESTART_TEST, RESTART_STEPS_TEST, DISTRIBUTION_TASKS],
     ),
     // The entry points that carry the request take it as a plain boolean,
     // so every caller is pinned: only CLI parsing may pass it.
@@ -170,6 +176,13 @@ const RULES: [(&str, &[&str]); 32] = [
             RESTART_COMMAND,
             SWITCH_SERVICE,
             WORKER_ARGS,
+            "codex-switcher/src/distribution/app_lifecycle.rs",
+            "codex-switcher/src/distribution/system_app_lifecycle.rs",
+            "codex-switcher/src/distribution/distribution_recovery_audit_service.rs",
+            DISTRIBUTION_ROLLBACK,
+            "codex-switcher/src/distribution/mock_app_lifecycle.test.rs",
+            "codex-switcher/src/distribution/distribution_desktop_switch_service.test.rs",
+            "codex-switcher/src/distribution/distribution_transaction_safety.test.rs",
         ],
     ),
     (

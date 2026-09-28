@@ -16,8 +16,8 @@ const KEYMAP_CHANGED: &str =
 const WINDOWS_CHANGED: &str =
     "Desktop windows changed while their tasks were being captured; refusing restart";
 
-/// Carries each ChatGPT window's selected task through one restart that the
-/// user explicitly asked to restore windows for (`--restore-window-tasks`).
+/// Carries each ChatGPT window's selected task through one direct CLI restart
+/// with `--restore-window-tasks` or one running-Desktop distribution restart.
 ///
 /// Capture happens before shutdown and fails closed, so the multiwindow
 /// shutdown guard still refuses the restart when any window's task cannot be
@@ -76,6 +76,23 @@ impl WindowTaskRestartSession {
         self.snapshot.windows.len()
     }
 
+    /// The final pre-signal read must still show the captured task, frame,
+    /// focus, and keymap for every exact window. A changed selection refuses
+    /// shutdown before credentials or checkpoints can advance further.
+    pub fn verify_unchanged(
+        &mut self,
+        expected: &ProcessIdentity,
+        backend: &SystemWindowRestoreBackend,
+        inventory: &[u32],
+    ) -> Result<(), String> {
+        let fresh = Self::capture(expected, Ok(self.home.clone()), backend, inventory)?;
+        self.clipboard_kept |= fresh.clipboard_kept;
+        if fresh.keymap != self.keymap || fresh.snapshot != self.snapshot {
+            return Err("Desktop window tasks, frames, or focus changed before shutdown".into());
+        }
+        Ok(())
+    }
+
     /// Once after the relaunch, and again after recovery, which may send its
     /// own task links. `process` is the relaunched Desktop the caller pinned.
     /// `ready` waits until Desktop can mount a task (its IPC router answers);
@@ -117,7 +134,7 @@ impl WindowTaskRestartSession {
         self.failures.push(format!("{}: {error}", phase.label()));
     }
 
-    /// Recovery sends a task link only for a task no window has open (and
+    /// Direct CLI recovery sends a task link only for a task no window has open (and
     /// then reopens its primary task). After a complete relaunch restore
     /// that showed every recovery target, no such link is sent, so no
     /// recheck is needed and no window is focused again.
