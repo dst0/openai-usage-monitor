@@ -25,6 +25,9 @@ bash tests/swift_test_defaults_isolation.sh
 echo "👉 Checking that Swift tests keep off the live Codex home..."
 bash tests/swift_test_codex_home_isolation.sh
 
+echo "👉 Checking that Swift tests keep off the live CLI, process list, and window list..."
+bash tests/swift_test_live_system_isolation.sh
+
 echo "👉 Checking that Swift tests remove the status items they create..."
 bash tests/swift_test_status_items.sh
 
@@ -123,6 +126,9 @@ swiftc -parse-as-library \
     tests/CodexClientIdentityTests.swift \
     -o "${TMP_BIN_DIR}/codex-client-identity_test"
 "${TMP_BIN_DIR}/codex-client-identity_test"
+
+echo "👉 Building the live diagnostic without running it..."
+bash scripts/swift_live_diagnostics.sh --compile-only
 
 echo "👉 Compiling recovery banner and exact window helpers..."
 RECOVERY_BANNER_SOURCES=()

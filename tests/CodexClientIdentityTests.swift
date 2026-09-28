@@ -90,6 +90,30 @@ struct CodexClientIdentityTests {
     require(client.loadCachedSnapshot()?.cliAccount == nil,
       "replacing auth after caching must invalidate the CLI quota")
 
+    // Whether ChatGPT runs comes from the client's Desktop source, never the live process list.
+    // Both answers are checked, so a client that read the real list would fail one of them on
+    // any machine, with ChatGPT open or not.
+    let appCache: [String: Any] = [
+      "accounts": [["id": app.id, "email": app.email, "plan_type": app.planType, "is_active": false]]
+    ]
+    try! JSONSerialization.data(withJSONObject: appCache)
+      .write(to: testHome.appendingPathComponent("usage-status.json"))
+    let runningDesktop = CodexDesktopProcessIdentity(pid: 4242, birthID: "1:000001")
+    let runningClient = identityHome.client(
+      desktopProcess: { runningDesktop }, desktopAppAccountIdProvider: { app.id })
+    let closedClient = identityHome.client(
+      desktopProcess: { nil }, desktopAppAccountIdProvider: { app.id })
+    require(runningClient.isCodexAppRunning(), "a running Desktop must be reported running")
+    require(runningClient.loadCachedSnapshot()?.isAppRunning == true,
+      "the snapshot must see the client's running Desktop")
+    require(runningClient.loadCachedSnapshot()?.appAccount?.id == app.id,
+      "a running Desktop must show its session's App account")
+    require(!closedClient.isCodexAppRunning(), "a closed Desktop must be reported closed")
+    require(closedClient.loadCachedSnapshot()?.isAppRunning == false,
+      "the snapshot must see the client's closed Desktop")
+    require(closedClient.loadCachedSnapshot()?.appAccount == nil,
+      "a closed Desktop must show no App account")
+
     let now = Date()
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

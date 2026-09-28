@@ -26,6 +26,11 @@ extension AppDelegate {
     }
   }
 
+  /// The live WindowServer list of on-screen windows. Only `AppDelegate()` binds it.
+  internal static func liveDesktopWindows() -> [[String: Any]] {
+    CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+  }
+
   internal func saveDesktopWindowBoundsPassive(for targetPID: pid_t) {
     if let data = try? Data(contentsOf: client.accountsFileURL),
       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -48,7 +53,7 @@ extension AppDelegate {
       if nowMs < deadlineMs { return }
     }
 
-    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+    let list = desktopWindows()
     var best: (frame: CGRect, area: CGFloat, isTitle: Bool)?
 
     for info in list {
