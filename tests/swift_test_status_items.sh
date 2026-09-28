@@ -304,6 +304,9 @@ expect_violation unapplied-removal "${T}" '  let remove = NSStatusBar.system.rem
     "${T} has 1 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
 expect_violation referenced-creation "${T}" '  let make = NSStatusBar.system.statusItem(withLength:)' \
     "${T} has 1 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
+# A backtick-escaped name is the same name: an escaped creation counts.
+expect_violation escaped-creation "${T}" '  let other = NSStatusBar.system.`statusItem`(withLength: 7)' \
+    "${T} creates 3 status items and removes 2"
 # Code inside an interpolation is code: a status item made there counts.
 expect_violation interpolated-creation "${T}" \
     '  let width = "\(NSStatusBar.system.statusItem(withLength: 6).length)"' \
