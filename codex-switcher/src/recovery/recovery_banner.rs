@@ -107,16 +107,6 @@ impl RecoveryBanner {
         capture: WindowCapture,
         restore_bounds: bool,
     ) -> Result<Self, String> {
-        if ids.is_empty() {
-            return Ok(Self {
-                expected_process: capture.process.clone(),
-                child: None,
-                visible_since: None,
-                service: None,
-                capture: restore_bounds.then_some(capture),
-                pending_statuses: Vec::new(),
-            });
-        }
         let expected =
             BannerProcessIdentity::new(capture.process.pid, capture.process.birth_id.clone())?;
         let saved_window = SavedWindow::new(

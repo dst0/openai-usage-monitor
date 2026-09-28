@@ -42,6 +42,7 @@ fn checkpoint(home: &Path, index: u64) -> Checkpoint {
             awaiting_owner: true,
             captured_restart: true,
             owner_account_id: Some("old-account".into()),
+            auth_rotation: None,
         },
         rollout,
     }

@@ -13,6 +13,7 @@ fn rejected_shutdown_restores_previous_ownerless_retry() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     };
     write_manifest(std::slice::from_ref(&old)).unwrap();
     let snapshot = RecoveryManifestSnapshot::capture().unwrap();
@@ -22,6 +23,7 @@ fn rejected_shutdown_restores_previous_ownerless_retry() {
         awaiting_owner: false,
         captured_restart: true,
         owner_account_id: None,
+        auth_rotation: None,
     }])
     .unwrap();
     assert_eq!(

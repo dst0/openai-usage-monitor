@@ -165,6 +165,7 @@ fn only_explicitly_ownerless_targets_with_a_current_owner_are_retried() {
             awaiting_owner: false,
             captured_restart: false,
             owner_account_id: None,
+            auth_rotation: None,
         },
         PendingTarget {
             id: "01a098c2-0fae-74d2-a80c-45d89e910e80".into(),
@@ -172,6 +173,7 @@ fn only_explicitly_ownerless_targets_with_a_current_owner_are_retried() {
             awaiting_owner: true,
             captured_restart: true,
             owner_account_id: Some("account-a".into()),
+            auth_rotation: None,
         },
         PendingTarget {
             id: "01a098c2-0fae-74d2-a80c-45d89e910e81".into(),
@@ -179,6 +181,7 @@ fn only_explicitly_ownerless_targets_with_a_current_owner_are_retried() {
             awaiting_owner: true,
             captured_restart: false,
             owner_account_id: Some("account-a".into()),
+            auth_rotation: None,
         },
     ];
     let mut probed = Vec::new();
@@ -199,6 +202,7 @@ fn owner_probe_error_cannot_schedule_a_turn() {
         awaiting_owner: true,
         captured_restart: false,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     }];
     assert!(
         select_ready_targets(&targets, "account-a", |_| Err("IPC unavailable".into())).is_err()
@@ -216,6 +220,7 @@ fn failed_link_delivery_does_not_hide_a_later_owned_target() {
             awaiting_owner: true,
             captured_restart: true,
             owner_account_id: Some("account-a".into()),
+            auth_rotation: None,
         })
         .collect();
     let mut probed = 0;
@@ -254,6 +259,7 @@ fn eligible_probe_reissues_a_link_for_each_ownerless_target() {
             awaiting_owner: true,
             captured_restart: true,
             owner_account_id: Some("account-a".into()),
+            auth_rotation: None,
         })
         .collect();
     let mut navigated = Vec::new();
@@ -289,6 +295,7 @@ fn account_change_does_not_probe_or_retry_deferred_target() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     };
     let ready =
         select_ready_targets(&[target], "account-b", |_| panic!("wrong account probed")).unwrap();
@@ -303,6 +310,7 @@ fn owner_probe_precedes_bounded_rollout_scan() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     };
     let no_owner = select_scanned_ready_targets(
         std::slice::from_ref(&target),

@@ -25,6 +25,7 @@ pub(super) struct RecoveryTarget {
     pub(super) mounted_by_recovery: bool,
     pub(super) owner_unavailable: bool,
     pub(super) account_mismatch: bool,
+    pub(super) auth_rotation_eligible: bool,
     pub(super) dispatched: bool,
     pub(super) completed: bool,
     pub(super) failure: Option<String>,
@@ -39,6 +40,7 @@ pub(super) fn prepare_target(
     id: &str,
     baseline: Option<u64>,
     scan_budget: u64,
+    auth_rotation_eligible: bool,
 ) -> Result<Option<RecoveryTarget>, String> {
     use switcher::ThreadRolloutState;
     if !valid_id(id) {
@@ -76,6 +78,7 @@ pub(super) fn prepare_target(
         mounted_by_recovery: false,
         owner_unavailable: false,
         account_mismatch: false,
+        auth_rotation_eligible,
         dispatched: false,
         completed: false,
         failure: None,

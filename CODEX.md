@@ -202,7 +202,14 @@ turn verification. For a deferred retry after App/CLI distribution, the saved
 Desktop account must match the target, the exact live ChatGPT PID and birth
 identity, and the expected CLI account; an old or unbound session cannot
 authorize dispatch. The initial recovery banner closes after its bounded
-owner waits; a new banner is required before any later owner-routed IPC send.
+owner waits. A deferred navigation attempt for a still eligible target under
+the exact saved Desktop account holds a new `Pending` banner through a bounded
+owner-mount wait and hands that same panel to recovery after owner proof. If no
+Desktop window is visible initially, panel creation is retried after navigation;
+no IPC is sent unless a live panel appears. Timeout, identity change, or panel
+failure retains the original checkpoint. While ownership is pending, the panel
+says that tasks are being opened and checked; it does not claim a restart or
+successful continuation before either is verified.
 An older ownerless checkpoint stays eligible across another switch until a
 new post-checkpoint turn has substantive, error-free agent work and no queued
 follow-up. Only then does a later restart record a fresh offset and clear the
@@ -212,8 +219,9 @@ Queued follow-ups require the same owner and turn-mode revalidation as an
 unqueued turn. An already-unpaused queue still receives one owner-routed
 `thread-follower-set-queued-follow-ups-state` wake after the durable dispatch
 marker; owner discovery alone sends no work. Non-quota interrupted errors are
-explicit-target only, and historical user Stop turns are not discovery-only
-recovery candidates, including when a queue exists.
+explicit-target only except for the operation-bound auth-refresh exception
+described below; historical user Stop turns are not discovery-only recovery
+candidates, including when a queue exists.
 Tail classification reads only through a captured file length, checks whether
 the seek begins on a record boundary, discards a partial first record as bytes
 before strict UTF-8 decoding, and requires a final newline. A malformed newer
@@ -234,8 +242,8 @@ selects one ownerless task with a valid ID and a SQLite row, rotating per
 entry never takes that turn, and a single-target pass (the deferred worker's
 re-prune before recovery) leaves the cursor alone so the next full pass
 continues the rotation. A selected target with a stable terminal non-quota error is dropped
-because unattended recovery cannot dispatch it; malformed or changed tails
-keep the retry. Older deferred intervals are scanned in chunks of at most 16 MiB
+unless its saved, confirmed auth-rotation evidence is bound to the target
+Desktop account; malformed or changed tails keep the retry. Older deferred intervals are scanned in chunks of at most 16 MiB
 per probe and yield no lifecycle result until the snapshot end is reached. Foreground
 recovery scans at most 16 MiB of rollout payload per pass across its targets,
 plus small boundary samples, and waits for a complete newline-terminated
@@ -257,10 +265,20 @@ that started recovery, so the changed account cannot retry it unattended. A
 hidden captured-restart banner can bind the
 relaunched process only when the exact live Desktop session marker matches;
 other modes reject a process change during the wait.
-There is no persistent banner while Desktop has not mounted the task. Unattended mounting
-after an account switch remains unverified on the current Desktop build. If the daemon is not
+The deferred banner exists during an eligible navigation attempt and its
+bounded owner wait, not between daemon probes. Unattended mounting after an
+account switch remains unverified on the current Desktop build. If the daemon is not
 running, inspect the affected task and use
 `cxi resume <id>` only if the turn remains interrupted.
+
+When a restart captures one selected window but has zero running recovery
+targets, the banner shows a generic one-window pending message and no task rows.
+The captured window and exact PID/birth identity still gate the panel. On
+relaunch, target auth and the saved Desktop session are checked before the
+panel is rebound or window geometry restored, then checked again immediately
+before recovery IPC. The panel does not claim that a
+task resumed; missing-window and optional-capture cases retain the prior
+fail-closed or best-effort behavior for their configured capture mode.
 
 An account switch records its recovery targets before shutdown and takes a
 second checkpoint after the old ChatGPT process exits. The later offset keeps
@@ -269,6 +287,24 @@ checkpoint cannot be saved, account switching stops before changing
 `auth.json` and relaunches the previous Desktop account; a successful shutdown
 alone is not permission to rotate credentials. `cxi restart` also relaunches
 the previous Desktop state if its post-shutdown checkpoint fails.
+Only a Monitor-owned A-to-B switch may mark the exact token-refresh failure
+of an active pre-stop turn as automatically recoverable. Its private recovery
+record carries the verified source and target account IDs, old turn ID,
+first-checkpoint offset, rollout file identity, and the queue database identity,
+revision, and pending count captured before that offset. The queue snapshot is
+checked during preparation, after stop, and again before deferred dispatch.
+A bounded streaming scan before
+auth replacement must find the matching terminal error in that interval and
+no Stop, new turn, or user input. The second offset remains the recovery proof
+boundary. Deferred mounting and dispatch recheck the saved rollout identity,
+length, and exact terminal interval, so replacement after confirmation cannot
+inherit the exception. The exception still requires the exact relaunched target-account
+Desktop session and a mounted IPC owner; `no-client-found` retains its
+target-bound checkpoint without sending a turn. Historical auth errors without
+this operation evidence remain explicit-only.
+The recovery manifest reader rejects symlinks, changing files, and files over
+1 MiB; serialized auth-rotation evidence must have bounded nonempty account
+and turn IDs and a valid captured-rollout identity.
 When eligible recovery targets or captured selected-window tasks exist,
 distribution handshakes Desktop IPC after the first checkpoint and before
 stopping ChatGPT. A failed handshake aborts the
@@ -405,18 +441,22 @@ window-roster completeness unproven.
 Automatic distribution records whether the exact Desktop process has an eligible
 standard window before shutdown. If no such window exists, it skips geometry
 restore; after task owner mounting, recovery requires a visible banner before
-IPC and retains the original checkpoint if no window appears. A launchd daemon may be denied Accessibility access even
-when the same helper succeeds from Terminal. If that happens, set
-`cxi config --preserve-window-bounds false` to explicitly disable geometry
-preservation. Distribution validates the exact Desktop process without an
-Accessibility window read, uses read-only WindowServer geometry to place the
-banner when a visible window and recovery target exist, and still performs IPC
-recovery and singleton-process verification. Explicit WindowServer visibility/geometry
-failures and panel visibility failures are logged without blocking the account
-switch. Helper protocol and unknown capture failures block the switch. Window access, geometry, and process-identity failures remain
-blocking while preservation is enabled; process-identity failures remain
-blocking in either mode. With preservation disabled, the prior window position
-and size are not restored or verified by the Monitor.
+IPC and retains the original checkpoint if no window appears. The shutdown
+window guard always checks Accessibility and Screen Recording inside the
+`codex-window-restore` process launched by `cxi`, including when
+`preserve_window_bounds_on_restart=false`.
+`WINDOW_ACCESSIBILITY_DENIED` and `WINDOW_SCREEN_RECORDING_DENIED` are fixed,
+non-sensitive pre-signal failures. Neither check prompts for a grant. The
+installer accepts an explicit `CODEX_MONITOR_SIGNING_IDENTITY_SHA1` and signs
+both the CLI and window helper with fixed identifiers; without it, both are ad
+hoc signed and a TCC grant may not survive rebuilding. Verify the installed
+launchd path and the actual TCC-attributed client rather than an
+interactive Terminal run. Disabling bounds preservation skips geometry
+restoration but cannot authorize a shutdown with unreadable window inventory.
+The legacy LaunchAgent has no `AssociatedBundleIdentifiers` key: Apple requires
+the agent executable and associated app to share a Team Identifier, while the
+installer currently signs the Monitor app ad hoc. Do not add that key as a
+privacy-grant workaround without matching signatures and live verification.
 
 Deferred recovery in an already running ChatGPT never restores window bounds.
 It locates its banner through the read-only WindowServer helper, so a launchd

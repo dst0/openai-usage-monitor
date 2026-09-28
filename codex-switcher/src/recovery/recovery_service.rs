@@ -65,11 +65,17 @@ pub(crate) fn recover_threads_with_banner(
     for id in ids {
         banner.record_status(id, BannerSessionStatus::InProgress);
         let previous = previous_pending.iter().find(|target| target.id == *id);
+        let prior_offset = previous.and_then(|target| target.offset);
         match prepare_target(
             &home,
             id,
-            previous.and_then(|target| target.offset),
+            prior_offset,
             per_target_budget,
+            previous
+                .and_then(|target| target.auth_rotation.as_ref())
+                .is_some_and(|evidence| {
+                    evidence.eligible_for(&home, id, identity.account_id(), prior_offset)
+                }),
         ) {
             Ok(Some(target)) => targets.push(target),
             Ok(None) => {

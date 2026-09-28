@@ -128,6 +128,8 @@ impl SystemWindowRestoreBackend {
         match stderr.strip_suffix(b"\n").unwrap_or(stderr) {
             b"WINDOW_NOT_FOUND" => "WINDOW_NOT_FOUND".into(),
             b"WINDOW_ACCESS_FAILED" => "WINDOW_ACCESS_FAILED".into(),
+            b"WINDOW_ACCESSIBILITY_DENIED" => "WINDOW_ACCESSIBILITY_DENIED".into(),
+            b"WINDOW_SCREEN_RECORDING_DENIED" => "WINDOW_SCREEN_RECORDING_DENIED".into(),
             b"WINDOW_GEOMETRY_FAILED" => "WINDOW_GEOMETRY_FAILED".into(),
             b"PROCESS_IDENTITY_REJECTED" => "PROCESS_IDENTITY_REJECTED".into(),
             _ => "Codex window restore helper rejected the request".into(),

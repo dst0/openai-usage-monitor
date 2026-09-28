@@ -20,6 +20,22 @@ pub(in crate::recovery) fn should_dispatch(
         }
 }
 
+pub(in crate::recovery) fn should_dispatch_with_auth_rotation(
+    state: ThreadRolloutState,
+    pending: usize,
+    mode: RecoveryMode,
+    confirmed: bool,
+) -> bool {
+    should_dispatch(state, pending, mode)
+        || (confirmed
+            && pending == 0
+            && state == ThreadRolloutState::InterruptedByError
+            && matches!(
+                mode,
+                RecoveryMode::CapturedRestart | RecoveryMode::DeferredCaptured
+            ))
+}
+
 pub(in crate::recovery) fn should_resume_queued(
     state: ThreadRolloutState,
     mode: RecoveryMode,
@@ -34,4 +50,18 @@ pub(in crate::recovery) fn should_resume_queued(
         CleanCompleted => mode != RecoveryMode::DiscoveredOnly,
         _ => false,
     }
+}
+
+pub(in crate::recovery) fn should_resume_queued_with_auth_rotation(
+    state: ThreadRolloutState,
+    mode: RecoveryMode,
+    confirmed: bool,
+) -> bool {
+    should_resume_queued(state, mode)
+        || (confirmed
+            && state == ThreadRolloutState::InterruptedByError
+            && matches!(
+                mode,
+                RecoveryMode::CapturedRestart | RecoveryMode::DeferredCaptured
+            ))
 }

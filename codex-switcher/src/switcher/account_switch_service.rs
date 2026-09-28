@@ -199,26 +199,16 @@ pub(super) fn switch_to_account_with(
                         &target_account.id,
                         launched_pids[0],
                         |bound_process| {
-                            let restored = recovery_banner
-                                .as_ref()
-                                .expect("running app must have a recovery banner")
-                                .restore_after_relaunch(
-                                    launched_pids[0],
-                                    recovery_operation_id.as_deref().unwrap_or("account_switch"),
-                                    "account_switch",
-                                );
-                            // A relaunch may restore a different account's
-                            // auth. Check after banner work, immediately
-                            // before Desktop owner IPC. The guard removes an
-                            // exact but now false target marker on failure.
-                            let verified =
-                                DesktopSessionBindingService::verify_target_before_recovery(
-                                    &crate::storage::codex_home(),
-                                    &target_account.id,
-                                    bound_process,
-                                );
-                            restored?;
-                            verified?;
+                            DesktopSessionBindingService::restore_banner_under_target(
+                                &crate::storage::codex_home(),
+                                &target_account.id,
+                                bound_process,
+                                recovery_banner
+                                    .as_ref()
+                                    .expect("running app must have a recovery banner"),
+                                launched_pids[0],
+                                recovery_operation_id.as_deref().unwrap_or("account_switch"),
+                            )?;
                             RestartWindowTaskService::around_recovery(
                                 &mut window_tasks,
                                 bound_process,

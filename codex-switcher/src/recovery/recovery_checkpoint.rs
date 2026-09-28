@@ -49,7 +49,13 @@ pub(super) fn checkpoint_targets_with(
     };
     let bound: Vec<String> = ids
         .iter()
-        .filter(|id| !claimed.contains(id))
+        .filter(|id| {
+            !claimed.contains(id)
+                && !(mode == RecoveryMode::ExplicitTarget
+                    && manifest
+                        .iter()
+                        .any(|target| target.id == id.as_str() && target.auth_rotation.is_some()))
+        })
         .cloned()
         .collect();
     validate_target_account_binding(manifest, &bound, binding)?;
@@ -72,6 +78,7 @@ pub(super) fn checkpoint_targets_with(
                 awaiting_owner: false,
                 captured_restart: mode == RecoveryMode::CapturedRestart,
                 owner_account_id: None,
+                auth_rotation: None,
             });
         }
     }

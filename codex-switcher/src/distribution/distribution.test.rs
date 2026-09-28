@@ -3,8 +3,10 @@ use super::distribution_coordinator::DistributionCoordinator;
 use super::distribution_decision_service::DistributionDecisionService;
 use super::distribution_journal::DistributionJournal;
 use super::distribution_outcome::DistributionStatus;
+use super::distribution_recovery_audit_service::DistributionRecoveryAuditService;
 use super::distribution_request::DistributionRequest;
 use super::mock_app_lifecycle::MockAppLifecycle;
+use super::recovery_audit_context::RecoveryAuditContext;
 use super::test_account_spec::TestAccountSpec;
 use super::test_helper::TestEnv;
 use super::window_capture_mode::WindowCaptureMode;
@@ -12,7 +14,7 @@ use crate::models::{AccountsFile, Settings};
 use crate::storage::{load_accounts, read_active_auth_json, save_accounts};
 use base64::Engine;
 use std::os::unix::fs::PermissionsExt;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 #[test]
@@ -818,6 +820,44 @@ fn recovery_sees_new_desktop_account_marker_before_dispatch() {
         observed.process.as_ref().map(|process| process.pid),
         Some(9999)
     );
+}
+
+#[test]
+fn changed_target_binding_during_geometry_restore_blocks_recovery() {
+    let env = TestEnv::new("binding_changed_during_restore");
+    let mock = MockAppLifecycle::new(true);
+    let target_binding_valid = Arc::new(AtomicBool::new(true));
+    let changed = Arc::clone(&target_binding_valid);
+    mock.observe_restore(move || changed.store(false, Ordering::SeqCst));
+    let request = DistributionRequest::auto("quota_exhausted");
+    let targets = vec!["captured-task".to_string()];
+    let logger = DistributionAuditLogger::new(env.home().join("audit.log"));
+    let bound = super::desktop_app_session::DesktopAppSession::new("target-account");
+
+    let result = DistributionRecoveryAuditService::restore_and_recover(
+        &logger,
+        &mock,
+        RecoveryAuditContext {
+            pid: 9999,
+            bound: &bound,
+            targets: &targets,
+            capture_mode: WindowCaptureMode::Captured,
+            operation_id: "binding-changed",
+            request: &request,
+        },
+        || {
+            if target_binding_valid.load(Ordering::SeqCst) {
+                Ok(())
+            } else {
+                Err("Target auth changed during geometry restore".into())
+            }
+        },
+    );
+
+    assert!(result.unwrap_err().contains("Target auth changed"));
+    assert_eq!(mock.restore_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.recovery_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(mock.abort_calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]

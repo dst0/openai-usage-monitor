@@ -1,4 +1,6 @@
 use super::{CheckpointScanRegistry, ManifestPruneService, OwnerlessProbeRotation, PendingTarget};
+use crate::recovery::auth_rotation_queue_snapshot::AuthRotationQueueSnapshot;
+use crate::recovery::auth_rotation_recovery_evidence::AuthRotationRecoveryEvidence;
 use crate::recovery::test_thread_index::indexed_before_the_pass;
 use chrono::{TimeZone, Utc};
 
@@ -35,6 +37,7 @@ fn quota_fixture(
             awaiting_owner,
             captured_restart: true,
             owner_account_id: Some("account-a".into()),
+            auth_rotation: None,
         },
     )
 }
@@ -73,6 +76,50 @@ fn quota_manifest_pruning_uses_failure_time_even_when_sqlite_moves() {
                 "{label} awaiting_owner={awaiting_owner}"
             );
         }
+    }
+}
+
+#[test]
+fn only_confirmed_target_bound_auth_error_survives_ownerless_prune() {
+    let now = Utc::now().timestamp();
+    for (confirmed, bound_to_target, expected) in [
+        (true, true, true),
+        (false, true, false),
+        (true, false, false),
+    ] {
+        let (home, mut target) = quota_fixture("auth-rotation-ownerless", Some(now), true);
+        let rollout = home
+            .join("sessions")
+            .join(format!("rollout-2026-09-27T00-00-00-{}.jsonl", target.id));
+        std::fs::write(
+            &rollout,
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"turn-a\",\"error\":{\"message\":\"Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.\"}}}\n",
+        )
+        .unwrap();
+        target.offset = Some(std::fs::metadata(&rollout).unwrap().len());
+        target.owner_account_id = Some(if bound_to_target { "B" } else { "A" }.into());
+        target.auth_rotation = Some(AuthRotationRecoveryEvidence {
+            source_account_id: "A".into(),
+            target_account_id: "B".into(),
+            pre_stop_offset: 0,
+            rollout_dev: 0,
+            rollout_ino: 0,
+            turn_id: "turn-a".into(),
+            queue_snapshot: AuthRotationQueueSnapshot {
+                database_identity: None,
+                revision: 0,
+                pending: 0,
+            },
+            confirmed_after_stop: confirmed,
+        });
+        let mut pending = vec![target];
+        let rotation = OwnerlessProbeRotation::new(1);
+        let scans = CheckpointScanRegistry::new(1);
+        ManifestPruneService::new(&rotation, &scans)
+            .run_with(&home, &mut pending, |_| Ok(Some(now)))
+            .unwrap();
+        assert_eq!(pending.len(), usize::from(expected));
+        std::fs::remove_dir_all(&home).unwrap();
     }
 }
 
@@ -171,6 +218,7 @@ fn ownerless(home: &std::path::Path, index: u64) -> (PendingTarget, std::path::P
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
+        auth_rotation: None,
     };
     (target, rollout)
 }
@@ -280,6 +328,7 @@ fn restart_targets_do_not_shift_the_ownerless_rotation() {
         id: "01a098c2-0fae-74d2-a80c-00000000f0ff".into(),
         awaiting_owner: false,
         owner_account_id: None,
+        auth_rotation: None,
         ..first.clone()
     };
     let now = Utc::now().timestamp();
@@ -352,6 +401,7 @@ fn clock_tick_during_the_pass_drops_only_a_row_dated_after_it() {
     let [before, after] = [1, 2].map(|index| PendingTarget {
         awaiting_owner: false,
         owner_account_id: None,
+        auth_rotation: None,
         ..ownerless(&home, index).0
     });
     let indexed = indexed_before_the_pass();
@@ -493,6 +543,7 @@ fn detection_pass_without_ownerless_targets_keeps_rotation_turn() {
         id: "01a098c2-0fae-74d2-a80c-00000000f0fe".into(),
         awaiting_owner: false,
         owner_account_id: None,
+        auth_rotation: None,
         ..first
     }];
     service
