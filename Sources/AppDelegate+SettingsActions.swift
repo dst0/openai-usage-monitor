@@ -58,7 +58,7 @@ extension AppDelegate {
   @objc internal func changeInterval(_ sender: NSMenuItem) {
     let newInterval = TimeInterval(sender.tag)
     refreshInterval = newInterval
-    UserDefaults.standard.set(newInterval, forKey: AppDelegate.refreshIntervalKey)
+    defaults.set(newInterval, forKey: AppDelegate.refreshIntervalKey)
     if let submenu = sender.menu {
       for item in submenu.items {
         item.state = (item.tag == sender.tag) ? .on : .off
@@ -157,9 +157,8 @@ extension AppDelegate {
   }
 
   @objc internal func toggleStackPercentages() {
-    let current = UserDefaults.standard.object(forKey: "stackPercentages") as? Bool ?? true
-    let updated = !current
-    UserDefaults.standard.set(updated, forKey: "stackPercentages")
+    let updated = !stacksPercentages
+    defaults.set(updated, forKey: AppDelegate.stackPercentagesKey)
     stackPercentagesItem?.state = updated ? .on : .off
     if let snap = lastSnapshot {
       updateStatusBar(with: snap)

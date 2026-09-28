@@ -84,19 +84,26 @@
   `flock` otherwise. It also removes its own interrupted
   `.codex-monitor-uninstall.XXXXXX` copies. A new installer `mktemp` template
   fails the shell test until the uninstaller covers it.
-- `scripts/install.sh` and `scripts/test_swift.sh` resolve a set
-  `CLANG_MODULE_CACHE_PATH` to its physical path before their first `swiftc`
-  (`scripts/swift_module_cache.sh`). They stop on a path that is not a
-  directory or is an empty one they cannot write. Reusing a module cache
-  through another spelling of its directory, such as `/tmp` for
-  `/private/tmp`, fails the build; Swift 6.4 also crashes. Give
-  ad hoc Swift or Clang runs that share a cache the physical path too. Where a
-  sandbox denies the default module cache, a writable `CLANG_MODULE_CACHE_PATH`
-  is enough. The compiler/SDK build difference recorded in `CODEX.md` does not
-  need an `SDKROOT` override.
+- Before their first `swiftc`, `scripts/install.sh` and `scripts/test_swift.sh`
+  point a set `CLANG_MODULE_CACHE_PATH` at their own subdirectory of its
+  physical path, `codex-monitor-swift-<cksum of that path>`
+  (`scripts/swift_module_cache.sh`). A module cache works only at the exact
+  path that built it: reuse through another spelling of its directory, such as
+  `/tmp` for `/private/tmp`, or after copying or moving it, fails the build
+  (the error depends on the toolchain). Every spelling reaches the same
+  subdirectory, which nothing else writes, and a moved cache gets a new one.
+  They stop on a path that is not a directory, contains a newline, starts with
+  an unexpanded `~`, or whose subdirectory is not a plain directory that the
+  user owns and can write and that group and others cannot write. A value that
+  already is the subdirectory for its parent is used as is. Ad hoc Swift or Clang runs that share a cache among themselves must
+  use one spelling. Where a sandbox denies the default module cache, a
+  writable `CLANG_MODULE_CACHE_PATH` is enough. The compiler/SDK build
+  difference recorded in `CODEX.md` does not need an `SDKROOT` override.
 - “No traces” means no persistent Monitor-owned installation artifacts. Shell
   history, unified logs, LaunchServices/TCC records, APFS snapshots, and
-  backups are outside the app's ownership and are not forensic-erased.
+  backups are outside the app's ownership and are not forensic-erased. So are
+  compiler build caches: the default module cache and the `codex-monitor-swift-*`
+  subdirectory of a user-set `CLANG_MODULE_CACHE_PATH`.
 
 ## Invariants
 - POSIX `0600` permissions on all credential and token files (`auth.json`, `accounts.json`).
@@ -222,6 +229,7 @@ These rules are the portable minimum for Destination Works repositories. Reposit
 - Tests that assert a sequence on rotating, counting, or bounded-cache state (round-robin cursors, counters, evicting caches) must own that state, because parallel tests can advance or evict a shared static between assertions. Inject it into the code under test, or key the shared instance by a resource the test alone uses (its own home or rollout path) with capacity far above what the suite fills. Keep the process-global instance only in the production entry point, and route that entry point through a function at least one test calls, so a production pass cannot silently use different state. Eviction order must be deterministic so it can be tested.
 - Tests must never read, lock, or write live Desktop state (`~/.codex`, ChatGPT.app, IPC) or reach the network. A test that resolves `codex_home()` holds one `storage::test_codex_home::TestCodexHome` (never nested; `TestEnv` already owns one). The guard serializes on `TEST_CODEX_HOME_MUTEX`, which is private to the guard's module, recovers it after a test panics while holding it, points `CODEX_HOME` at a fresh temporary directory, and clears it while unwinding. In test builds `codex_home()` panics unless `CODEX_HOME` is exactly the currently held guard's home; worker threads the test spawns may resolve it. A raw lock of the mutex followed by a guard deadlocks rather than panicking, so the compiler rejects any use of the mutex outside that module, and `tests/enforce_codex_home_isolation.rs` rejects any direct `TEST_CODEX_HOME_MUTEX.lock(` outside the guard's files (in case its visibility is ever widened) and any other `set_var`/`remove_var` of `CODEX_HOME`. Inject network-backed work such as quota-cache or status refreshes rather than letting a test reach it; `catch_unwind` or a discarded `Result` hides a real request. Probing a writer lock with `try_lock_exclusive` briefly takes it.
 - Tests must also never resolve or run the installed Monitor helpers in `~/.local/bin`, read the live process table (`/bin/ps`), or send ChatGPT task links. Inject the dependency instead: `recovery::dispatch_identity_checks::DispatchIdentityChecks` for dispatch identity and the deferred Desktop binding, the preflight probes of `switch_to_account_with`, or a `SystemWindowRestoreBackend` built around a temporary fake helper. Resolve live checks lazily, only where their result decides the outcome. In test builds the helper resolvers, the shared process-table reader, and both task-link senders call `test_live_system::forbid` before touching anything. Each tripwire has a guard test that would at worst run a read-only probe if the tripwire were removed, never a launch or a write; seams whose guard could not meet that (notifications, `launchctl`, the CLI `open` help, shim installation, the real `codex` CLI) are not tripwired and must not be reached from tests. A fake IPC peer (`recovery::test_desktop_router::TestDesktopRouter`) stays connected until the client hangs up and detects a missing request from EOF, never from a read timeout that production work between two requests can outlast. To audit, run each test alone under `sandbox-exec` with a profile that sends `SIGKILL` on access to `~/.codex`, `~/.local`, the Monitor and ChatGPT bundles, `/bin/ps`, `/usr/bin/open`, `osascript`, `launchctl`, or non-loopback network.
+- Swift tests never use the standard defaults store. A test binary has no bundle, so its standard store is the per-user domain named after the executable, and every concurrent run shares it. Build `AppDelegate` through `init(client:defaults:autoLaunchManager:)` with a `TestPreferencesSuite` and stubbed login items. In `Sources/`, only `AppDelegate()` and `AutoLaunchManager.shared` choose the standard store, and Test 4 checks that `AppDelegate()` keeps both. Name a throwaway suite by an absolute path in a directory the test deletes: `removePersistentDomain(forName:)` leaves a named suite's plist in `~/Library/Preferences`. Never build or run a test binary beside a `Resources/Info.plist` (any case), such as the repository root: it runs as the Monitor, with the user's live Monitor preferences as its standard store. `tests/swift_test_defaults_isolation.sh` enforces the source rules, and `TestPreferencesSuite` refuses to run as the Monitor.
 - When code under test compares an injected timestamp with a clock it samples itself (a prune pass's `now` against thread-index `updated_at`), date the injected value before the call, as production reads it (`recovery::test_thread_index::indexed_before_the_pass`). A lookup that samples the clock runs after the code's own sample and can land one second later.
 - Panic-path cleanup guards must never panic while another panic is unwinding. Release internal locks before invoking callbacks, recover poisoned coordination locks during cleanup, and cover the poisoned-lock path deterministically.
 - For non-trivial features, bug fixes, or test additions, automatically spawn an adversarial test-critic subagent to review the tests. The critic must evaluate whether the suite verifies real behavior vs artificial line coverage, identifies missing edge cases, and flags fragile/vacuous tests before work is completed.
