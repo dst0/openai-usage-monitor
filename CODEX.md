@@ -474,9 +474,11 @@ minutes doubling to 30, in memory only; manual requests never consult or
 change it. It remembers only the latest plan, ends a streak after any other
 attempt result or an hour without a failure, logs `AUTO_BACKOFF_ACTIVE` once
 per hold, and counts awake time (`Instant`).
-The watchdog suppresses its two-second full quota-refresh wake during an
-active hold. Normal interval ticks, auth-file wakeups, and lightweight deferred
-recovery polling continue; a different plan is reconsidered at the next tick.
+The watchdog suppresses its two-second depleted-account full quota-refresh wake
+during an active hold. An enabled weekly auto-reset can still wake a full tick
+for a recent blocked task, at most once every 30 seconds. Normal interval
+ticks, auth-file wakeups, and lightweight deferred recovery polling continue;
+a different plan is reconsidered at the next tick.
 
 Deferred recovery in an already running ChatGPT never restores window bounds.
 It locates its banner through the read-only WindowServer helper, so a launchd
@@ -491,12 +493,13 @@ and malformed helper output block dispatch and retain the original checkpoint.
 Automatic switching stays disabled until quota-interrupted cold tasks complete
 end-to-end recovery and exact selected-task restoration across multiple windows
 is verified in the installed app. Historical logs show URL-to-owner-to-IPC
-recovery; current live checks show that accepted URL delivery may leave the
-task ownerless at an immediate check. The installed ChatGPT 26.924.20706
-deep-link handler shows its primary window before ordinary task navigation,
-which the owner accepts. No supported background mount IPC method was evident.
-These checks dispatched no recovery turn or account switch. URL acceptance is
-not owner or recovery proof.
+recovery; checks on 2026-09-28 with ChatGPT 26.924.20706 showed that accepted
+URL delivery may leave the task ownerless at an immediate check. That version's
+deep-link handler showed its primary window before ordinary task navigation,
+which the owner accepted. No supported background mount IPC method was evident.
+Those checks dispatched no recovery turn or account switch. The app currently
+installed on this host is 26.924.22138; the prior observation is not live
+proof for it. URL acceptance is not owner or recovery proof.
 
 The Menu Bar's APP quota comes from `desktop-app-session.json` only when its
 saved account is bound to the exact live ChatGPT PID and process birth time.

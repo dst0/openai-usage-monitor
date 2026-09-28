@@ -13,6 +13,7 @@ use super::distribution_recovery_preflight_service::DistributionRecoveryPrefligh
 use super::distribution_request::DistributionRequest;
 use super::distribution_shared_auth_guard::DistributionSharedAuthGuard;
 use super::distribution_transaction_error::DistributionTransactionError;
+use super::distribution_window_task_lifecycle_service::DistributionWindowTaskLifecycleService;
 use super::log_redaction_service::LogRedactionService;
 use crate::models::AccountsFile;
 use crate::{recovery, switcher};
@@ -99,20 +100,11 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 ));
             }
         };
-        if let Err(error) = self.lifecycle.capture_window_tasks() {
-            self.lifecycle.abort_recovery();
-            let cleanup = DistributionJournal::clear(home).err();
-            let message = match cleanup {
-                Some(cleanup) => format!(
-                    "Could not capture Desktop window tasks before shutdown: {error}; journal cleanup failed: {cleanup}"
-                ),
-                None => format!("Could not capture Desktop window tasks before shutdown: {error}"),
-            };
-            return Err(DistributionTransactionError::pre_signal(
-                "WINDOW_TASK_CAPTURE_FAILED",
-                message,
-            ));
-        }
+        DistributionWindowTaskLifecycleService::new(self.lifecycle, self.logger).capture(
+            home,
+            operation_id,
+            request,
+        )?;
         let checkpoint = match DistributionCheckpointService::prepare(
             home,
             self.lifecycle,
@@ -286,12 +278,9 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 }),
             };
         }
-        let window_error = self.lifecycle.finish_window_tasks().err();
-        let recovery_error = match (recovery_error, window_error) {
-            (Some(recovery), Some(windows)) => Some(format!("{recovery}; {windows}")),
-            (None, Some(windows)) => Some(windows),
-            (recovery, None) => recovery,
-        };
+        let recovery_error =
+            DistributionWindowTaskLifecycleService::new(self.lifecycle, self.logger)
+                .finish_with_recovery_error(recovery_error);
 
         let registry_result = DistributionAccountCommitService::commit_latest_desktop_auth(
             self.lifecycle,

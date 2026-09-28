@@ -12,33 +12,46 @@ use std::time::{Duration, Instant};
 
 pub struct DaemonLoopService;
 
+const HELD_RESET_WATCHDOG_INTERVAL: Duration = Duration::from_secs(30);
+
 impl DaemonLoopService {
-    pub fn watchdog_needs_immediate_check(backoff: &AutomaticDistributionBackoff) -> bool {
+    pub fn watchdog_needs_immediate_check(
+        backoff: &AutomaticDistributionBackoff,
+        last_full_tick: Instant,
+    ) -> bool {
         let now = Instant::now();
-        if backoff.has_active_hold(now) {
+        if backoff.has_active_hold(now)
+            && now.saturating_duration_since(last_full_tick) < HELD_RESET_WATCHDOG_INTERVAL
+        {
             return false;
         }
         let Ok(accounts_file) = load_accounts() else {
             return false;
         };
-        Self::watchdog_needs_immediate_check_with(&accounts_file, backoff, now, || {
-            !crate::switcher::detect_quota_blocked_user_threads_since(30).is_empty()
-        })
+        Self::watchdog_needs_immediate_check_with(
+            &accounts_file,
+            backoff,
+            now,
+            last_full_tick,
+            || !crate::switcher::detect_quota_blocked_user_threads_since(30).is_empty(),
+        )
     }
 
     fn watchdog_needs_immediate_check_with(
         accounts_file: &AccountsFile,
         backoff: &AutomaticDistributionBackoff,
         now: Instant,
+        last_full_tick: Instant,
         recent_quota_blocked: impl FnOnce() -> bool,
     ) -> bool {
-        // Do not wake the full quota-refresh tick every two seconds while an
-        // unchanged automatic plan is deliberately held. Normal interval and
-        // auth-file wakeups still run; deferred recovery keeps polling.
-        if backoff.has_active_hold(now) {
-            return false;
-        }
         let settings = &accounts_file.settings;
+        if backoff.has_active_hold(now) {
+            // Weekly reset is independent of switching. Keep its blocked-task
+            // probe, but bound the full quota-refresh tick to once per 30s.
+            return settings.auto_reset_weekly_enabled
+                && now.saturating_duration_since(last_full_tick) >= HELD_RESET_WATCHDOG_INTERVAL
+                && recent_quota_blocked();
+        }
         if !settings.auto_switch_enabled && !settings.auto_reset_weekly_enabled {
             return false;
         }
@@ -129,7 +142,7 @@ impl DaemonLoopService {
                     break;
                 }
                 if watchdog_ticks.is_multiple_of(2)
-                    && Self::watchdog_needs_immediate_check(&automatic_backoff)
+                    && Self::watchdog_needs_immediate_check(&automatic_backoff, sleep_start)
                 {
                     crate::logger::log(
                         "INFO",

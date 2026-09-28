@@ -275,6 +275,35 @@ fn assert_previous_window_restore(
 }
 
 #[test]
+fn window_task_capture_failure_is_pre_signal_and_keeps_desktop_running() {
+    let (env, mut accounts, plan, mut journal, before_auth, _) =
+        rollback_failure_fixture("window_task_capture_failure");
+    let lifecycle = MockAppLifecycle::new(true);
+    *lifecycle.task_capture_error.lock().unwrap() = Some("synthetic capture error".into());
+    let logger = DistributionAuditLogger::default();
+    let error = DistributionDesktopSwitchService::new(&lifecycle, &logger)
+        .run(
+            env.home(),
+            &mut journal,
+            &plan,
+            &DistributionRequest::user("synthetic quota interruption"),
+            &mut accounts,
+            "op_window_task_capture_failure",
+        )
+        .err()
+        .expect("window task capture must fail");
+
+    assert_eq!(error.pre_signal_phase(), Some("WINDOW_TASK_CAPTURE_FAILED"));
+    assert!(error.to_string().contains("synthetic capture error"));
+    assert_eq!(lifecycle.stop_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(read_active_auth_json().unwrap(), before_auth);
+    assert!(!DistributionJournal::journal_path(env.home()).exists());
+    let log = env.log_content();
+    assert!(log.contains("phase=WINDOW_TASK_CAPTURE_FAILED"), "{log}");
+    assert!(log.contains("Desktop was not signalled"), "{log}");
+}
+
+#[test]
 fn post_stop_checkpoint_failure_restores_previous_window_tasks_after_relaunch() {
     let (env, mut accounts, plan, mut journal, before_auth, checkpoint_path) =
         rollback_failure_fixture("post_stop_window_restore");
@@ -298,7 +327,10 @@ fn post_stop_checkpoint_failure_restores_previous_window_tasks_after_relaunch() 
     )
     .err()
     .expect("post-stop checkpoint failure must roll back");
-    assert!(error.contains("previous Desktop relaunched"), "{error}");
+    assert!(
+        error.to_string().contains("previous Desktop relaunched"),
+        "{error}"
+    );
     assert_eq!(read_active_auth_json().unwrap(), before_auth);
     assert_previous_window_restore(
         &lifecycle,
@@ -361,8 +393,16 @@ fn target_launch_failure_restores_previous_windows_and_reports_partial_restore()
     )
     .err()
     .expect("target launch failure must roll back");
-    assert!(error.contains("synthetic target launch failure"), "{error}");
-    assert!(error.contains("WINDOW_TASKS_PARTIAL"), "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains("synthetic target launch failure"),
+        "{error}"
+    );
+    assert!(
+        error.to_string().contains("WINDOW_TASKS_PARTIAL"),
+        "{error}"
+    );
     assert_eq!(read_active_auth_json().unwrap(), before_auth);
     assert_previous_window_restore(
         &lifecycle,
@@ -550,7 +590,7 @@ fn selected_window_without_recovery_targets_still_requires_ipc_preflight() {
     )
     .err()
     .expect("IPC preflight must reject the selected-window restart");
-    assert!(error.contains("preflight"), "{error}");
+    assert!(error.to_string().contains("preflight"), "{error}");
     assert_eq!(lifecycle.stop_calls.load(Ordering::SeqCst), 0);
     assert_eq!(lifecycle.launch_calls.load(Ordering::SeqCst), 0);
     assert!(lifecycle.running.load(Ordering::SeqCst));
@@ -583,7 +623,7 @@ fn zero_windows_without_recovery_targets_skip_ipc_preflight() {
     )
     .err()
     .expect("synthetic stop refusal must be reported");
-    assert!(error.contains("stop"), "{error}");
+    assert!(error.to_string().contains("stop"), "{error}");
     assert_eq!(lifecycle.stop_calls.load(Ordering::SeqCst), 1);
     assert_eq!(read_active_auth_json().unwrap(), before_auth);
 }

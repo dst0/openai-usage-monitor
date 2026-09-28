@@ -713,9 +713,11 @@ and after window restoration, immediately before recovery IPC. A confirmed
 account-switch auth error is eligible for this mount only while its saved
 rollout interval and queue snapshot remain current.
 
-While that hold is active, the daemon's two-second quota watchdog does not wake
-another full tick. The configured polling interval and auth-file-change wakeup
-still apply, and deferred task recovery continues its lightweight polling.
+While that hold is active, the daemon's two-second depleted-account watchdog
+does not wake another full tick. An enabled weekly auto-reset can still wake a
+full tick for a recent blocked task, at most once every 30 seconds. The
+configured polling interval and auth-file-change wakeup still apply, and
+deferred task recovery continues its lightweight polling.
 
 The tail reader checks the byte before its seek point. It discards a partial
 first record before strict UTF-8 decoding, retains a full record at an exact
@@ -751,7 +753,7 @@ Screen Recording access; the `launchd` context was observed without it, and
 missing titles fail the guard as `WINDOW_INVENTORY_MISMATCH` (shown as
 `Codex window restore helper rejected the request`).
 
-Every pre-signal failure (`WINDOW_CAPTURE_FAILED`,
+Every pre-signal failure (`WINDOW_CAPTURE_FAILED`, `WINDOW_TASK_CAPTURE_FAILED`,
 `SHUTDOWN_WINDOW_GUARD_FAILED`, `RECOVERY_CHECKPOINT_FAILED`,
 `RECOVERY_PREFLIGHT_FAILED`, or a `SHUTDOWN_FAILED` rejected before the signal)
 leaves credentials and Desktop unchanged. When the daemon's same automatic plan

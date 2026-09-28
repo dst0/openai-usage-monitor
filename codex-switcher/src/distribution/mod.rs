@@ -39,6 +39,7 @@ mod distribution_state_preflight_service;
 pub mod distribution_transaction_error;
 pub mod distribution_transaction_service;
 pub mod distribution_trigger;
+mod distribution_window_task_lifecycle_service;
 mod distribution_window_task_service;
 pub mod historical_log_redaction_service;
 mod historical_log_stream_redactor;

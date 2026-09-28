@@ -30,11 +30,17 @@ fn disabled_auto_switch_does_not_wake_watchdog_for_depleted_account() {
     assert!(!accounts.settings.auto_switch_enabled);
     crate::storage::save_accounts(&accounts).unwrap();
 
-    assert!(!DaemonLoopService::watchdog_needs_immediate_check(&backoff));
+    assert!(!DaemonLoopService::watchdog_needs_immediate_check(
+        &backoff,
+        Instant::now()
+    ));
 
     accounts.settings.auto_switch_enabled = true;
     crate::storage::save_accounts(&accounts).unwrap();
-    assert!(DaemonLoopService::watchdog_needs_immediate_check(&backoff));
+    assert!(DaemonLoopService::watchdog_needs_immediate_check(
+        &backoff,
+        Instant::now()
+    ));
 }
 
 #[test]
@@ -45,6 +51,7 @@ fn disabled_watchdog_does_not_probe_quota_threads_and_enabled_watchdog_does() {
     let found = DaemonLoopService::watchdog_needs_immediate_check_with(
         &accounts,
         &backoff,
+        Instant::now(),
         Instant::now(),
         || {
             scans.set(scans.get() + 1);
@@ -59,6 +66,7 @@ fn disabled_watchdog_does_not_probe_quota_threads_and_enabled_watchdog_does() {
     let found = DaemonLoopService::watchdog_needs_immediate_check_with(
         &enabled,
         &backoff,
+        Instant::now(),
         Instant::now(),
         || {
             scans.set(scans.get() + 1);
@@ -79,6 +87,7 @@ fn weekly_reset_only_preserves_recent_task_probe() {
         &accounts,
         &backoff,
         Instant::now(),
+        Instant::now(),
         || {
             scans.set(scans.get() + 1);
             true
@@ -93,6 +102,7 @@ fn weekly_reset_only_preserves_recent_task_probe() {
     let found = DaemonLoopService::watchdog_needs_immediate_check_with(
         &accounts,
         &backoff,
+        Instant::now(),
         Instant::now(),
         || {
             scans.set(scans.get() + 1);
@@ -110,7 +120,10 @@ fn invalid_registry_does_not_start_immediate_quota_scan() {
     let path = home.path().join("accounts.json");
     std::fs::write(&path, b"invalid registry").unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    assert!(!DaemonLoopService::watchdog_needs_immediate_check(&backoff));
+    assert!(!DaemonLoopService::watchdog_needs_immediate_check(
+        &backoff,
+        Instant::now()
+    ));
 }
 
 #[test]
@@ -135,6 +148,7 @@ fn held_automatic_plan_does_not_wake_full_quota_refresh_every_two_seconds() {
         &accounts,
         &backoff,
         now + Duration::from_secs(1),
+        now,
         recent,
     ));
     assert_eq!(scans.get(), 0);
@@ -143,6 +157,7 @@ fn held_automatic_plan_does_not_wake_full_quota_refresh_every_two_seconds() {
         &accounts,
         &backoff,
         now + Duration::from_secs(2),
+        now,
         || {
             scans.set(scans.get() + 1);
             true
@@ -152,7 +167,30 @@ fn held_automatic_plan_does_not_wake_full_quota_refresh_every_two_seconds() {
     assert!(DaemonLoopService::watchdog_needs_immediate_check_with(
         &accounts,
         &backoff,
+        now + Duration::from_secs(30),
+        now,
+        || {
+            scans.set(scans.get() + 1);
+            true
+        },
+    ));
+    assert_eq!(scans.get(), 1);
+    assert!(!DaemonLoopService::watchdog_needs_immediate_check_with(
+        &accounts,
+        &backoff,
+        now + Duration::from_secs(31),
+        now + Duration::from_secs(30),
+        || {
+            scans.set(scans.get() + 1);
+            true
+        },
+    ));
+    assert_eq!(scans.get(), 1);
+    assert!(DaemonLoopService::watchdog_needs_immediate_check_with(
+        &accounts,
+        &backoff,
         now + Duration::from_secs(5 * 60 + 1),
+        now + Duration::from_secs(30),
         || false,
     ));
 }
