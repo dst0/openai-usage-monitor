@@ -2269,6 +2269,8 @@ struct AppDelegateTestRunner {
     assertTrue(markerRefreshes > firstCount, "replacement marker must refresh the menu")
     let authFile = watcherHome.appendingPathComponent("auth.json")
     try! Data("{}".utf8).write(to: authFile)
+    // The auth handler schedules a quota refresh; keep it off the real codex-mon CLI.
+    watcher.quotaRefreshOverride = { completion in completion(nil) }
     watcher.startAuthFileWatcher()
     let beforeAuthChange = markerRefreshes
     let authTemp = watcherHome.appendingPathComponent("auth.tmp")

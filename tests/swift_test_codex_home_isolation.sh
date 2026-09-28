@@ -25,8 +25,10 @@
 #             CodexClient.shared; only AppDelegate() passes the shared client; only
 #             AppDelegate builds the single-instance lock, from its client's home; no
 #             source reads HOME from the environment or changes the environment.
-# scripts/*.swift helpers are not scanned: they are separate programs that no Swift test
-# compiles, and the one that reads CODEX_HOME resolves it for itself.
+# scripts/*.swift helpers are not scanned. test_swift.sh compiles some of them (the
+# CodexWindow* helpers and CodexPreservedClipboard) into test binaries, but none of those
+# resolves a Codex home; codex-ui-resume.swift, which reads CODEX_HOME, is not compiled
+# into any test.
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && /bin/pwd -P)"
@@ -42,13 +44,18 @@ S='[[:space:]]*'
 INIT="(\\.${S}init${S})?"
 SHARED_CLIENT="CodexClient${S}\\.${S}shared([^[:alnum:]_]|\$)"
 LIVE_HOME="liveCodexHome"
+# `.shared` with no type name (e.g. `client: .shared`); other types spell `Type.shared`.
+SHARED_SHORTHAND="(^|[^[:alnum:]_.])\\.${S}shared([^[:alnum:]_]|\$)"
+# In Sources: a `.shared` default for a CodexClient, and Self.shared / bare shared. in CodexClient.swift.
+SOURCE_SHARED_DEFAULT="CodexClient${S}=${S}\\.${S}shared([^[:alnum:]_]|\$)"
+CLIENT_SELF_SHARED="Self${S}\\.${S}shared([^[:alnum:]_]|\$)|(^|[^[:alnum:]_.])shared${S}\\."
 CLIENT_BUILT="CodexClient${S}${INIT}\\(|CodexClient${S}[?!]?${S}=${S}\\.init${S}\\("
 DEFAULT_CLIENT="CodexClient${S}${INIT}\\(${S}\\)|CodexClient${S}[?!]?${S}=${S}\\.init${S}\\(${S}\\)"
 ENV_CHANGE="(^|[^[:alnum:]_])(setenv|unsetenv|putenv)${S}\\("
 HOME_ENV_READ="(environment${S}\\[|getenv${S}\\()${S}\"(CODEX_)?HOME\""
 SOURCE_HOME_ENV_READ="(environment${S}\\[|getenv${S}\\()${S}\"HOME\""
 # A fake path under /Users in a fixture is fine; one into a .codex directory there is not.
-REAL_HOME="homeDirectoryForCurrentUser|homeDirectory${S}\\(${S}forUser|NSHomeDirectory|NSUserName|getpwuid|getpwnam|TildeInPath|CFCopyHomeDirectoryURL|\"~/|/Users/[^\"[:space:]]*/\\.codex"
+REAL_HOME="URL${S}\\.${S}homeDirectory|CFFIXED_USER_HOME|homeDirectoryForCurrentUser|homeDirectory${S}\\(${S}forUser|NSHomeDirectory|NSUserName|getpwuid|getpwnam|TildeInPath|CFCopyHomeDirectoryURL|\"~/|/Users/[^\"[:space:]]*/\\.codex"
 # The production wiring check, spelled exactly; nothing else may follow it.
 WIRING="${S}assertTrue\\(CodexClient\\.shared\\.codexHome == CodexClient\\.liveCodexHome, \"[^\"]*\"\\)\$"
 CODEX_HOME_NAME="\"CODEX_HOME\""
@@ -106,7 +113,7 @@ check_tree() {
     local delegate_file=Sources/AppDelegate.swift
     while IFS= read -r file; do
         [ -z "$(code_matches "${file}" "^${WIRING}")" ] || wiring=1
-        found="$(without "$(code_matches "${file}" "${SHARED_CLIENT}|${LIVE_HOME}")" "${WIRING}")"
+        found="$(without "$(code_matches "${file}" "${SHARED_CLIENT}|${LIVE_HOME}|${SHARED_SHORTHAND}")" "${WIRING}")"
         [ -z "${found}" ] \
             || violations+="${found} (build a CodexClient on a TestCodexHome; only the wiring check names the live home)"$'\n'
         found="$(without "$(code_matches "${file}" "${CLIENT_BUILT}")" '.*codexHome:')"
@@ -132,6 +139,9 @@ check_tree() {
     expect_once "${client_file}" "${LIVE_HOME_DECLARED}" 'The liveCodexHome declaration'
     expect_once "${client_file}" "${DEFAULT_CLIENT}" 'CodexClient()'
     expect_once "${client_file}" "${SHARED_ROOT}" 'The shared client'
+    found="$(code_matches "${ROOT}/${client_file}" "${CLIENT_SELF_SHARED}" 2>/dev/null)"
+    [ -z "${found}" ] \
+        || violations+="${found} (CodexClient must not route through its own shared instance)"$'\n'
     expect_once "${delegate_file}" "${SHARED_CLIENT}" 'CodexClient.shared'
     expect_once "${delegate_file}" "${APP_DELEGATE_ROOT}" 'The AppDelegate() client argument'
     expect_once "${delegate_file}" "${LOCK_BUILT}" 'The single-instance lock'
@@ -145,6 +155,9 @@ check_tree() {
         violations+=$'\n'
     fi
     for file in "${SOURCES[@]}"; do
+        found="$(code_matches "${file}" "${SOURCE_SHARED_DEFAULT}")"
+        [ -z "${found}" ] \
+            || violations+="${found} (do not default a CodexClient to .shared; only AppDelegate() passes it)"$'\n'
         found="$(code_matches "${file}" "${ENV_CHANGE}|${SOURCE_HOME_ENV_READ}")"
         [ -z "${found}" ] \
             || violations+="${found} (sources must not change the environment or read HOME from it)"$'\n'
@@ -249,6 +262,14 @@ expect_violation test-users-path "${T}" 'let home = URL(fileURLWithPath: "/Users
     "tests must not locate the user's real home"
 expect_violation test-users-subpath "${T}" 'let registry = "/Users/someone/.codex/accounts.json"' \
     "tests must not locate the user's real home"
+expect_violation test-shared-shorthand-arg "${T}" \
+    'let delegate = makeTestAppDelegate(client: .shared, preferences: preferences)' 'only the wiring check names the live home'
+expect_violation test-shared-shorthand-typed "${T}" 'let client: CodexClient = .shared' 'only the wiring check names the live home'
+expect_violation test-url-home-directory "${T}" 'let home = URL.homeDirectory.appending(path: ".codex")' \
+    "tests must not locate the user's real home"
+expect_violation test-resolve-real-home "${T}" \
+    'let h = CodexClient.resolveCodexHome(environment: [:], userHome: URL.homeDirectory)' "tests must not locate the user's real home"
+expect_violation test-cffixed-home "${T}" 'let fixed = "CFFIXED_USER_HOME"' "tests must not locate the user's real home"
 expect_violation test-in-subdirectory tests/support/Helpers.swift \
     'let client = CodexClient.shared' 'tests/support/Helpers.swift:1:'
 expect_missing test-no-wiring-check tests/AppDelegateWiringTests.swift \
@@ -257,6 +278,12 @@ expect_missing test-no-wiring-check tests/AppDelegateWiringTests.swift \
 C=Sources/CodexClient.swift
 D=Sources/AppDelegate.swift
 W=Sources/AppDelegate+FileWatchers.swift
+expect_violation source-shared-default "${W}" \
+    'func make(client: CodexClient = .shared) {}' 'do not default a CodexClient to .shared'
+expect_violation source-self-shared "${C}" \
+    '  public static var statusFileURL: URL { Self.shared.statusFileURL }' 'must not route through its own shared instance'
+expect_violation source-bare-shared "${C}" \
+    '  static var statusPath: String { shared.statusFileURL.path }' 'must not route through its own shared instance'
 expect_violation source-static-home "${C}" \
     '  public static var statusFileURL: URL { liveCodexHome.appendingPathComponent("usage-status.json") }' \
     'liveCodexHome must be declared and used once'
