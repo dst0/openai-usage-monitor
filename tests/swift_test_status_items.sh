@@ -106,7 +106,8 @@ print code(0);
 # is not a NSStatusBar.system.removeStatusItem(item) call, each
 # statusItem(withLength:) reference, and each backtick-escaped statusItem or
 # withLength, which the creation pattern would miss; guarded counts status-item
-# calls and references inside #if, whose branch may not be compiled.
+# calls and references inside #if, whose branch may not be compiled, but not
+# declarations.
 COUNT_CALLS='
 use strict; use warnings;
 local $/; my $c = <STDIN>; $c = "" unless defined $c;
@@ -119,7 +120,8 @@ $references += () = $c =~ /`(?:statusItem|withLength)`/g;
 my @marks;
 while ($c =~ /^[ \t]*#(if|endif)\b/mg) { push @marks, [$-[0], $1 eq "if" ? 1 : -1]; }
 my $guarded = 0;
-while ($c =~ /\bremoveStatusItem\b|statusItem\s*\(\s*withLength\b/g) {
+while ($c =~ /(\bfunc\s+)?(?:\bremoveStatusItem\b|statusItem\s*\(\s*withLength\b)/g) {
+  next if defined $1;
   my ($at, $depth) = ($-[0], 0);
   for my $mark (@marks) { last if $mark->[0] >= $at; $depth += $mark->[1]; }
   $guarded++ if $depth > 0;
