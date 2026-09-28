@@ -458,6 +458,23 @@ the agent executable and associated app to share a Team Identifier, while the
 installer currently signs the Monitor app ad hoc. Do not add that key as a
 privacy-grant workaround without matching signatures and live verification.
 
+The multi-window shutdown guard (`count-standard-windows`) still reads
+Accessibility in both modes: it counts standard windows through Accessibility
+before cross-checking WindowServer. From the launchd daemon, macOS attributes
+that request to `~/.local/bin/cxi`, so without Accessibility for `cxi` the guard
+returns `WINDOW_ACCESS_FAILED` from `DistributionCheckpointService::prepare`,
+before any checkpoint write or signal. The switch logs
+`SHUTDOWN_WINDOW_GUARD_FAILED` and an `OUTCOME` with
+`pre_signal_phase=SHUTDOWN_WINDOW_GUARD_FAILED`. A launchd context also lacked
+Screen Recording in a probe; WindowServer then may omit window titles, which
+the guard rejects as an inventory mismatch. The daemon's
+`AutomaticDistributionBackoff` holds back an automatic plan (cause, current and
+target accounts) after two consecutive identical pre-signal failures, for 5
+minutes doubling to 30, in memory only; manual requests never consult or
+change it. It remembers only the latest plan, ends a streak after any other
+attempt result or an hour without a failure, logs `AUTO_BACKOFF_ACTIVE` once
+per hold, and counts awake time (`Instant`).
+
 Deferred recovery in an already running ChatGPT never restores window bounds.
 It locates its banner through the read-only WindowServer helper, so a launchd
 Accessibility denial cannot stop IPC recovery when WindowServer can place the

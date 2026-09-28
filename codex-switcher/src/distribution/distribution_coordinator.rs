@@ -1,4 +1,5 @@
 use super::app_lifecycle::AppLifecycle;
+use super::automatic_distribution_backoff::AutomaticDistributionBackoff;
 use super::desktop_app_session::DesktopAppSession;
 use super::desktop_session_verification_service::DesktopSessionVerificationService;
 use super::distribution_audit_logger::DistributionAuditLogger;
@@ -18,6 +19,7 @@ pub struct DistributionCoordinator {
     transaction_service: DistributionTransactionService,
     logger: DistributionAuditLogger,
     lifecycle: Arc<dyn AppLifecycle>,
+    automatic_backoff: Option<Arc<AutomaticDistributionBackoff>>,
 }
 
 impl Default for DistributionCoordinator {
@@ -41,7 +43,14 @@ impl DistributionCoordinator {
             ),
             logger,
             lifecycle,
+            automatic_backoff: None,
         }
+    }
+
+    /// Holds back automatic plans that keep failing before Desktop is signalled.
+    pub fn with_automatic_backoff(mut self, backoff: Arc<AutomaticDistributionBackoff>) -> Self {
+        self.automatic_backoff = Some(backoff);
+        self
     }
 
     pub fn execute(&self, request: DistributionRequest) -> Result<DistributionOutcome, String> {
@@ -223,19 +232,30 @@ impl DistributionCoordinator {
             ));
         }
 
-        match self.transaction_service.execute_locked(
+        let backoff = self.automatic_backoff.as_deref();
+        if let Some(outcome) =
+            backoff.and_then(|backoff| backoff.defer(&self.logger, &op_id, &request, &plan))
+        {
+            return Ok(outcome);
+        }
+        let result = self.transaction_service.execute_locked(
             &op_id,
             &plan,
             &request,
             accounts_file,
             &operation_lock,
-        ) {
-            Ok(outcome) => Ok(outcome),
-            Err(error) => {
-                self.log_failed_outcome(&op_id, trigger_str, &request.reason, "transaction_failed");
-                Err(error)
-            }
+        );
+        if let Err(error) = &result {
+            let code = match error.pre_signal_phase() {
+                Some(phase) => format!("transaction_failed pre_signal_phase={phase}"),
+                None => "transaction_failed".into(),
+            };
+            self.log_failed_outcome(&op_id, trigger_str, &request.reason, &code);
         }
+        if let Some(backoff) = backoff {
+            backoff.observe(&self.logger, &op_id, &request, &plan, result.as_ref().err());
+        }
+        result.map_err(|error| error.into_message())
     }
 
     fn log_failed_outcome(&self, op_id: &str, trigger: &str, reason: &str, code: &str) {

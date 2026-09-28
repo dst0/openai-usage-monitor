@@ -1,3 +1,4 @@
+use super::automatic_distribution_backoff::AutomaticDistributionBackoff;
 use super::daemon_tick_service::DaemonTickService;
 use super::log_permissions_service::LogPermissionsService;
 use super::log_redaction_service::LogRedactionService;
@@ -5,6 +6,7 @@ use crate::models::AccountsFile;
 use crate::storage::{daemon_lock_path, load_accounts};
 use fs2::FileExt;
 use std::fs::OpenOptions;
+use std::sync::Arc;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -86,13 +88,14 @@ impl DaemonLoopService {
         }
 
         let mut deferred_recovery = crate::recovery::DeferredRecoveryService::new();
+        let automatic_backoff = Arc::new(AutomaticDistributionBackoff::default());
 
         loop {
             let _ = crate::logger::rotate_all_logs(
                 crate::logger::DEFAULT_MAX_LOG_SIZE,
                 crate::logger::DEFAULT_MAX_ARCHIVES,
             );
-            if let Err(error) = DaemonTickService::run(true) {
+            if let Err(error) = DaemonTickService::run(true, Some(&automatic_backoff)) {
                 LogRedactionService::eprint_background(&format!("Error in daemon tick: {error}"));
                 crate::logger::log("ERROR", "DAEMON", "Daemon tick failed");
             }

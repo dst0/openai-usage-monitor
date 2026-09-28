@@ -1,3 +1,4 @@
+use super::automatic_distribution_backoff::AutomaticDistributionBackoff;
 use super::automatic_distribution_service::AutomaticDistributionService;
 use super::automatic_distribution_source::AutomaticDistributionSource;
 use super::cli_auth_file_identity_service::CliAuthFileIdentityService;
@@ -12,11 +13,17 @@ use crate::models::{AccountStatusEntry, AccountsFile, StatusFile};
 use crate::quota::update_account_quota_cache_with_policy;
 use crate::storage::{load_accounts, update_accounts_atomically, write_status_file};
 use chrono::Utc;
+use std::sync::Arc;
 
 pub struct DaemonTickService;
 
 impl DaemonTickService {
-    pub fn run(auto_switch: bool) -> Result<(), String> {
+    /// The daemon loop passes its automatic-distribution backoff so it
+    /// persists across ticks.
+    pub fn run(
+        auto_switch: bool,
+        backoff: Option<&Arc<AutomaticDistributionBackoff>>,
+    ) -> Result<(), String> {
         let mut accounts_file = load_accounts()?;
         let active_sync = DaemonAccountSyncService::sync_active_tokens(&mut accounts_file);
         if DesktopExternalBindingService::refresh_if_needed().is_err() {
@@ -79,7 +86,7 @@ impl DaemonTickService {
         let weekly_reset_suppressed =
             handle_weekly_reset(auto_switch, &accounts_file, active, &mut status)?;
         if auto_switch {
-            coordinate_automatic_distribution(&accounts_file, weekly_reset_suppressed)?;
+            coordinate_automatic_distribution(&accounts_file, weekly_reset_suppressed, backoff)?;
         }
         Ok(())
     }
@@ -241,8 +248,12 @@ fn handle_weekly_reset(
 fn coordinate_automatic_distribution(
     accounts_file: &AccountsFile,
     suppressed: bool,
+    backoff: Option<&Arc<AutomaticDistributionBackoff>>,
 ) -> Result<(), String> {
-    let coordinator = DistributionCoordinator::new();
+    let mut coordinator = DistributionCoordinator::new();
+    if let Some(backoff) = backoff {
+        coordinator = coordinator.with_automatic_backoff(backoff.clone());
+    }
     if let Some(outcome) =
         coordinate_automatic_distribution_with(&coordinator, accounts_file, suppressed)?
     {

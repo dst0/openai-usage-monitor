@@ -1,5 +1,7 @@
 pub mod app_lifecycle;
 pub mod app_stop_error;
+pub mod automatic_distribution_backoff;
+mod automatic_distribution_backoff_record;
 pub mod automatic_distribution_service;
 pub mod automatic_distribution_source;
 mod cli_auth_file_identity_service;
@@ -28,11 +30,13 @@ mod distribution_offline_commit_service;
 mod distribution_offline_registry_service;
 pub mod distribution_outcome;
 pub mod distribution_plan;
+pub mod distribution_pre_signal_failure;
 pub mod distribution_recovery_audit_service;
 mod distribution_recovery_preflight_service;
 pub mod distribution_request;
 mod distribution_shared_auth_guard;
 mod distribution_state_preflight_service;
+pub mod distribution_transaction_error;
 pub mod distribution_transaction_service;
 pub mod distribution_trigger;
 mod distribution_window_task_service;
@@ -150,6 +154,10 @@ mod distribution_checkpoint_service_tests;
 #[cfg(test)]
 #[path = "distribution_desktop_switch_service.test.rs"]
 mod distribution_desktop_switch_service_tests;
+
+#[cfg(test)]
+#[path = "distribution_pre_signal_backoff.test.rs"]
+mod distribution_pre_signal_backoff_tests;
 
 #[cfg(test)]
 #[path = "distribution_transaction_safety.test.rs"]

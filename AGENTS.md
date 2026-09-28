@@ -337,6 +337,7 @@ The detector scans threads using two distinct layers:
 | Recovery evidence soak | `10 s` | Requires substantive work to remain error-free before declaring the recovered turn verified. |
 | Desktop stability | `3 s` | Requires the same singleton Desktop PID throughout; verifies a visible window only when one was captured before restart. |
 | Banner minimum visibility | `5 s` | Keeps the recovery banner visible when a visible window and recovery target were found. |
+| Automatic distribution backoff | `2` identical pre-signal failures, then `5 min` doubling to `30 min` | Daemon-owned, in memory. Keys on reason plus current and target accounts, and on the failure's phase and message; remembers only the latest plan; a streak ends after any other attempt result or `60 min` without a failure. Manual requests never consult or change it. |
 | Window task navigation | `2` link attempts, `12 s` each, `0.5 s` polls | Per window during `--restore-window-tasks` or the rehearsal; a cold task can take seconds to load after a relaunch. |
 | New Window item / new window / window close | `20 s` / `5 s` / `3 s` | Waits after a relaunch for Desktop to add File > New Window, for the item to key a new window, and for a rehearsal window to close. |
 | Window-task helper deadline | `30 s` + per window `5 s` (probe, snapshot) or `70 s + 6 s × windows` (restore, rehearsal) | Kills the helper's process group when passed, so an unanswered pasteboard prompt or stuck Accessibility call cannot hold a restart. |
