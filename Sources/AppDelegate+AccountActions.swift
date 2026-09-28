@@ -74,6 +74,10 @@ extension AppDelegate {
   }
 
   internal func showAlert(title: String, message: String, style: NSAlert.Style = .informational) {
+    if let alertOverride {
+      alertOverride(title, message, style)
+      return
+    }
     let alert = NSAlert()
     alert.messageText = title
     alert.informativeText = message

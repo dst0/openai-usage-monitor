@@ -688,6 +688,7 @@ SWIFT_SOURCES=(
     "${PROJECT_DIR}/Sources/CodexDesktopProcessIdentity.swift"
     "${PROJECT_DIR}/Sources/CodexRecoveryProcessIdentity.swift"
     "${PROJECT_DIR}/Sources/AutoLaunchManager.swift"
+    "${PROJECT_DIR}/Sources/LaunchAtLoginMenuController.swift"
     "${PROJECT_DIR}/Sources/SingleInstanceGuard.swift"
     "${PROJECT_DIR}/Sources/MenuIconButton.swift"
     "${PROJECT_DIR}/Sources/InsetSeparatorView.swift"

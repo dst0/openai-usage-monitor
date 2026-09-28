@@ -73,7 +73,7 @@ The switching and monitoring core is written in **Rust**, paired with a native m
    - Desktop app restart button.
    - Built-in offline documentation with interactive menu bar simulator (`helps.html`).
    - Full native multilingual localization across Menu Bar status items, menus, and system dialogs (13 languages: EN, UK, RU, DE, FR, ES, IT, PT, PL, NL, JA, ZH-Hans, VI); the interactive guide provides 12 languages and intentionally omits Russian.
-   - Launch at Login support (`Launch at Login`).
+   - `Launch at Login` toggle that shows the login item macOS reports, read again each time the menu opens: checked only when the main-app login service or a System Events login item (such as the one `scripts/install.sh` adds) opens this app, a dash when System Events cannot be read, and a warning when a change does not take effect. macOS may ask once whether Codex Monitor may control System Events; it only reads and changes its own login item.
 
 ---
 
