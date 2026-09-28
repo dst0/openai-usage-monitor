@@ -37,6 +37,11 @@ struct AppDelegateTestRunner {
     // store that all concurrent runs of this binary share.
     let preferences = TestPreferencesSuite(purpose: "app-delegate")
 
+    // ====================================================================
+    // Test 0: Monitor state only in this run's private Codex home
+    // ====================================================================
+    runCodexHomeIsolationTests(preferences: preferences)
+
     let mockIcon = NSImage(size: NSSize(width: 18, height: 18))
 
     // ====================================================================

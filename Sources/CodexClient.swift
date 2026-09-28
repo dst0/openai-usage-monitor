@@ -46,9 +46,18 @@ public final class CodexClient: @unchecked Sendable {
   }
 
   public static var codexHome: URL {
+    // Test builds (-D CODEX_MONITOR_TESTS, tests/TestCodexHome.swift) stop the run here unless
+    // CODEX_HOME names the test's private home. The checks come first because building either
+    // URL reads the file system.
     if let env = ProcessInfo.processInfo.environment["CODEX_HOME"], !env.isEmpty {
+      #if CODEX_MONITOR_TESTS
+      TestCodexHome.requireIsolated(env, seam: "CodexClient.codexHome")
+      #endif
       return URL(fileURLWithPath: env)
     }
+    #if CODEX_MONITOR_TESTS
+    TestCodexHome.forbid("CodexClient.codexHome with CODEX_HOME unset")
+    #endif
     return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
   }
 

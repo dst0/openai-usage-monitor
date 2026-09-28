@@ -407,6 +407,10 @@ public enum HelpsDocHelper {
       }
     }
 
+    // Test builds stop here: the lookups below name the live ~/.codex and installed apps.
+    #if CODEX_MONITOR_TESTS
+    TestCodexHome.forbid("HelpsDocHelper.findHelpsHTMLURL home fallback")
+    #endif
     let home = fileManager.homeDirectoryForCurrentUser
 
     let codexHelpURL = home.appendingPathComponent(".codex/helps.html")

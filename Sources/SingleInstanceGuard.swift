@@ -6,6 +6,10 @@ public final class SingleInstanceGuard {
   public let lockPath: String
 
   public static var defaultLockPath: String {
+    // Test builds stop here: this path ignores CODEX_HOME. Tests pass `init(lockPath:)`.
+    #if CODEX_MONITOR_TESTS
+    TestCodexHome.forbid("SingleInstanceGuard.defaultLockPath")
+    #endif
     let home =
       (ProcessInfo.processInfo.environment["HOME"]).flatMap { $0.isEmpty ? nil : $0 }
       ?? FileManager.default.homeDirectoryForCurrentUser.path

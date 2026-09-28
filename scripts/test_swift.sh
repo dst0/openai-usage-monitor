@@ -11,6 +11,10 @@ echo "🚀 Building and running Swift Test Suites for OpenAI Usage Monitor..."
 # scripts/swift_module_cache.sh.
 canonicalize_clang_module_cache_path || exit 1
 
+# Every Swift test build defines CODEX_MONITOR_TESTS, which compiles the Codex home tripwires
+# into Sources/; see tests/TestCodexHome.swift.
+swiftc_test() { swiftc -D CODEX_MONITOR_TESTS "$@"; }
+
 TMP_BIN_DIR=$(mktemp -d /tmp/openai_swift_tests_XXXXXX)
 trap 'rm -rf "${TMP_BIN_DIR}"' EXIT
 
@@ -23,14 +27,27 @@ echo "👉 Checking that Swift tests keep their own defaults store..."
 bash tests/swift_test_defaults_isolation.sh
 
 echo "👉 [1/2] Running Screen Contrast, Vector Icons & Stacked Percentage Tests..."
-swiftc -parse-as-library \
+swiftc_test -parse-as-library \
     Sources/StatusBarStyle.swift \
     tests/ScreenContrastTests.swift \
     -o "${TMP_BIN_DIR}/screen_contrast_test"
 "${TMP_BIN_DIR}/screen_contrast_test"
 
+echo "👉 Running Codex home guard and tripwire tests..."
+swiftc_test -parse-as-library \
+    Sources/Localization.swift \
+    Sources/QuotaModels.swift \
+    Sources/CodexClient.swift \
+    Sources/CodexDesktopProcessIdentity.swift \
+    Sources/CodexRecoveryProcessIdentity.swift \
+    Sources/SingleInstanceGuard.swift \
+    tests/TestCodexHome.swift \
+    tests/TestCodexHomeTests.swift \
+    -o "${TMP_BIN_DIR}/test-codex-home_test"
+"${TMP_BIN_DIR}/test-codex-home_test"
+
 echo "👉 [2/2] Running AppDelegate Status Bar & Layout Tests..."
-swiftc -parse-as-library \
+swiftc_test -parse-as-library \
     Sources/Localization.swift \
     Sources/QuotaModels.swift \
     Sources/StatusBarStyle.swift \
@@ -66,23 +83,25 @@ swiftc -parse-as-library \
     Sources/AppDelegate+AutoReset.swift \
     Sources/AppDelegate+SettingsActions.swift \
     Sources/AppDelegate+WindowBounds.swift \
+    tests/TestCodexHome.swift \
     tests/TestPreferencesSuite.swift \
     tests/AppDelegatePreferencesTests.swift \
     tests/FakeLoginItems.swift \
     tests/LaunchAtLoginTests.swift \
+    tests/AppDelegateCodexHomeTests.swift \
     tests/AppDelegateTests.swift \
     -o "${TMP_BIN_DIR}/app_delegate_test"
 "${TMP_BIN_DIR}/app_delegate_test"
 
 echo "👉 Running test defaults suite guard and cleanup tests..."
-swiftc -parse-as-library \
+swiftc_test -parse-as-library \
     tests/TestPreferencesSuite.swift \
     tests/TestPreferencesSuiteTests.swift \
     -o "${TMP_BIN_DIR}/test-preferences-suite_test"
 "${TMP_BIN_DIR}/test-preferences-suite_test"
 
 echo "👉 Running recovery payload security tests..."
-swiftc -parse-as-library \
+swiftc_test -parse-as-library \
     -target "$(uname -m)-apple-macosx13.0" \
     -framework AppKit -framework Foundation -framework ApplicationServices \
     Sources/CodexRecoveryPayloadReader.swift \
@@ -96,7 +115,7 @@ while IFS= read -r recovery_source || [ -n "${recovery_source}" ]; do
     [ -n "${recovery_source}" ] || continue
     RECOVERY_BANNER_SOURCES+=("${recovery_source}")
 done < "scripts/codex-recovery-banner-sources.txt"
-swiftc -parse-as-library \
+swiftc_test -parse-as-library \
     -target "$(uname -m)-apple-macosx13.0" \
     -framework AppKit -framework Foundation -framework ApplicationServices \
     "${RECOVERY_BANNER_SOURCES[@]}" \
@@ -105,12 +124,13 @@ swiftc -parse-as-library \
 "${TMP_BIN_DIR}/codex-recovery-banner-geometry_test"
 
 echo "👉 Running App/CLI identity separation tests..."
-swiftc -parse-as-library \
+swiftc_test -parse-as-library \
     Sources/Localization.swift \
     Sources/QuotaModels.swift \
     Sources/CodexClient.swift \
     Sources/CodexDesktopProcessIdentity.swift \
     Sources/CodexRecoveryProcessIdentity.swift \
+    tests/TestCodexHome.swift \
     tests/CodexClientIdentityTests.swift \
     -o "${TMP_BIN_DIR}/codex-client-identity_test"
 "${TMP_BIN_DIR}/codex-client-identity_test"
@@ -121,13 +141,13 @@ while IFS= read -r recovery_source || [ -n "${recovery_source}" ]; do
     [ -n "${recovery_source}" ] || continue
     RECOVERY_BANNER_SOURCES+=("${recovery_source}")
 done < "scripts/codex-recovery-banner-sources.txt"
-swiftc -parse-as-library \
+swiftc_test -parse-as-library \
     -target "$(uname -m)-apple-macosx13.0" \
     -framework AppKit -framework Foundation -framework ApplicationServices \
     "${RECOVERY_BANNER_SOURCES[@]}" \
     scripts/codex-recovery-banner-main.swift \
     -o "${TMP_BIN_DIR}/codex-recovery-banner"
-swiftc \
+swiftc_test \
     -target "$(uname -m)-apple-macosx13.0" \
     -framework AppKit -framework Foundation -framework ApplicationServices \
     scripts/CodexWindowAXValueDecoder.swift \
@@ -145,7 +165,7 @@ swiftc \
     -o "${TMP_BIN_DIR}/codex-window-restore"
 
 echo "👉 Running exact window Accessibility value tests..."
-swiftc -parse-as-library \
+swiftc_test -parse-as-library \
     -target "$(uname -m)-apple-macosx13.0" \
     -framework AppKit -framework Foundation -framework ApplicationServices \
     scripts/CodexWindowAXValueDecoder.swift \
@@ -154,7 +174,7 @@ swiftc -parse-as-library \
 "${TMP_BIN_DIR}/codex-window-ax-value_test"
 
 echo "👉 Running exact window safety checks..."
-swiftc -parse-as-library \
+swiftc_test -parse-as-library \
     -target "$(uname -m)-apple-macosx13.0" \
     -framework AppKit -framework Foundation -framework ApplicationServices \
     scripts/CodexWindowSafetyChecks.swift \
@@ -163,7 +183,7 @@ swiftc -parse-as-library \
 "${TMP_BIN_DIR}/codex-window-safety-checks_test"
 
 echo "👉 Running selected-task probe validation tests..."
-swiftc -parse-as-library \
+swiftc_test -parse-as-library \
     -target "$(uname -m)-apple-macosx13.0" \
     -framework AppKit -framework Foundation -framework ApplicationServices \
     scripts/CodexWindowSafetyChecks.swift \
@@ -174,7 +194,7 @@ swiftc -parse-as-library \
 "${TMP_BIN_DIR}/codex-window-task-probe_test"
 
 echo "👉 Running selected-task probe sequencing tests..."
-swiftc -parse-as-library \
+swiftc_test -parse-as-library \
     -target "$(uname -m)-apple-macosx13.0" \
     -framework Foundation \
     scripts/CodexWindowSafetyChecks.swift \
@@ -185,7 +205,7 @@ swiftc -parse-as-library \
 "${TMP_BIN_DIR}/codex-window-task-probe-core_test"
 
 echo "👉 Running window task snapshot, restore, and rehearsal sequencing tests..."
-swiftc -parse-as-library \
+swiftc_test -parse-as-library \
     -target "$(uname -m)-apple-macosx13.0" \
     -framework AppKit -framework Foundation -framework ApplicationServices \
     scripts/CodexWindowSafetyChecks.swift \
@@ -199,7 +219,7 @@ swiftc -parse-as-library \
 "${TMP_BIN_DIR}/codex-window-task-session_test"
 
 echo "👉 Running window task record contract tests..."
-swiftc -parse-as-library \
+swiftc_test -parse-as-library \
     -target "$(uname -m)-apple-macosx13.0" \
     -framework Foundation \
     scripts/CodexWindowSafetyChecks.swift \
@@ -212,7 +232,7 @@ swiftc -parse-as-library \
 "${TMP_BIN_DIR}/codex-window-task-records_test"
 
 echo "👉 Running preserved clipboard tests on a private pasteboard..."
-swiftc -parse-as-library \
+swiftc_test -parse-as-library \
     -target "$(uname -m)-apple-macosx13.0" \
     -framework AppKit -framework Foundation -framework ApplicationServices \
     scripts/CodexWindowSafetyChecks.swift \
