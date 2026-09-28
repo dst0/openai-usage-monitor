@@ -1,0 +1,25 @@
+# 2026-09-28 — `removePersistentDomain(forName:)` leaves an empty plist in ~/Library/Preferences
+
+- **Status:** Resolved
+- **Task/context:** Giving each Swift test run its own defaults store ([2026-09-28 — Concurrent Swift suite runs isolated by an injected defaults store](2026-09-28-concurrent-swift-suites-isolated-by-injected-defaults.md)). The plan was a `UserDefaults(suiteName:)` with a unique name per run, removed afterwards with `removePersistentDomain(forName:)`.
+- **Unexpected observation or failure:** Removing a named suite's domain does not remove its file. After a run, `~/Library/Preferences/<suite>.plist` still exists, first with the old keys and later as an empty 42-byte plist. A test that makes one suite per run therefore leaves one file per run.
+- **Evidence:**
+  - Probe on macOS 27.2, Swift 6.4: a suite named `codex-monitor-probe.<UUID>` was written, then `removePersistentDomain(forName:)` ran. The process read `nil` back. After exit, `defaults read` of the domain printed `{}`, but the 66-byte file on disk still held the removed key. After the next `defaults` call on that domain, cfprefsd rewrote it as a 42-byte empty plist. It was not deleted. A suite that is only read, never written, left no file.
+  - The same host's `~/Library/Preferences` held 3,523 empty 42-byte plists named `<prefix><UUID>.plist`, 16 to 771 for each of nine name prefixes. Most prefixes name other projects' test suites.
+  - A suite named by an absolute path, `UserDefaults(suiteName: "<dir>/<name>")`, is stored at `<dir>/<name>.plist`. In 100 of 100 probes the file existed right after `set` and `synchronize()`, and the suite did not see a key set in the process's own standard domain. After `removePersistentDomain(forName:)` the file stayed, as an empty plist, until the directory was deleted. Deleting the directory and then asking `defaults` for the domain did not bring the file back.
+- **Approaches tried:**
+  - **Attempt:** Named suite in `~/Library/Preferences`, removed with `removePersistentDomain(forName:)`.
+    - **Outcome:** Did not work.
+    - **Why:** The domain is emptied but its plist remains, one per run.
+  - **Attempt:** Delete `~/Library/Preferences/<suite>.plist` after removing the domain.
+    - **Outcome:** Rejected.
+    - **Why:** cfprefsd writes that file lazily. The rewrite can come after the deletion and recreate it.
+  - **Attempt:** Name the suite by an absolute path inside a private `mkdtemp` directory, remove the domain, then delete the directory.
+    - **Outcome:** Worked.
+    - **Why:** The store never enters `~/Library/Preferences`, and the directory, including the empty plist, is removed with the run.
+- **Root cause:** cfprefsd keeps a domain's plist file after the domain is emptied, and writes it back asynchronously.
+- **Resolution:** `tests/TestPreferencesSuite.swift` names each suite by an absolute path in its own `mkdtemp` directory. It calls `removePersistentDomain(forName:)` and deletes the directory in `tearDown()`, and from an `atexit` handler when an assertion exits the process. Absolute-path suite names are not documented for `UserDefaults`, so the suite checks that `<path>.plist` exists after its first write and stops the run if not.
+- **Verification:** `./scripts/test_swift.sh` passes and leaves no `codex-monitor-test-defaults.*` directory in `$TMPDIR` and no new file in `~/Library/Preferences`. An assertion failure in the new Test 4 (seen while writing it) still removed its suite directories through the `atexit` handler.
+- **Prevention/follow-up:** A run killed by a signal skips `atexit` and leaves its directory under `$TMPDIR`, which macOS cleans up itself. Nothing in `~/Library/Preferences` is affected.
+- **Reusable learning:** For throwaway defaults, name the suite by an absolute path in a directory you delete. `removePersistentDomain(forName:)` empties a named domain but leaves its plist in `~/Library/Preferences`.
+- **References:** `tests/TestPreferencesSuite.swift`, `tests/AppDelegatePreferencesTests.swift`.
