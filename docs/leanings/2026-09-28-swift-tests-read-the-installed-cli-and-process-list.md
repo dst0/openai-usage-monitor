@@ -23,10 +23,10 @@
     - **Outcome:** Worked.
     - **Details:**
       - `CodexClient(codexHome:distributionRunner:cliExecutable:desktopProcess:…)` and `AppDelegate(client:defaults:autoLaunchManager:desktopWindows:)` take their sources.
-      - Only `CodexClient()` and `AppDelegate()` bind the live ones, as unapplied references. Tests build `CodexClient.shared` and `AppDelegate()` for their wiring checks, so a root that called a lookup would reach the live system with nothing failing. The static check pins the exact binding lines.
+      - Only `CodexClient()` and `AppDelegate()` bind the live ones, as unapplied references. Tests build `CodexClient.shared` and `AppDelegate()` for their wiring checks, so a root that called a lookup would reach the live system with nothing failing. The static check pins the exact binding lines and the whole body of `CodexClient()`, so it cannot call a lookup through its binding either.
   - **Attempt:** Keep the live checks as a diagnostic.
     - **Outcome:** Worked.
-    - **Why:** `scripts/swift_live_diagnostics.sh --allow-live-system` prints the installed CLI and the running Desktop. It refuses without the flag, only reads, and passes the module-cache ordering scan. The static check keeps it out of `test_swift.sh`, the workflows, and the tests.
+    - **Why:** `scripts/swift_live_diagnostics.sh --allow-live-system` prints the installed CLI and the running Desktop. It only reads the live system and passes the module-cache ordering scan. `scripts/test_swift.sh` builds it with `--compile-only`, which runs nothing, so its hand-kept source list fails CI when it goes stale. The static check keeps the flag out of `test_swift.sh`, the workflows, and the tests. With a fake `swiftc` it also shows that other arguments stop before the build and that `--compile-only` never runs its program.
 - **Root cause:** #37 injected the Codex home but left the other lookups static on `CodexClient` and inline in `AppDelegate`, so any client or delegate built in a test used them.
 - **Resolution:**
   - `CodexClient` runs `cliExecutableURL` (its injected CLI) and asks `desktopProcess()`. `TestCodexHome.client()` defaults to a CLI path in the test home that does not exist, and to no running Desktop.
@@ -34,9 +34,9 @@
   - New tests:
     - `refreshQuotas` runs a fake CLI in a test home exactly once, with `status --refresh`.
     - The identity tests check both a running and a closed Desktop.
-    - The bounds test saves the Desktop's titled window from a fake list, and not its small window or another process's window.
+    - The bounds test saves the Desktop's titled window from a fake list, and not its small window or another process's window. Its first save starts with no `desktop-window.json`, and a second save replaces the file.
 - **Verification:**
-  - **Static check.** Red on `main` as above; green on the branch. It fails when any rule is broken: fixtures for each, run before the repository check.
+  - **Static check.** Red on `main` as above; green on the branch. It fails when any rule is broken: fixtures for each, run before the repository check. A post-implementation review found gaps, now closed: the binding pins let `CodexClient()` call `cli()` itself, the ban missed `NSWorkspace`, `sysctl`, `ps`, `pgrep`, and other `CGWindowList` functions, and the check read its own matches through a here-string, which macOS bash 3.2 writes outside TMPDIR ([learning](2026-09-28-bash-heredocs-ignore-tmpdir-under-a-write-sandbox.md)).
   - **Module-cache scan.** Accepts the diagnostic and rejects it with a compile moved before the cache call.
   - **Workflow policy.** `cargo test --locked --test ci_workflow_policy` passes (144) on a Linux clone with the binary stubbed.
   - **Swift suites.** `./scripts/test_swift.sh` passed on the macOS CI runner (Swift 5.10) in run 36383593989, the pull request's first compile of this change, with the new check and tests.
@@ -45,6 +45,5 @@
   - **Still live, not reached by tests:**
     - `AccountRowView.mouseUp` on an app-session row activates ChatGPT, or opens it, through `NSRunningApplication` and `NSWorkspace`. Tests build such a row but never click it.
     - `SingleInstanceGuard.isAnotherInstanceRunning` and `refreshCLIVersion` run only at launch. The static check bans tests from naming the launch path.
-  - **Unverified.** `saveDesktopWindowBoundsPassive` replaces `desktop-window.json` with `FileManager.replaceItemAt`, which may fail when the file does not exist yet. The new test pre-creates the file, and no Mac was available here to check the first save.
 - **Reusable learning:** Every live lookup a Swift type makes needs a required initializer argument. The composition root binds it without calling it, and the test factory supplies a fake. Keep a flag-gated diagnostic for the live values rather than a test that reads them.
 - **References:** `Sources/CodexClient.swift`, `Sources/AppDelegate.swift`, `Sources/AppDelegate+WindowBounds.swift`, `tests/TestCodexHome.swift`, `tests/AppDelegatePreferencesTests.swift`, `tests/AppDelegateTests.swift` (Test 7), `tests/CodexClientIdentityTests.swift`, `tests/AppDelegateCodexHomeTests.swift`, `tests/swift_test_live_system_isolation.sh`, `scripts/swift_live_diagnostics.sh`, `scripts/codex-live-diagnostics.swift`, AGENTS.md.

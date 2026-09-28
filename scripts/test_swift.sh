@@ -124,6 +124,9 @@ swiftc -parse-as-library \
     -o "${TMP_BIN_DIR}/codex-client-identity_test"
 "${TMP_BIN_DIR}/codex-client-identity_test"
 
+echo "👉 Building the live diagnostic without running it..."
+bash scripts/swift_live_diagnostics.sh --compile-only
+
 echo "👉 Compiling recovery banner and exact window helpers..."
 RECOVERY_BANNER_SOURCES=()
 while IFS= read -r recovery_source || [ -n "${recovery_source}" ]; do

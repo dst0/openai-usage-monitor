@@ -214,20 +214,29 @@ private func checkWindowBoundsUseTheClientHome(preferences: TestPreferencesSuite
       kCGWindowBounds as String: frame.dictionaryRepresentation,
     ]
   }
-  let windows = [
+  var windows = [
     window(pid: desktopPID, name: "Settings", CGRect(x: 0, y: 0, width: 200, height: 150)),
     window(pid: 99, name: "Other", CGRect(x: 0, y: 0, width: 1600, height: 1000)),
     window(pid: desktopPID, name: "ChatGPT", CGRect(x: 10, y: 20, width: 800, height: 600)),
   ]
   let windowed = makeTestAppDelegate(
     client: home.client(), preferences: preferences, desktopWindows: { windows })
-  // The saved bounds replace an existing file, as after an earlier save.
-  home.writeJSON("desktop-window.json", ["version": 1])
+  func savedBounds() -> [Double?] {
+    let saved = (try? Data(contentsOf: home.file("desktop-window.json")))
+      .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+    return [saved["x"], saved["y"], saved["width"], saved["height"]].map { ($0 as? NSNumber)?.doubleValue }
+  }
+  // The first save creates the file; a later one replaces it.
   windowed.saveDesktopWindowBoundsPassive(for: desktopPID)
-  let saved = (try? Data(contentsOf: home.file("desktop-window.json")))
-    .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
   assertEqual(
-    [saved["x"], saved["y"], saved["width"], saved["height"]].map { ($0 as? NSNumber)?.doubleValue },
-    [10.0, 20.0, 800.0, 600.0], "The Desktop's own window in the delegate's list must be saved")
+    savedBounds(), [10.0, 20.0, 800.0, 600.0],
+    "The first save must write the Desktop's own window from the delegate's list")
+  windows[2] = window(pid: desktopPID, name: "ChatGPT", CGRect(x: 30, y: 40, width: 900, height: 700))
+  windowed.saveDesktopWindowBoundsPassive(for: desktopPID)
+  assertEqual(
+    savedBounds(), [30.0, 40.0, 900.0, 700.0], "A later save must replace the saved bounds")
+  let leftovers = ((try? FileManager.default.contentsOfDirectory(atPath: home.url.path)) ?? [])
+    .filter { $0.hasPrefix("desktop-window.json.") }
+  assertEqual(leftovers, [], "Saving bounds must not leave its staging file behind")
   home.tearDown()
 }

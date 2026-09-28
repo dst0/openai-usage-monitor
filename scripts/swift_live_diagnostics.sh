@@ -4,14 +4,28 @@
 # (CodexDesktopProcessIdentity.current, which reads the process list). The
 # Swift tests never make these lookups; they use fakes. Run this only when you
 # need that live evidence, for example to see which codex-mon the menu would
-# run. It only reads: it runs no CLI, reads no Codex home, and changes nothing.
-# It builds in a temporary directory, never beside resources/Info.plist. No test
-# or CI step runs it (tests/swift_test_live_system_isolation.sh checks that).
+# run:
+#
+#   scripts/swift_live_diagnostics.sh --allow-live-system
+#
+# It only reads the live system: it runs no CLI, reads no Codex home, and
+# writes only its temporary build directory and the Swift module cache. It
+# builds there, never beside resources/Info.plist.
+#
+# scripts/test_swift.sh passes --compile-only, which builds the same program
+# and runs nothing, so its source list cannot go stale. Any other arguments
+# stop here, before the build. No test or workflow passes --allow-live-system
+# (tests/swift_test_live_system_isolation.sh checks that, and checks both
+# modes with a fake swiftc).
 set -euo pipefail
 
-if [ "$#" -ne 1 ] || [ "$1" != "--allow-live-system" ]; then
-    echo "usage: scripts/swift_live_diagnostics.sh --allow-live-system" >&2
-    echo "It reads the live process list and looks for the installed Monitor CLI; run it only when you need that." >&2
+if [ "$#" -eq 1 ] && [ "$1" = "--allow-live-system" ]; then
+    RUN_DIAGNOSTIC=1
+elif [ "$#" -eq 1 ] && [ "$1" = "--compile-only" ]; then
+    RUN_DIAGNOSTIC=0
+else
+    echo "usage: scripts/swift_live_diagnostics.sh --allow-live-system | --compile-only" >&2
+    echo "--allow-live-system reads the live process list and looks for the installed Monitor CLI; pass it only when you need that." >&2
     exit 2
 fi
 
@@ -34,4 +48,5 @@ swiftc -parse-as-library \
     Sources/CodexRecoveryProcessIdentity.swift \
     scripts/codex-live-diagnostics.swift \
     -o "${TMP_BIN_DIR}/codex-live-diagnostics"
+[ "${RUN_DIAGNOSTIC}" -eq 1 ] || exit 0
 "${TMP_BIN_DIR}/codex-live-diagnostics"
