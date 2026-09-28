@@ -302,8 +302,9 @@ if ! command -v swiftc >/dev/null 2>&1; then
     echo "   xcode-select --install"
     exit 1
 fi
-# Every swiftc call below must reach an overridden module cache through one
-# physical spelling; a /tmp alias of a cache built as /private/tmp crashes Swift.
+# Every swiftc call below must use the scripts' own module cache subdirectory:
+# a cache reused through another spelling, such as /tmp for /private/tmp, fails
+# to compile. See scripts/swift_module_cache.sh.
 canonicalize_clang_module_cache_path || exit 1
 
 if ! command -v cargo >/dev/null 2>&1; then

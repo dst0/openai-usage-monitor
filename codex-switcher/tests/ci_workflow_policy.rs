@@ -3,14 +3,14 @@
 //! concurrency, an exact Rust toolchain, a committed `Cargo.lock` that every
 //! workflow and repository script builds with `--locked`, cache keys that hash
 //! committed files, an all-targets Clippy gate, a required-job gate for every
-//! shell test under `tests/`, and required branch-protection checks that
-//! always report. Rule logic lives in
-//! `ci_workflow_policy/rules.rs`, with the checkout, trigger, required-job,
-//! locked-cargo, lockfile, cache-key, Clippy gate, shell-test gate, and
-//! inherited-settings rules in `checkout.rs`, `triggers.rs`,
-//! `required_checks.rs`, `locked_cargo.rs`, `lockfile.rs`, `cache_keys.rs`,
-//! `clippy_gate.rs`, `shell_test_gate.rs`, and `inherited_settings.rs`, and
-//! `yaml_limits.rs`
+//! shell test under `tests/`, test steps that report after an earlier
+//! failure, and required branch-protection checks that always report. Rule
+//! logic lives in `ci_workflow_policy/rules.rs`, with the checkout, trigger,
+//! required-job, locked-cargo, lockfile, cache-key, Clippy gate, shell-test
+//! gate, test-step condition, and inherited-settings rules in `checkout.rs`,
+//! `triggers.rs`, `required_checks.rs`, `locked_cargo.rs`, `lockfile.rs`,
+//! `cache_keys.rs`, `clippy_gate.rs`, `shell_test_gate.rs`,
+//! `test_step_condition.rs`, and `inherited_settings.rs`, and `yaml_limits.rs`
 //! rejecting YAML the line reader (`yaml_lines.rs`, `yaml_values.rs`,
 //! `workflow_jobs.rs`) cannot read. `shell_lines.rs` reads shell command lines
 //! for the locked-cargo rule, and `git_repo.rs` answers what the repository
@@ -69,6 +69,9 @@ mod clippy_gate;
 
 #[path = "ci_workflow_policy/inherited_settings.rs"]
 mod inherited_settings;
+
+#[path = "ci_workflow_policy/test_step_condition.rs"]
+mod test_step_condition;
 
 #[path = "ci_workflow_policy/shell_test_gate.rs"]
 mod shell_test_gate;
@@ -133,6 +136,9 @@ fn every_workflow_meets_ci_baseline() {
                 &repo(),
                 &text,
                 &contexts,
+            ));
+            found.extend(test_step_condition::unit_test_condition_violations(
+                &text, &contexts,
             ));
             found.extend(inherited_settings::inherited_setting_violations(
                 &text, &contexts,

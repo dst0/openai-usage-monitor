@@ -1,0 +1,21 @@
+# 2026-09-28 — A deliberate Clippy failure placed inside `assert_eq!` did not fail Clippy
+
+- **Status:** Resolved
+- **Task/context:** PR #33 made the required unit-test step run after a Clippy failure. To prove this on GitHub, a temporary probe commit was meant to break the Clippy gate while `cargo test` still passed.
+- **Unexpected observation or failure:** The probe added `let probe = 1u8; assert_eq!(probe.clone(), 1);` to a policy test. In CI run 36363805136 the "Run Clippy on All Targets" step succeeded with no warnings, so the run never showed the unit tests running after a Clippy failure. A draft learning already said the probe "broke Clippy". An adversarial reviewer caught the false claim by reading the step results.
+- **Evidence:**
+  - Run 36363805136: Clippy `success`, unit tests `success`. The failing shell-test probes in the same commit did fail as intended.
+  - With the call moved out of the macro (`let copy = probe.clone(); assert_eq!(copy, 1);`), the pinned toolchain's `cargo clippy --workspace --all-targets --locked -- -D warnings` failed locally with ``using `clone` on type `u8` which implements the `Copy` trait``. `cargo test` still passed.
+- **Approaches tried:**
+  - **Attempt:** `clone()` on a `Copy` value as an argument of `assert_eq!`.
+    - **Outcome:** Did not work.
+    - **Why:** No `clone_on_copy` finding was reported. The leading hypothesis is that the lint skips expressions whose span comes from a macro expansion. The Clippy source was not checked.
+  - **Attempt:** The same call in a plain `let` statement, confirmed locally before pushing.
+    - **Outcome:** Worked.
+    - **Why:** The expression is ordinary user code, so the lint applies.
+- **Root cause:** The probe was pushed without first checking that it failed the step it targeted, and the result was assumed from intent.
+- **Resolution:** A second probe commit moved the call out of the macro. Its CI run is cited in PR #33. The learning's verification claim was corrected before commit.
+- **Verification:** The local Clippy failure above. In CI run 36364479563 the second probe failed the Clippy gate while the unit tests still ran and passed. See [2026-09-28 — The default step condition hid later test results in a required job](2026-09-28-default-step-condition-hid-later-ci-test-results.md).
+- **Prevention/follow-up:** None open.
+- **Reusable learning:** Before citing a deliberate-failure probe, run it locally and see the targeted check fail. Then read the per-step results of the CI run instead of inferring them from the commit. Keep lint probes out of macro arguments.
+- **References:** PR #33, CI runs 36363805136 (first probe) and 36364479563 (second probe).

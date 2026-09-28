@@ -68,8 +68,13 @@ fn required_job_steps_cannot_skip_or_mask_their_work() {
         ),
         ("        if: failure()\n", "`if: failure()`"),
         (
-            "        if: ${{ !cancelled() }}\n",
-            "`if: ${{ !cancelled() }}`",
+            "        if: ${{ cancelled() }}\n",
+            "`if: ${{ cancelled() }}`",
+        ),
+        // Starts like an allowed condition but can skip the step.
+        (
+            "        if: ${{ !cancelled() && github.event_name == 'push' }}\n",
+            "`if: ${{ !cancelled() && github.event_name == 'push' }}`",
         ),
     ] {
         let v = violations(&with(TEST_STEP, &format!("{TEST_STEP}{step}")));
@@ -93,6 +98,9 @@ fn required_job_steps_cannot_skip_or_mask_their_work() {
         "        if: always()\n",
         "        if: ${{ success() }}\n",
         "        if: \"always()\"\n",
+        // Skips only in a cancelled run, which never reports success.
+        "        if: ${{ !cancelled() }}\n",
+        "        if: '!cancelled()'\n",
     ] {
         let text = with(TEST_STEP, &format!("{TEST_STEP}{step}"));
         assert_eq!(violations(&text), Vec::<String>::new(), "{step:?}");
