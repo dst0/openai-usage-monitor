@@ -45,11 +45,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
   internal var alertOverride: ((_ title: String, _ message: String, _ style: NSAlert.Style) -> Void)?
   internal let singleGuard = SingleInstanceGuard()
   internal let autoLaunchManager: AutoLaunchManager
-  /// Shows the login-item state read back from macOS in the Launch at Login item.
+  /// Shows the login-item state read back from macOS in the Launch at Login item. A failed toggle
+  /// closes the menu if it was reopened and shows its warning once the run loop is back in the
+  /// default mode, so the alert never runs inside menu tracking.
   internal lazy var launchAtLogin = LaunchAtLoginMenuController(manager: autoLaunchManager) {
     [weak self] failure in
     self?.statusItem?.menu?.cancelTracking()
-    self?.showAlert(title: L10n.launchAtLogin, message: failure.message, style: .warning)
+    RunLoop.main.perform(inModes: [.default]) {
+      self?.showAlert(title: L10n.launchAtLogin, message: failure.message, style: .warning)
+    }
   }
   internal var ownsBackgroundAutomation = false
 

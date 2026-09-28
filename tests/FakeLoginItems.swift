@@ -3,12 +3,12 @@ import ServiceManagement
 
 /// System Events login items held in memory, so no test reaches the real ones.
 ///
-/// It answers only the three scripts `AutoLaunchManager` sends for `appName` and `appPath`: the
-/// path listing, the add, and the remove. Any other script fails and is kept in
+/// It answers only the scripts `AutoLaunchManager` sends: the path listing, the add for `appName`
+/// and `appPath`, and a remove by exact paths. Any other script fails and is kept in
 /// `unexpectedScripts`. A listing prints one path per line, as `osascript` prints the output of
 /// `AutoLaunchManager.printLoginItemPathsScript` (the Launch at Login tests run that script to
-/// check). `readGate` and `writeGate`, when set, hold a listing or a change until they are
-/// signalled; a listing takes its answer before it waits.
+/// check), followed by `listingNoise` when set. `readGate` and `writeGate`, when set, hold a
+/// listing or a change until they are signalled; a listing takes its answer before it waits.
 final class FakeSystemEventsLoginItems: ScriptExecuting {
   struct Item: Equatable {
     var name: String
@@ -25,6 +25,8 @@ final class FakeSystemEventsLoginItems: ScriptExecuting {
   private var storedCanRead = true
   private var storedCanWrite = true
   private var storedAcceptsWithoutEffect = false
+  private var storedListingNoise: String?
+  private var storedRemovedPaths: [[String]] = []
   private var storedReads = 0
   private var storedWrites: [String] = []
   private var storedUnexpected: [String] = []
@@ -53,6 +55,13 @@ final class FakeSystemEventsLoginItems: ScriptExecuting {
     get { locked { storedAcceptsWithoutEffect } }
     set { locked { storedAcceptsWithoutEffect = newValue } }
   }
+  /// Extra text a listing prints after the paths, such as a warning on the merged stderr.
+  var listingNoise: String? {
+    get { locked { storedListingNoise } }
+    set { locked { storedListingNoise = newValue } }
+  }
+  /// The paths each remove asked to delete, in order.
+  var removedPaths: [[String]] { locked { storedRemovedPaths } }
   var readGate: DispatchSemaphore? {
     get { locked { storedReadGate } }
     set { locked { storedReadGate = newValue } }
@@ -71,17 +80,18 @@ final class FakeSystemEventsLoginItems: ScriptExecuting {
     if script == AutoLaunchManager.loginItemPathsScript {
       let (answer, gate): ((Int32, String), DispatchSemaphore?) = locked {
         storedReads += 1
-        let answer: (Int32, String) =
-          storedCanRead ? (0, storedItems.map(\.path).joined(separator: "\n")) : (1, Self.notAuthorized)
+        let listed = (storedItems.map(\.path) + [storedListingNoise].compactMap { $0 }).joined(separator: "\n")
+        let answer: (Int32, String) = storedCanRead ? (0, listed) : (1, Self.notAuthorized)
         return (answer, storedReadGate)
       }
       gate?.wait()
       return answer
     }
     let change: String
+    let removing = Self.removedPaths(in: script)
     if script == AutoLaunchManager.addLoginItemScript(name: appName, path: appPath) {
       change = "add"
-    } else if script == AutoLaunchManager.removeLoginItemScript(name: appName) {
+    } else if removing != nil {
       change = "remove"
     } else {
       locked { storedUnexpected.append(script) }
@@ -90,16 +100,34 @@ final class FakeSystemEventsLoginItems: ScriptExecuting {
     locked { storedWriteGate }?.wait()
     return locked {
       storedWrites.append(change)
+      if let removing { storedRemovedPaths.append(removing) }
       guard storedCanWrite else { return (1, Self.notAuthorized) }
       guard !storedAcceptsWithoutEffect else { return (0, "") }
-      // Both scripts first delete every item with the app's name, as scripts/install.sh does.
-      storedItems.removeAll { $0.name == appName }
-      if change == "add" {
-        storedItems.append(Item(name: appName, path: appPath))
-        return (0, "login item \(appName)")
+      if let removing {
+        storedItems.removeAll { removing.contains($0.path) }
+        return (0, "")
       }
-      return (0, "")
+      // The add first deletes every item with the app's name, as scripts/install.sh does.
+      storedItems.removeAll { $0.name == appName }
+      storedItems.append(Item(name: appName, path: appPath))
+      return (0, "login item \(appName)")
     }
+  }
+
+  /// The paths a remove script deletes, when `script` is exactly the one
+  /// `AutoLaunchManager.removeLoginItemsScript(paths:)` builds for them; otherwise nil.
+  private static func removedPaths(in script: String) -> [String]? {
+    let prefix = "    delete (every login item whose path is \""
+    let suffix = "\")"
+    let lines = script.components(separatedBy: "\n")
+    guard lines.count > 2 else { return nil }
+    var paths: [String] = []
+    for line in lines.dropFirst().dropLast() {
+      guard line.hasPrefix(prefix), line.hasSuffix(suffix) else { return nil }
+      let escaped = String(line.dropFirst(prefix.count).dropLast(suffix.count))
+      paths.append(escaped.replacingOccurrences(of: "\\\"", with: "\"").replacingOccurrences(of: "\\\\", with: "\\"))
+    }
+    return script == AutoLaunchManager.removeLoginItemsScript(paths: paths) ? paths : nil
   }
 
   private func locked<T>(_ body: () -> T) -> T {

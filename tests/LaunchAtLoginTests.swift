@@ -17,6 +17,7 @@ func runLaunchAtLoginTests() {
   checkListingScriptOutput()
   checkFailureMapping()
   checkMenuController(fixture)
+  checkToggleBeforeFirstRead(fixture)
   checkDelegateMenu(fixture)
   print("  ✅ Launch at Login shows the login item macOS reports")
 }
@@ -28,6 +29,7 @@ private final class InstalledBundleFixture {
   let root: URL
   let installed: URL
   let homeLink: URL
+  let renamedLink: URL
   let otherCopy: URL
   let bundle: Bundle
 
@@ -37,6 +39,7 @@ private final class InstalledBundleFixture {
       "codex-login-item-\(UUID().uuidString)", isDirectory: true)
     installed = root.appendingPathComponent("Applications/Codex Monitor.app", isDirectory: true)
     homeLink = root.appendingPathComponent("home/Applications/Codex Monitor.app")
+    renamedLink = root.appendingPathComponent("home/Links/Monitor Shortcut.app")
     otherCopy = root.appendingPathComponent("Old/Codex Monitor.app", isDirectory: true)
     for app in [installed, otherCopy] {
       let contents = app.appendingPathComponent("Contents", isDirectory: true)
@@ -47,6 +50,9 @@ private final class InstalledBundleFixture {
     try! fileManager.createDirectory(
       at: homeLink.deletingLastPathComponent(), withIntermediateDirectories: true)
     try! fileManager.createSymbolicLink(at: homeLink, withDestinationURL: installed)
+    try! fileManager.createDirectory(
+      at: renamedLink.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try! fileManager.createSymbolicLink(at: renamedLink, withDestinationURL: installed)
     guard let bundle = Bundle(path: installed.path) else {
       assertTrue(false, "Fixture bundle must load")
       fatalError("unreachable")
@@ -94,6 +100,25 @@ private func checkStateReadsBothRegistrations(_ fixture: InstalledBundleFixture)
   assertEqual(manager.state, .enabled, "A trailing slash must not hide the login item")
   scripts.items = [Item(name: "Codex Monitor", path: fixture.homeLink.path)]
   assertEqual(manager.state, .enabled, "An item at the ~/Applications link must read as enabled")
+  scripts.items = [Item(name: "Codex Monitor.app", path: fixture.installed.path)]
+  assertEqual(manager.state, .enabled, "The item's name must not matter, only what it opens")
+  scripts.listingNoise = "osascript: warning: stderr is merged into the listing"
+  assertEqual(manager.state, .enabled, "Other lines in the listing must not hide the login item")
+  scripts.items = []
+  assertEqual(manager.state, .disabled, "Other lines in the listing must not read as a login item")
+  scripts.listingNoise = nil
+  if (try? fixture.root.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?
+    .volumeSupportsCaseSensitiveNames == false
+  {
+    scripts.items = [Item(name: "Codex Monitor", path: fixture.installed.deletingLastPathComponent().path + "/codex monitor.app")]
+    assertEqual(manager.state, .enabled, "On a case-insensitive volume a differently cased name must match")
+  }
+
+  // Only items named like the bundle are looked up on disk, so a link with another name, even
+  // one that leads here, is not: other apps' items may sit in protected folders or on volumes
+  // that do not answer.
+  scripts.items = [Item(name: "Monitor Shortcut", path: fixture.renamedLink.path)]
+  assertEqual(manager.state, .disabled, "An item whose name differs from the bundle's must not be looked up")
 
   // Items that open something else do not count, even when they share the name.
   scripts.items = [
@@ -170,14 +195,28 @@ private func checkChangesAreReadBack(_ fixture: InstalledBundleFixture) {
   scripts.acceptsChangesWithoutEffect = true
   assertEqual(manager.setEnabled(true), .disabled, "The add's exit status must not stand for the result")
 
-  // Disabling removes both registrations: the main-app service and every item with the name.
+  // Disabling removes both registrations: the main-app service and exactly the System Events
+  // items that open this bundle, whatever their name, as scripts/uninstall.sh removes by path.
   (scripts, service, manager) = fixture.fakes()
   service.status = .enabled
-  scripts.items = [dropbox, fixture.installerItem, Item(name: "Codex Monitor", path: fixture.otherCopy.path)]
+  let otherCopyItem = Item(name: "Codex Monitor", path: fixture.otherCopy.path)
+  let renamedItem = Item(name: "Codex Monitor.app", path: fixture.installed.path + "/")
+  let linkItem = Item(name: "Codex Monitor", path: fixture.homeLink.path)
+  scripts.items = [dropbox, fixture.installerItem, otherCopyItem, renamedItem, linkItem, fixture.installerItem]
   assertEqual(manager.setEnabled(false), .disabled, "A full disable must read back as disabled")
   assertEqual(service.unregisterCalls, 1, "Disabling must unregister the main-app service")
-  assertEqual(scripts.writes, ["remove"], "Disabling must remove the System Events items")
-  assertEqual(scripts.items, [dropbox], "Only the Monitor's items may be removed")
+  assertEqual(scripts.writes, ["remove"], "Disabling must remove the System Events items once")
+  assertEqual(
+    scripts.removedPaths, [[fixture.installed.path, renamedItem.path, linkItem.path]],
+    "Disabling must delete each listed path that opens this bundle once, as listed")
+  assertEqual(scripts.items, [dropbox, otherCopyItem], "Items for other apps and other copies must stay")
+
+  // With no System Events item for this bundle, disabling sends no remove.
+  (scripts, service, manager) = fixture.fakes()
+  service.status = .enabled
+  scripts.items = [dropbox]
+  assertEqual(manager.setEnabled(false), .disabled, "A service-only disable must read back as disabled")
+  assertEqual(scripts.writes, [], "Nothing to remove must send no remove script")
 
   // Either registration that stays keeps the app opening at login.
   (scripts, service, manager) = fixture.fakes()
@@ -198,25 +237,32 @@ private func checkChangesAreReadBack(_ fixture: InstalledBundleFixture) {
   service.status = .enabled
   scripts.canRead = false
   assertEqual(manager.setEnabled(false), .unknown, "A disable that cannot be read back must be unknown")
+  assertEqual(scripts.writes, [], "Unreadable items must not be removed blindly")
   assertTrue(scripts.unexpectedScripts.isEmpty, "Changes must send only the add and remove scripts")
 
   let add = AutoLaunchManager.addLoginItemScript(name: "Codex \"Q\" Monitor", path: "/Apps\\X/Codex.app")
   assertTrue(
     add.contains("{name:\"Codex \\\"Q\\\" Monitor\", path:\"/Apps\\\\X/Codex.app\", hidden:false}"),
     "The add script must escape quotes and backslashes")
-  assertTrue(
-    AutoLaunchManager.removeLoginItemScript(name: "A \"B\"").contains("whose name is \"A \\\"B\\\"\""),
-    "The remove script must escape the name")
+  assertEqual(
+    AutoLaunchManager.removeLoginItemsScript(paths: ["/A \"B\"/C\\D.app", "/E.app"]),
+    "tell application \"System Events\"\n"
+      + "    delete (every login item whose path is \"/A \\\"B\\\"/C\\\\D.app\")\n"
+      + "    delete (every login item whose path is \"/E.app\")\n"
+      + "end tell",
+    "The remove script must delete each escaped path")
 }
 
 /// scripts/install.sh registers the bundle it installs, under the name the app uses, so the app
 /// reads the installer's item as its own and removes it when turned off.
 private func checkScriptsMatchTheInstaller() {
   let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-  guard let installer = try? String(contentsOf: repository.appendingPathComponent("scripts/install.sh"), encoding: .utf8),
+  guard
+    let installer = try? String(contentsOf: repository.appendingPathComponent("scripts/install.sh"), encoding: .utf8),
+    let uninstaller = try? String(contentsOf: repository.appendingPathComponent("scripts/uninstall.sh"), encoding: .utf8),
     let info = NSDictionary(contentsOf: repository.appendingPathComponent("resources/Info.plist"))
   else {
-    assertTrue(false, "scripts/install.sh and resources/Info.plist must be readable")
+    assertTrue(false, "scripts/install.sh, scripts/uninstall.sh and resources/Info.plist must be readable")
     return
   }
   let lines = installer.components(separatedBy: "\n")
@@ -232,37 +278,52 @@ private func checkScriptsMatchTheInstaller() {
   assertEqual(
     info["CFBundleDisplayName"] as? String, "Codex Monitor",
     "The app must look for the name the installer registers")
+  // The uninstaller removes the installer's item by bundle path at either install location.
+  assertTrue(
+    uninstaller.contains(
+      "set expectedPaths to {\"/Applications/Codex Monitor.app\", \"/Applications/Codex Monitor.app/\", "
+        + "userHome & \"/Applications/Codex Monitor.app\", userHome & \"/Applications/Codex Monitor.app/\"}"),
+    "The uninstaller must remove the login item at both install locations")
+  // The app sends Apple events to System Events through osascript; macOS names this reason when
+  // it asks the user.
+  assertTrue(
+    (info["NSAppleEventsUsageDescription"] as? String)?.contains("System Events") == true,
+    "Info.plist must explain why the Monitor asks System Events")
 }
+
+/// The printing half of the listing, spelled out so the test runs nothing it has not read.
+private let expectedPrintingScript = """
+  set output to ""
+  repeat with itemPathReference in itemPaths
+    set itemPath to contents of itemPathReference
+    if class of itemPath is text then set output to output & itemPath & linefeed
+  end repeat
+  return output
+  """
 
 /// The listing's AppleScript after the System Events query prints what the fake prints.
 private func checkListingScriptOutput() {
   assertEqual(
+    AutoLaunchManager.printLoginItemPathsScript, expectedPrintingScript,
+    "The printing script must be the one this test runs")
+  assertEqual(
     AutoLaunchManager.loginItemPathsScript,
-    "tell application \"System Events\" to set itemPaths to path of every login item\n"
-      + AutoLaunchManager.printLoginItemPathsScript,
+    "tell application \"System Events\" to set itemPaths to path of every login item\n" + expectedPrintingScript,
     "The listing must be one System Events query followed by the printing script")
-  let listed = runPlainAppleScript(
-    "set itemPaths to {\"/Applications/Codex Monitor.app\", missing value, \"/Users/me/Applications/Other App.app/\"}\n"
-      + AutoLaunchManager.printLoginItemPathsScript)
   assertEqual(
-    listed, "/Applications/Codex Monitor.app\n/Users/me/Applications/Other App.app/",
+    printPaths(from: "{\"/Applications/Codex Monitor.app\", missing value, \"/Users/me/Applications/Other App.app/\"}"),
+    "/Applications/Codex Monitor.app\n/Users/me/Applications/Other App.app/",
     "The printing script must print one text path per line and skip missing ones")
-  assertEqual(
-    runPlainAppleScript("set itemPaths to {}\n" + AutoLaunchManager.printLoginItemPathsScript), "",
-    "No login items must print nothing")
+  assertEqual(printPaths(from: "{}"), "", "No login items must print nothing")
 }
 
-/// Runs AppleScript that addresses no application, trimmed as `DefaultScriptExecutor` trims it.
-/// It refuses any script that could send an Apple event or run a command.
-private func runPlainAppleScript(_ script: String) -> String {
-  let lowered = script.lowercased()
-  let addressing = ["tell", "application \"", "application id", "app \"", "app id", "system events", "do shell script"]
-  assertTrue(
-    !addressing.contains(where: lowered.contains),
-    "Tests may only run AppleScript that addresses no application")
+/// Runs the printing script on a literal list through `osascript`, trimmed as
+/// `DefaultScriptExecutor` trims it. Only this file's literal lists and the pinned printing
+/// script run, and neither addresses an application.
+private func printPaths(from literalList: String) -> String {
   let process = Process()
   process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-  process.arguments = ["-e", script]
+  process.arguments = ["-e", "set itemPaths to \(literalList)\n" + expectedPrintingScript]
   let output = Pipe()
   process.standardOutput = output
   process.standardError = FileHandle.nullDevice
@@ -273,7 +334,7 @@ private func runPlainAppleScript(_ script: String) -> String {
   }
   let data = output.fileHandleForReading.readDataToEndOfFile()
   process.waitUntilExit()
-  assertEqual(process.terminationStatus, 0, "Plain AppleScript must run")
+  assertEqual(process.terminationStatus, 0, "The printing script must run")
   return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 }
 
@@ -303,6 +364,28 @@ private func checkFailureMapping() {
 
 private func waitForLoginItem(_ controller: LaunchAtLoginMenuController, _ message: String) {
   waitUntil(message) { !controller.isRefreshing && !controller.isChanging }
+}
+
+/// Runs every block already waiting for the main run loop's default mode, where the delegate
+/// shows its alerts: blocks run in the order they were added.
+private func flushDefaultModeBlocks() {
+  var flushed = false
+  RunLoop.main.perform(inModes: [.default]) { flushed = true }
+  waitUntil("default-mode blocks ran") { flushed }
+}
+
+private func checkToggleBeforeFirstRead(_ fixture: InstalledBundleFixture) {
+  let (scripts, service, manager) = fixture.fakes()
+  var failures: [LaunchAtLoginMenuController.Failure] = []
+  let controller = LaunchAtLoginMenuController(manager: manager) { failures.append($0) }
+  let item = NSMenuItem(title: L10n.launchAtLogin, action: nil, keyEquivalent: "")
+  controller.item = item
+  controller.toggle()
+  waitForLoginItem(controller, "toggle before any read")
+  assertEqual(service.registerCalls, 1, "A toggle before the first read must ask to enable")
+  assertEqual(item.state, .on, "A confirmed enable before the first read must show a checkmark")
+  assertEqual(failures, [], "A confirmed enable must not be reported")
+  assertTrue(scripts.unexpectedScripts.isEmpty, "Only the manager's scripts may run")
 }
 
 private func checkMenuController(_ fixture: InstalledBundleFixture) {
@@ -492,6 +575,7 @@ private func checkDelegateMenu(_ fixture: InstalledBundleFixture) {
   scripts.canWrite = false
   delegate.toggleLaunchAtLogin()
   waitForLoginItem(delegate.launchAtLogin, "menu failed enable")
+  flushDefaultModeBlocks()
   assertEqual(item.state, .off, "A failed enable from the menu must stay unchecked")
   assertEqual(
     alerts, ["\(L10n.launchAtLogin)|\(L10n.launchAtLoginEnableFailed)|warning"],
@@ -502,15 +586,27 @@ private func checkDelegateMenu(_ fixture: InstalledBundleFixture) {
   service.registerFails = false
   delegate.toggleLaunchAtLogin()
   waitForLoginItem(delegate.launchAtLogin, "menu enable")
+  flushDefaultModeBlocks()
   assertEqual(item.state, .on, "A confirmed enable from the menu must be checked")
   assertEqual(alerts, [], "A confirmed enable must not show an alert")
   service.unregisterFails = true
   delegate.toggleLaunchAtLogin()
   waitForLoginItem(delegate.launchAtLogin, "menu failed disable")
+  flushDefaultModeBlocks()
   assertEqual(item.state, .on, "A failed disable from the menu must stay checked")
   assertEqual(
     alerts, ["\(L10n.launchAtLogin)|\(L10n.launchAtLoginDisableFailed)|warning"],
     "A failed disable must show one warning")
+
+  // A failure is shown after the current pass, in the run loop's default mode, never while the
+  // menu that was reopened is still tracking.
+  alerts = []
+  delegate.launchAtLogin.reportFailure(.unconfirmed)
+  assertEqual(alerts, [], "A failure alert must wait for the run loop's default mode")
+  flushDefaultModeBlocks()
+  assertEqual(
+    alerts, ["\(L10n.launchAtLogin)|\(L10n.launchAtLoginUnknown)|warning"],
+    "An unconfirmed change must show one warning")
 
   // A rebuilt menu shows the last state read at once, then reads again.
   let rebuilt = delegate.buildMenu()

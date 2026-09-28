@@ -85,8 +85,11 @@ public enum LoginItemState: Equatable {
 /// one opens the app at login, so `state` reports enabled when either points at this bundle. No
 /// preference is cached: every answer is read from macOS, and `setEnabled` reports the state read
 /// back after the change, not whether each step claimed success.
+///
+/// Both system seams are required arguments, so only `shared` can reach the live login items; tests
+/// pass the fakes in tests/FakeLoginItems.swift.
 public final class AutoLaunchManager {
-  public static let shared = AutoLaunchManager()
+  public static let shared = AutoLaunchManager(scriptExecutor: DefaultScriptExecutor(), smService: DefaultSMAppServiceManager())
 
   public static let defaultAppName = "Codex Monitor"
   public static let defaultAppPath = "/Applications/Codex Monitor.app"
@@ -113,8 +116,8 @@ public final class AutoLaunchManager {
   private let fileManager: FileManager
 
   public init(
-    scriptExecutor: ScriptExecuting = DefaultScriptExecutor(),
-    smService: SMAppServiceManaging = DefaultSMAppServiceManager(),
+    scriptExecutor: ScriptExecuting,
+    smService: SMAppServiceManaging,
     bundle: Bundle = .main,
     fileManager: FileManager = .default
   ) {
@@ -146,14 +149,13 @@ public final class AutoLaunchManager {
       """
   }
 
-  /// Deletes every System Events login item named `name`.
-  public static func removeLoginItemScript(name: String) -> String {
-    let safeName = escapeAppleScriptString(name)
-    return """
-      tell application "System Events"
-          delete (every login item whose name is "\(safeName)")
-      end tell
-      """
+  /// Deletes every System Events login item whose path is one of `paths`, spelled exactly as the
+  /// listing printed them.
+  public static func removeLoginItemsScript(paths: [String]) -> String {
+    let deletions = paths.map {
+      "    delete (every login item whose path is \"\(escapeAppleScriptString($0))\")"
+    }
+    return (["tell application \"System Events\""] + deletions + ["end tell"]).joined(separator: "\n")
   }
 
   /// Whether two paths name one file: the same device and inode when both exist, following
@@ -205,13 +207,29 @@ public final class AutoLaunchManager {
     if smService.isAvailable && smService.status == .enabled {
       return .enabled
     }
+    guard let paths = loginItemPathsOpeningThisApp() else { return .unknown }
+    return paths.isEmpty ? .disabled : .enabled
+  }
+
+  /// The System Events login item paths, as listed, that open this bundle; nil when the items
+  /// cannot be read. Only an absolute path whose last component is the bundle's name is compared
+  /// on disk, so other apps' items (which may sit in protected folders or on unreachable volumes)
+  /// are never touched.
+  private func loginItemPathsOpeningThisApp() -> [String]? {
     let listing = scriptExecutor.executeAppleScript(Self.loginItemPathsScript)
-    guard listing.exitCode == 0 else { return .unknown }
+    guard listing.exitCode == 0 else { return nil }
     let ownPath = appPath
-    let opensThisApp = listing.output.split(whereSeparator: \.isNewline).contains { line in
-      line.hasPrefix("/") && Self.isSameFile(String(line), ownPath)
+    let ownName = URL(fileURLWithPath: ownPath).standardizedFileURL.lastPathComponent
+    var matches: [String] = []
+    for line in listing.output.split(whereSeparator: \.isNewline).map(String.init) {
+      guard line.hasPrefix("/"), !matches.contains(line) else { continue }
+      let name = URL(fileURLWithPath: line).standardizedFileURL.lastPathComponent
+      guard name.caseInsensitiveCompare(ownName) == .orderedSame else { continue }
+      if Self.isSameFile(line, ownPath) {
+        matches.append(line)
+      }
     }
-    return opensThisApp ? .enabled : .disabled
+    return matches
   }
 
   /// Adds or removes the login item, then returns the state read back from macOS. A step that
@@ -235,10 +253,14 @@ public final class AutoLaunchManager {
     _ = scriptExecutor.executeAppleScript(Self.addLoginItemScript(name: appName, path: appPath))
   }
 
+  /// Unregisters the main-app service and deletes exactly the System Events items that `state`
+  /// counts as this app's, as scripts/uninstall.sh deletes by bundle path. Items for other copies
+  /// are left alone.
   private func removeLoginItems() {
     if smService.isAvailable {
       try? smService.unregister()
     }
-    _ = scriptExecutor.executeAppleScript(Self.removeLoginItemScript(name: appName))
+    guard let paths = loginItemPathsOpeningThisApp(), !paths.isEmpty else { return }
+    _ = scriptExecutor.executeAppleScript(Self.removeLoginItemsScript(paths: paths))
   }
 }

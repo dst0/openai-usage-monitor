@@ -21,7 +21,12 @@ func makeTestAppDelegate(client: CodexClient, preferences: TestPreferencesSuite)
   let store = preferences.defaults
   let scripts = FailingLoginItemScripts(), service = UnavailableMainAppService()
   let loginItems = AutoLaunchManager(scriptExecutor: scripts, smService: service)
-  return AppDelegate(client: client, defaults: store, autoLaunchManager: loginItems)
+  let delegate = AppDelegate(client: client, defaults: store, autoLaunchManager: loginItems)
+  // A modal alert would stop the suite; no test built here expects one.
+  delegate.alertOverride = { title, message, _ in
+    assertTrue(false, "Unexpected alert: \(title): \(message)")
+  }
+  return delegate
 }
 
 /// Test 4: the delegate's menu preferences come from the store it was given.
