@@ -399,9 +399,27 @@ skill links that point to this project. The script is idempotent and does not re
 anything merely because it happens to be named `codex` unless it is the exact
 shim installed by this project.
 
+While an installation runs, the uninstaller changes nothing: it prints that an
+installer holds the install lock and exits with status 75, so rerun it after
+the installation ends. The Menu Bar app's Uninstall item has already quit the
+app by then and shows nothing, so if the app is still installed afterwards,
+run `scripts/uninstall.sh` from a terminal once the installation is done (a
+successful installation reopens the app). The lock is
+`codex_monitor_install_<uid>.lock` in the per-user temporary directory
+(`getconf DARWIN_USER_TEMP_DIR`), whatever `TMPDIR` says, so an uninstall
+started from the menu finds an installer started in a terminal. A lock that
+an older installer kept in the uninstaller's own `$TMPDIR` or in `/tmp` counts
+too. The installer takes the lock with `lockf` (macOS 15 and later) or perl's
+`flock` (macOS 13 and 14 ship no `lockf`), and refuses to run when it can take
+neither or cannot find that directory. A program the installer starts that
+keeps running after it (a compiler cache server, for example) does not keep
+the lock. The lock ends within a fraction of a second of the installer's
+exit, so an uninstall started at that very moment may still be refused; run
+it again.
+
 It also removes what a killed installer or uninstaller left behind. The
-installer creates its temporary paths only while it holds its install lock (a
-file in `$TMPDIR`) and removes them before releasing it:
+installer creates its temporary paths only while it holds its install lock
+and removes them before releasing it:
 
 - `~/.local/bin/.codex-mon.install.XXXXXX` (the CLI being installed, mode
   `0600` or `0755`) and codesign's `.codex-mon.install.XXXXXX.cstemp` copy
@@ -411,21 +429,19 @@ file in `$TMPDIR`) and removes them before releasing it:
   `Codex Monitor.app`);
 - a one-line remote install's clone,
   `codex-mon-install-XXXXXX.XXXXXXXXXX` in the per-user temporary directory
-  (`getconf DARWIN_USER_TEMP_DIR`, mode `0700`).
+  (mode `0700`; eight characters after the dot on macOS 13, ten later).
 
 Each `X` is a letter or digit, as `mktemp` fills it. The name, your user, the
 type and mode must all match, and nothing is followed through a symlink.
 While an installation runs, a backup directory can hold the only copy of the
 previous app. The uninstaller therefore removes these only when no installer
-holds the lock. It checks with `lockf`, or with perl's `flock` on macOS 14,
-which has no `lockf`. If an installer holds the lock, or the lock cannot be
-verified, it keeps them,
-names them, and finishes with a warning, so rerun it after the installation
-ends. Once the installer has exited, a backup is leftover Monitor data and is
-removed like the app, including one the installer kept because it could not
-roll back. An installer started with a different `TMPDIR` uses a different lock
-file and is not detected. The uninstaller also removes the private copies it
-edits in place of `~/.zshrc`, `~/.bash_profile`, and `~/.codex/config.toml`
+holds a lock, checked again just before removal. If one does, or a lock
+cannot be verified (for example a symlink in its place), it keeps them,
+names them, and finishes with a warning. Once the installer has exited, a
+backup is leftover Monitor data and is removed like the app, including one
+the installer kept because it could not roll back. The uninstaller also
+removes the private copies it edits in place of `~/.zshrc`,
+`~/.bash_profile`, and `~/.codex/config.toml`
 (`<file>.codex-monitor-uninstall.XXXXXX`) if an earlier run was interrupted.
 
 By design, uninstall does **not** delete the official OpenAI Codex Desktop app,

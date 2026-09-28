@@ -73,12 +73,13 @@ jobs:
         run: cargo test --locked --verbose
 
       # Runs a copy of scripts/uninstall.sh against temporary homes, with
-      # launchctl, osascript, defaults, lsregister, and getconf replaced by
-      # fakes, so the runner's launchd, login items, and /Applications are
-      # never touched. It builds codex-mon itself, from codex-switcher/ and
-      # with the committed Cargo.lock. Every tracked tests/*.sh needs a step
-      # like this one in a required job, setting only `name`,
-      # `if: ${{ !cancelled() }}`, and `run: bash <script>`, as enforced by
+      # launchctl, osascript, defaults, lsregister, getconf, ps, and kill
+      # replaced by fakes, so the runner's launchd, login items, processes,
+      # and /Applications are never touched. It builds codex-mon itself,
+      # from codex-switcher/ and with the committed Cargo.lock. Every
+      # tracked tests/*.sh needs a step like this one in a required job,
+      # setting only `name`, `if: ${{ !cancelled() }}`, and
+      # `run: bash <script>`, as enforced by
       # codex-switcher/tests/ci_workflow_policy/shell_test_gate.rs. The
       # condition runs each shell test even after an earlier step failed, so
       # one failure does not hide the others; a failed step still fails the
@@ -90,7 +91,13 @@ jobs:
       # The installer tests below work on temporary directories and on copies
       # of the installer helpers whose ps, kill, launchctl, and sleep are
       # fakes, or only read scripts/install.sh. They never install, sign an
-      # installed app, signal a real process, or touch launchd.
+      # installed app, signal a real process, or touch launchd. The lock
+      # test runs install.sh's own install lock with a fake getconf; its log
+      # names the lock tools this runner offers.
+      - name: Run Installer Lock Shell Test
+        if: ${{ !cancelled() }}
+        run: bash tests/install_lock.sh
+
       - name: Run Installer Bundle Swap Shell Test
         if: ${{ !cancelled() }}
         run: bash tests/install_bundle_swap.sh
@@ -110,6 +117,28 @@ jobs:
       - name: Run Installer Restart Worker Wait Shell Test
         if: ${{ !cancelled() }}
         run: bash tests/install_restart_worker_wait.sh
+
+  # Not a required check. The required jobs run on macOS 14, which ships no
+  # /usr/bin/lockf, so the installer lock there always falls back to perl;
+  # this job runs the same test where lockf's descriptor form, the path
+  # macOS 15 and later take, exists.
+  install-lock-macos-15:
+    name: 🔐 Installer Lock with lockf (macOS 15)
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Require lockf
+        run: test -x /usr/bin/lockf
+
+      # /bin/bash is the bash 3.2 the installer runs under. The required
+      # job's `bash tests/install_lock.sh` step stays the one gate for it.
+      - name: Run Installer Lock Shell Test with lockf
+        run: /bin/bash tests/install_lock.sh
 
   test-swift:
     name: 🍏 Swift Menu Bar App Tests

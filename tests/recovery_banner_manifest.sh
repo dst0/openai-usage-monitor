@@ -27,7 +27,9 @@ done < "${MANIFEST}"
 if [ "$(uname -s)" = "Darwin" ] && command -v swiftc >/dev/null 2>&1; then
     tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-recovery-banner-manifest.XXXXXX")"
     cleanup() { rm -rf "${tmp_dir}"; }
-    trap cleanup EXIT INT TERM
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
     swiftc -parse-as-library \
         -target "$(uname -m)-apple-macosx13.0" \
         -framework AppKit -framework Foundation -framework ApplicationServices \

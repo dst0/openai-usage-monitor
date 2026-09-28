@@ -539,32 +539,70 @@ non-symlink files, without an owner or mode check. Any new or renamed staging
 writer needs a matching pattern and shell test in the same change.
 
 Leftovers of a killed install are a third list. `install.sh` takes its install
-lock (`${TMPDIR:-/tmp}/codex_monitor_install_<uid>.lock`) before creating any
-temporary path and releases it only as the last step of its EXIT cleanup. The
+lock before creating any temporary path and releases it only as the last step
+of its EXIT cleanup, after removing them. The lock file is
+`codex_monitor_install_<uid>.lock` in `getconf DARWIN_USER_TEMP_DIR`, whatever
+`TMPDIR` says, so an installer and an uninstaller started from a shell,
+launchd, or the Menu Bar app meet at one file; the installer refuses to run
+without that directory. Both scripts take the lock through an identical
+`flock_fd_now`: `/usr/bin/lockf`'s descriptor form where it exists (macOS 15
+and later), otherwise `/usr/bin/perl`'s `flock` (macOS 13 and 14 ship no
+`lockf`), otherwise the installer fails closed and the uninstaller treats the
+lock as unverified. An installer waits by polling, because `lockf` waits on a
+descriptor by spinning a CPU. The uninstaller removes a free lock file while
+it holds that lock, so an installer that was waiting for it would then hold
+a file without a name; after every acquisition the installer compares the
+open file (`stat 0<&9`; `stat /dev/fd/9` reports devfs's device) with the
+path and locks the file now at the path when they differ. It writes its PID
+through the locked descriptor, never by path, and then hands the lock to a
+perl keeper that is forked with INT, TERM, HUP, and QUIT ignored and exits
+within about 0.05 s of the installer's exit. Once the keeper reports that it
+runs, the installer closes its own descriptor, so no command it runs, such
+as a compiler cache server started under cargo, can inherit the lock and
+keep it after the installer ends; if the keeper never reports, the installer
+keeps the descriptor and says so. An interrupted installer keeps the lock
+through its EXIT cleanup (it traps QUIT too, which bash would otherwise let
+end it without that cleanup). Both scripts run perl with `-T`, which ignores
+the caller's `PERL5OPT` and `PERL5LIB`. Before its remote clone, CLI
+staging, bundle staging, and bundle swap, the installer stops if the path
+no longer names its lock file or a fresh probe no longer finds the lock
+held: uninstallers from before this lock removed a lock file once more after
+releasing it, and a keeper can be killed. The uninstaller's probe
+opens each lock file read-only, never creating one, likewise starts over
+when the path no longer names the file it locked, and treats any lock-tool
+status other than taken or held as unknown.
+
+A confirmed uninstall stops with exit status 75 before changing anything
+while an installer holds that lock, or a legacy `${TMPDIR:-/tmp}` or `/tmp`
+one of an older installer; its dry run says so and marks each held lock
+file. It does not stop an installer that starts during the uninstall, whose
+leftovers the check below still keeps. The Menu Bar app discards the
+uninstaller's output, so a refusal started from the menu is silent. The
 uninstaller matches `~/.local/bin/.codex-mon.install.XXXXXX` (regular file,
-mode `0600` or `0755`) and its codesign `.cstemp` copy (regular file, `0755`),
-`.codex-monitor-install.XXXXXX` and `.codex-monitor-backup.XXXXXX` in
-`/Applications` and `~/Applications` (mode `0700` directory that is empty or
-holds only a real `Codex Monitor.app` directory), and the remote-install clone
-`codex-mon-install-XXXXXX.XXXXXXXXXX` in `getconf DARWIN_USER_TEMP_DIR` (mode
-`0700` directory). Each `X` is one of mktemp's `[0-9A-Za-z]`, the owner must be
-the current user, and symlinks are never followed. A backup can hold the only
+mode `0600` or `0755`) and its codesign `.cstemp` copy
+(regular file, `0755`), `.codex-monitor-install.XXXXXX` and
+`.codex-monitor-backup.XXXXXX` in `/Applications` and `~/Applications` (mode
+`0700` directory that is empty or holds only a real `Codex Monitor.app`
+directory), and the remote-install clone `codex-mon-install-XXXXXX.` plus ten
+characters (eight on macOS 13) in `getconf DARWIN_USER_TEMP_DIR` (mode `0700`
+directory). Each `X` is one of mktemp's `[0-9A-Za-z]`, the owner must be the
+current user, and symlinks are never followed. A backup can hold the only
 copy of the previous app while an install runs, so these are removed only
-when the lock file is absent or its BSD `flock` can be taken at once. The
-probe uses `/usr/bin/lockf` where it exists (newer macOS releases) and
-`/usr/bin/perl`'s `flock` on macOS 14, which ships no `lockf`; with neither,
-the lock is unverified. The Monitor lock files (`daemon.lock`, `codex.lock`,
-`monitor.lock`, `desktop-recovery.lock`, and the install lock) use the same
-probe before removal. A held, symlinked, or
-otherwise unverifiable lock keeps them and makes the uninstall report
-warnings. After the installer exits, a backup it kept because rollback failed
-is Monitor-owned debris and is removed with the app. An installer run with another `TMPDIR` is not detected. The
-uninstaller also removes its own interrupted
+when every lock file is absent or its `flock` can be taken at once, checked
+again right before removal. A held lock, or one that is symlinked, not a
+regular file, another user's, unreadable, or in an unknown per-user
+temporary directory, keeps them and makes the uninstall report warnings. The
+Monitor lock files (`daemon.lock`, `codex.lock`, `monitor.lock`,
+`desktop-recovery.lock`, and the install locks) are removed the same way,
+only while their lock is free. After the installer exits, a backup it kept
+because rollback failed is Monitor-owned debris and is removed with the app.
+The uninstaller also removes its own interrupted
 `<file>.codex-monitor-uninstall.XXXXXX` copies of `~/.zshrc`,
 `~/.bash_profile`, and `~/.codex/config.toml` (current owner, regular file).
-`tests/log_permissions_and_uninstall.sh` fails when an installer `mktemp`
-template changes or the lock order regresses, and the required Rust CI job
-runs it on every pull request.
+`tests/log_permissions_and_uninstall.sh` fails when an installer or
+uninstaller `mktemp` template changes, and `tests/install_lock.sh` runs the
+installer's own lock and EXIT cleanup; the required Rust CI job runs both on
+every pull request.
 
 During installation, log migration occurs only after the newly built app is
 copied to same-filesystem staging and strictly signature-verified. The exact

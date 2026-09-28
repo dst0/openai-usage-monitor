@@ -1,0 +1,100 @@
+# 2026-09-28 — An installer waiting for the install lock could end up holding a removed lock file
+
+- **Status:** Resolved (limits listed under Prevention/follow-up)
+- **Task/context:** Two late adversarial reviews of PR #30 (reviewed at `5cf1a4d`) found gaps in the install lock that gates uninstall's removal of a killed install's leftovers. This work, on `fix/install-lock-identity` from `main` at `bc2a246`, checked each finding against current code. Two independent reviews of the fix (PR #35) found more. Earlier learning: [2026-09-28-uninstall-kept-killed-install-staging.md](2026-09-28-uninstall-kept-killed-install-staging.md).
+- **Unexpected observation or failure:**
+  - **S1, removal race.** The uninstaller's final `remove_unlocked_file` ran `lockf -s -t 0 <lock> /usr/bin/true` without `-k`, so `lockf` removed the lock file while holding its lock. An installer that had opened the file just before the removal waited, and then locked a file with no name. Its `echo "$$" > <lock>` then created a new, unlocked file at the path. A later uninstaller found that file free and removed the waiting installer's staging and backup directories, and a second installer could run alongside the first.
+  - **S2, location.** The lock file was `${TMPDIR:-/tmp}/codex_monitor_install_<uid>.lock`. An installer started from a shell and an uninstaller started by the Menu Bar app, or with another `TMPDIR`, used different files, so the uninstaller never saw the installer.
+  - **Refusal missing.** While an installer held the lock, the uninstaller still stopped the Monitor and removed the app, CLI, launch agent, and skills. Only the leftovers were gated.
+  - **Wrong identity check.** The fix the review suggested, comparing `stat -L -f '%d:%i' /dev/fd/9` with the path, can never match on macOS. For the same open file, devfs reports its own device: `2437840837:373639198` for `/dev/fd/9`, but `16777231:373639198` for both the path and `stat 0<&9`, which runs fstat on the open file.
+  - **Inherited lock.** The first fix still kept the lock on the installer shell's descriptor 9, which every command it ran inherits. A process that outlived the installer, such as a compiler cache server started under cargo through `RUSTC_WRAPPER`, kept the lock. With the new refusal, that would stop every uninstall for as long as the process lived.
+  - **Keeper startup race.** The first keeper set its signal handling in perl. A group signal that arrived right after the handoff, before perl started, ended the keeper, so the interrupted installer ran its cleanup without the lock.
+  - **Keeper never confirmed.** The shell closed its own descriptor without checking that the keeper ran. Anything that stops perl at startup, such as `PERL5OPT=-MNoSuchModule` in the caller's environment (reproduced by the second review), left the whole install without a lock.
+  - **Keeper release race in the test.** CI failed at `the old lockf was not tried first`: a released installer's keeper still held the lock for part of a poll interval, so the next scenario's first attempt found it held.
+- **Evidence:**
+  - `tests/install_lock.sh`, run in a scratch copy with `main`'s `acquire_install_lock` swapped in (the same scenario code, and the lock path set to the per-user directory so that only the removal race is tested) failed with `W holds a lock file the path no longer names: locked 501 16777231:373820490 Regular File, path 501 16777231:373820579 Regular File`. The file at the path was the waiter's own PID write.
+  - With `main`'s `${TMPDIR:-/tmp}` path, the same test failed with `the installer locked a file in its TMPDIR instead of the per-user temporary directory`.
+  - The reviewer showed the inherited lock with a background child, and with a Rust `Command::spawn` child, both of which kept the lock after the installer exited. In bash 3.2, `9>&-` on a function call or `{ …; }` group does not stop the inheritance, because bash's saved copy of descriptor 9 is inherited too.
+  - The new interrupted-cleanup test (a `kill -TERM 0` to the installer's own process group right after the lock is taken) recorded `rm not-held-0` for every cleanup step until the keeper was forked with those signals already ignored.
+  - All 41 recorded mutants of the two scripts fail a test, except one that became equivalent: the PR lists them. A mutant that loops now fails at a time limit instead of hanging the test. The survivors along the way are now covered: an absent lock file on a probe retry (the `remove-once` scenario) and the restoring of the installer's traps (a before-and-after `trap -p` check).
+  - `bash` 3.2 runs no EXIT trap when SIGQUIT ends it (exit status 131, no cleanup), so the installer now traps QUIT like INT and TERM.
+- **Approaches tried:**
+  - **Attempt:** The review's `stat -L /dev/fd/9` against `stat <path>`.
+    - **Outcome:** Did not work.
+    - **Why:** `/dev/fd/N` reports devfs's device, so every acquisition would look replaced, and the installer would retry until it gave up.
+  - **Attempt:** Keep the installer on `${TMPDIR:-/tmp}` and have the uninstaller probe `${TMPDIR:-/tmp}`, `getconf DARWIN_USER_TEMP_DIR`, and `/tmp`.
+    - **Outcome:** Partial.
+    - **Why:** It misses an installer started with any other `TMPDIR`. It is kept only to find installers older than this change.
+  - **Attempt:** Move `acquire_install_lock` into a sourced helper script, as the second review asked.
+    - **Outcome:** Rejected.
+    - **Why:** A one-line (`curl | bash`) install has no helper scripts until after its clone, and the lock must be taken before the clone. The block stays in `install.sh` between `# >>> install lock` and `# <<< install lock`. Both tests source exactly those lines, which must define only functions and variables.
+  - **Attempt:** Close descriptor 9 for each command that might start a lasting process.
+    - **Outcome:** Rejected.
+    - **Why:** In bash 3.2 it has to be done on every simple command, and any command added later would reopen the gap.
+  - **Attempt:** Hand the lock to a perl keeper that inherits descriptor 9 and exits when its parent changes (`getppid`). The shell then closes its own descriptor 9.
+    - **Outcome:** Worked, after one fix.
+    - **Why:** The keeper runs nothing else, and reparenting marks the installer's exit even when a zombie remains.
+    - **The fixes:**
+      - The shell sets INT, TERM, HUP, and QUIT to ignored around the fork and restores its own traps afterwards, so the keeper is born ignoring them. Setting that in perl alone left the startup window described above.
+      - The keeper reports `ready` through a pipe, and only then does the shell close its descriptor. Without that report the shell keeps the descriptor and says so.
+      - Both scripts run perl with `-T`, which ignores `PERL5OPT` and `PERL5LIB`.
+      - `install_lock_still_named` also probes through a new open file that the lock is still held, so a keeper that dies later is noticed before the next temporary path.
+  - **Attempt:** The rest of the protocol:
+    - lock one canonical file in `getconf DARWIN_USER_TEMP_DIR`, the directory `mktemp -t` uses, and refuse to install without it;
+    - after every acquisition, compare the open file (`stat 0<&9`) with the path, and on a mismatch close it and lock the file now at the path (at most 20 times);
+    - write the PID through descriptor 9, create the lock file private whatever the umask, and still lock a read-only one;
+    - before each step that creates a leftover, check that the path still names the locked file.
+
+    The uninstaller opens each lock file read-only on its own descriptor, applies the same comparison before trusting a free result or removing the file, and removes a lock file only while holding it. It treats any tool status other than taken or held as unknown, stops with status 75 while any lock is held, and also probes the legacy `${TMPDIR:-/tmp}` and `/tmp` locks.
+    - **Outcome:** Worked.
+    - **Why:** Everyone who removes a lock file does so while holding it, so after a successful check, nobody who follows the protocol can remove or replace the path until the holder releases it. `confstr` does not depend on the environment, so every launch context computes the same directory.
+- **Root cause:** The protocol treated "the file named X is locked" as "the lock at X is held". Removing a lock file while holding it is only safe when every acquirer checks, after locking, that the name still refers to the file it locked. The lock's lifetime was tied to a descriptor that every child process inherits, not to the installer. Its location depended on an environment variable that differs between launch contexts.
+- **Resolution:**
+  - `scripts/install.sh`: the marked lock block (`flock_fd_now`, `install_lock_identity`, `hand_off_install_lock`, `install_lock_still_named`, `acquire_install_lock`), its four `install_lock_still_named || exit 1` call sites, and `cleanup()` also removing codesign's `.cstemp`.
+  - `scripts/uninstall.sh`: `flock_fd_now`, `try_flock`, `install_lock_blocker`, `print_install_lock_plan`, `remove_install_lock_files`, and the exit-75 refusal before any change.
+  - The uninstaller copy in the test now also fakes `ps` and `kill`, and runs under `/bin/bash`.
+- **Verification:**
+  - `tests/install_lock.sh` covers:
+    - the lock's location, whatever `TMPDIR` says;
+    - a lock file removed while an installer waits;
+    - a second installer taking the replacement file;
+    - a child process that outlives the installer and must not keep the lock;
+    - the stop when another program removes or replaces the lock file;
+    - a caller's `PERL5OPT`, a keeper that never starts, and one that quits early;
+    - the umask and read-only cases;
+    - the PID written through the descriptor;
+    - each lock tool, the fallback from an old `lockf`, and both directions across tools;
+    - each fail-closed path;
+    - cleanup, both at a normal exit and after a signal to the whole process group, removing every path while the lock is held.
+  - `tests/log_permissions_and_uninstall.sh` covers:
+    - the exit-75 refusal while the current installer or a legacy one holds a lock, with no file and no launchd, login-item, or preference call changed;
+    - the leftover check for an installer that starts after the uninstaller's first check;
+    - the probe's recheck (a replaced file, one that keeps changing, a removed one), and a tool status that means nothing;
+    - removal only while the lock is held, recorded at each removal;
+    - a symlinked, directory, unreadable, or unprobeable lock;
+    - a dry run that marks held locks and leaves free ones unchanged;
+    - free locks removed through both probes;
+    - an unknown temporary directory.
+  - Both pass with every `lockf` path replaced by a missing one, as on the macOS 14 runner. A separate, non-required macOS 15 CI job runs the lock test with the real `lockf`.
+- **Prevention/follow-up:**
+  - `AGENTS.md` (Installation & Removal Contract), `README.md`, and `CODEX.md` state the protocol and its limits.
+  - Still open:
+    - An uninstaller from before this change, still bundled in apps installed from it, removes a lock file once more after releasing it. A new installer that loses its file that way stops at its next check, not at once.
+    - A confirmed uninstall does not keep an installer from starting during its own few seconds; only that installer's leftovers are protected.
+    - Started from the Menu Bar app, a refusal is silent, because the app discards the uninstaller's output after quitting.
+    - An older installer that ran without `TMPDIR` locks `/tmp` and is not serialized with a new one.
+    - Another local user can plant a file at the `/tmp` legacy path, which makes leftovers unverifiable. This fails closed, with a warning.
+    - Without perl, or when the keeper does not report, the installer shell keeps descriptor 9 itself.
+    - The keeper frees the lock within about 0.05 s of the installer's exit. An uninstall started at that moment may be refused and must be run again.
+    - A signal that arrives while the shell forks the keeper is lost, because the signals are briefly ignored.
+    - If the installer alone is killed with SIGKILL, the commands it started (`git clone`, a bundle copy, `codesign`) may still write temporary paths after the lock is free. At worst this leaves extra leftovers, never removed data.
+    - A dry run probes the lock twice, so an installer that starts between the two probes gets inconsistent lines in the plan.
+    - A lock file owned by another uid needs root to create and is not tested.
+- **Reusable learning:**
+  - When a lock file may be removed by name while it is held, every process that acquires it must compare the file it locked (fstat) with the path and retry on a mismatch, and must never write through the path.
+  - Hold a lock that must outlive nothing in a process that runs nothing else, tied to the owner's lifetime, never in a shell whose children inherit it.
+  - Make that process ignore signals before it is created, not after it starts, and have it confirm that it runs before the lock is released anywhere else.
+  - Run system perl with `-T` in scripts that must work whatever the user's environment.
+  - Put shared lock files where every launch context computes the same path: on macOS, `confstr` directories rather than `TMPDIR`.
+  - On macOS, `stat 0<&N` identifies an open descriptor's file; `/dev/fd/N` does not.
+- **References:** `scripts/install.sh`, `scripts/uninstall.sh`, `tests/install_lock.sh`, `tests/log_permissions_and_uninstall.sh`, `.github/workflows/ci.yml`, [2026-09-28-lockf-first-ships-with-macos-15.md](2026-09-28-lockf-first-ships-with-macos-15.md), [2026-09-28-macos-13-mktemp-t-appends-eight-characters.md](2026-09-28-macos-13-mktemp-t-appends-eight-characters.md).
