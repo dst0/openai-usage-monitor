@@ -151,6 +151,7 @@ jobs:
       # test_swift.sh also runs it before compiling; this step is the run the
       # policy enforces.
       - name: Run Swift Test Codex Home Isolation Shell Test
+        if: ${{ !cancelled() }}
         run: bash tests/swift_test_codex_home_isolation.sh
 
   security-scan:
