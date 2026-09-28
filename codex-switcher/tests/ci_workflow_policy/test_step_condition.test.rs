@@ -41,7 +41,7 @@ fn a_required_unit_test_step_that_an_earlier_failure_would_skip_is_rejected() {
     let v = unit_test_condition_violations(&compliant(), &contexts());
     assert_eq!(v.len(), 1, "{v:?}");
     assert!(
-        v[0].contains("required job `build` step at line 20 runs `cargo test --locked`"),
+        v[0].contains("required job `build` step at line 20 runs `cargo test`"),
         "{v:?}"
     );
     for other in ["success()", "always()", "failure()"] {
@@ -73,6 +73,53 @@ fn a_conditioned_unit_test_step_complies() {
     assert_eq!(
         unit_test_condition_violations(&unconditioned_block, &contexts()).len(),
         1
+    );
+}
+
+/// A test command is found by its subcommand, not by `test` directly after
+/// `cargo`: global options, their values, and cargo's `t` alias count too.
+#[test]
+fn every_spelling_of_a_test_command_needs_the_condition() {
+    for command in [
+        "cargo --locked test",
+        "cargo --frozen test",
+        "cargo -v test --locked",
+        "cargo --color always test --locked",
+        "cargo --config net.offline=true test --locked",
+        "cargo t --locked",
+        "env CARGO_TERM_COLOR=never cargo test --locked",
+        "cargo build --locked && cargo test --locked",
+    ] {
+        let text = with(TEST_STEP, &format!("      - run: {command}\n"));
+        let v = unit_test_condition_violations(&text, &contexts());
+        assert_eq!(v.len(), 1, "{command}: {v:?}");
+    }
+    // An option's value is not the subcommand, and nothing after `--` is.
+    for command in [
+        "cargo --color test build --locked",
+        "cargo --config t build --locked",
+        "cargo run --locked -- test",
+        "cargo clippy --locked --all-targets",
+        "cargo testing",
+    ] {
+        let text = with(TEST_STEP, &format!("      - run: {command}\n"));
+        let v = unit_test_condition_violations(&text, &contexts());
+        assert_eq!(v, Vec::<String>::new(), "{command}");
+    }
+}
+
+/// Only the command a step runs counts: a step whose other values read like a
+/// test command, which the shell reader would take for one, is not a test
+/// step.
+#[test]
+fn only_the_run_command_makes_a_test_step() {
+    let text = with(
+        TEST_STEP,
+        "      - name: Build\n        env:\n          NEXT: cargo test --locked\n        run: cargo build --locked\n",
+    );
+    assert_eq!(
+        unit_test_condition_violations(&text, &contexts()),
+        Vec::<String>::new()
     );
 }
 

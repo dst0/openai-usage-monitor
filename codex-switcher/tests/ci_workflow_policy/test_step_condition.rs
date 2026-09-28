@@ -5,16 +5,19 @@
 //! `TEST_STEP_CONDITION`, which runs it after a failure and, unlike
 //! `always()`, not in a cancelled run; a failed step still fails its job.
 //! `shell_test_gate.rs` requires it on every shell-test gate, and
-//! `unit_test_condition_violations` on every `cargo test --locked` step of a
-//! required job.
+//! `unit_test_condition_violations` on every step of a required job whose
+//! `run:` runs `cargo test`, however it is spelled.
 
-use crate::locked_cargo::runs_locked;
+use crate::locked_cargo::cargo_commands;
 use crate::workflow_jobs::{job_steps, jobs};
 use crate::yaml_lines::{entry, nested};
 
 /// The `if:` of a test step that runs after an earlier failure. A leading `!`
 /// would start a YAML tag, hence the `${{ }}` spelling GitHub documents.
 pub const TEST_STEP_CONDITION: &str = "${{ !cancelled() }}";
+/// Cargo options before the subcommand whose value is the next word, so that
+/// value is not read as the subcommand (`cargo --color test build`).
+const CARGO_VALUE_OPTIONS: [&str; 5] = ["--color", "--config", "--explain", "-C", "-Z"];
 
 /// Why a step whose `if:` values are `conditions` does not run after an
 /// earlier failure as a test step must; `None` when it does.
@@ -27,8 +30,23 @@ pub fn condition_problem(conditions: &[&str]) -> Option<String> {
     })
 }
 
-/// One violation for each step of a required job that runs
-/// `cargo test --locked` without `TEST_STEP_CONDITION`.
+/// Whether the cargo command `words`, starting with `cargo`, runs the tests:
+/// its first word that is neither an option nor an option's value is `test`
+/// or cargo's built-in alias `t` (`cargo --locked test`, `cargo -v t`).
+fn runs_tests(words: &[String]) -> bool {
+    let mut rest = words.iter().skip(1);
+    while let Some(word) = rest.next() {
+        if CARGO_VALUE_OPTIONS.contains(&word.as_str()) {
+            rest.next();
+        } else if !word.starts_with(['-', '+']) {
+            return matches!(word.as_str(), "test" | "t");
+        }
+    }
+    false
+}
+
+/// One violation for each step of a required job whose `run:` runs
+/// `cargo test` without `TEST_STEP_CONDITION`.
 pub fn unit_test_condition_violations(text: &str, contexts: &[String]) -> Vec<String> {
     let lines: Vec<&str> = text.lines().collect();
     let mut out = Vec::new();
@@ -40,12 +58,14 @@ pub fn unit_test_condition_violations(text: &str, contexts: &[String]) -> Vec<St
             continue;
         }
         for step in job_steps(&lines, &job).unwrap_or_default() {
-            let step_lines: Vec<&str> = step
+            let run_lines: Vec<&str> = step
                 .iter()
+                .filter(|&&i| entry(lines[i]).is_some_and(|e| e.key == "run"))
                 .flat_map(|&i| std::iter::once(i).chain(nested(&lines, i)))
                 .map(|i| lines[i])
                 .collect();
-            if !runs_locked(&step_lines.join("\n"), "test") {
+            let commands = cargo_commands(&run_lines.join("\n"));
+            if !commands.iter().any(|(_, words)| runs_tests(words)) {
                 continue;
             }
             let conditions: Vec<&str> = step
@@ -56,7 +76,7 @@ pub fn unit_test_condition_violations(text: &str, contexts: &[String]) -> Vec<St
                 .collect();
             if let Some(problem) = condition_problem(&conditions) {
                 out.push(format!(
-                    "required job `{}` step at line {} runs `cargo test --locked`: {problem}",
+                    "required job `{}` step at line {} runs `cargo test`: {problem}",
                     job.id,
                     step[0] + 1
                 ));

@@ -8,7 +8,7 @@
   - `codex-switcher/tests/ci_workflow_policy/required_checks.rs` allowed only `always()` and `success()` on steps of required jobs, and a test explicitly rejected `${{ !cancelled() }}`. No comment or learning gave a reason, and the rule's own principle ("runs whenever its job can still pass") admits it: `!cancelled()` skips a step only in a cancelled run, which never reports success.
   - The final policy, run against the `ci.yml` of PR #31, reported nine violations, one per shell-test gate plus one for the unit-test step. Two of them:
     - ``no required job runs `tests/install_bundle_swap.sh`, a step with only `name`, `if: ${{ !cancelled() }}`, and `run: bash tests/install_bundle_swap.sh`; step at line 87: `if:` is not set once to exactly `${{ !cancelled() }}`, which runs the step after an earlier failure but not in a cancelled run``
-    - ``required job `test-rust` step at line 68 runs `cargo test --locked`: `if:` is not set once to exactly `${{ !cancelled() }}`, ...``
+    - ``required job `test-rust` step at line 68 runs `cargo test`: `if:` is not set once to exactly `${{ !cancelled() }}`, ...``
 - **Approaches tried:**
   - **Attempt:** Allow `if: always()` on gate steps.
     - **Outcome:** Did not work.
@@ -16,20 +16,20 @@
   - **Attempt:** Give each shell test its own required job, or a matrix.
     - **Outcome:** Did not work.
     - **Why:** Separate jobs change the branch-protection contexts in `scripts/setup-github-protection.sh` and multiply macOS runner start-up. The policy forbids `strategy:` on required jobs.
-  - **Attempt:** Require `if: ${{ !cancelled() }}` on every shell-test gate and on each required `cargo test --locked` step, and allow `!cancelled()` on any step of a required job.
+  - **Attempt:** Require `if: ${{ !cancelled() }}` on every shell-test gate and on each required-job step that runs `cargo test`, and allow `!cancelled()` on any step of a required job.
     - **Outcome:** Worked.
     - **Why:** Each test step now reports its own result after an earlier failure. A failed step still fails the job, and a cancelled run skips the steps.
 - **Root cause:** GitHub's implicit `success()` condition, combined with an allow-list that had left out the documented run-after-failure condition.
 - **Resolution:**
   - `test_step_condition.rs` defines the exact condition `${{ !cancelled() }}`; a leading bare `!` would be a YAML tag.
-  - The rule requires it on every `cargo test --locked` step of a required job, and `shell_test_gate.rs` requires it on every gate.
+  - The rule requires it on every required-job step whose `run:` runs `cargo test`. The subcommand is found past global options and their values, and the `t` alias counts. `shell_test_gate.rs` requires it on every gate.
   - `required_checks.rs` accepts `!cancelled()` and `${{ !cancelled() }}`.
   - `ci.yml` sets the condition on the eight gates and on `cargo test`.
 - **Verification:**
   - **Policy tests.** `cargo test --locked --test ci_workflow_policy` passed.
     - The new tests reject a missing, repeated, or different condition, including `${{ !cancelled() && github.event_name == 'push' }}`.
     - The live wiring tests report the removal of any gate's condition, or of the unit-test step's, for that step alone.
-    - Three mutations of the unit-test rule each failed at least one test.
+    - Six mutations, five of the unit-test rule and one removing the live `ci.yml` condition, each failed at least one test.
   - **On GitHub**, with temporary probe commits on PR #33 (since reverted):
     - **Run 36364479563.** Clippy failed and the unit tests still ran and passed. `tests/install_bundle_swap.sh` failed, and the four installer tests after it ran. `tests/recovery_banner_manifest.sh` failed, and `tests/swift_module_cache_path.sh` after it ran. Both jobs reported `failure`.
     - **Run 36363773334** was superseded by a push while Clippy and the Swift suites ran. Every conditioned step after that point shows `skipped`, and the run concluded `cancelled`.
