@@ -80,11 +80,36 @@ CLIENT_ROOT_BODY="$(printf '%s\n' \
     '      desktopAppAccountIdProvider: { Self.readDesktopAppSessionAccountId(in: home, currentProcess: desktop) })' \
     '  }')"
 
+# JOIN_CONTINUATIONS: a perl program that prints a Swift file with each line
+# that starts with a dot, a member access continued from an earlier line, joined
+# onto the previous code line, past blank and // comment lines, so a call split
+# as `CodexDesktopProcessIdentity` then `.current()` reads as one. A trailing //
+# comment on that previous line is dropped when the line has no quote. Line
+# numbers are kept: joined lines become blank. It holds no single quote so it
+# can live in this shell string.
+JOIN_CONTINUATIONS='
+my @lines = <STDIN>; chomp @lines; my $last = -1;
+for my $i (0 .. $#lines) {
+  next if $lines[$i] =~ m{^\s*(?://.*)?$};
+  if ($last >= 0 && $lines[$i] =~ m{^\s*\.}) {
+    $lines[$last] =~ s{\s*//.*$}{} unless $lines[$last] =~ m{"};
+    $lines[$last] .= $lines[$i]; $lines[$i] = ""; next;
+  }
+  $last = $i;
+}
+print "$_\n" for @lines;
+'
+
 # code_matches FILE ERE -> "file:line:text" for each matching line that is not
-# a // comment. A file grep cannot read is reported as a match, so it fails.
+# a // comment, after JOIN_CONTINUATIONS. A file that cannot be read is reported
+# as a match, so it fails.
 code_matches() {
-    local out status=0
-    out="$(/usr/bin/grep -n -E -- "$2" "$1" 2>/dev/null)" || status=$?
+    local joined out status=0
+    if [ ! -r "$1" ] || ! joined="$(/usr/bin/perl -T -e "${JOIN_CONTINUATIONS}" < "$1" 2>/dev/null)"; then
+        printf '%s: cannot be read\n' "${1#"${ROOT}"/}"
+        return 0
+    fi
+    out="$(printf '%s\n' "${joined}" | /usr/bin/grep -n -E -- "$2")" || status=$?
     if [ "${status}" -gt 1 ]; then
         printf '%s: cannot be read\n' "${1#"${ROOT}"/}"
         return 0
