@@ -5,11 +5,12 @@
 # menu bar until removeStatusItem(_:) takes it out or the test binary exits, and
 # nothing can list status items, so no runtime check can find one a test left
 # behind. Every tests/*.swift file, at any depth, must therefore remove as many
-# status items as it creates. Any receiver counts, so an alias of
-# NSStatusBar.system is covered, and so does a call whose line ends at
-# `statusItem(`, its argument on the next line. Lines whose first non-blank
-# characters are // are ignored. The check counts calls and cannot pair them: review still checks
-# that each removal follows its item's last use.
+# status items as it creates. Every call counts, several on one line too. Any
+# receiver counts, so an alias of NSStatusBar.system is covered, and so does a
+# call whose line ends at `statusItem(`, its argument on the next line. Lines
+# whose first non-blank characters are // are ignored. The check counts calls
+# and cannot pair them: review still checks that each removal follows its
+# item's last use.
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && /bin/pwd -P)"
@@ -24,9 +25,11 @@ fail() {
     exit 1
 }
 
-# count FILE ERE -> the number of lines in FILE that match ERE and are not // comments
+# count FILE ERE -> how many times ERE matches in FILE outside // comment lines. Every
+# match counts, so two calls on one line count twice.
 count() {
-    { /usr/bin/grep -E -v '^[[:space:]]*//' "$1" || true; } | { /usr/bin/grep -c -E -- "$2" || true; }
+    { /usr/bin/grep -E -v '^[[:space:]]*//' "$1" || true; } \
+        | { /usr/bin/grep -o -E -- "$2" || true; } | /usr/bin/wc -l | /usr/bin/tr -d '[:space:]'
 }
 
 # check_tree ROOT -> prints each violation; returns 1 if there is any. A listing
@@ -92,6 +95,9 @@ expect_violation spaced "${T}" '  let other = NSStatusBar.system.statusItem (wit
     "${T} creates 2 status items and removes 1"
 expect_violation split-call "${T}" '  let other = NSStatusBar.system.statusItem(' \
     "${T} creates 2 status items and removes 1"
+expect_violation same-line "${T}" \
+    '  let a = NSStatusBar.system.statusItem(withLength: 1); let b = NSStatusBar.system.statusItem(withLength: 2); NSStatusBar.system.removeStatusItem(a)' \
+    "${T} creates 3 status items and removes 2"
 expect_violation extra-removal "${T}" '  NSStatusBar.system.removeStatusItem(item)' \
     "${T} creates 1 status items and removes 2"
 expect_violation subdirectory tests/support/Helpers.swift \
