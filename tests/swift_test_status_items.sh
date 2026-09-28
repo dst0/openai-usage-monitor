@@ -11,7 +11,9 @@
 # only as a direct member call, .removeStatusItem(item); any other use of that
 # name (a declaration or wrapper, a selector, a method reference) and any
 # reference to statusItem(withLength:) fails the check, because a wrapper called
-# as self.removeStatusItem(item) need not remove anything. Text in comments and
+# as self.removeStatusItem(item) need not remove anything. So does any of them
+# inside #if: the check cannot tell which branch is compiled, and a removal in
+# an inactive one never runs. Text in comments and
 # literals does not count: STRIP_SWIFT removes // and nested /* */ comments,
 # plain, multi-line, and raw strings, and extended regex literals (#/.../#)
 # first, and keeps the code of string interpolations. The check counts calls
@@ -26,7 +28,8 @@ trap '/bin/rm -rf -- "${TEMP_ROOT}"' EXIT
 # STRIP_SWIFT: a perl program that prints Swift source from standard input with
 # comments, string literals, and extended regex literals removed and line breaks
 # kept. A regex literal ends at the first / and its #s that no backslash
-# escapes, as Swift lexes it. The program holds no single quote so it can live
+# escapes, as Swift lexes it. A comment, literal, or interpolation still open at
+# the end of the file fails the scan: the scanner misread the file. The program holds no single quote so it can live
 # in this shell string: macOS bash 3.2 writes here-documents outside TMPDIR
 # (docs/leanings/2026-09-28-bash-heredocs-ignore-tmpdir-under-a-write-sandbox.md).
 STRIP_SWIFT='
@@ -46,6 +49,7 @@ sub code {
         elsif ($t eq "*/") { $level--; $i += 2; }
         else { $out .= "\n" if substr($s, $i, 1) eq "\n"; $i++; }
       }
+      die "unterminated block comment\n" if $level > 0;
       next;
     }
     if ($c eq "\"" || $c eq "#") {
@@ -60,6 +64,7 @@ sub code {
     }
     $out .= $c; $i++;
   }
+  die "unterminated string interpolation\n" if $inner;
   return $out;
 }
 sub literal {
@@ -76,7 +81,7 @@ sub literal {
     }
     $out .= "\n" if substr($s, $i, 1) eq "\n"; $i++;
   }
-  return $out;
+  die "unterminated string literal\n";
 }
 sub regex {
   my ($hashes) = @_; my $close = "/" . ("#" x $hashes); my $out = "\"\"";
@@ -85,14 +90,16 @@ sub regex {
     $i++ if substr($s, $i, 1) eq "\\";
     $out .= "\n" if substr($s, $i, 1) eq "\n"; $i++;
   }
-  return $out;
+  die "unterminated regex literal\n";
 }
 print code(0);
 '
 
 # COUNT_CALLS: a perl program that reads STRIP_SWIFT output and prints
-# "created removed misused": misused counts each removeStatusItem that is not a
-# .removeStatusItem(item) call and each statusItem(withLength:) reference.
+# "created removed misused guarded": misused counts each removeStatusItem that
+# is not a .removeStatusItem(item) call and each statusItem(withLength:)
+# reference; guarded counts status-item calls and references inside #if, whose
+# branch may not be compiled.
 COUNT_CALLS='
 use strict; use warnings;
 local $/; my $c = <STDIN>; $c = "" unless defined $c;
@@ -100,7 +107,15 @@ my $created = () = $c =~ /statusItem\s*\(\s*withLength\b/g;
 my $removed = () = $c =~ /\.removeStatusItem[ \t]*\((?!\s*_\s*:\s*\))/g;
 my $named = () = $c =~ /\bremoveStatusItem\b/g;
 my $references = () = $c =~ /statusItem\s*\(\s*withLength\s*:\s*\)/g;
-print $created, " ", $removed, " ", $named - $removed + $references, "\n";
+my @marks;
+while ($c =~ /^[ \t]*#(if|endif)\b/mg) { push @marks, [$-[0], $1 eq "if" ? 1 : -1]; }
+my $guarded = 0;
+while ($c =~ /\bremoveStatusItem\b|statusItem\s*\(\s*withLength\b/g) {
+  my ($at, $depth) = ($-[0], 0);
+  for my $mark (@marks) { last if $mark->[0] >= $at; $depth += $mark->[1]; }
+  $guarded++ if $depth > 0;
+}
+print $created, " ", $removed, " ", $named - $removed + $references, " ", $guarded, "\n";
 '
 
 fail() {
@@ -110,16 +125,18 @@ fail() {
 
 # scan FILE -> "created removed misused" for FILE's code, outside comments and
 # literals. Every match counts, so two calls on one line count twice. Fails if
-# either program fails.
+# either program fails; their error messages are part of the output.
 scan() {
-    /usr/bin/perl -T -e "${STRIP_SWIFT}" < "$1" | /usr/bin/perl -T -e "${COUNT_CALLS}"
+    local code
+    code="$(/usr/bin/perl -T -e "${STRIP_SWIFT}" < "$1" 2>&1)" || { printf '%s\n' "${code}"; return 1; }
+    printf '%s\n' "${code}" | /usr/bin/perl -T -e "${COUNT_CALLS}" 2>&1
 }
 
 # check_tree ROOT -> prints each violation; returns 1 if there is any. A listing
 # error fails the check rather than skipping part of the tree.
 check_tree() {
-    local root="$1" violations="" files file rel counts created removed misused status=0
-    local counts_re='^([0-9]+) ([0-9]+) ([0-9]+)$'
+    local root="$1" violations="" files file rel counts created removed misused guarded status=0
+    local counts_re='^([0-9]+) ([0-9]+) ([0-9]+) ([0-9]+)$'
     [ -d "${root}/tests" ] || { printf 'tests: no such directory under %s\n' "${root}"; return 1; }
     files="$(/usr/bin/find "${root}/tests" -type f -name '*.swift')" || status=$?
     if [ "${status}" -ne 0 ]; then
@@ -134,10 +151,12 @@ check_tree() {
             continue
         fi
         if ! counts="$(scan "${file}")" || [[ ! "${counts}" =~ ${counts_re} ]]; then
-            violations+="${rel}: cannot be scanned"$'\n'
+            violations+="${rel}: cannot be scanned: ${counts//$'\n'/ }"$'\n'
             continue
         fi
-        created="${BASH_REMATCH[1]}" removed="${BASH_REMATCH[2]}" misused="${BASH_REMATCH[3]}"
+        created="${BASH_REMATCH[1]}" removed="${BASH_REMATCH[2]}" misused="${BASH_REMATCH[3]}" guarded="${BASH_REMATCH[4]}"
+        [ "${guarded}" -eq 0 ] \
+            || violations+="${rel} has ${guarded} status-item calls inside #if; make and remove status items outside conditional compilation"$'\n'
         [ "${misused}" -eq 0 ] \
             || violations+="${rel} has ${misused} uses of removeStatusItem or statusItem(withLength:) that are not direct calls; call both directly"$'\n'
         [ "${created}" -eq "${removed}" ] \
@@ -189,6 +208,8 @@ output="$(check_tree "${clean}")" || fail "clean fixture was rejected: ${output}
 # A call split over lines counts once; similar names and other regex literals are not status-item calls.
 expect_accepted split-calls \
     '  let split = NSStatusBar.system.statusItem('$'\n''    withLength: 8)'$'\n''  NSStatusBar.system'$'\n''    .removeStatusItem(split)'
+expect_accepted after-closed-conditions \
+    '#if DEBUG'$'\n''  let debug = true'$'\n''#endif'$'\n''#if os(macOS)'$'\n''#else'$'\n''#endif'$'\n''  let late = NSStatusBar.system.statusItem(withLength: 9)'$'\n''  NSStatusBar.system.removeStatusItem(late)'
 expect_accepted similar-names '  cache.removeStatusItemFromCache(id); let words = #/[a-z]+/#; let label = statusItemTitle(id)'
 
 T=tests/AppDelegateTests.swift
@@ -243,6 +264,26 @@ expect_violation multiline-regex-removal "${T}" \
 expect_violation regex-quote "${T}" \
     '  let quote = #/"/#; let other = NSStatusBar.system.statusItem(withLength: 7); let q = "x"' \
     "${T} creates 3 status items and removes 2"
+# A comment or literal still open at the end of the file means the scanner
+# misread it; the file fails rather than losing the code after it.
+expect_violation unterminated-regex "${T}" '  let broken = #/abc' \
+    "${T}: cannot be scanned: unterminated regex literal"
+expect_violation unterminated-string "${T}" '  let broken = "abc' \
+    "${T}: cannot be scanned: unterminated string literal"
+expect_violation unterminated-comment "${T}" '  /* abc' \
+    "${T}: cannot be scanned: unterminated block comment"
+expect_violation unterminated-interpolation "${T}" '  let broken = "\(label(' \
+    "${T}: cannot be scanned: unterminated string interpolation"
+# A status-item call inside #if fails at any depth; closed #if blocks before a
+# call do not.
+expect_violation guarded-removal "${T}" "${LEAK}"$'\n''#if false'$'\n''  NSStatusBar.system.removeStatusItem(kept)'$'\n''#endif' \
+    "${T} has 1 status-item calls inside #if"
+expect_violation nested-guarded-removal "${T}" \
+    "${LEAK}"$'\n''#if DEBUG'$'\n''#if os(macOS)'$'\n''#endif'$'\n''  NSStatusBar.system.removeStatusItem(kept)'$'\n''#endif' \
+    "${T} has 1 status-item calls inside #if"
+expect_violation else-guarded-removal "${T}" \
+    "${LEAK}"$'\n''#if DEBUG'$'\n''  let debug = true'$'\n''#elseif os(macOS)'$'\n''#else'$'\n''  NSStatusBar.system.removeStatusItem(kept)'$'\n''#endif' \
+    "${T} has 1 status-item calls inside #if"
 # Any other use of removeStatusItem fails, even when the counts balance: a wrapper
 # called through self need not remove anything.
 expect_violation wrapper-removal "${T}" \
