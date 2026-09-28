@@ -143,6 +143,7 @@ jobs:
       # to a temporary directory. test_swift.sh also runs it before compiling;
       # this step is the run the policy enforces.
       - name: Run Swift Test Defaults Isolation Shell Test
+        if: ${{ !cancelled() }}
         run: bash tests/swift_test_defaults_isolation.sh
 
   security-scan:
