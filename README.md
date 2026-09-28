@@ -724,34 +724,27 @@ first record before strict UTF-8 decoding, retains a full record at an exact
 newline boundary, and reports unknown state for malformed complete records.
 
 `launchd` can deny Accessibility and Screen Recording to the window helper even
-when the helper succeeds from Terminal. The shutdown guard checks both grants
-before any credential change or Desktop signal; disabling window bounds
-preservation does not bypass it. `WINDOW_ACCESSIBILITY_DENIED` and
-`WINDOW_SCREEN_RECORDING_DENIED` name the missing grant without opening a macOS
-permission prompt. In System Settings > Privacy & Security, grant each denied
-service to the client macOS attributes the launchd helper request to (which may
-be `codex-window-restore` or `cxi`), then
-verify a launchd-origin window inventory before relying on an automatic restart.
-The installer never grants either permission. Automatic distribution now
-captures and restores selected tasks in code, but a successful grant does not
-prove that behavior across multiple windows on the installed Desktop.
+when the helper succeeds from Terminal. Before every restart, the shutdown
+guard counts ChatGPT's standard windows through Accessibility and cross-checks
+them against WindowServer. It checks both grants before any credential change
+or Desktop signal; disabling window bounds preservation does not bypass it.
+`WINDOW_ACCESSIBILITY_DENIED` and `WINDOW_SCREEN_RECORDING_DENIED` name the
+missing grant without opening a macOS prompt. A distribution may first call
+the helper while capturing selected window tasks, yielding
+`phase=WINDOW_TASK_CAPTURE_FAILED`; a later shutdown preflight yields
+`phase=SHUTDOWN_WINDOW_GUARD_FAILED`. The outcome includes the matching
+`pre_signal_phase`. Both stop before Desktop is signalled.
 
-The multi-window shutdown guard is not covered by that setting: before every
-restart it counts ChatGPT's standard windows through Accessibility and
-cross-checks them against WindowServer. From `launchd`, macOS attributes the
-helper's Accessibility request to the daemon's `~/.local/bin/cxi`, not to your
-terminal, so unless `cxi` itself has Accessibility access the guard fails with
-`WINDOW_ACCESS_FAILED` and the switch stops before Desktop is signalled. The
-audit log records that as `phase=SHUTDOWN_WINDOW_GUARD_FAILED`, and the
-`OUTCOME` line adds `pre_signal_phase=SHUTDOWN_WINDOW_GUARD_FAILED`. Adding
-`~/.local/bin/cxi` under System Settings > Privacy & Security > Accessibility
-and restarting the daemon should let the guard read the windows (not yet
-verified live); the installer re-signs `cxi`, so a reinstall may need the grant
-again. The guard also requires
-WindowServer window titles, which macOS may withhold from a process without
-Screen Recording access; the `launchd` context was observed without it, and
-missing titles fail the guard as `WINDOW_INVENTORY_MISMATCH` (shown as
-`Codex window restore helper rejected the request`).
+On macOS 27.2, find Accessibility in System Settings under Privacy & Security >
+Device Control and Data Access. Screen access is under Screen & System Audio
+Recording. Grant each denied service to the exact current executable macOS
+attributes the background request to, potentially both `codex-mon` (`cxi`) and
+`codex-window-restore`, then verify a fresh launchd-origin window inventory.
+An enabled row in System Settings does not prove that a rebuilt ad hoc signed
+binary is trusted: on this host both rows were enabled under Device Control,
+yet a launchd helper run returned `WINDOW_ACCESSIBILITY_DENIED` after reinstall.
+The installer never grants either permission. A successful grant still does not
+prove selected-task restoration across multiple windows in the installed app.
 
 Every pre-signal failure (`WINDOW_CAPTURE_FAILED`, `WINDOW_TASK_CAPTURE_FAILED`,
 `SHUTDOWN_WINDOW_GUARD_FAILED`, `RECOVERY_CHECKPOINT_FAILED`,

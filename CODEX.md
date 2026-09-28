@@ -458,16 +458,29 @@ the agent executable and associated app to share a Team Identifier, while the
 installer currently signs the Monitor app ad hoc. Do not add that key as a
 privacy-grant workaround without matching signatures and live verification.
 
+On 2026-09-28, macOS 27.2 showed enabled `codex-mon` and
+`codex-window-restore` rows under Privacy & Security > Device Control and Data
+Access, and an enabled `codex-mon` row under Screen & System Audio Recording.
+The freshly installed ad hoc helper counted one current ChatGPT window from an
+interactive shell, but the same exact helper and process identity returned
+`WINDOW_ACCESSIBILITY_DENIED` from a one-shot launchd job. This proves the
+visible toggle is insufficient evidence of current background authorization.
+Screen Recording for the helper was absent in Settings; its launchd status
+cannot be inferred until Accessibility passes. No Desktop signal, account
+switch, or recovery request was sent. Automatic switching remains disabled.
+
 The multi-window shutdown guard (`count-standard-windows`) still reads
 Accessibility in both modes: it counts standard windows through Accessibility
-before cross-checking WindowServer. From the launchd daemon, macOS attributes
-that request to `~/.local/bin/cxi`, so without Accessibility for `cxi` the guard
-returns `WINDOW_ACCESS_FAILED` from `DistributionCheckpointService::prepare`,
-before any checkpoint write or signal. The switch logs
-`SHUTDOWN_WINDOW_GUARD_FAILED` and an `OUTCOME` with
-`pre_signal_phase=SHUTDOWN_WINDOW_GUARD_FAILED`. A launchd context also lacked
-Screen Recording in a probe; WindowServer then may omit window titles, which
-the guard rejects as an inventory mismatch. The daemon's
+before cross-checking WindowServer. A launchd denial from the current helper
+returns `WINDOW_ACCESSIBILITY_DENIED` before any Desktop signal. If selected
+window task capture reaches the helper first, the switch logs
+`WINDOW_TASK_CAPTURE_FAILED`; if the later checkpoint preflight reaches it,
+the switch logs `SHUTDOWN_WINDOW_GUARD_FAILED`. The outcome carries the same
+`pre_signal_phase`. The one-shot launchd probe did not execute distribution,
+so it established the helper error but no distribution audit phase. A prior
+launchd context also
+lacked Screen Recording in a probe; WindowServer then may omit window titles,
+which the guard rejects as an inventory mismatch. The daemon's
 `AutomaticDistributionBackoff` holds back an automatic plan (cause, current and
 target accounts) after two consecutive identical pre-signal failures, for 5
 minutes doubling to 30, in memory only; manual requests never consult or
