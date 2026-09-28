@@ -449,29 +449,50 @@ On this host the Command Line Tools Swift compiler (`6.4.0.34.1`) and the
 default macOS 27.0 SDK's Swift interfaces (`6.4.0.31.4`) come from different
 builds. That difference alone does not block builds: with a writable module
 cache, the default SDK builds every installer target and passes
-`./scripts/test_swift.sh` (checked 2026-09-28). Both installed SDKs came from
-a different compiler build. So when Swift cannot rebuild one of their modules,
-for example because the module cache is not writable, it reports
-`this SDK is not supported by the compiler`. Read the error printed before
-that line. Where a sandbox denies the default cache, set
+`./scripts/test_swift.sh` (checked 2026-09-28). The Swift interfaces of both
+installed SDKs were built by a different compiler, so when Swift cannot rebuild
+one of their modules, for example because the module cache is not writable, it
+may report `this SDK is not supported by the compiler`. Read the error printed
+before that line. Where a sandbox denies the default cache, set
 `CLANG_MODULE_CACHE_PATH` to a writable directory.
 `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk` still works
 but is not required.
 
-Reuse a module cache only through the path spelling that built it. Clang records
-imported module files by absolute path. A cache built as `/private/tmp/x` and
-reused as `/tmp/x`, or the reverse, or through any other symlink, fails. Swift
-6.4 reports `module '_DarwinFoundation1' is defined in both ...` and crashes.
+A module cache works only at the exact path that built it. Clang records
+imported module files by absolute path, so reusing a warm cache through another
+spelling of its directory (`/tmp/x` for `/private/tmp/x`, or any other
+symlink), or after copying or moving it, fails. The error depends on the
+toolchain and the source. For a second spelling, Swift 6.4 reports
+`module '_DarwinFoundation1' is defined in both ...`; `swift-frontend` then
+crashed with signal 11 on the installer's `codex-ui-resume.swift` and on
+`tests/ScreenContrastTests.swift`, but not on a small `import Darwin` probe.
 Swift 5.10 on GitHub's `macos-14` runner reports
-`PCH was compiled with module cache path ...` instead. Fresh caches and
-same-spelling reuse work. `scripts/install.sh` and `scripts/test_swift.sh`
-resolve `CLANG_MODULE_CACHE_PATH` to its physical path before compiling, so a
-warm cache can be reused through them. They create a missing directory, pin a
-relative path to the caller's directory, and stop if the path is not a
-directory or is an empty one they cannot write. A warm read-only cache still
-compiles what it already holds, so it only gets a warning. Give other
-`swiftc`, `swift`, or `clang -fmodules` runs that share the cache the physical
-path too, and use a new directory for a cache built through another spelling.
+`PCH was compiled with module cache path ...` and
+`missing required module 'SwiftShims'` instead, and Swift 6.4 reports the same
+recorded-path mismatch for a copied or moved cache. Fresh caches and same-path
+reuse work.
+
+`scripts/install.sh` and `scripts/test_swift.sh` therefore never compile into
+`CLANG_MODULE_CACHE_PATH` itself. They create it if it is missing, resolve it
+to its physical path (`cd -P` and `pwd -P`, which on this host also fold
+`/PRIVATE/TMP`, `/System/Volumes/Data/...`, `//`, and `/./` into one
+spelling), and use its subdirectory
+`codex-monitor-swift-<cksum of the physical path>`. Every spelling reaches the
+same subdirectory, nothing else writes it, a cache another tool warmed through
+an alias is left alone, and a copied or moved cache gets a new subdirectory;
+delete old `codex-monitor-swift-*` directories to reclaim space. A value that
+already is that subdirectory for its parent, such as the value the helper
+exports to a nested script, is used as is. A relative path resolves once
+against the caller's directory. The scripts stop if the path is
+not a directory, contains a newline, or starts with an unexpanded `~`, or if
+the subdirectory is a symlink, is not a directory, is not owned by the user
+or is writable by group or others (another account could plant modules that
+get compiled into the app), or is not writable and searchable (`[ -w ]`,
+`[ -x ]`, which also apply ACLs and sandbox rules). A
+read-only cache compiles only what it already holds for the same flags, and
+these scripts compile with several. Other `swiftc`, `swift`, or
+`clang -fmodules` runs that share a cache among themselves must use one
+spelling, and must not reuse a copied or moved cache.
 Verify the exact built app signature and running process after installation.
 
 ## Runtime Paths & Files
@@ -608,3 +629,6 @@ state—`ChatGPT.app`, its bundled app-server, `~/.codex/auth.json`,
 and source checkouts. It cannot erase shell history, macOS unified logs,
 notification history, LaunchServices caches, or TCC records; “no traces” means
 no persistent Monitor installation artifacts, not forensic erasure of the OS.
+Compiler build caches are outside its scope too: the default Clang module cache,
+and the `codex-monitor-swift-*` subdirectory that the install and test scripts
+create in a `CLANG_MODULE_CACHE_PATH` you set. Delete those by hand if wanted.

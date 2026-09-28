@@ -64,7 +64,7 @@ extension AppDelegate {
     guard let button = statusItem?.button else { return }
     let isScreenActive = true
     let currentIcon = isScreenActive ? (menuBarIconActive ?? menuBarIcon) : (menuBarIconInactive ?? menuBarIcon)
-    let stackPercentages = UserDefaults.standard.object(forKey: "stackPercentages") as? Bool ?? true
+    let stackPercentages = stacksPercentages
     let attributedTitle = AppDelegate.buildStatusBarAttributedString(
       snapshot: snapshot, icon: currentIcon, isScreenActive: isScreenActive, useQuotaIcons: true, stackPercentages: stackPercentages
     )
@@ -286,7 +286,7 @@ extension AppDelegate {
   ) {
     guard let button = statusItem?.button else { return }
     let currentIcon = isScreenActive ? (menuBarIconActive ?? menuBarIcon) : (menuBarIconInactive ?? menuBarIcon)
-    let stackPref = UserDefaults.standard.object(forKey: "stackPercentages") as? Bool ?? true
+    let stackPref = stacksPercentages
     let attributedTitle = AppDelegate.buildStatusBarAttributedString(
       icon: currentIcon, appSession: nil, cliSession: (fiveHPct: fiveHPct, fiveHColor: fiveHColor, weeklyPct: weeklyPct, weeklyColor: weeklyColor),
       accounts: accounts, isScreenActive: isScreenActive, useQuotaIcons: true, stackPercentages: stackPref
