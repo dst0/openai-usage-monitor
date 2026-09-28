@@ -70,10 +70,11 @@ jobs:
         run: cargo test --locked --verbose
 
       # Runs a copy of scripts/uninstall.sh against temporary homes, with
-      # launchctl, osascript, defaults, lsregister, and getconf replaced by
-      # fakes, so the runner's launchd, login items, and /Applications are
-      # never touched. It builds codex-mon itself, from codex-switcher/ and
-      # with the committed Cargo.lock. Every tracked tests/*.sh needs a step
+      # launchctl, osascript, defaults, lsregister, getconf, ps, and kill
+      # replaced by fakes, so the runner's launchd, login items, processes,
+      # and /Applications are never touched. It builds codex-mon itself,
+      # from codex-switcher/ and with the committed Cargo.lock. Every
+      # tracked tests/*.sh needs a step
       # like this one in a required job, setting only `name` and
       # `run: bash <script>`, as enforced by
       # codex-switcher/tests/ci_workflow_policy/shell_test_gate.rs.
@@ -84,6 +85,11 @@ jobs:
       # of the installer helpers whose ps, kill, launchctl, and sleep are
       # fakes, or only read scripts/install.sh. They never install, sign an
       # installed app, signal a real process, or touch launchd.
+      # Runs install.sh's own install lock in temporary directories, with a
+      # fake getconf; its log names the lock tools this runner offers.
+      - name: Run Installer Lock Shell Test
+        run: bash tests/install_lock.sh
+
       - name: Run Installer Bundle Swap Shell Test
         run: bash tests/install_bundle_swap.sh
 

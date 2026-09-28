@@ -28,8 +28,8 @@ line_number_after() {
 }
 
 cleanup_function_line="$(line_number 'cleanup() {')"
-cleanup_guard_line="$(line_number '    if [ -n "${CLI_STAGING}" ] && [ -f "${CLI_STAGING}" ]; then')"
-cleanup_remove_line="$(line_number '        rm -f "${CLI_STAGING}"')"
+cleanup_guard_line="$(line_number '    if [ -n "${CLI_STAGING}" ]; then')"
+cleanup_remove_line="$(line_number '        rm -f "${CLI_STAGING}" "${CLI_STAGING}.cstemp"')"
 cleanup_trap_line="$(line_number 'trap cleanup EXIT')"
 signal_int_trap_line="$(line_number "trap 'exit 130' INT")"
 signal_term_trap_line="$(line_number "trap 'exit 143' TERM")"

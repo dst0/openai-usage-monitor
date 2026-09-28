@@ -1,18 +1,26 @@
 #!/bin/bash
 set -euo pipefail
 
+# Every uninstaller run below sets HOME, and CODEX_HOME only where a case
+# needs it: an inherited CODEX_HOME would point the runs at the caller's
+# real Codex home.
+unset CODEX_HOME
+
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RAW_TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/codex-monitor-log-test.XXXXXX")"
 TEMP_ROOT="$(cd "${RAW_TEMP_ROOT}" && /bin/pwd -P)"
 LOCK_HOLDER=""
 cleanup() {
+    # Closing the write end of its pipe releases a lock holder.
+    exec 7>&-
     if [ -n "${LOCK_HOLDER}" ]; then
-        /usr/bin/touch "${TEMP_ROOT}/lock-release" 2>/dev/null || true
         wait "${LOCK_HOLDER}" 2>/dev/null || true
     fi
     /bin/rm -rf -- "${TEMP_ROOT}"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 fail() {
     printf 'FAIL: %s\n' "$*" >&2
@@ -65,10 +73,11 @@ output_names_path() {
 # ------------------------------------------------------------------------------
 # Installer contract the uninstaller relies on. Uninstall removes interrupted
 # installer staging only while no installer holds the install lock, so
-# install.sh must create every temporary path only after acquiring that lock
-# and release it only after its EXIT cleanup removed them. Every mktemp
-# template in the installer must be one the uninstaller matches: a new or
-# renamed template fails here until scripts/uninstall.sh and this test cover it.
+# install.sh must create every temporary path only after acquiring that lock.
+# That its EXIT cleanup removes them while still holding the lock is run and
+# checked in tests/install_lock.sh. Every mktemp template in the installer
+# must be one the uninstaller matches: a new or renamed template fails here
+# until scripts/uninstall.sh and this test cover it.
 # ------------------------------------------------------------------------------
 INSTALL_SCRIPT="${PROJECT_DIR}/scripts/install.sh"
 
@@ -81,7 +90,7 @@ installer_line() {
     /usr/bin/printf '%s\n' "${matches%%:*}"
 }
 
-lock_line="$(installer_line 'acquire_install_lock')"
+lock_line="$(installer_line 'acquire_install_lock || exit 1')"
 clone_line="$(installer_line '    TMP_DIR="$(mktemp -d -t codex-mon-install-XXXXXX)"')"
 cli_staging_line="$(installer_line 'CLI_STAGING="$(mktemp "${LOCAL_BIN}/.codex-mon.install.XXXXXX")"')"
 bundle_staging_line="$(installer_line 'prepare_app_bundle_staging "${APP_DIR}" "${INSTALL_DIR}" "${BUNDLE_NAME}"')"
@@ -91,20 +100,6 @@ bundle_staging_line="$(installer_line 'prepare_app_bundle_staging "${APP_DIR}" "
     fail 'installer stages the CLI before taking the install lock'
 [ "${lock_line}" -lt "${bundle_staging_line}" ] ||
     fail 'installer stages the app bundle before taking the install lock'
-
-cleanup_start_line="$(installer_line 'cleanup() {')"
-cleanup_end_line="$(/usr/bin/awk -v start="${cleanup_start_line}" 'NR > start && $0 == "}" { print NR; exit }' "${INSTALL_SCRIPT}")"
-clone_removal_line="$(installer_line '        rm -rf "${TMP_DIR}"')"
-bundle_removal_line="$(installer_line '    cleanup_app_bundle_swap_paths 2>/dev/null || true')"
-lock_release_lines="$(/usr/bin/grep -n -F 'exec 9>&-' "${INSTALL_SCRIPT}" | /usr/bin/cut -d: -f1)"
-[ "${lock_release_lines}" = "$((cleanup_end_line - 1))" ] ||
-    fail 'installer must release the install lock only as the last step of its EXIT cleanup'
-[ "${clone_removal_line}" -gt "${cleanup_start_line}" ] &&
-    [ "${clone_removal_line}" -lt "${lock_release_lines}" ] ||
-    fail 'installer releases the install lock before removing its remote clone'
-[ "${bundle_removal_line}" -gt "${cleanup_start_line}" ] &&
-    [ "${bundle_removal_line}" -lt "${lock_release_lines}" ] ||
-    fail 'installer releases the install lock before removing its bundle staging'
 
 EXPECTED_INSTALLER_MKTEMPS="$(/usr/bin/sort <<'EOF'
 TMP_DIR="$(mktemp -d -t codex-mon-install-XXXXXX)"
@@ -128,11 +123,29 @@ for relative in scripts/install_bundle_swap.sh scripts/wait_for_restart_worker.s
         *) fail "installer script scan missed ${relative}" ;;
     esac
 done
-ACTUAL_INSTALLER_MKTEMPS="$(/bin/cat "${INSTALLER_SCRIPTS[@]}" |
-    /usr/bin/grep -F 'mktemp' | /usr/bin/sed -e 's/^[[:space:]]*//' | /usr/bin/sort)"
+ACTUAL_INSTALLER_MKTEMPS="$(/bin/cat "${INSTALLER_SCRIPTS[@]}" | /usr/bin/grep -F 'mktemp' |
+    /usr/bin/grep -v -E '^[[:space:]]*#' | /usr/bin/sed -e 's/^[[:space:]]*//' | /usr/bin/sort)"
 [ "${ACTUAL_INSTALLER_MKTEMPS}" = "${EXPECTED_INSTALLER_MKTEMPS}" ] ||
     fail "installer mktemp templates changed; update scripts/uninstall.sh and this test:
 ${ACTUAL_INSTALLER_MKTEMPS}"
+
+# The uninstaller's own copies: it edits exactly these three files, each
+# through one mktemp template. The fixtures below are made with that
+# template, so uninstaller_temps must match what the uninstaller creates.
+UNINSTALL_SCRIPT="${PROJECT_DIR}/scripts/uninstall.sh"
+UNINSTALL_MKTEMP='temporary="$(/usr/bin/mktemp "${path}.codex-monitor-uninstall.XXXXXX" 2>/dev/null || true)"'
+ACTUAL_UNINSTALLER_MKTEMPS="$(/usr/bin/grep -F 'mktemp' "${UNINSTALL_SCRIPT}" |
+    /usr/bin/grep -v -E '^[[:space:]]*#' | /usr/bin/sed -e 's/^[[:space:]]*//' | /usr/bin/sort -u)"
+[ "${ACTUAL_UNINSTALLER_MKTEMPS}" = "${UNINSTALL_MKTEMP}" ] ||
+    fail "uninstaller mktemp templates changed; update uninstaller_temps and this test:
+${ACTUAL_UNINSTALLER_MKTEMPS}"
+UNINSTALL_COPY_SUFFIX="$(/usr/bin/printf '%s\n' "${UNINSTALL_MKTEMP}" | /usr/bin/sed -e 's/.*"[$][{]path[}]\([^"]*\)".*/\1/')"
+ACTUAL_EDITED_FILES="$(/usr/bin/grep -E '^clean_rc_file "|^    local path="[$][{]USER_HOME[}]/[.]codex/config[.]toml"$' "${UNINSTALL_SCRIPT}")"
+[ "${ACTUAL_EDITED_FILES}" = '    local path="${USER_HOME}/.codex/config.toml"
+clean_rc_file "${USER_HOME}/.zshrc"
+clean_rc_file "${USER_HOME}/.bash_profile"' ] ||
+    fail "the uninstaller edits other files; update uninstaller_temps and this test:
+${ACTUAL_EDITED_FILES}"
 
 # Exercise the same fd-anchored Rust helper used by install.sh and uninstall.sh.
 # The fake homes are canonicalized so the test does not reject macOS's /var
@@ -298,11 +311,50 @@ FAKE_DARWIN_TMP="${TEMP_ROOT}/darwin-user-tmp"
 [ "\$#" -eq 1 ] && [ "\$1" = DARWIN_USER_TEMP_DIR ] && [ -f '${GETCONF_OUTPUT}' ] || exit 1
 /bin/cat '${GETCONF_OUTPUT}'
 EOF
+# The uninstaller stops this user's processes whose command line names an
+# installed path. The /bin/ps fake lists PS_TABLE ("<pid> <uid> <command>"
+# lines; empty means no processes). The /bin/kill fake reports a PID alive
+# while ALIVE lists it, logs TERM and KILL, and ends the process on TERM
+# unless STUBBORN lists it.
+PS_TABLE="${TEMP_ROOT}/ps-table"
+ALIVE="${TEMP_ROOT}/alive"
+STUBBORN="${TEMP_ROOT}/stubborn"
+KILL_LOG="${TEMP_ROOT}/kill.log"
+: > "${PS_TABLE}"
+: > "${ALIVE}"
+: > "${STUBBORN}"
+/bin/cat > "${FAKE_BIN}/ps" <<EOF
+#!/bin/bash
+case "\$*" in
+    '-axo pid=,uid=,command=') /bin/cat '${PS_TABLE}' ;;
+    '-p '*' -o command=')
+        /usr/bin/awk -v pid="\$2" '\$1 == pid { sub(/^[0-9]+ [0-9]+ /, ""); print }' '${PS_TABLE}' ;;
+    *) echo "unexpected ps \$*" >&2; exit 2 ;;
+esac
+EOF
+/bin/cat > "${FAKE_BIN}/kill" <<EOF
+#!/bin/bash
+case "\$1" in
+    -0) /usr/bin/grep -F -x -- "\$2" '${ALIVE}' >/dev/null ;;
+    -TERM|-KILL)
+        /usr/bin/printf '%s %s\n' "\$1" "\$2" >> '${KILL_LOG}'
+        if [ "\$1" = -KILL ] || ! /usr/bin/grep -F -x -- "\$2" '${STUBBORN}' >/dev/null; then
+            /usr/bin/grep -v -F -x -- "\$2" '${ALIVE}' > '${ALIVE}.next' || true
+            /bin/mv -f '${ALIVE}.next' '${ALIVE}'
+        fi
+        ;;
+    *) echo "unexpected kill \$*" >&2; exit 2 ;;
+esac
+EOF
+# Where an installer older than the per-user temporary directory lock left
+# its lock when TMPDIR was unset.
+FAKE_SHARED_TMP="${TEMP_ROOT}/shared-tmp"
+/bin/mkdir -p "${FAKE_SHARED_TMP}"
 for name in "${STAGING_LOOKALIKES_0600[@]}"; do /bin/chmod 600 "${FAKE_HOME}/.codex/${name}"; done
 for name in "${STAGING_LOOKALIKES_0644[@]}"; do /bin/chmod 644 "${FAKE_HOME}/.codex/${name}"; done
 [ "$(/usr/bin/stat -f '%Lp' "${STAGING_SYMLINK}")" = 600 ] || fail 'symlink look-alike mode setup failed'
 /bin/chmod 755 "${FAKE_BIN}/launchctl" "${FAKE_BIN}/osascript" "${FAKE_BIN}/defaults" \
-    "${FAKE_BIN}/lsregister" "${FAKE_BIN}/getconf"
+    "${FAKE_BIN}/lsregister" "${FAKE_BIN}/getconf" "${FAKE_BIN}/ps" "${FAKE_BIN}/kill"
 
 # Installed helpers and a system install's ~/Applications symlink.
 /bin/mkdir -p "${FAKE_HOME}/Applications/Codex Notifier.app/Contents/MacOS"
@@ -364,6 +416,7 @@ VALID_INSTALLER_TEMPS=(
     "${USER_APPS}/.codex-monitor-backup.P0a1S2"
     "${FAKE_DARWIN_TMP}/codex-mon-install-XXXXXX.a1B2c3D4e5"
     "${FAKE_DARWIN_TMP}/codex-mon-install-XXXXXX.Zz9Yy8Xx7W"
+    "${FAKE_DARWIN_TMP}/codex-mon-install-XXXXXX.m13Cln8x"
 )
 # Killed before `chmod 755`, after it, and during codesign's temporary copy.
 make_file 600 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Ab3dE9"
@@ -378,8 +431,10 @@ make_staging_root 700 "${SYSTEM_APPS}/.codex-monitor-backup.R4t5Y6" 'Codex Monit
 make_staging_root 700 "${USER_APPS}/.codex-monitor-install.U7i8O9"
 make_staging_root 700 "${USER_APPS}/.codex-monitor-backup.P0a1S2"
 # A remote-install clone with sources, and one killed right after mktemp.
+# `mktemp -t` appends ten characters from macOS 14 and eight on macOS 13.
 make_staging_root 700 "${FAKE_DARWIN_TMP}/codex-mon-install-XXXXXX.a1B2c3D4e5" 'Cargo.toml' '.git/'
 make_staging_root 700 "${FAKE_DARWIN_TMP}/codex-mon-install-XXXXXX.Zz9Yy8Xx7W"
+make_staging_root 700 "${FAKE_DARWIN_TMP}/codex-mon-install-XXXXXX.m13Cln8x" 'Cargo.toml'
 
 LOOKALIKE_INSTALLER_TEMPS=()
 lookalike_file() {
@@ -425,6 +480,7 @@ lookalike_root 700 "${USER_APPS}/.codex-monitor-install.FlBd01" 'Codex Monitor.a
 /bin/mkdir -m 700 "${USER_APPS}/.codex-monitor-install.BlNk01"
 lookalike_symlink "${OUTSIDE}/bundle-target.app" "${USER_APPS}/.codex-monitor-install.BlNk01/Codex Monitor.app"
 LOOKALIKE_INSTALLER_TEMPS+=("${USER_APPS}/.codex-monitor-install.BlNk01")
+lookalike_root 700 "${FAKE_DARWIN_TMP}/codex-mon-install-XXXXXX.a1B2c3D"
 lookalike_root 700 "${FAKE_DARWIN_TMP}/codex-mon-install-XXXXXX.a1B2c3D4e"
 lookalike_root 700 "${FAKE_DARWIN_TMP}/codex-mon-install-XXXXXX.a1B2c3D4e5f"
 lookalike_root 700 "${FAKE_DARWIN_TMP}/codex-mon-install-XXXXXX.a1B2c3D4_5"
@@ -447,6 +503,10 @@ VALID_UNINSTALLER_TEMPS=(
 make_file 600 "${FAKE_HOME}/.zshrc.codex-monitor-uninstall.K3l4M5"
 make_file 644 "${FAKE_HOME}/.bash_profile.codex-monitor-uninstall.B9n8M7"
 make_file 600 "${FAKE_HOME}/.codex/config.toml.codex-monitor-uninstall.C1v2B3"
+# The same kind of copy made with the uninstaller's own mktemp template.
+for edited in .zshrc .bash_profile .codex/config.toml; do
+    VALID_UNINSTALLER_TEMPS+=("$(/usr/bin/mktemp "${FAKE_HOME}/${edited}${UNINSTALL_COPY_SUFFIX}")")
+done
 lookalike_file 600 "${FAKE_HOME}/.zshrc.codex-monitor-uninstall.K3l4M"
 lookalike_file 600 "${FAKE_HOME}/.zshrc.codex-monitor-uninstal.K3l4M5"
 lookalike_file 600 "${FAKE_HOME}/.profile.codex-monitor-uninstall.K3l4M5"
@@ -454,6 +514,11 @@ lookalike_file 600 "${FAKE_HOME}/.codex/.zshrc.codex-monitor-uninstall.Q9w8E7"
 lookalike_root 700 "${FAKE_HOME}/.zshrc.codex-monitor-uninstall.D1rD1r"
 lookalike_symlink "${OUTSIDE}/file-target" "${FAKE_HOME}/.bash_profile.codex-monitor-uninstall.L1nK01"
 
+# The fakes' paths are spliced into sed programs below, which only works for
+# plain path characters.
+case "${TEMP_ROOT}" in
+    *[!A-Za-z0-9/._+-]*) fail "TMPDIR must be a path of letters, digits, /, ., _, +, and -: ${TEMP_ROOT}" ;;
+esac
 UNINSTALL_COPY="${TEMP_ROOT}/uninstall.sh"
 # Rewrite only absolute system paths (after a quote or a space); the
 # `${USER_HOME}/Applications` paths already point into the fake home.
@@ -464,26 +529,51 @@ UNINSTALL_COPY="${TEMP_ROOT}/uninstall.sh"
     -e "s|/usr/bin/osascript|${FAKE_BIN}/osascript|g" \
     -e "s|/usr/bin/defaults|${FAKE_BIN}/defaults|g" \
     -e "s|/usr/bin/getconf|${FAKE_BIN}/getconf|g" \
+    -e "s|/bin/ps |${FAKE_BIN}/ps |g" \
+    -e "s|/bin/kill |${FAKE_BIN}/kill |g" \
+    -e "s|\${TMPDIR:-/tmp}|\${TMPDIR:-${FAKE_SHARED_TMP}}|g" \
+    -e "s|\"/tmp\"|\"${FAKE_SHARED_TMP}\"|g" \
     -e "s|/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister|${FAKE_BIN}/lsregister|g" \
-    "${PROJECT_DIR}/scripts/uninstall.sh" > "${UNINSTALL_COPY}"
+    "${UNINSTALL_SCRIPT}" > "${UNINSTALL_COPY}"
 /bin/chmod 755 "${UNINSTALL_COPY}"
 # Fail if a command line of the copy still names a real system path the test
-# must not touch; comment lines never run.
+# must not touch, or a process, launchd, or temporary-directory command by
+# another spelling that the rewrite missed; comment lines never run. The
+# copies below differ only in the lock tools.
 SYSTEM_PATH_PATTERNS=(
     -e '/Applications' -e '/usr/local/bin' -e '/usr/bin/getconf' -e '/bin/launchctl'
-    -e '/usr/bin/osascript' -e '/usr/bin/defaults' -e '/Support/lsregister'
+    -e '/usr/bin/osascript' -e '/usr/bin/defaults' -e '/Support/lsregister' -e '/bin/ps'
+    -e '/bin/kill' -e '/tmp'
 )
-UNREWRITTEN_PATHS="$(/usr/bin/grep -n "${SYSTEM_PATH_PATTERNS[@]}" "${UNINSTALL_COPY}" |
-    /usr/bin/grep -v -E '^[0-9]+:[[:space:]]*#' |
-    /usr/bin/sed -e "s|${FAKE_ROOT}/||g" -e "s|${FAKE_BIN}/||g" -e 's|}/Applications||g' |
-    /usr/bin/grep "${SYSTEM_PATH_PATTERNS[@]}" || true)"
+SYSTEM_COMMAND='(^|[^[:alnum:]_.])(ps|kill|pkill|killall|pgrep|lsappinfo|launchctl|osascript|defaults|getconf)([^[:alnum:]_.-]|$)|(^|[^[:alnum:]_.-])open[[:space:]]'
+SOURCE_COMMAND='(^|[;&|({[:space:]])(source|[.])[[:space:]]'
+unrewritten_commands() {
+    /usr/bin/sed -e "s|${FAKE_BIN}/[A-Za-z0-9_-]*||g" -e "s|${FAKE_ROOT}/||g" -e "s|${TEMP_ROOT}/||g" \
+        -e 's|}/Applications||g' "$1" |
+        /usr/bin/grep -n -E "${SYSTEM_PATH_PATTERNS[@]}" -e "${SYSTEM_COMMAND}" -e "${SOURCE_COMMAND}" |
+        /usr/bin/grep -v -E '^[0-9]+:[[:space:]]*#' || true
+}
+# The check must reject each of these lines and accept fakes and comments.
+GUARD_PROBE="${TEMP_ROOT}/uninstall-guard-probe.sh"
+for line in 'kill -TERM "$pid"' '/bin/kill -0 1' 'x="$(ps -axo pid=)"' '/usr/bin/pkill CodexMonitor' \
+    'launchctl bootout gui/501/x' 'command -v osascript' '/usr/bin/defaults delete x' \
+    'dir="$(getconf DARWIN_USER_TEMP_DIR)"' '/usr/bin/open -a x' 'TMP_ROOT="${TMPDIR:-/tmp}"' \
+    'add_install_lock_dir "/tmp"' 'rm -f /Applications/x' 'source "${x}"' '    . ./x.sh'; do
+    /usr/bin/printf '%s\n' "${line}" > "${GUARD_PROBE}"
+    [ -n "$(unrewritten_commands "${GUARD_PROBE}")" ] || fail "uninstaller copy guard missed: ${line}"
+done
+/usr/bin/printf '%s\n' "\"${FAKE_BIN}/kill\" -TERM 1" "${FAKE_BIN}/ps -axo pid=" '# kill ps /tmp' \
+    "add_install_lock_dir \"${FAKE_SHARED_TMP}\"" 'open(my $lock, "<&=", $ARGV[0]) or exit 71;' \
+    'warn "process $pid changed identity"' > "${GUARD_PROBE}"
+[ -z "$(unrewritten_commands "${GUARD_PROBE}")" ] || fail 'uninstaller copy guard rejected a fake or a comment'
+UNREWRITTEN_PATHS="$(unrewritten_commands "${UNINSTALL_COPY}")"
 [ -z "${UNREWRITTEN_PATHS}" ] ||
-    fail "uninstaller copy still reaches real system paths:
+    fail "uninstaller copy still reaches real system paths or commands:
 ${UNREWRITTEN_PATHS}"
 
 DRY_RUN_OUTPUT="${TEMP_ROOT}/dry-run.txt"
 HOME="${FAKE_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
-    "${UNINSTALL_COPY}" --dry-run > "${DRY_RUN_OUTPUT}"
+    /bin/bash "${UNINSTALL_COPY}" --dry-run > "${DRY_RUN_OUTPUT}"
 /usr/bin/grep -F 'switcher.log' "${DRY_RUN_OUTPUT}" >/dev/null
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/log/switcher.log" "${DRY_RUN_OUTPUT}" >/dev/null
 /usr/bin/grep -F "  remove ${FAKE_CODEX_HOME}/log/.monitor-log-lifecycle.lock" "${DRY_RUN_OUTPUT}" >/dev/null
@@ -547,7 +637,7 @@ done
     fail 'dry-run preserved installer leftovers although no installer was running'
 
 HOME="${FAKE_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
-    "${UNINSTALL_COPY}" --yes >/dev/null
+    /bin/bash "${UNINSTALL_COPY}" --yes >/dev/null
 assert_absent "${FAKE_HOME}/.codex/log/switcher.log"
 assert_absent "${FAKE_HOME}/.codex/log/.monitor-log-lifecycle.lock"
 assert_absent "${FAKE_HOME}/.codex/log/archive/switcher-20260920-000000.log.br"
@@ -632,10 +722,44 @@ assert_mode 600 "${FAKE_HOME}/.codex/auth.json"
 assert_mode 600 "${FAKE_HOME}/.codex/accounts.json"
 
 # ------------------------------------------------------------------------------
-# A running installer holds the install lock, and its backup root can hold the
-# only copy of the previous app. Uninstall must then keep every installer
-# leftover, in the dry run and the confirmed run, and report the confirmed run
-# as incomplete. Its own interrupted copies do not depend on the lock.
+# The uninstaller stops only this user's processes whose command line names an
+# installed path. One that ignores TERM gets KILL while its command line still
+# names that path.
+# ------------------------------------------------------------------------------
+TEST_UID="$(/usr/bin/id -u)"
+PROCESS_HOME="${TEMP_ROOT}/process-home"
+/bin/mkdir -p "${PROCESS_HOME}/.codex"
+install_fake_helper "${PROCESS_HOME}"
+/usr/bin/printf '%s\n' \
+    "4101 ${TEST_UID} ${PROCESS_HOME}/.local/bin/codex-mon daemon" \
+    "4102 $((TEST_UID + 1)) ${PROCESS_HOME}/.local/bin/codex-mon daemon" \
+    "4103 ${TEST_UID} /usr/bin/unrelated --flag" \
+    "4104 ${TEST_UID} ${FAKE_ROOT}/Applications/Codex Monitor.app/Contents/MacOS/CodexMonitor" \
+    "4105 ${TEST_UID} ${PROCESS_HOME}/.local/bin/codex-ui-resume --banner" > "${PS_TABLE}"
+/usr/bin/printf '%s\n' 4101 4102 4103 4104 4105 > "${ALIVE}"
+/usr/bin/printf '4105\n' > "${STUBBORN}"
+HOME="${PROCESS_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
+    /bin/bash "${UNINSTALL_COPY}" --yes > "${TEMP_ROOT}/process-output.txt" 2>&1 ||
+    fail "uninstall failed while stopping processes: $(/bin/cat "${TEMP_ROOT}/process-output.txt")"
+[ "$(/bin/cat "${KILL_LOG}")" = '-TERM 4101
+-TERM 4105
+-KILL 4105
+-TERM 4104' ] || fail "uninstall signalled the wrong processes: $(/bin/cat "${KILL_LOG}")"
+: > "${PS_TABLE}"
+: > "${ALIVE}"
+: > "${STUBBORN}"
+/bin/rm -f "${KILL_LOG}"
+
+# ------------------------------------------------------------------------------
+# The install lock. install.sh locks codex_monitor_install_<uid>.lock in the
+# per-user temporary directory (here FAKE_DARWIN_TMP, through the fake
+# getconf) whatever its TMPDIR says; older installers locked the one in
+# ${TMPDIR:-/tmp}. While an installer holds a lock, its backup root can hold
+# the only copy of the previous app, so a confirmed uninstall stops before
+# changing anything and a dry run says so. Leftovers are also kept, as a
+# second layer, from an installer that starts after that check, and whenever
+# the lock cannot be verified. The uninstaller's own copies do not depend on
+# the lock.
 # ------------------------------------------------------------------------------
 LOCKED_HOME="${TEMP_ROOT}/locked-home"
 /bin/mkdir -p "${LOCKED_HOME}/.codex" "${LOCKED_HOME}/Applications"
@@ -652,35 +776,84 @@ make_staging_root 700 "${LOCKED_HOME}/Applications/.codex-monitor-install.L0cK03
 make_staging_root 700 "${FAKE_DARWIN_TMP}/codex-mon-install-XXXXXX.L0cK04abcd" 'Cargo.toml'
 LOCKED_UNINSTALL_TEMP="${LOCKED_HOME}/.zshrc.codex-monitor-uninstall.L0cK05"
 make_file 600 "${LOCKED_UNINSTALL_TEMP}"
-INSTALL_LOCK="${TEMP_ROOT}/tmp/codex_monitor_install_$(/usr/bin/id -u).lock"
-LOCK_READY="${TEMP_ROOT}/lock-ready"
-LOCK_RELEASE="${TEMP_ROOT}/lock-release"
+LOCK_NAME="codex_monitor_install_${TEST_UID}.lock"
+INSTALL_LOCK="${FAKE_DARWIN_TMP}/${LOCK_NAME}"
+TMPDIR_LOCK="${TEMP_ROOT}/tmp/${LOCK_NAME}"
+SHARED_TMP_LOCK="${FAKE_SHARED_TMP}/${LOCK_NAME}"
+# Installers here run with a TMPDIR other than the uninstaller's.
+INSTALLER_TMPDIR="${TEMP_ROOT}/installer-tmp"
+/bin/mkdir -p "${INSTALLER_TMPDIR}"
+HELD_REASON='an installer holds the install lock'
+UNVERIFIED_REASON='the install lock cannot be verified'
+HELD_NOTE="${HELD_REASON}: a confirmed uninstall stops without changing anything until the installation ends."
+HELD_ERROR="Error: ${HELD_REASON}; nothing was changed. Rerun the uninstaller after the installation ends."
+LOCKED_OUTPUT="${TEMP_ROOT}/locked-output.txt"
 
 LOCKED_UNINSTALLER="${UNINSTALL_COPY}"
 run_locked_uninstall() {
     HOME="${LOCKED_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
-        "${LOCKED_UNINSTALLER}" "$@"
+        /bin/bash "${LOCKED_UNINSTALLER}" "$@"
 }
 
 # What the uninstaller's probe can use, for failure messages.
 describe_install_lock() {
-    /usr/bin/printf 'lockf on PATH: %s; /usr/bin/perl: %s; lock: %s; macOS %s' \
-        "$(command -v lockf || echo none)" "$([ -x /usr/bin/perl ] && echo present || echo missing)" \
-        "$(/bin/ls -ld "${INSTALL_LOCK}" 2>&1 || true)" "$(/usr/bin/sw_vers -productVersion 2>/dev/null || echo unknown)"
+    /usr/bin/printf '/usr/bin/lockf %s; /usr/bin/perl %s; macOS %s; locks: %s' \
+        "$([ -x /usr/bin/lockf ] && echo present || echo missing)" \
+        "$([ -x /usr/bin/perl ] && echo present || echo missing)" \
+        "$(/usr/bin/sw_vers -productVersion 2>/dev/null || echo unknown)" \
+        "$(/bin/ls -ld "${INSTALL_LOCK}" "${TMPDIR_LOCK}" "${SHARED_TMP_LOCK}" 2>&1 | /usr/bin/tr '\n' ';' || true)"
 }
 
-# The uninstaller probes the lock with lockf(1) where it exists (newer macOS)
-# and with perl's flock otherwise (macOS 14 has no lockf). This copy has no lockf,
-# so the perl path runs on every host; the plain copy uses whichever the host
-# has. NO_PROBE_UNINSTALLER has neither.
+# The uninstaller probes the lock with lockf(1) where it exists (macOS 15 and
+# later) and with perl's flock otherwise. This copy has no lockf, so the perl
+# path runs on every host; the plain copy uses whichever the host has.
+# NO_PROBE_UNINSTALLER has neither. SCRIPTED_PROBE_UNINSTALLER's lockf takes
+# no lock and answers as SCRIPTED_LOCKF_MODE says.
 PERL_PROBE_UNINSTALLER="${TEMP_ROOT}/uninstall-perl-probe.sh"
 NO_PROBE_UNINSTALLER="${TEMP_ROOT}/uninstall-no-probe.sh"
+SCRIPTED_PROBE_UNINSTALLER="${TEMP_ROOT}/uninstall-scripted-probe.sh"
 /usr/bin/sed -e "s|/usr/bin/lockf|${TEMP_ROOT}/missing-lockf|g" "${UNINSTALL_COPY}" > "${PERL_PROBE_UNINSTALLER}"
 /usr/bin/sed -e "s|/usr/bin/perl|${TEMP_ROOT}/missing-perl|g" "${PERL_PROBE_UNINSTALLER}" > "${NO_PROBE_UNINSTALLER}"
-/bin/chmod 755 "${PERL_PROBE_UNINSTALLER}" "${NO_PROBE_UNINSTALLER}"
+/usr/bin/sed -e "s|/usr/bin/lockf|${FAKE_BIN}/scripted-lockf|g" "${UNINSTALL_COPY}" > "${SCRIPTED_PROBE_UNINSTALLER}"
 /usr/bin/grep -F '/usr/bin/lockf' "${UNINSTALL_COPY}" >/dev/null &&
     /usr/bin/grep -F '/usr/bin/perl' "${UNINSTALL_COPY}" >/dev/null ||
     fail 'uninstaller no longer names the lock probes this test replaces'
+# Only the descriptor form, as the uninstaller calls it. The first call is
+# free: free-once takes it as it is, replace-once first puts a new file at the
+# install lock's path, as an uninstaller's removal and a new installer would.
+# Every later call reports a held lock, except that replace-always replaces
+# the file and reports it free on every call. remove-once removes the file
+# instead, as another uninstaller that held it would.
+SCRIPTED_LOCKF_MODE="${TEMP_ROOT}/scripted-lockf-mode"
+SCRIPTED_LOCKF_CALLS="${TEMP_ROOT}/scripted-lockf-calls"
+/bin/cat > "${FAKE_BIN}/scripted-lockf" <<EOF
+#!/bin/bash
+[ "\$#" -eq 4 ] && [ "\$1" = -s ] && [ "\$2" = -t ] && [ "\$3" = 0 ] || exit 64
+count=\$(( \$(/bin/cat '${SCRIPTED_LOCKF_CALLS}' 2>/dev/null || echo 0) + 1 ))
+/usr/bin/printf '%s\n' "\${count}" > '${SCRIPTED_LOCKF_CALLS}'
+mode="\$(/bin/cat '${SCRIPTED_LOCKF_MODE}')"
+[ "\${count}" -eq 1 ] || [ "\${mode}" = replace-always ] || exit 75
+case "\${mode}" in
+    free-once) exit 0 ;;
+    remove-once)
+        /bin/rm -f '${INSTALL_LOCK}'
+        exit 0
+        ;;
+    replace-once|replace-always)
+        /usr/bin/printf 'replacement\n' > '${INSTALL_LOCK}.next'
+        /bin/mv -f '${INSTALL_LOCK}.next' '${INSTALL_LOCK}'
+        exit 0
+        ;;
+esac
+exit 71
+EOF
+/bin/chmod 755 "${PERL_PROBE_UNINSTALLER}" "${NO_PROBE_UNINSTALLER}" "${SCRIPTED_PROBE_UNINSTALLER}" \
+    "${FAKE_BIN}/scripted-lockf"
+use_scripted_lockf() {
+    /usr/bin/printf '%s\n' "$1" > "${SCRIPTED_LOCKF_MODE}"
+    /bin/rm -f "${SCRIPTED_LOCKF_CALLS}"
+    LOCKED_UNINSTALLER="${SCRIPTED_PROBE_UNINSTALLER}"
+}
 
 assert_locked_temps_preserved_in_plan() {
     local reason="$1"
@@ -695,97 +868,200 @@ assert_locked_temps_preserved_in_plan() {
     done
     /usr/bin/grep -F -x "  remove ${LOCKED_UNINSTALL_TEMP}" "${output}" >/dev/null ||
         fail "dry-run gated the uninstaller's own copy on the install lock (${reason})"
+    if [ "${reason}" = "${HELD_REASON}" ]; then
+        /usr/bin/grep -F -x "${HELD_NOTE}" "${output}" >/dev/null ||
+            fail "dry-run did not say that a confirmed uninstall would stop"
+    else
+        /usr/bin/grep -F "${HELD_REASON}:" "${output}" >/dev/null &&
+            fail "dry-run said an installer holds the lock (${reason})"
+    fi
+    return 0
 }
 
-# Hold the lock with install.sh's own acquire_install_lock and its fd 9 setup,
-# so this proves that the uninstaller's probe sees the lock a real installer
-# takes on this runner.
-ACQUIRE_INSTALL_LOCK="$(/usr/bin/awk '/^acquire_install_lock\(\) \{$/, /^\}$/' "${INSTALL_SCRIPT}")"
-[ "$(/usr/bin/printf '%s\n' "${ACQUIRE_INSTALL_LOCK}" | /usr/bin/tail -n 2)" = '    echo "$$" > "${INSTALL_LOCK_FILE}"
-}' ] || fail 'could not extract exactly the installer acquire_install_lock function'
-LOCK_HOLDER_SCRIPT="${TEMP_ROOT}/installer-lock-holder.sh"
-{
-    /usr/bin/printf '%s\n' '#!/bin/bash' 'set -euo pipefail' 'INSTALL_LOCK_FILE="$1"'
-    /usr/bin/printf '%s\n' "${ACQUIRE_INSTALL_LOCK}"
-    /bin/cat <<'EOF'
-touch "${INSTALL_LOCK_FILE}"
-exec 9>>"${INSTALL_LOCK_FILE}"
-acquire_install_lock
-/usr/bin/touch "$2"
-attempt=0
-while [ ! -e "$3" ] && [ "${attempt}" -lt 1200 ]; do
-    /bin/sleep 0.05
-    attempt=$((attempt + 1))
-done
-EOF
-} > "${LOCK_HOLDER_SCRIPT}"
-/bin/bash "${LOCK_HOLDER_SCRIPT}" "${INSTALL_LOCK}" "${LOCK_READY}" "${LOCK_RELEASE}" &
-LOCK_HOLDER=$!
-attempt=0
-while [ ! -e "${LOCK_READY}" ]; do
-    attempt=$((attempt + 1))
-    [ "${attempt}" -lt 200 ] || fail "installer's acquire_install_lock did not take the lock on this system"
-    /bin/sleep 0.05
-done
+# Everything a confirmed run could change, to prove it changed nothing.
+locked_state() {
+    /usr/bin/find "${LOCKED_HOME}" "${SYSTEM_APPS}" "${FAKE_DARWIN_TMP}" "${TEMP_ROOT}/tmp" \
+        "${FAKE_SHARED_TMP}" -exec /usr/bin/stat -f '%N %i %m %z %Lp' {} + | /usr/bin/sort
+}
 
-LOCKED_OUTPUT="${TEMP_ROOT}/locked-output.txt"
-# Once through the perl path and once through the host's own probe.
-for LOCKED_UNINSTALLER in "${PERL_PROBE_UNINSTALLER}" "${UNINSTALL_COPY}"; do
-    assert_locked_temps_preserved_in_plan 'an installer holds the install lock'
-    install_fake_helper "${LOCKED_HOME}"
+# While an installer holds a lock, the dry run says the uninstall would stop,
+# and the confirmed run fails before changing anything.
+assert_uninstall_refused() {
+    local holder="$1"
+    local before
+    assert_locked_temps_preserved_in_plan "${HELD_REASON}"
+    before="$(locked_state)"
     if run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1; then
-        fail 'uninstall reported success while an installer held the install lock'
+        fail "uninstall reported success while ${holder} held the install lock"
     fi
-    for path in "${LOCKED_TEMPS[@]}"; do
-        assert_exists "${path}"
-        /usr/bin/grep -F -x "Warning: preserving installer staging because an installer holds the install lock: ${path}" \
-            "${LOCKED_OUTPUT}" >/dev/null || fail "uninstall did not report preserving ${path}"
+    /usr/bin/grep -F -x "${HELD_ERROR}" "${LOCKED_OUTPUT}" >/dev/null ||
+        fail "uninstall did not stop for ${holder}: $(/bin/cat "${LOCKED_OUTPUT}"); $(describe_install_lock)"
+    [ "$(locked_state)" = "${before}" ] ||
+        fail "uninstall changed files while ${holder} held the install lock: $(/usr/bin/diff <(/usr/bin/printf '%s\n' "${before}") <(locked_state) || true)"
+}
+
+# Lock holders run the installer's own lock (install.sh's marked lines, with
+# the fake getconf) in /bin/bash, or act as an installer from before the
+# per-user temporary directory lock, which flocked the file at a given path.
+# A holder keeps its lock until this test closes the write end of its pipe
+# (descriptor 7), which also happens if the test dies.
+INSTALL_LOCK_BLOCK="${TEMP_ROOT}/install-lock-block.sh"
+/usr/bin/awk '
+    $0 == "# >>> install lock" { inside = 1; starts++; next }
+    $0 == "# <<< install lock" { inside = 0; ends++; next }
+    inside { print }
+    END { exit (starts == 1 && ends == 1) ? 0 : 1 }
+' "${INSTALL_SCRIPT}" | /usr/bin/sed -e "s|/usr/bin/getconf|${FAKE_BIN}/getconf|g" > "${INSTALL_LOCK_BLOCK}" ||
+    fail 'could not extract the install lock block of install.sh'
+/usr/bin/grep -F 'acquire_install_lock() {' "${INSTALL_LOCK_BLOCK}" >/dev/null ||
+    fail 'the install lock block defines no acquire_install_lock'
+/usr/bin/grep -E '(^|[^[:alnum:]_./-])getconf([^[:alnum:]_.-]|$)|/usr/bin/getconf' "${INSTALL_LOCK_BLOCK}" |
+    /usr/bin/grep -v -E '^[[:space:]]*#' | /usr/bin/grep -v -F "${FAKE_BIN}/getconf" >/dev/null &&
+    fail 'the install lock block copy can still reach the real getconf'
+LOCK_HOLDER_SCRIPT="${TEMP_ROOT}/installer-lock-holder.sh"
+/bin/cat > "${LOCK_HOLDER_SCRIPT}" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+if [ "$1" = installer ]; then
+    source "$2"
+    acquire_install_lock || exit 1
+else
+    exec 9>>"$2"
+    /usr/bin/perl -MFcntl=:flock -e 'open(my $lock, "<&=", 9) or exit 71; flock($lock, LOCK_EX | LOCK_NB) or exit 75;'
+fi
+/usr/bin/touch "$3"
+read -r _ || true
+EOF
+start_lock_holder() {
+    local ready="${TEMP_ROOT}/lock-ready"
+    local fifo="${TEMP_ROOT}/lock-release.fifo"
+    /bin/rm -f "${ready}" "${fifo}"
+    /usr/bin/mkfifo "${fifo}"
+    TMPDIR="${INSTALLER_TMPDIR}" /bin/bash "${LOCK_HOLDER_SCRIPT}" "$1" "$2" "${ready}" \
+        < "${fifo}" > "${TEMP_ROOT}/lock-holder.log" 2>&1 7>&- &
+    LOCK_HOLDER=$!
+    exec 7>"${fifo}"
+    local attempt=0
+    until [ -e "${ready}" ]; do
+        attempt=$((attempt + 1))
+        [ "${attempt}" -lt 400 ] ||
+            fail "lock holder ($1) did not take the lock: $(/bin/cat "${TEMP_ROOT}/lock-holder.log"); $(describe_install_lock)"
+        /bin/sleep 0.025
     done
-    assert_exists "${SYSTEM_APPS}/.codex-monitor-backup.L0cK02/Codex Monitor.app/Contents/Info.plist"
-    assert_exists "${INSTALL_LOCK}"
-    /usr/bin/grep -F -x "Warning: lock is still held; preserving: ${INSTALL_LOCK}" "${LOCKED_OUTPUT}" >/dev/null ||
-        fail "uninstall did not keep the held install lock: $(describe_install_lock)"
-    assert_absent "${LOCKED_UNINSTALL_TEMP}"
-    make_file 600 "${LOCKED_UNINSTALL_TEMP}"
+}
+release_lock_holder() {
+    exec 7>&-
+    wait "${LOCK_HOLDER}" || fail "lock holder failed: $(/bin/cat "${TEMP_ROOT}/lock-holder.log")"
+    LOCK_HOLDER=""
+}
+
+# The installer of this change, started with another TMPDIR: once through the
+# perl probe and once through the host's own.
+start_lock_holder installer "${INSTALL_LOCK_BLOCK}"
+[ -f "${INSTALL_LOCK}" ] || fail "the installer did not lock ${INSTALL_LOCK}; $(describe_install_lock)"
+[ ! -e "${INSTALLER_TMPDIR}/${LOCK_NAME}" ] || fail 'the installer locked a file in its TMPDIR'
+for LOCKED_UNINSTALLER in "${PERL_PROBE_UNINSTALLER}" "${UNINSTALL_COPY}"; do
+    assert_uninstall_refused 'an installer'
 done
 LOCKED_UNINSTALLER="${UNINSTALL_COPY}"
+release_lock_holder
 
-/usr/bin/touch "${LOCK_RELEASE}"
-wait "${LOCK_HOLDER}" || fail 'test lock holder failed'
-LOCK_HOLDER=""
+# Installers from before this change locked ${TMPDIR:-/tmp}'s file: here the
+# uninstaller's TMPDIR, and /tmp for an installer run without TMPDIR.
+for legacy_lock in "${TMPDIR_LOCK}" "${SHARED_TMP_LOCK}"; do
+    start_lock_holder legacy "${legacy_lock}"
+    assert_uninstall_refused "a legacy installer (${legacy_lock})"
+    release_lock_holder
+    /bin/rm -f "${legacy_lock}"
+done
 
-# A lock path that is a symlink or not a regular file cannot prove that no
-# installer is running.
+# An installer that takes the lock after the uninstaller's first check still
+# keeps its leftovers, and its lock file: the uninstall proceeds, reports each,
+# and fails.
+[ -f "${INSTALL_LOCK}" ] || fail 'the free install lock file is missing'
+use_scripted_lockf free-once
+install_fake_helper "${LOCKED_HOME}"
+if run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1; then
+    fail 'uninstall reported success while an installer that started late held the install lock'
+fi
+/usr/bin/grep -F -x "${HELD_ERROR}" "${LOCKED_OUTPUT}" >/dev/null &&
+    fail 'uninstall stopped although the install lock was free when it started'
+for path in "${LOCKED_TEMPS[@]}"; do
+    assert_exists "${path}"
+    /usr/bin/grep -F -x "Warning: preserving installer staging because ${HELD_REASON}: ${path}" \
+        "${LOCKED_OUTPUT}" >/dev/null || fail "uninstall did not report preserving ${path}: $(/bin/cat "${LOCKED_OUTPUT}")"
+done
+assert_exists "${SYSTEM_APPS}/.codex-monitor-backup.L0cK02/Codex Monitor.app/Contents/Info.plist"
+assert_exists "${INSTALL_LOCK}"
+/usr/bin/grep -F -x "Warning: lock is still held; preserving: ${INSTALL_LOCK}" "${LOCKED_OUTPUT}" >/dev/null ||
+    fail 'uninstall did not keep the held install lock'
+assert_absent "${LOCKED_UNINSTALL_TEMP}"
+make_file 600 "${LOCKED_UNINSTALL_TEMP}"
+
+# A probe must lock the file that the path names. Here the path gets a new
+# file, which an installer holds, while the probe opens the old one.
+use_scripted_lockf replace-once
+assert_locked_temps_preserved_in_plan "${HELD_REASON}"
+[ "$(/bin/cat "${INSTALL_LOCK}")" = replacement ] || fail 'the scripted lockf did not replace the lock file'
+# A lock file that keeps changing under the probe cannot be verified.
+use_scripted_lockf replace-always
+assert_locked_temps_preserved_in_plan "${UNVERIFIED_REASON}"
+# One that another uninstaller removed while the probe opened it was free.
+use_scripted_lockf remove-once
+run_locked_uninstall --dry-run > "${TEMP_ROOT}/removed-lock-dry-run.txt"
+for path in "${LOCKED_TEMPS[@]}"; do
+    /usr/bin/grep -F -x "  remove ${path}" "${TEMP_ROOT}/removed-lock-dry-run.txt" >/dev/null ||
+        fail "dry-run kept ${path} behind a lock file that was removed while free"
+done
+assert_absent "${INSTALL_LOCK}"
+LOCKED_UNINSTALLER="${UNINSTALL_COPY}"
 /bin/rm -f "${INSTALL_LOCK}"
+
+# A lock path that is a symlink, a directory, or unreadable cannot prove that
+# no installer is running.
 /bin/ln -s "${OUTSIDE}/file-target" "${INSTALL_LOCK}"
-assert_locked_temps_preserved_in_plan 'the install lock cannot be verified'
-# Nothing else fails in this run: the lock-file cleanup takes the unheld
-# symlinked lock and unlinks it, so only the preserved leftovers can make the
-# uninstall report warnings.
+assert_locked_temps_preserved_in_plan "${UNVERIFIED_REASON}"
+# Nothing else fails in this run: the lock-file cleanup removes the symlink
+# itself, so only the preserved leftovers can make the uninstall report
+# warnings.
 install_fake_helper "${LOCKED_HOME}"
 if run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1; then
     fail 'uninstall reported success although it kept installer leftovers'
 fi
 for path in "${LOCKED_TEMPS[@]}"; do
     assert_exists "${path}"
-    /usr/bin/grep -F -x "Warning: preserving installer staging because the install lock cannot be verified: ${path}" \
+    /usr/bin/grep -F -x "Warning: preserving installer staging because ${UNVERIFIED_REASON}: ${path}" \
         "${LOCKED_OUTPUT}" >/dev/null || fail "uninstall did not report preserving ${path} behind an unverifiable lock"
 done
 /usr/bin/grep -F 'Warning:' "${LOCKED_OUTPUT}" | /usr/bin/grep -v -F -e 'preserving installer staging' \
     -e 'uninstall completed with warnings' >/dev/null &&
     fail "an unrelated warning masks the preserved-leftover failure: $(/bin/cat "${LOCKED_OUTPUT}")"
+assert_absent "${INSTALL_LOCK}"
 assert_content 'outside file sentinel' "${OUTSIDE}/file-target"
 assert_absent "${LOCKED_UNINSTALL_TEMP}"
 make_file 600 "${LOCKED_UNINSTALL_TEMP}"
-/bin/rm -f "${INSTALL_LOCK}"
 /bin/mkdir "${INSTALL_LOCK}"
-assert_locked_temps_preserved_in_plan 'the install lock cannot be verified'
+assert_locked_temps_preserved_in_plan "${UNVERIFIED_REASON}"
 /bin/rmdir "${INSTALL_LOCK}"
+/usr/bin/touch "${INSTALL_LOCK}"
+/bin/chmod 000 "${INSTALL_LOCK}"
+[ ! -r "${INSTALL_LOCK}" ] || fail 'this test cannot make an unreadable file; do not run it as root'
+assert_locked_temps_preserved_in_plan "${UNVERIFIED_REASON}"
+install_fake_helper "${LOCKED_HOME}"
+if run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1; then
+    fail 'uninstall reported success behind an unreadable install lock'
+fi
+for path in "${LOCKED_TEMPS[@]}"; do
+    assert_exists "${path}"
+done
+/usr/bin/grep -F -x "Warning: cannot tell whether the lock is held; preserving: ${INSTALL_LOCK}" \
+    "${LOCKED_OUTPUT}" >/dev/null || fail 'uninstall removed or did not report an unreadable lock file'
+make_file 600 "${LOCKED_UNINSTALL_TEMP}"
+/bin/chmod 600 "${INSTALL_LOCK}"
 # Nor can a free lock file be probed with neither lockf nor perl: the
 # confirmed run keeps the leftovers and the lock file itself.
-/usr/bin/touch "${INSTALL_LOCK}"
 LOCKED_UNINSTALLER="${NO_PROBE_UNINSTALLER}"
-assert_locked_temps_preserved_in_plan 'the install lock cannot be verified'
+assert_locked_temps_preserved_in_plan "${UNVERIFIED_REASON}"
 install_fake_helper "${LOCKED_HOME}"
 if run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1; then
     fail 'uninstall reported success without a way to probe the install lock'
@@ -798,33 +1074,50 @@ assert_exists "${INSTALL_LOCK}"
     "${LOCKED_OUTPUT}" >/dev/null || fail 'uninstall removed or did not report an unprobed lock file'
 make_file 600 "${LOCKED_UNINSTALL_TEMP}"
 LOCKED_UNINSTALLER="${UNINSTALL_COPY}"
-/bin/rm -f "${INSTALL_LOCK}"
 
-# A lock file that exists but is not held proves the installer has exited.
-# This run takes the perl path, which also unlinks the free lock file; the
-# symlinked-lock run above took the host's own probe.
-/usr/bin/touch "${INSTALL_LOCK}"
-install_fake_helper "${LOCKED_HOME}"
+# Free lock files prove that their installers have exited. A dry run leaves
+# them as they are; a confirmed run removes them with the leftovers. This run
+# takes the perl path; the next one the host's own probe.
+/usr/bin/touch "${TMPDIR_LOCK}" "${SHARED_TMP_LOCK}"
+FREE_LOCKS=("${INSTALL_LOCK}" "${TMPDIR_LOCK}" "${SHARED_TMP_LOCK}")
+free_lock_state() { /usr/bin/stat -f '%N %i %m %z' "${FREE_LOCKS[@]}"; }
+FREE_LOCK_STATE="$(free_lock_state)"
+for LOCKED_UNINSTALLER in "${PERL_PROBE_UNINSTALLER}" "${UNINSTALL_COPY}"; do
+    run_locked_uninstall --dry-run > "${TEMP_ROOT}/free-dry-run.txt"
+    for path in "${LOCKED_TEMPS[@]}" "${FREE_LOCKS[@]}"; do
+        /usr/bin/grep -F -x "  remove ${path}" "${TEMP_ROOT}/free-dry-run.txt" >/dev/null ||
+            fail "dry-run did not plan to remove ${path} behind free locks"
+    done
+    [ "$(free_lock_state)" = "${FREE_LOCK_STATE}" ] || fail 'a dry run changed a free lock file'
+done
 LOCKED_UNINSTALLER="${PERL_PROBE_UNINSTALLER}"
-run_locked_uninstall --yes >/dev/null
-LOCKED_UNINSTALLER="${UNINSTALL_COPY}"
-for path in "${LOCKED_TEMPS[@]}"; do
+install_fake_helper "${LOCKED_HOME}"
+run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1 ||
+    fail "uninstall failed behind free locks: $(/bin/cat "${LOCKED_OUTPUT}")"
+for path in "${LOCKED_TEMPS[@]}" "${FREE_LOCKS[@]}" "${LOCKED_UNINSTALL_TEMP}"; do
     assert_absent "${path}"
 done
-assert_absent "${LOCKED_UNINSTALL_TEMP}"
+/usr/bin/touch "${INSTALL_LOCK}"
+LOCKED_UNINSTALLER="${UNINSTALL_COPY}"
+install_fake_helper "${LOCKED_HOME}"
+run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1 ||
+    fail "uninstall failed behind a free lock through the host's probe: $(/bin/cat "${LOCKED_OUTPUT}")"
 assert_absent "${INSTALL_LOCK}"
 
 # ------------------------------------------------------------------------------
 # Without an absolute per-user temporary directory the uninstaller cannot look
-# for remote-install clones. It must say so rather than guess a location.
+# for remote-install clones, nor probe the install lock kept there. It must
+# say so rather than guess a location, and keep every installer leftover.
 # ------------------------------------------------------------------------------
 GETCONF_HOME="${TEMP_ROOT}/getconf-home"
 GETCONF_CWD="${TEMP_ROOT}/getconf-cwd"
 GETCONF_CLONE="${FAKE_DARWIN_TMP}/codex-mon-install-XXXXXX.GcF01abcde"
 RELATIVE_CLONE="${GETCONF_CWD}/relative/codex-mon-install-XXXXXX.GcF02abcde"
-/bin/mkdir -p "${GETCONF_HOME}/.codex" "${GETCONF_CWD}/relative"
+GETCONF_STAGING="${GETCONF_HOME}/.local/bin/.codex-mon.install.GcF03a"
+/bin/mkdir -p "${GETCONF_HOME}/.codex" "${GETCONF_HOME}/.local/bin" "${GETCONF_CWD}/relative"
 make_staging_root 700 "${GETCONF_CLONE}" 'Cargo.toml'
 make_staging_root 700 "${RELATIVE_CLONE}" 'Cargo.toml'
+make_file 600 "${GETCONF_STAGING}"
 for getconf_output in missing 'relative/'; do
     if [ "${getconf_output}" = missing ]; then
         /bin/rm -f "${GETCONF_OUTPUT}"
@@ -834,19 +1127,24 @@ for getconf_output in missing 'relative/'; do
     install_fake_helper "${GETCONF_HOME}"
     GETCONF_DRY_RUN="${TEMP_ROOT}/getconf-dry-run.txt"
     (cd "${GETCONF_CWD}" && HOME="${GETCONF_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
-        "${UNINSTALL_COPY}" --dry-run > "${GETCONF_DRY_RUN}")
+        /bin/bash "${UNINSTALL_COPY}" --dry-run > "${GETCONF_DRY_RUN}")
     /usr/bin/grep -F -x '  preserve remote-install clones (the per-user temporary directory is unknown)' \
         "${GETCONF_DRY_RUN}" >/dev/null || fail "dry-run hid an unknown temporary directory (${getconf_output})"
     /usr/bin/grep -F 'codex-mon-install-XXXXXX' "${GETCONF_DRY_RUN}" >/dev/null &&
         fail "dry-run listed a clone without a verified temporary directory (${getconf_output})"
+    /usr/bin/grep -F -x "  preserve ${GETCONF_STAGING} (the install lock cannot be verified)" \
+        "${GETCONF_DRY_RUN}" >/dev/null || fail "dry-run did not keep staging behind an unknown lock (${getconf_output})"
     if (cd "${GETCONF_CWD}" && HOME="${GETCONF_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
-        "${UNINSTALL_COPY}" --yes > "${TEMP_ROOT}/getconf-output.txt" 2>&1); then
+        /bin/bash "${UNINSTALL_COPY}" --yes > "${TEMP_ROOT}/getconf-output.txt" 2>&1); then
         fail "uninstall reported success without checking for remote-install clones (${getconf_output})"
     fi
     /usr/bin/grep -F 'Warning: the per-user temporary directory is unknown; remote-install clones were not checked' \
         "${TEMP_ROOT}/getconf-output.txt" >/dev/null || fail "uninstall hid an unknown temporary directory (${getconf_output})"
+    /usr/bin/grep -F -x "Warning: preserving installer staging because the install lock cannot be verified: ${GETCONF_STAGING}" \
+        "${TEMP_ROOT}/getconf-output.txt" >/dev/null || fail "uninstall did not keep staging behind an unknown lock (${getconf_output})"
     assert_exists "${GETCONF_CLONE}/Cargo.toml"
     assert_exists "${RELATIVE_CLONE}/Cargo.toml"
+    assert_exists "${GETCONF_STAGING}"
 done
 /usr/bin/printf '%s/\n' "${FAKE_DARWIN_TMP}" > "${GETCONF_OUTPUT}"
 /bin/rm -rf -- "${GETCONF_CLONE}"
@@ -857,7 +1155,7 @@ install_fake_helper "${PURGE_HOME}"
 /usr/bin/printf 'purge me\n' > "${PURGE_HOME}/.codex/accounts.json"
 /bin/chmod 600 "${PURGE_HOME}/.codex/accounts.json"
 HOME="${PURGE_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
-    "${UNINSTALL_COPY}" --yes --purge-data >/dev/null
+    /bin/bash "${UNINSTALL_COPY}" --yes --purge-data >/dev/null
 assert_absent "${PURGE_HOME}/.codex/accounts.json"
 
 PURGE_SYMLINK_HOME="${TEMP_ROOT}/purge-symlink-home"
@@ -867,7 +1165,7 @@ install_fake_helper "${PURGE_SYMLINK_HOME}"
 /usr/bin/printf 'external account sentinel\n' > "${PURGE_EXTERNAL}/accounts.json"
 /bin/ln -s "${PURGE_EXTERNAL}/accounts.json" "${PURGE_SYMLINK_HOME}/.codex/accounts.json"
 if HOME="${PURGE_SYMLINK_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
-    "${UNINSTALL_COPY}" --yes --purge-data >/dev/null 2>&1; then
+    /bin/bash "${UNINSTALL_COPY}" --yes --purge-data >/dev/null 2>&1; then
     fail 'purge accepted a symlinked accounts.json'
 fi
 assert_content 'external account sentinel' "${PURGE_EXTERNAL}/accounts.json"
@@ -877,7 +1175,7 @@ PURGE_DIRECTORY_HOME="${TEMP_ROOT}/purge-directory-home"
 /bin/mkdir -p "${PURGE_DIRECTORY_HOME}/.codex/accounts.json"
 install_fake_helper "${PURGE_DIRECTORY_HOME}"
 if HOME="${PURGE_DIRECTORY_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
-    "${UNINSTALL_COPY}" --yes --purge-data >/dev/null 2>&1; then
+    /bin/bash "${UNINSTALL_COPY}" --yes --purge-data >/dev/null 2>&1; then
     fail 'purge accepted a directory accounts.json'
 fi
 assert_exists "${PURGE_DIRECTORY_HOME}/.codex/accounts.json"
@@ -892,12 +1190,12 @@ install_fake_helper "${SYMLINK_LOG_HOME}"
 /bin/ln -s "${EXTERNAL_LOG_ROOT}" "${SYMLINK_LOG_HOME}/.codex/log"
 SYMLINK_LOG_OUTPUT="${TEMP_ROOT}/symlink-log-output.txt"
 HOME="${SYMLINK_LOG_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
-    "${UNINSTALL_COPY}" --dry-run > "${SYMLINK_LOG_OUTPUT}"
+    /bin/bash "${UNINSTALL_COPY}" --dry-run > "${SYMLINK_LOG_OUTPUT}"
 /usr/bin/grep -F 'preserve Monitor log/recovery cleanup' "${SYMLINK_LOG_OUTPUT}" >/dev/null
 /usr/bin/grep -F "${EXTERNAL_LOG_ROOT}" "${SYMLINK_LOG_OUTPUT}" >/dev/null &&
     fail 'dry-run exposed the external log target'
 if HOME="${SYMLINK_LOG_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
-    "${UNINSTALL_COPY}" --yes >/dev/null 2>&1; then
+    /bin/bash "${UNINSTALL_COPY}" --yes >/dev/null 2>&1; then
     fail 'uninstall accepted a symlinked log parent'
 fi
 assert_content 'external switcher sentinel' "${EXTERNAL_LOG_ROOT}/switcher.log"
@@ -912,12 +1210,12 @@ install_fake_helper "${SYMLINK_RECOVERY_HOME}"
 /bin/ln -s "${EXTERNAL_RECOVERY_ROOT}" "${SYMLINK_RECOVERY_HOME}/.codex/recovery-runs"
 SYMLINK_RECOVERY_OUTPUT="${TEMP_ROOT}/symlink-recovery-output.txt"
 HOME="${SYMLINK_RECOVERY_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
-    "${UNINSTALL_COPY}" --dry-run > "${SYMLINK_RECOVERY_OUTPUT}"
+    /bin/bash "${UNINSTALL_COPY}" --dry-run > "${SYMLINK_RECOVERY_OUTPUT}"
 /usr/bin/grep -F 'preserve Monitor log/recovery cleanup' "${SYMLINK_RECOVERY_OUTPUT}" >/dev/null
 /usr/bin/grep -F "${EXTERNAL_RECOVERY_ROOT}" "${SYMLINK_RECOVERY_OUTPUT}" >/dev/null &&
     fail 'dry-run exposed the external recovery target'
 if HOME="${SYMLINK_RECOVERY_HOME}" TMPDIR="${TEMP_ROOT}/tmp" PATH="${FAKE_BIN}:${PATH}" \
-    "${UNINSTALL_COPY}" --yes >/dev/null 2>&1; then
+    /bin/bash "${UNINSTALL_COPY}" --yes >/dev/null 2>&1; then
     fail 'uninstall accepted a symlinked recovery parent'
 fi
 assert_content 'external cancel sentinel' "${EXTERNAL_RECOVERY_ROOT}/cancel-restart"
@@ -933,7 +1231,7 @@ install_fake_helper "${SYMLINK_ANCHOR_HOME}"
 /bin/ln -s "${EXTERNAL_ANCHOR_ROOT}" "${SYMLINK_ANCHOR_HOME}/.codex"
 SYMLINK_ANCHOR_OUTPUT="${TEMP_ROOT}/symlink-anchor-output.txt"
 if HOME="${SYMLINK_ANCHOR_HOME}" CODEX_HOME="" TMPDIR="${TEMP_ROOT}/tmp" \
-    PATH="${FAKE_BIN}:${PATH}" "${UNINSTALL_COPY}" --dry-run > "${SYMLINK_ANCHOR_OUTPUT}"; then
+    PATH="${FAKE_BIN}:${PATH}" /bin/bash "${UNINSTALL_COPY}" --dry-run > "${SYMLINK_ANCHOR_OUTPUT}"; then
     fail 'uninstall accepted a symlinked CODEX_HOME anchor'
 fi
 /usr/bin/grep -F 'refusing to operate through a symlinked CODEX_HOME' "${SYMLINK_ANCHOR_OUTPUT}" >/dev/null

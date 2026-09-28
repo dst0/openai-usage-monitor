@@ -518,32 +518,52 @@ non-symlink files, without an owner or mode check. Any new or renamed staging
 writer needs a matching pattern and shell test in the same change.
 
 Leftovers of a killed install are a third list. `install.sh` takes its install
-lock (`${TMPDIR:-/tmp}/codex_monitor_install_<uid>.lock`) before creating any
-temporary path and releases it only as the last step of its EXIT cleanup. The
-uninstaller matches `~/.local/bin/.codex-mon.install.XXXXXX` (regular file,
-mode `0600` or `0755`) and its codesign `.cstemp` copy (regular file, `0755`),
-`.codex-monitor-install.XXXXXX` and `.codex-monitor-backup.XXXXXX` in
-`/Applications` and `~/Applications` (mode `0700` directory that is empty or
-holds only a real `Codex Monitor.app` directory), and the remote-install clone
-`codex-mon-install-XXXXXX.XXXXXXXXXX` in `getconf DARWIN_USER_TEMP_DIR` (mode
-`0700` directory). Each `X` is one of mktemp's `[0-9A-Za-z]`, the owner must be
-the current user, and symlinks are never followed. A backup can hold the only
+lock before creating any temporary path and releases it only as the last step
+of its EXIT cleanup, after removing them. The lock file is
+`codex_monitor_install_<uid>.lock` in `getconf DARWIN_USER_TEMP_DIR`, whatever
+`TMPDIR` says, so an installer and an uninstaller started from a shell,
+launchd, or the Menu Bar app meet at one file; the installer refuses to run
+without that directory. Both scripts take the lock through an identical
+`flock_fd_now`: `/usr/bin/lockf`'s descriptor form where it exists (macOS 15
+and later), otherwise `/usr/bin/perl`'s `flock` (macOS 13 and 14 ship no
+`lockf`), otherwise the installer fails closed and the uninstaller treats the
+lock as unverified. An installer waits by polling, because `lockf` waits on a
+descriptor by spinning a CPU. The uninstaller removes a free lock file while
+it holds that lock, so an installer that was waiting for it would then hold
+a file without a name; after every acquisition the installer compares the
+open file (`stat 0<&9`; `stat /dev/fd/9` reports devfs's device) with the
+path and locks the file now at the path when they differ. It writes its PID
+through the locked descriptor, never by path. The uninstaller's probe opens
+each lock file read-only, never creating one, and likewise starts over when
+the path no longer names the file it locked.
+
+A confirmed uninstall stops before changing anything while an installer
+holds that lock, or a legacy `${TMPDIR:-/tmp}` or `/tmp` one of an older
+installer. The uninstaller matches `~/.local/bin/.codex-mon.install.XXXXXX`
+(regular file, mode `0600` or `0755`) and its codesign `.cstemp` copy
+(regular file, `0755`), `.codex-monitor-install.XXXXXX` and
+`.codex-monitor-backup.XXXXXX` in `/Applications` and `~/Applications` (mode
+`0700` directory that is empty or holds only a real `Codex Monitor.app`
+directory), and the remote-install clone `codex-mon-install-XXXXXX.` plus ten
+characters (eight on macOS 13) in `getconf DARWIN_USER_TEMP_DIR` (mode `0700`
+directory). Each `X` is one of mktemp's `[0-9A-Za-z]`, the owner must be the
+current user, and symlinks are never followed. A backup can hold the only
 copy of the previous app while an install runs, so these are removed only
-when the lock file is absent or its BSD `flock` can be taken at once. The
-probe uses `/usr/bin/lockf` where it exists (newer macOS releases) and
-`/usr/bin/perl`'s `flock` on macOS 14, which ships no `lockf`; with neither,
-the lock is unverified. The Monitor lock files (`daemon.lock`, `codex.lock`,
-`monitor.lock`, `desktop-recovery.lock`, and the install lock) use the same
-probe before removal. A held, symlinked, or
-otherwise unverifiable lock keeps them and makes the uninstall report
-warnings. After the installer exits, a backup it kept because rollback failed
-is Monitor-owned debris and is removed with the app. An installer run with another `TMPDIR` is not detected. The
-uninstaller also removes its own interrupted
+when every lock file is absent or its `flock` can be taken at once, checked
+again right before removal. A held lock, or one that is symlinked, not a
+regular file, another user's, unreadable, or in an unknown per-user
+temporary directory, keeps them and makes the uninstall report warnings. The
+Monitor lock files (`daemon.lock`, `codex.lock`, `monitor.lock`,
+`desktop-recovery.lock`, and the install locks) are removed the same way,
+only while their lock is free. After the installer exits, a backup it kept
+because rollback failed is Monitor-owned debris and is removed with the app.
+The uninstaller also removes its own interrupted
 `<file>.codex-monitor-uninstall.XXXXXX` copies of `~/.zshrc`,
 `~/.bash_profile`, and `~/.codex/config.toml` (current owner, regular file).
-`tests/log_permissions_and_uninstall.sh` fails when an installer `mktemp`
-template changes or the lock order regresses, and the required Rust CI job
-runs it on every pull request.
+`tests/log_permissions_and_uninstall.sh` fails when an installer or
+uninstaller `mktemp` template changes, and `tests/install_lock.sh` runs the
+installer's own lock and EXIT cleanup; the required Rust CI job runs both on
+every pull request.
 
 During installation, log migration occurs only after the newly built app is
 copied to same-filesystem staging and strictly signature-verified. The exact

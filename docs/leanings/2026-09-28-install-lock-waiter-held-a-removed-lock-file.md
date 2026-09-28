@@ -1,0 +1,46 @@
+# 2026-09-28 — An installer waiting for the install lock could end up holding a removed lock file
+
+- **Status:** Resolved
+- **Task/context:** Two late adversarial reviews of PR #30 (reviewed at `5cf1a4d`) found gaps in the install lock that gates uninstall's removal of a killed install's leftovers. This work, on `fix/install-lock-identity` from `main` at `bc2a246`, checked each finding against current code. Earlier learning: [2026-09-28-uninstall-kept-killed-install-staging.md](2026-09-28-uninstall-kept-killed-install-staging.md).
+- **Unexpected observation or failure:**
+  - The uninstaller's final `remove_unlocked_file` ran `lockf -s -t 0 <lock> /usr/bin/true` without `-k`, so `lockf` removed the lock file while holding its lock. An installer that had opened the file just before the removal waited, and then locked a file with no name. Its `echo "$$" > <lock>` then created a new, unlocked file at the path. A later uninstaller found that file free and removed the waiting installer's staging and backup directories, and a second installer could run alongside the first.
+  - The lock file was `${TMPDIR:-/tmp}/codex_monitor_install_<uid>.lock`. An installer started from a shell and an uninstaller started by the Menu Bar app, or with another `TMPDIR`, used different files, so the uninstaller never saw the installer.
+  - While an installer held the lock, the uninstaller still stopped the Monitor and removed the app, CLI, launch agent, and skills. Only the leftovers were gated.
+  - The fix the review suggested, comparing `stat -L -f '%d:%i' /dev/fd/9` with the path, can never match on macOS. For the same open file, devfs reports its own device: `2437840837:373639198` for `/dev/fd/9`, but `16777231:373639198` for both the path and `stat 0<&9`, which runs fstat on the open file.
+- **Evidence:**
+  - `tests/install_lock.sh`, run in a scratch copy with `main`'s `acquire_install_lock` swapped in (the same scenario code, and the lock path set to the per-user directory so that only the removal race is tested) failed with `W holds a lock file the path no longer names: locked 501 16777231:373820490 Regular File, path 501 16777231:373820579 Regular File`. The file at the path was the waiter's own PID write.
+  - With `main`'s `${TMPDIR:-/tmp}` path, the same test failed with `the installer locked a file in its TMPDIR instead of the per-user temporary directory`.
+  - With the fix, all 25 recorded mutants of the two scripts fail a test: 10 in the installer (among them no recheck, lock in `TMPDIR`, PID written by path, fail-open on an unknown status, `.cstemp` kept, lock released before cleanup, unbounded reopening) and 15 in the uninstaller (among them no recheck in the probe, no refusal before changes, each lock location dropped, unknown status treated as free, a keep-mode probe that removes the file, unbounded probe retries, 8-character clones rejected, another uid's process signalled). The first run left one survivor: an absent lock file on a probe retry was never exercised. The `remove-once` scenario now covers it.
+- **Approaches tried:**
+  - **Attempt:** The review's `stat -L /dev/fd/9` against `stat <path>`.
+    - **Outcome:** Did not work.
+    - **Why:** `/dev/fd/N` reports devfs's device, so every acquisition would look replaced, and the installer would retry until it gave up.
+  - **Attempt:** Keep the installer on `${TMPDIR:-/tmp}` and have the uninstaller probe `${TMPDIR:-/tmp}`, `getconf DARWIN_USER_TEMP_DIR`, and `/tmp`.
+    - **Outcome:** Partial.
+    - **Why:** It misses an installer started with any other `TMPDIR`. It is kept only to find installers older than this change.
+  - **Attempt:** Move `acquire_install_lock` into a sourced helper script, as the second review asked.
+    - **Outcome:** Rejected.
+    - **Why:** A one-line (`curl | bash`) install has no helper scripts until after its clone, and the lock must be taken before the clone. The block stays in `install.sh` between `# >>> install lock` and `# <<< install lock`. Both tests source exactly those lines, which must define only functions and variables.
+  - **Attempt:** Lock one canonical file in `getconf DARWIN_USER_TEMP_DIR`, the directory `mktemp -t` uses, and refuse to install without it. After every acquisition, compare the open file (`stat 0<&9`) with the path, and on a mismatch close it and lock the file now at the path (at most 20 times). Write the PID through descriptor 9. The uninstaller opens each lock file read-only on its own descriptor, applies the same comparison before trusting a free result or removing the file, refuses to change anything while any lock is held, and also probes the legacy `${TMPDIR:-/tmp}` and `/tmp` locks.
+    - **Outcome:** Worked.
+    - **Why:** Everyone who removes a lock file does so while holding it, so after a successful check, nobody who follows the protocol can remove or replace the path until the holder releases it. `confstr` does not depend on the environment, so every launch context computes the same directory.
+- **Root cause:** The protocol treated "the file named X is locked" as "the lock at X is held". Removing a lock file while holding it is only safe when every acquirer checks, after locking, that the name still refers to the file it locked. The lock's location also depended on an environment variable that differs between launch contexts.
+- **Resolution:** `scripts/install.sh` (the marked lock block, and `cleanup()` also removing codesign's `.cstemp`) and `scripts/uninstall.sh` (`flock_fd_now`, `try_flock`, `install_lock_blocker`, `remove_install_lock_files`, and the refusal before any change). The uninstaller copy in the test now also fakes `ps` and `kill`, and runs under `/bin/bash`.
+- **Verification:** `tests/install_lock.sh` covers:
+  - the location, whatever `TMPDIR` says;
+  - a lock file removed while an installer waits;
+  - a second installer taking the replacement file while the first waits;
+  - the PID written through the descriptor;
+  - each lock tool, and the fallback from an old `lockf`;
+  - each fail-closed path;
+  - cleanup removing every path while the lock is still held.
+
+  `tests/log_permissions_and_uninstall.sh` covers the refusal while the current installer or a legacy one holds a lock, the second-layer check, the probe's recheck (a replaced file, one that keeps changing, a removed one), and a symlinked, directory, unreadable, or unprobeable lock. It also covers a dry run that leaves free locks untouched, free locks removed through both probes, and an unknown temporary directory. Both pass with every `lockf` path replaced by a missing one, as on the macOS 14 runner.
+- **Prevention/follow-up:**
+  - `AGENTS.md` (Installation & Removal Contract), `README.md`, and `CODEX.md` state the protocol.
+  - The required Rust CI job runs `tests/install_lock.sh`.
+  - Still open: a lock file owned by another uid needs root to create and is not tested.
+  - Still open: the real `lockf` path runs only where `/usr/bin/lockf` exists (macOS 15 and later), not on the macOS 14 runner.
+  - Still open: an installer older than this change that ran with a `TMPDIR` other than the uninstaller's, and not `/tmp`, is still not detected.
+- **Reusable learning:** When a lock file may be removed by name while it is held, every process that acquires it must compare the file it locked (fstat) with the path and retry on a mismatch, and must never write through the path. Put shared lock files where every launch context computes the same path (on macOS, `confstr` directories rather than `TMPDIR`). On macOS, `stat 0<&N` identifies an open descriptor's file; `/dev/fd/N` does not.
+- **References:** `scripts/install.sh`, `scripts/uninstall.sh`, `tests/install_lock.sh`, `tests/log_permissions_and_uninstall.sh`, [2026-09-28-lockf-first-ships-with-macos-15.md](2026-09-28-lockf-first-ships-with-macos-15.md), [2026-09-28-macos-13-mktemp-t-appends-eight-characters.md](2026-09-28-macos-13-mktemp-t-appends-eight-characters.md).

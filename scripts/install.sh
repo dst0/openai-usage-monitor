@@ -190,8 +190,9 @@ APP_TARGET_PATH=""
 APP_SWAP_ACTIVE=0
 APP_HAD_EXISTING_TARGET=0
 cleanup() {
-    if [ -n "${CLI_STAGING}" ] && [ -f "${CLI_STAGING}" ]; then
-        rm -f "${CLI_STAGING}"
+    if [ -n "${CLI_STAGING}" ]; then
+        # codesign --force writes <file>.cstemp next to the file it signs.
+        rm -f "${CLI_STAGING}" "${CLI_STAGING}.cstemp"
     fi
     if [ "${CLEANUP_TMP}" -eq 1 ] && [ -d "${TMP_DIR:-}" ]; then
         rm -rf "${TMP_DIR}"
@@ -223,40 +224,142 @@ trap 'exit 143' TERM
 # Take the lock before creating any temporary path (remote clone, CLI and app
 # staging, app backup); cleanup() releases it only after removing them. The
 # uninstaller removes such leftovers only while no installer holds this lock.
-INSTALL_LOCK_FILE="${TMPDIR:-/tmp}/codex_monitor_install_${UID:-$(id -u)}.lock"
-touch "${INSTALL_LOCK_FILE}"
-exec 9>>"${INSTALL_LOCK_FILE}"
+# A one-line install has no helper scripts before its clone, so the lock is
+# defined here. tests/install_lock.sh and tests/log_permissions_and_uninstall.sh
+# source the lines between the two markers; keep them free of other commands.
+# >>> install lock
+INSTALL_UID="$(/usr/bin/id -u)"
+INSTALL_LOCK_FILE=""
+# Seconds between attempts while another installer holds the lock.
+INSTALL_LOCK_POLL_SECONDS=1
+# How often the lock file may turn out to have been replaced before giving up.
+INSTALL_LOCK_MAX_OPENS=20
 
-acquire_install_lock() {
-    if command -v lockf >/dev/null 2>&1; then
-        if ! lockf -s -t 0 9 2>/dev/null; then
-            local holder_pid
-            holder_pid="$(head -n 1 "${INSTALL_LOCK_FILE}" 2>/dev/null || true)"
-            if [ -n "${holder_pid}" ] && kill -0 "${holder_pid}" 2>/dev/null; then
-                echo "⏳ Another installation (PID ${holder_pid}) is currently in progress. Waiting for it to finish..."
-            else
-                echo "⏳ Another installation is currently in progress. Waiting for it to finish..."
-            fi
-            lockf 9
-            echo "🔒 Acquired installation lock. Continuing..."
-        fi
-    elif command -v python3 >/dev/null 2>&1; then
-        if ! python3 -c "import fcntl; fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)" 2>/dev/null; then
-            local holder_pid
-            holder_pid="$(head -n 1 "${INSTALL_LOCK_FILE}" 2>/dev/null || true)"
-            if [ -n "${holder_pid}" ] && kill -0 "${holder_pid}" 2>/dev/null; then
-                echo "⏳ Another installation (PID ${holder_pid}) is currently in progress. Waiting for it to finish..."
-            else
-                echo "⏳ Another installation is currently in progress. Waiting for it to finish..."
-            fi
-            python3 -c "import fcntl; fcntl.flock(9, fcntl.LOCK_EX)"
-            echo "🔒 Acquired installation lock. Continuing..."
-        fi
-    fi
-    echo "$$" > "${INSTALL_LOCK_FILE}"
+# The lock lives in the per-user temporary directory, which `mktemp -t` also
+# uses, whatever TMPDIR says, so installers and uninstallers started from a
+# shell, launchd, or the Menu Bar app agree on one file. Prints the directory
+# without its trailing slash; fails unless it is an absolute path naming a
+# directory, not a symlink, owned by this user.
+install_lock_dir() {
+    local dir
+    dir="$(/usr/bin/getconf DARWIN_USER_TEMP_DIR 2>/dev/null)" || return 1
+    dir="${dir%/}"
+    case "${dir}" in
+        /?*) ;;
+        *) return 1 ;;
+    esac
+    [ ! -L "${dir}" ] && [ -d "${dir}" ] &&
+        [ "$(/usr/bin/stat -f '%u' "${dir}" 2>/dev/null)" = "${INSTALL_UID}" ] || return 1
+    /usr/bin/printf '%s\n' "${dir}"
 }
 
-acquire_install_lock
+# Tries once to take the exclusive flock(2) lock of the file open as
+# descriptor $1. Exit status 0: taken (or already held through this
+# descriptor); 75 (EX_TEMPFAIL): another open file holds it; anything else:
+# unknown. /usr/bin/lockf, and its descriptor form, first ship with macOS 15;
+# macOS 13 and 14 have perl's flock, the same lock. A lockf without the
+# descriptor form rejects it as a usage error (64), which falls back too.
+# Callers wait by retrying: lockf's own wait on a descriptor spins a CPU.
+# scripts/uninstall.sh keeps an identical copy of this function.
+flock_fd_now() {
+    local fd="$1"
+    local status=69
+    if [ -x /usr/bin/lockf ]; then
+        /usr/bin/lockf -s -t 0 "${fd}" 2>/dev/null && return 0 || status=$?
+        [ "${status}" -eq 64 ] || return "${status}"
+    fi
+    [ -x /usr/bin/perl ] || return 69
+    /usr/bin/perl -MErrno -MFcntl=:flock -e '
+        open(my $lock, "<&=", $ARGV[0]) or exit 71;
+        flock($lock, LOCK_EX | LOCK_NB) or exit($!{EWOULDBLOCK} ? 75 : 71);
+        exit 0;
+    ' "${fd}" 2>/dev/null
+}
+
+# "<owner uid> <device>:<inode> <type>" of the file open as descriptor 9, or
+# with an argument, of that path without following a symlink. `stat /dev/fd/9`
+# would report the device of devfs instead of the file's.
+install_lock_identity() {
+    if [ "$#" -eq 0 ]; then
+        /usr/bin/stat -f '%u %d:%i %HT' 0<&9 2>/dev/null
+    else
+        /usr/bin/stat -f '%u %d:%i %HT' "$1" 2>/dev/null
+    fi
+}
+
+# Opens INSTALL_LOCK_FILE as descriptor 9 and takes its lock, waiting while
+# another installer holds it. The uninstaller removes a lock file while it
+# holds the lock, so a waiter can acquire a file that no longer has a name,
+# which nobody else can see or lock. Once locked, the path must therefore
+# still name the locked file; otherwise the file now at the path is opened
+# and locked instead. Fails closed when the lock cannot be taken.
+acquire_install_lock() {
+    local dir locked holder_pid
+    local opens=0
+    local announced=0
+    local status=0
+    dir="$(install_lock_dir)" || {
+        echo "❌ Refusing installation: the per-user temporary directory (DARWIN_USER_TEMP_DIR) is unavailable."
+        return 1
+    }
+    INSTALL_LOCK_FILE="${dir}/codex_monitor_install_${INSTALL_UID}.lock"
+    while true; do
+        opens=$((opens + 1))
+        if [ "${opens}" -gt "${INSTALL_LOCK_MAX_OPENS}" ]; then
+            echo "❌ Refusing installation: the install lock file kept changing: ${INSTALL_LOCK_FILE}"
+            return 1
+        fi
+        if [ -L "${INSTALL_LOCK_FILE}" ] || { [ -e "${INSTALL_LOCK_FILE}" ] && [ ! -f "${INSTALL_LOCK_FILE}" ]; }; then
+            echo "❌ Refusing installation: the install lock is not a regular file: ${INSTALL_LOCK_FILE}"
+            return 1
+        fi
+        if ! { exec 9<>"${INSTALL_LOCK_FILE}"; } 2>/dev/null; then
+            echo "❌ Refusing installation: cannot open the install lock: ${INSTALL_LOCK_FILE}"
+            return 1
+        fi
+        while true; do
+            if flock_fd_now 9; then
+                break
+            else
+                status=$?
+            fi
+            if [ "${status}" -ne 75 ]; then
+                exec 9<&-
+                echo "❌ Refusing installation: the install lock cannot be taken (status ${status}); it needs /usr/bin/lockf or /usr/bin/perl."
+                return 1
+            fi
+            if [ "${announced}" -eq 0 ]; then
+                holder_pid="$(/usr/bin/head -n 1 "${INSTALL_LOCK_FILE}" 2>/dev/null || true)"
+                case "${holder_pid}" in
+                    ''|*[!0-9]*) echo "⏳ Another installation is currently in progress. Waiting for it to finish..." ;;
+                    *) echo "⏳ Another installation (PID ${holder_pid}) is currently in progress. Waiting for it to finish..." ;;
+                esac
+                announced=1
+            fi
+            /bin/sleep "${INSTALL_LOCK_POLL_SECONDS}"
+        done
+        locked="$(install_lock_identity)"
+        if [ -n "${locked}" ] && [ "${locked}" = "$(install_lock_identity "${INSTALL_LOCK_FILE}")" ]; then
+            case "${locked}" in
+                "${INSTALL_UID} "*" Regular File") break ;;
+            esac
+            exec 9<&-
+            echo "❌ Refusing installation: the install lock is not this user's regular file: ${INSTALL_LOCK_FILE}"
+            return 1
+        fi
+        exec 9<&-
+        echo "🔁 The install lock file was replaced while waiting; locking the current one..."
+    done
+    [ "${announced}" -eq 0 ] || echo "🔒 Acquired installation lock. Continuing..."
+    # Tell the next waiter who holds the lock. Written through the locked
+    # descriptor: writing by path would create an unlocked file if the path
+    # changed. A longer earlier line may remain after it; only the first line
+    # is read.
+    /usr/bin/printf '%s\n' "$$" >&9 2>/dev/null || true
+}
+# <<< install lock
+
+acquire_install_lock || exit 1
 
 if [ -z "${PROJECT_DIR}" ]; then
     echo "🌐 Remote installation detected. Preparing temporary build environment..."
