@@ -7,7 +7,8 @@
 # behind. Every tests/*.swift file, at any depth, must therefore remove as many
 # status items as it creates. Every call counts, several on one line too. A
 # creation is statusItem( followed by withLength, even on the next line, on any
-# receiver, so an alias of NSStatusBar.system is covered. A removal counts only
+# receiver, so an alias of NSStatusBar.system is covered; a func declaring that
+# name is not one, but calls to it are. A removal counts only
 # as NSStatusBar.system.removeStatusItem(item), whose receiver is never nil; any
 # other use of that name (an alias or optional status bar, a declaration or
 # wrapper, a selector, a method reference), any reference to
@@ -110,6 +111,7 @@ COUNT_CALLS='
 use strict; use warnings;
 local $/; my $c = <STDIN>; $c = "" unless defined $c;
 my $created = () = $c =~ /statusItem\s*\(\s*withLength\b/g;
+$created -= () = $c =~ /\bfunc\s+statusItem\s*\(\s*withLength\b/g;
 my $removed = () = $c =~ /\bNSStatusBar\s*\.system\s*\.removeStatusItem[ \t]*\((?!\s*_\s*:\s*\))/g;
 my $named = () = $c =~ /\bremoveStatusItem\b/g;
 my $references = () = $c =~ /statusItem\s*\(\s*withLength\s*:\s*\)/g;
@@ -310,6 +312,10 @@ expect_violation unapplied-removal "${T}" '  let remove = NSStatusBar.system.rem
     "${T} has 1 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
 expect_violation referenced-creation "${T}" '  let make = NSStatusBar.system.statusItem(withLength:)' \
     "${T} has 1 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
+# A creation in the body of a helper declared with the creator's name counts.
+expect_violation declared-creator-body "${T}" \
+    '  func statusItem(withLength: Int) { _ = NSStatusBar.system.statusItem(withLength: 3) }' \
+    "${T} creates 3 status items and removes 2"
 # A backtick-escaped name is the same name to Swift but not to the patterns, so
 # it fails.
 expect_violation escaped-creation "${T}" '  let other = NSStatusBar.system.`statusItem`(withLength: 7)' \
