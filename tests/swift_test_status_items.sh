@@ -397,6 +397,9 @@ expect_violation capitalized-receiver-creation "${T}" \
 expect_violation bare-name-pattern-creation "${T}" \
     '  switch length { case statusItem(withLength: 1).length: break; default: break }' \
     "${T} creates 3 status items and removes 2"
+expect_violation enum-member-creation "${T}" \
+    '  enum Placeholder { static let cached = NSStatusBar.system.statusItem(withLength: 1) }' \
+    "${T} creates 3 status items and removes 2"
 expect_violation unenclosed-case-creation "${T}" \
     '  func f() {'$'\n''  case .statusItem(withLength: let n)'$'\n''  }' \
     "${T} creates 3 status items and removes 2"
