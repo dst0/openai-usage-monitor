@@ -12,6 +12,7 @@ use super::distribution_recovery_audit_service::DistributionRecoveryAuditService
 use super::distribution_recovery_preflight_service::DistributionRecoveryPreflightService;
 use super::distribution_request::DistributionRequest;
 use super::distribution_shared_auth_guard::DistributionSharedAuthGuard;
+use super::distribution_transaction_error::DistributionTransactionError;
 use super::log_redaction_service::LogRedactionService;
 use crate::models::AccountsFile;
 use crate::{recovery, switcher};
@@ -60,7 +61,7 @@ impl<'a> DistributionDesktopSwitchService<'a> {
         request: &DistributionRequest,
         accounts: &mut AccountsFile,
         operation_id: &str,
-    ) -> Result<DistributionDesktopSwitchOutcome, String> {
+    ) -> Result<DistributionDesktopSwitchOutcome, DistributionTransactionError> {
         let trigger = request.trigger.as_str();
         let target_id = plan
             .target_app_id
@@ -92,8 +93,9 @@ impl<'a> DistributionDesktopSwitchService<'a> {
             Ok(mode) => mode,
             Err(error) => {
                 let _ = DistributionJournal::clear(home);
-                return Err(format!(
-                    "Could not capture ChatGPT window before shutdown: {error}"
+                return Err(DistributionTransactionError::pre_signal(
+                    "WINDOW_CAPTURE_FAILED",
+                    format!("Could not capture ChatGPT window before shutdown: {error}"),
                 ));
             }
         };
@@ -102,11 +104,21 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 Ok(snapshot) => snapshot,
                 Err(error) => {
                     self.lifecycle.abort_recovery();
-                    return Err(error);
+                    self.logger.log_failure(
+                        operation_id,
+                        error.phase,
+                        trigger,
+                        &request.reason,
+                        &format!("Desktop was not signalled: {}", error.message),
+                    );
+                    return Err(error.into());
                 }
             };
         self.recovery_preflight
-            .run(home, &checkpoint, &running_threads, operation_id, request)?;
+            .run(home, &checkpoint, &running_threads, operation_id, request)
+            .map_err(|error| {
+                DistributionTransactionError::pre_signal("RECOVERY_PREFLIGHT_FAILED", error)
+            })?;
         let _ = recovery::arm_automation_cooldown();
 
         if let Err(error) = self.lifecycle.stop_app() {
@@ -120,13 +132,18 @@ impl<'a> DistributionDesktopSwitchService<'a> {
             );
             let message = format!("Could not stop ChatGPT Desktop gracefully: {error}");
             return Err(if error.before_signal {
-                DistributionCheckpointService::rollback_and_clear(home, &checkpoint, message)
+                DistributionTransactionError::pre_signal(
+                    "SHUTDOWN_FAILED",
+                    DistributionCheckpointService::rollback_and_clear(home, &checkpoint, message),
+                )
             } else {
-                message
+                message.into()
             });
         }
         if let Err(error) = DistributionCheckpointService::finalize_after_stop(&running_threads) {
-            return Err(rollback.before_auth_commit(home, accounts, plan, error, false));
+            return Err(rollback
+                .before_auth_commit(home, accounts, plan, error, false)
+                .into());
         }
         let handoff = DistributionSharedAuthGuard::require_desktop_stopped(self.lifecycle)
             .and_then(|_| {
@@ -137,17 +154,23 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 DistributionDesktopAuthHandoffService::preserve_after_stop(accounts, current_id)
             });
         if let Err(error) = handoff {
-            return Err(rollback.before_auth_commit(home, accounts, plan, error, true));
+            return Err(rollback
+                .before_auth_commit(home, accounts, plan, error, true)
+                .into());
         }
         let target_account =
             match DistributionAccountCommitService::find_account(accounts, target_id) {
                 Ok(account) => account,
                 Err(error) => {
-                    return Err(rollback.before_auth_commit(home, accounts, plan, error, false))
+                    return Err(rollback
+                        .before_auth_commit(home, accounts, plan, error, false)
+                        .into())
                 }
             };
         if let Err(error) = journal.update_phase(home, "auth_commit_app") {
-            return Err(rollback.before_auth_commit(home, accounts, plan, error, false));
+            return Err(rollback
+                .before_auth_commit(home, accounts, plan, error, false)
+                .into());
         }
         self.logger.log_action(
             operation_id,
@@ -166,18 +189,22 @@ impl<'a> DistributionDesktopSwitchService<'a> {
             ) {
                 Ok(snapshot) => snapshot,
                 Err(error) => {
-                    return Err(rollback.before_auth_commit(home, accounts, plan, error, false))
+                    return Err(rollback
+                        .before_auth_commit(home, accounts, plan, error, false)
+                        .into())
                 }
             };
         if let Err(error) = journal.update_phase(home, "relaunching_desktop") {
-            return Err(rollback.after_auth_commit(
-                home,
-                accounts,
-                previous_id,
-                &previous_auth,
-                &committed_auth,
-                error,
-            ));
+            return Err(rollback
+                .after_auth_commit(
+                    home,
+                    accounts,
+                    previous_id,
+                    &previous_auth,
+                    &committed_auth,
+                    error,
+                )
+                .into());
         }
         self.logger.log_action(
             operation_id,
@@ -208,9 +235,7 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 Ok(()) => {
                     self.lifecycle.abort_recovery();
                     DistributionJournal::clear(home)?;
-                    Err(format!(
-                        "Desktop switch rolled back after launch failure: {reason}"
-                    ))
+                    Err(format!("Desktop switch rolled back after launch failure: {reason}").into())
                 }
                 Err(rollback_error) => Ok(DistributionDesktopSwitchOutcome {
                     restarted_desktop: false,

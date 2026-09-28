@@ -9,11 +9,11 @@ pub fn sync_active_tokens(accounts_file: &mut AccountsFile) -> Result<bool, Stri
 
 #[allow(dead_code)]
 pub fn run_daemon_tick() -> Result<(), String> {
-    DaemonTickService::run(true)
+    DaemonTickService::run(true, None)
 }
 
 pub fn refresh_quotas_and_status() -> Result<(), String> {
-    DaemonTickService::run(false)
+    DaemonTickService::run(false, None)
 }
 
 pub fn run_daemon_loop() {

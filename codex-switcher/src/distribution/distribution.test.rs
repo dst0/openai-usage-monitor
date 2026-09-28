@@ -1357,6 +1357,9 @@ fn window_access_failure_prevents_auth_change_and_restart() {
         Some("old@example.com:old")
     );
     assert!(env.log_content().contains("phase=WINDOW_CAPTURE_FAILED"));
+    assert!(env
+        .log_content()
+        .contains("status=failed code=transaction_failed pre_signal_phase=WINDOW_CAPTURE_FAILED"));
 }
 
 #[test]
@@ -1607,4 +1610,11 @@ fn failed_post_shutdown_checkpoint_keeps_old_auth_and_relaunches_desktop() {
         load_accounts().unwrap().active_account_id.as_deref(),
         Some("old@example.com:old")
     );
+    // Desktop was stopped, so this failure must not feed the automatic backoff.
+    let log = env.log_content();
+    assert!(
+        log.contains("status=failed code=transaction_failed"),
+        "{log}"
+    );
+    assert!(!log.contains("pre_signal_phase"), "{log}");
 }

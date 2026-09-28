@@ -818,6 +818,12 @@ fn post_stop_checkpoint_error_does_not_launch_with_changed_auth() {
         .execute(DistributionRequest::auto("quota_exhausted"));
 
     assert!(result.is_err());
+    let log = env.log_content();
+    assert!(
+        log.contains("status=failed code=transaction_failed"),
+        "{log}"
+    );
+    assert!(!log.contains("pre_signal_phase"), "{log}");
     assert_eq!(lifecycle.inner.stop_calls.load(Ordering::SeqCst), 1);
     assert_eq!(lifecycle.inner.launch_calls.load(Ordering::SeqCst), 0);
     assert!(!lifecycle.inner.running.load(Ordering::SeqCst));

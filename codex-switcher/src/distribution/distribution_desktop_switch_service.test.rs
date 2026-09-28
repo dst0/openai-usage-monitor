@@ -250,7 +250,13 @@ fn prepare_rollback_failure_retains_distribution_journal_before_desktop_stop() {
         "op_rollback_failure",
     );
     let error = match result {
-        Err(error) => error,
+        Err(error) => {
+            assert_eq!(
+                error.pre_signal_phase(),
+                Some("SHUTDOWN_WINDOW_GUARD_FAILED")
+            );
+            error.into_message()
+        }
         Ok(_) => panic!("prepare must fail"),
     };
     assert!(error.contains("could not be restored"), "{error}");
@@ -278,7 +284,10 @@ fn before_signal_stop_rollback_failure_retains_distribution_journal() {
         "op_rollback_failure",
     );
     let error = match result {
-        Err(error) => error,
+        Err(error) => {
+            assert_eq!(error.pre_signal_phase(), Some("SHUTDOWN_FAILED"));
+            error.into_message()
+        }
         Ok(_) => panic!("stop must fail"),
     };
     assert!(error.contains("could not be restored"), "{error}");
@@ -481,7 +490,10 @@ fn failed_recovery_preflight_keeps_desktop_running_and_restores_prior_checkpoint
         "op_recovery_preflight",
     );
     let error = match result {
-        Err(error) => error,
+        Err(error) => {
+            assert_eq!(error.pre_signal_phase(), Some("RECOVERY_PREFLIGHT_FAILED"));
+            error.into_message()
+        }
         Ok(_) => panic!("failed recovery preflight must reject Desktop shutdown"),
     };
 
@@ -541,4 +553,35 @@ fn failed_preflight_retains_distribution_journal_when_checkpoint_rollback_fails(
     assert!(checkpoint_path.is_dir());
     assert!(DistributionJournal::journal_path(env.home()).exists());
     assert!(lifecycle.running.load(Ordering::SeqCst));
+}
+
+#[test]
+fn unreadable_checkpoint_clears_the_unsignalled_journal() {
+    let (env, mut accounts, plan, mut journal, before_auth, checkpoint_path) =
+        rollback_failure_fixture("checkpoint_capture_failure");
+    std::fs::remove_file(&checkpoint_path).unwrap();
+    std::fs::create_dir(&checkpoint_path).unwrap();
+    let lifecycle = MockAppLifecycle::new(true);
+    let logger = DistributionAuditLogger::default();
+    let result = DistributionDesktopSwitchService::new(&lifecycle, &logger).run(
+        env.home(),
+        &mut journal,
+        &plan,
+        &DistributionRequest::user("synthetic quota interruption"),
+        &mut accounts,
+        "op_checkpoint_capture",
+    );
+    let Err(error) = result else {
+        panic!("an unreadable checkpoint must stop the switch");
+    };
+
+    assert_eq!(error.pre_signal_phase(), Some("RECOVERY_CHECKPOINT_FAILED"));
+    assert_eq!(lifecycle.stop_calls.load(Ordering::SeqCst), 0);
+    assert!(lifecycle.running.load(Ordering::SeqCst));
+    assert!(!DistributionJournal::journal_path(env.home()).exists());
+    assert!(checkpoint_path.is_dir());
+    assert_eq!(read_active_auth_json().unwrap(), before_auth);
+    assert!(env
+        .log_content()
+        .contains("phase=RECOVERY_CHECKPOINT_FAILED trigger=user"));
 }
