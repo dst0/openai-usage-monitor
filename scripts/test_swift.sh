@@ -81,6 +81,7 @@ swiftc -parse-as-library \
     tests/AppDelegateCodexHomeTests.swift \
     tests/FakeLoginItems.swift \
     tests/LaunchAtLoginTests.swift \
+    tests/AutoSwitchSettingsMenuTests.swift \
     tests/AppDelegateTests.swift \
     -o "${TMP_BIN_DIR}/app_delegate_test"
 "${TMP_BIN_DIR}/app_delegate_test"

@@ -228,9 +228,6 @@ public struct MultiAccountSnapshot: Sendable {
   public let resetTime: Date?
   public let resetAfterSeconds: Int?
   public let credits: Int
-  public let autoSwitchEnabled: Bool
-  public let autoSwitchBusinessOnly: Bool
-  public let autoSwitchBusinessPriority: Bool
   public let autoResetWeeklyEnabled: Bool
   public let autoResetWeeklyMinRemainingSeconds: Int
   public let autoResetState: String
@@ -255,9 +252,6 @@ public struct MultiAccountSnapshot: Sendable {
     resetTime: Date?,
     resetAfterSeconds: Int?,
     credits: Int,
-    autoSwitchEnabled: Bool = false,
-    autoSwitchBusinessOnly: Bool = false,
-    autoSwitchBusinessPriority: Bool = false,
     autoResetWeeklyEnabled: Bool = false,
     autoResetWeeklyMinRemainingSeconds: Int = 0,
     autoResetState: String = "disabled",
@@ -281,9 +275,6 @@ public struct MultiAccountSnapshot: Sendable {
     self.resetTime = resetTime
     self.resetAfterSeconds = resetAfterSeconds
     self.credits = credits
-    self.autoSwitchEnabled = autoSwitchEnabled
-    self.autoSwitchBusinessOnly = autoSwitchBusinessOnly
-    self.autoSwitchBusinessPriority = autoSwitchBusinessPriority
     self.autoResetWeeklyEnabled = autoResetWeeklyEnabled
     self.autoResetWeeklyMinRemainingSeconds = max(0, autoResetWeeklyMinRemainingSeconds)
     self.autoResetState = autoResetState

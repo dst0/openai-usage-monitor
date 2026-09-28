@@ -409,9 +409,6 @@ public final class CodexClient: @unchecked Sendable {
     let resetTime = resetTimeStr.flatMap { Self.parseDate($0) }
     let resetAfterSec = json["reset_after_seconds"] as? Int
     let credits = json["credits"] as? Int ?? 0
-    let autoSwitch = json["auto_switch_enabled"] as? Bool ?? false
-    let autoSwitchBizOnly = json["auto_switch_business_only"] as? Bool ?? false
-    let autoSwitchBizPriority = json["auto_switch_business_priority"] as? Bool ?? false
     let autoResetWeekly = json["auto_reset_weekly_enabled"] as? Bool ?? false
     let autoResetMinRemaining = json["auto_reset_weekly_min_remaining_seconds"] as? Int ?? 0
     let autoResetState = json["auto_reset_state"] as? String ?? "disabled"
@@ -491,9 +488,6 @@ public final class CodexClient: @unchecked Sendable {
       resetTime: resetTime,
       resetAfterSeconds: resetAfterSec,
       credits: credits,
-      autoSwitchEnabled: autoSwitch,
-      autoSwitchBusinessOnly: autoSwitchBizOnly,
-      autoSwitchBusinessPriority: autoSwitchBizPriority,
       autoResetWeeklyEnabled: autoResetWeekly,
       autoResetWeeklyMinRemainingSeconds: autoResetMinRemaining,
       autoResetState: autoResetState,
@@ -851,25 +845,33 @@ public final class CodexClient: @unchecked Sendable {
     }
   }
 
-  public func setRestartAppOnSwitch(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
-    DispatchQueue.global(qos: .userInitiated).async {
-      let bin = self.cliExecutableURL.path
+  /// Runs `config` writes one at a time, in the order they were asked for. Each write is its
+  /// own CLI process, so on a concurrent queue two quick menu toggles could save in reverse.
+  private let configQueue = DispatchQueue(label: "com.codex.monitor.config", qos: .userInitiated)
+
+  /// Runs `config` with `arguments` on the config queue and reports on the main queue whether
+  /// the CLI saved them. A missing CLI reports failure.
+  private func runConfig(_ arguments: [String], completion: ((Bool) -> Void)?) {
+    configQueue.async {
       let proc = Process()
-      proc.executableURL = URL(fileURLWithPath: bin)
-      proc.arguments = ["config", "--restart-app-on-switch", enabled ? "true" : "false"]
+      proc.executableURL = URL(fileURLWithPath: self.cliExecutableURL.path)
+      proc.arguments = ["config"] + arguments
+      let success: Bool
       do {
         try proc.run()
         proc.waitUntilExit()
-        let success = proc.terminationStatus == 0
-        DispatchQueue.main.async {
-          completion?(success)
-        }
+        success = proc.terminationStatus == 0
       } catch {
-        DispatchQueue.main.async {
-          completion?(false)
-        }
+        success = false
+      }
+      DispatchQueue.main.async {
+        completion?(success)
       }
     }
+  }
+
+  public func setRestartAppOnSwitch(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
+    runConfig(["--restart-app-on-switch", enabled ? "true" : "false"], completion: completion)
   }
 
   /// The `settings` object of the account registry in this client's Codex home.
@@ -880,85 +882,56 @@ public final class CodexClient: @unchecked Sendable {
     return json["settings"] as? [String: Any]
   }
 
-  public func getRestartAppOnSwitch() -> Bool {
-    registrySettings()?["restart_app_on_switch"] as? Bool ?? false
+  /// The settings the Auto-Switch Settings submenu shows, from one read of the registry so its
+  /// marks never mix two versions of it. Each default is the Rust core's `Settings` default: a
+  /// missing registry or key leaves every automation off and window-bounds preservation on, so
+  /// the menu never shows automatic switching on while the daemon treats it as off.
+  public struct AutoSwitchSettings: Equatable {
+    public let autoSwitchEnabled: Bool
+    public let businessOnly: Bool
+    public let businessPriority: Bool
+    public let restartAppOnSwitch: Bool
+    public let preserveWindowBoundsOnRestart: Bool
+
+    init(registrySettings settings: [String: Any]?) {
+      autoSwitchEnabled = settings?["auto_switch_enabled"] as? Bool ?? false
+      businessOnly = settings?["auto_switch_business_only"] as? Bool ?? false
+      businessPriority = settings?["auto_switch_business_priority"] as? Bool ?? false
+      restartAppOnSwitch = settings?["restart_app_on_switch"] as? Bool ?? false
+      preserveWindowBoundsOnRestart =
+        settings?["preserve_window_bounds_on_restart"] as? Bool ?? true
+    }
+  }
+
+  public func getAutoSwitchSettings() -> AutoSwitchSettings {
+    AutoSwitchSettings(registrySettings: registrySettings())
   }
 
   public func setAutoSwitchEnabled(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
-    DispatchQueue.global(qos: .userInitiated).async {
-      let bin = self.cliExecutableURL.path
-      let proc = Process()
-      proc.executableURL = URL(fileURLWithPath: bin)
-      proc.arguments = ["config", "--auto-switch-enabled", enabled ? "true" : "false"]
-      do {
-        try proc.run()
-        proc.waitUntilExit()
-        let success = proc.terminationStatus == 0
-        DispatchQueue.main.async {
-          completion?(success)
-        }
-      } catch {
-        DispatchQueue.main.async {
-          completion?(false)
-        }
-      }
-    }
+    runConfig(["--auto-switch-enabled", enabled ? "true" : "false"], completion: completion)
   }
 
-  /// Off unless the registry turns it on, like the Rust core's `Settings` default: the menu
-  /// must not show automatic switching on while the daemon treats it as off.
-  public func getAutoSwitchEnabled() -> Bool {
-    registrySettings()?["auto_switch_enabled"] as? Bool ?? false
-  }
-
+  /// Turning it on also turns on automatic switching and turns off business priority: the
+  /// Rust core saves all three together.
   public func setAutoSwitchBusinessOnly(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
-    DispatchQueue.global(qos: .userInitiated).async {
-      let bin = self.cliExecutableURL.path
-      let proc = Process()
-      proc.executableURL = URL(fileURLWithPath: bin)
-      proc.arguments = ["config", "--auto-switch-business-only", enabled ? "true" : "false"]
-      do {
-        try proc.run()
-        proc.waitUntilExit()
-        let success = proc.terminationStatus == 0
-        DispatchQueue.main.async {
-          completion?(success)
-        }
-      } catch {
-        DispatchQueue.main.async {
-          completion?(false)
-        }
-      }
-    }
+    runConfig(["--auto-switch-business-only", enabled ? "true" : "false"], completion: completion)
   }
 
-  public func getAutoSwitchBusinessOnly() -> Bool {
-    registrySettings()?["auto_switch_business_only"] as? Bool ?? false
-  }
-
+  /// Turning it on also turns on automatic switching and turns off business-only: the Rust
+  /// core saves all three together.
   public func setAutoSwitchBusinessPriority(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
-    DispatchQueue.global(qos: .userInitiated).async {
-      let bin = self.cliExecutableURL.path
-      let proc = Process()
-      proc.executableURL = URL(fileURLWithPath: bin)
-      proc.arguments = ["config", "--auto-switch-business-priority", enabled ? "true" : "false"]
-      do {
-        try proc.run()
-        proc.waitUntilExit()
-        let success = proc.terminationStatus == 0
-        DispatchQueue.main.async {
-          completion?(success)
-        }
-      } catch {
-        DispatchQueue.main.async {
-          completion?(false)
-        }
-      }
-    }
+    runConfig(
+      ["--auto-switch-business-priority", enabled ? "true" : "false"], completion: completion)
   }
 
-  public func getAutoSwitchBusinessPriority() -> Bool {
-    registrySettings()?["auto_switch_business_priority"] as? Bool ?? false
+  /// Whether a Desktop restart puts its window back where it was. Turning it off skips only
+  /// that geometry: the shutdown window checks still run.
+  public func setPreserveWindowBoundsOnRestart(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
+    runConfig(["--preserve-window-bounds", enabled ? "true" : "false"], completion: completion)
+  }
+
+  public func getPreserveWindowBoundsOnRestart() -> Bool {
+    getAutoSwitchSettings().preserveWindowBoundsOnRestart
   }
 
   /// Configures the weekly reset-credit policy in one CLI invocation so the
@@ -970,28 +943,11 @@ public final class CodexClient: @unchecked Sendable {
     completion: ((Bool) -> Void)? = nil
   ) {
     let safeHours = min(167, max(0, minRemainingHours))
-    DispatchQueue.global(qos: .userInitiated).async {
-      let bin = self.cliExecutableURL.path
-      let proc = Process()
-      proc.executableURL = URL(fileURLWithPath: bin)
-      proc.arguments = [
-        "config",
+    runConfig(
+      [
         "--auto-reset-weekly-enabled", enabled ? "true" : "false",
         "--auto-reset-weekly-min-hours", String(safeHours),
-      ]
-      do {
-        try proc.run()
-        proc.waitUntilExit()
-        let success = proc.terminationStatus == 0
-        DispatchQueue.main.async {
-          completion?(success)
-        }
-      } catch {
-        DispatchQueue.main.async {
-          completion?(false)
-        }
-      }
-    }
+      ], completion: completion)
   }
 
   public func getAutoResetWeeklyConfiguration() -> (enabled: Bool, minRemainingHours: Int) {

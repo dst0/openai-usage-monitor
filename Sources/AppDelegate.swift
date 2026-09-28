@@ -68,9 +68,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
   internal var lastUpdatedMenuItem: NSMenuItem?
   internal var updateCLIItem: NSMenuItem?
   internal var stackPercentagesItem: NSMenuItem?
+  /// "⚙️ Auto-Switch Settings" and the checkmark items of its submenu.
+  internal var autoSwitchSettingsItem: NSMenuItem?
   internal var autoSwitchItem: NSMenuItem?
   internal var autoSwitchBusinessOnlyItem: NSMenuItem?
   internal var autoSwitchBusinessPriorityItem: NSMenuItem?
+  internal var restartAppOnSwitchItem: NSMenuItem?
+  internal var preserveWindowBoundsItem: NSMenuItem?
   internal var autoResetWeeklyItem: NSMenuItem?
   internal var autoResetWeeklyStatusItem: NSMenuItem?
   internal var autoResetWeeklyThresholdItems: [NSMenuItem] = []
