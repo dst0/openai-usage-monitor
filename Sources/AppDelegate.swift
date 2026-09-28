@@ -3,6 +3,7 @@ import Foundation
 
 public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
   public static let refreshIntervalKey = "codex_refresh_interval"
+  public static let stackPercentagesKey = "stackPercentages"
   public static let defaultMenuWidth: CGFloat = 440
 
   public var statusItem: NSStatusItem!
@@ -34,15 +35,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
   internal var isCLIUpdateAvailable: Bool = false
   internal var availableCLIVersion: String? = nil
 
-  internal var refreshInterval: TimeInterval = {
-    let saved = UserDefaults.standard.double(forKey: AppDelegate.refreshIntervalKey)
-    return saved > 0 ? saved : 60.0  // 1 minute default
-  }()
+  internal var refreshInterval: TimeInterval
 
   internal let client: CodexClient
+  /// Menu preferences. The app passes the standard store; tests pass a suite of their own.
+  internal let defaults: UserDefaults
   internal var quotaRefreshOverride: ((@escaping (MultiAccountSnapshot?) -> Void) -> Void)?
   internal let singleGuard = SingleInstanceGuard()
-  internal let autoLaunchManager = AutoLaunchManager.shared
+  internal let autoLaunchManager: AutoLaunchManager
   internal var ownsBackgroundAutomation = false
 
   internal var accountsSeparatorTop: NSMenuItem?
@@ -68,14 +68,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     return fmt
   }()
 
-  public override init() {
-    self.client = CodexClient.shared
+  public override convenience init() {
+    self.init(
+      client: CodexClient.shared, defaults: UserDefaults.standard,
+      autoLaunchManager: AutoLaunchManager.shared)
+  }
+
+  internal init(client: CodexClient, defaults: UserDefaults, autoLaunchManager: AutoLaunchManager) {
+    self.client = client
+    self.defaults = defaults
+    self.autoLaunchManager = autoLaunchManager
+    let saved = defaults.double(forKey: AppDelegate.refreshIntervalKey)
+    self.refreshInterval = saved > 0 ? saved : 60.0  // 1 minute default
     super.init()
   }
 
-  internal init(client: CodexClient) {
-    self.client = client
-    super.init()
+  /// Whether the status bar stacks its two percentages; stacked until the user turns it off.
+  internal var stacksPercentages: Bool {
+    defaults.object(forKey: AppDelegate.stackPercentagesKey) as? Bool ?? true
   }
 
   // MARK: - Lifecycle

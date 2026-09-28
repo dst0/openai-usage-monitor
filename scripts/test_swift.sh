@@ -19,6 +19,9 @@ cd "${REPO_DIR}"
 echo "👉 Running Swift module-cache path tests..."
 bash tests/swift_module_cache_path.sh
 
+echo "👉 Checking that Swift tests keep their own defaults store..."
+bash tests/swift_test_defaults_isolation.sh
+
 echo "👉 [1/2] Running Screen Contrast, Vector Icons & Stacked Percentage Tests..."
 swiftc -parse-as-library \
     Sources/StatusBarStyle.swift \
@@ -62,6 +65,8 @@ swiftc -parse-as-library \
     Sources/AppDelegate+AutoReset.swift \
     Sources/AppDelegate+SettingsActions.swift \
     Sources/AppDelegate+WindowBounds.swift \
+    tests/TestPreferencesSuite.swift \
+    tests/AppDelegatePreferencesTests.swift \
     tests/AppDelegateTests.swift \
     -o "${TMP_BIN_DIR}/app_delegate_test"
 "${TMP_BIN_DIR}/app_delegate_test"

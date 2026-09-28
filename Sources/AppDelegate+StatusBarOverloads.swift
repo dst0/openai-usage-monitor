@@ -78,28 +78,4 @@ extension AppDelegate {
       stackPercentages: stackPercentages
     )
   }
-
-  /// Backward compatibility overload for previous 3-tuple session arguments.
-  public static func buildStatusBarAttributedString(
-    icon: NSImage?,
-    appSession: (pct: String, color: NSColor, resetDesc: String)?,
-    cliSession: (pct: String, color: NSColor, resetDesc: String),
-    accounts: [AccountQuota],
-    isScreenActive: Bool = true
-  ) -> NSAttributedString {
-    let appTuple:
-      (fiveHPct: String, fiveHColor: NSColor, weeklyPct: String, weeklyColor: NSColor)? =
-        appSession.map { ($0.pct, $0.color, $0.pct, $0.color) }
-    let cliTuple = (cliSession.pct, cliSession.color, cliSession.pct, cliSession.color)
-    let stackPref = UserDefaults.standard.object(forKey: "stackPercentages") as? Bool ?? true
-    return buildStatusBarAttributedString(
-      icon: icon,
-      appSession: appTuple,
-      cliSession: cliTuple,
-      accounts: accounts,
-      isScreenActive: isScreenActive,
-      useQuotaIcons: true,
-      stackPercentages: stackPref
-    )
-  }
 }
