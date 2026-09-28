@@ -5,20 +5,23 @@
 # menu bar until removeStatusItem(_:) takes it out or the test binary exits, and
 # nothing can list status items, so no runtime check can find one a test left
 # behind. Every tests/*.swift file, at any depth, must therefore remove as many
-# status items as it creates. Every call counts, several on one line too, and
-# any receiver counts, so an alias of NSStatusBar.system is covered. A creation
-# is statusItem( followed by withLength, even on the next line. A removal counts
-# only as a direct member call, .removeStatusItem(item); any other use of that
-# name (a declaration or wrapper, a selector, a method reference) and any
-# reference to statusItem(withLength:) fails the check, because a wrapper called
-# as self.removeStatusItem(item) need not remove anything. So does any of them
+# status items as it creates. Every call counts, several on one line too. A
+# creation is statusItem( followed by withLength, even on the next line, on any
+# receiver, so an alias of NSStatusBar.system is covered. A removal counts only
+# as NSStatusBar.system.removeStatusItem(item), whose receiver is never nil; any
+# other use of that name (an alias or optional status bar, a declaration or
+# wrapper, a selector, a method reference) and any reference to
+# statusItem(withLength:) fails the check, because such a call may not run or
+# may not remove anything. So does any of them
 # inside #if: the check cannot tell which branch is compiled, and a removal in
 # an inactive one never runs. Text in comments and
 # literals does not count: STRIP_SWIFT removes // and nested /* */ comments,
 # plain, multi-line, and raw strings, and extended regex literals (#/.../#)
-# first, and keeps the code of string interpolations. The check counts calls
-# and cannot pair them: review still checks that each removal follows its
-# item's last use.
+# first, and keeps the code of string interpolations. The check reads text:
+# it trusts that NSStatusBar is AppKit's, and it does not follow control flow,
+# so a removal that a condition, an early return, a throw, or an uncalled
+# closure skips still counts. It counts calls and cannot pair them: review
+# checks that each removal runs after its item's last use.
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && /bin/pwd -P)"
@@ -97,14 +100,14 @@ print code(0);
 
 # COUNT_CALLS: a perl program that reads STRIP_SWIFT output and prints
 # "created removed misused guarded": misused counts each removeStatusItem that
-# is not a .removeStatusItem(item) call and each statusItem(withLength:)
+# is not a NSStatusBar.system.removeStatusItem(item) call and each statusItem(withLength:)
 # reference; guarded counts status-item calls and references inside #if, whose
 # branch may not be compiled.
 COUNT_CALLS='
 use strict; use warnings;
 local $/; my $c = <STDIN>; $c = "" unless defined $c;
 my $created = () = $c =~ /statusItem\s*\(\s*withLength\b/g;
-my $removed = () = $c =~ /\.removeStatusItem[ \t]*\((?!\s*_\s*:\s*\))/g;
+my $removed = () = $c =~ /\bNSStatusBar\s*\.system\s*\.removeStatusItem[ \t]*\((?!\s*_\s*:\s*\))/g;
 my $named = () = $c =~ /\bremoveStatusItem\b/g;
 my $references = () = $c =~ /statusItem\s*\(\s*withLength\s*:\s*\)/g;
 my @marks;
@@ -158,7 +161,7 @@ check_tree() {
         [ "${guarded}" -eq 0 ] \
             || violations+="${rel} has ${guarded} status-item calls inside #if; make and remove status items outside conditional compilation"$'\n'
         [ "${misused}" -eq 0 ] \
-            || violations+="${rel} has ${misused} uses of removeStatusItem or statusItem(withLength:) that are not direct calls; call both directly"$'\n'
+            || violations+="${rel} has ${misused} uses of removeStatusItem or statusItem(withLength:) that are not direct calls; remove with NSStatusBar.system.removeStatusItem(item)"$'\n'
         [ "${created}" -eq "${removed}" ] \
             || violations+="${rel} creates ${created} status items and removes ${removed}; remove each after its last use"$'\n'
     done < <(printf '%s\n' "${files}" | /usr/bin/sort)
@@ -210,6 +213,8 @@ expect_accepted split-calls \
     '  let split = NSStatusBar.system.statusItem('$'\n''    withLength: 8)'$'\n''  NSStatusBar.system'$'\n''    .removeStatusItem(split)'
 expect_accepted after-closed-conditions \
     '#if DEBUG'$'\n''  let debug = true'$'\n''#endif'$'\n''#if os(macOS)'$'\n''#else'$'\n''#endif'$'\n''  let late = NSStatusBar.system.statusItem(withLength: 9)'$'\n''  NSStatusBar.system.removeStatusItem(late)'
+expect_accepted qualified-removal \
+    '  let late = NSStatusBar.system.statusItem(withLength: 9); AppKit.NSStatusBar.system.removeStatusItem(late)'
 expect_accepted similar-names '  cache.removeStatusItemFromCache(id); let words = #/[a-z]+/#; let label = statusItemTitle(id)'
 
 T=tests/AppDelegateTests.swift
@@ -294,7 +299,7 @@ expect_violation aliased-removal "${T}" "${LEAK}; let bar = NSStatusBar.system; 
 # called through self need not remove anything.
 expect_violation wrapper-removal "${T}" \
     "${LEAK}; func removeStatusItem(_ item: NSStatusItem) {}; self.removeStatusItem(kept)" \
-    "${T} has 1 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
+    "${T} has 2 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
 expect_violation unapplied-removal "${T}" '  let remove = NSStatusBar.system.removeStatusItem' \
     "${T} has 1 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
 expect_violation referenced-creation "${T}" '  let make = NSStatusBar.system.statusItem(withLength:)' \
