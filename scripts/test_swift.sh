@@ -17,7 +17,7 @@ trap 'rm -rf "${TMP_BIN_DIR}"' EXIT
 cd "${REPO_DIR}"
 
 echo "👉 Running Swift module-cache path tests..."
-bash tests/swift_module_cache_path.sh
+/bin/bash tests/swift_module_cache_path.sh
 
 echo "👉 [1/2] Running Screen Contrast, Vector Icons & Stacked Percentage Tests..."
 swiftc -parse-as-library \

@@ -111,13 +111,21 @@ The installation script checks and guides you through the prerequisites automati
    `CLANG_MODULE_CACHE_PATH` to a writable directory. Otherwise repair or select
    matching Command Line Tools and rerun the test. Do not publish or reinstall a
    partially built app bundle.
-   If you set `CLANG_MODULE_CACHE_PATH`, the test and install scripts use its
-   physical path (`/tmp/x` becomes `/private/tmp/x`). They create the
-   directory if it is missing and resolve a relative path from where you ran
-   them. They stop if the path is not a directory or is an empty one they
-   cannot write. Reusing a module cache through a different path spelling from
-   the one that built it fails, so give other Swift or Clang runs that share
-   the cache the physical path too.
+   A module cache works only at the exact path that built it: reusing it
+   through another spelling of its directory (`/tmp/x` for `/private/tmp/x`)
+   or after copying or moving it fails to compile, with an error that depends
+   on the Swift version. So if you set `CLANG_MODULE_CACHE_PATH`, the test and
+   install scripts create the directory if it is missing, resolve it to its
+   physical path (a relative path from where you ran them), and compile into
+   their own subdirectory of it, `codex-monitor-swift-<checksum of that
+   path>`. Any spelling of the directory reaches the same subdirectory, a copy
+   or move starts a new one, and the rest of the directory is left to your
+   other tools. Delete old `codex-monitor-swift-*` directories to reclaim
+   space. The scripts stop if the path is not a directory, contains a newline,
+   or starts with an unexpanded `~`, or if the subdirectory is not a plain
+   directory they can write. Other Swift or Clang runs that share a cache among
+   themselves must use one spelling of it, and a new directory after a copy or
+   move.
 3. **Rust & Cargo** (for building the ultra-lightweight CLI core):
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh

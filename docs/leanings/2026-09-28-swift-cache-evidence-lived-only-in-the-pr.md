@@ -1,0 +1,26 @@
+# 2026-09-28 — Evidence for the module-cache records lived only in PR #27
+
+- **Status:** Resolved
+- **Task/context:** Review of the two records merged with PR #27: [2026-09-28 — Swift module cache fails only when reused through another path spelling](2026-09-28-swift-cache-spelling-mismatch-isolated.md) and [2026-09-28 — Swift's "SDK is not supported" error came from an unwritable module cache](2026-09-28-swift-sdk-not-supported-was-unwritable-module-cache.md). Found on branch `fix/swift-cache-helper-hardening`.
+- **Unexpected observation or failure:** The first record ends its end-to-end check with "Exact results are in the PR". The second says the default SDK passed `./scripts/test_swift.sh` with "runs listed in the PR". `AGENTS.md` requires durable knowledge to live in the repository, not only in a PR description.
+- **Evidence:** Copied from the PR #27 description, sanitized. All local runs used macOS 27.2 (`26B5091g`), Command Line Tools `27.0.0.0.1788430756`, and Swift 6.4 (`swiftlang-6.4.0.34.1`), on branch `docs/swift-module-cache-cause` from `f88f8ca`.
+  - The matrix and the CI signature are already in the first record, including the three CI runs (36344882750, 36345754465, 36345896177). The PR table's cell E (default SDK, no `SDKROOT`, a writable cache built through `/private/tmp`) passed the four installer compiles 3 of 3 times, as the second record states.
+  - End to end, with one warm cache built through `/private/tmp` by the pre-fix `./scripts/test_swift.sh` (snapshot of `f88f8ca`): the pre-fix script through `/tmp` failed with rc 1, the duplicate `_DarwinFoundation1`, and signal 11. The fixed script through `/tmp` passed.
+  - `SDKROOT=…/MacOSX26.5.sdk CLANG_MODULE_CACHE_PATH=/tmp/<warm cache built as /private/tmp> ./scripts/test_swift.sh` passed with the fix, printing `Using the physical Swift module cache path …`. The pre-fix script failed the same run.
+  - `CLANG_MODULE_CACHE_PATH=<new scratch dir> ./scripts/test_swift.sh` with the default SDK and no `SDKROOT` passed 3 times. A fourth run, started in parallel with another suite, failed on the shared-defaults hazard in [2026-09-28 — Concurrent Swift suite runs share the AppDelegate test's defaults](2026-09-28-concurrent-swift-suites-share-test-defaults.md). The final head also passed with the default SDK and the variable spelled through `/tmp`.
+  - Regression test before the fix: `FAIL: scripts/install.sh: does not source scripts/swift_module_cache.sh`. Its stub check against the pre-fix `test_swift.sh` failed with `expected '…/real/e2e', got '…/alias/e2e'`. Its `-` and read-only cases failed against the first version of the helper.
+  - A time-boxed critic ran mutations on scratch copies. The test caught a helper returning 0 on failure, a logical instead of physical `pwd`, a removed writability check, and a misplaced call.
+  - The matrix harness, per-run logs, and results were archived outside the repository with Brotli quality 6. They are not reproduced here.
+- **Approaches tried:**
+  - **Attempt:** Leave the pointer to the PR.
+    - **Outcome:** Rejected.
+    - **Why:** A PR description can be edited and is not part of a checkout. The records would not stand on their own.
+  - **Attempt:** Rewrite the two records in place.
+    - **Outcome:** Rejected.
+    - **Why:** The pointer is incomplete, not false, so the `Corrected` exception does not apply. Records are append-only.
+- **Root cause:** Evidence was written once, into the PR description, and the records pointed there instead of repeating the decisive numbers.
+- **Resolution:** This record holds that evidence. [2026-09-28 — Resolving the module cache path broke caches warmed through an alias; the scripts now own a path-keyed subdirectory](2026-09-28-swift-cache-helper-owns-a-path-keyed-subdirectory.md) records its own results in full and adds the per-toolchain failure signatures.
+- **Verification:** Every result above appears in the PR #27 description as merged in `9482cc8`. No new runs were needed for this record.
+- **Prevention/follow-up:** When a record cites results, put the commands, counts, and first error lines in the record, and use the PR only as a pointer to the same content.
+- **Reusable learning:** A learning record must stand alone in a checkout. Never end one with "details are in the PR".
+- **References:** PR #27, commit `9482cc8`, [2026-09-28 — Swift module cache fails only when reused through another path spelling](2026-09-28-swift-cache-spelling-mismatch-isolated.md), [2026-09-28 — Swift's "SDK is not supported" error came from an unwritable module cache](2026-09-28-swift-sdk-not-supported-was-unwritable-module-cache.md).
