@@ -1,0 +1,22 @@
+# 2026-09-28 — Advice to rename a test helper's suffix would have hidden it from the locked-cargo scan
+
+- **Status:** Resolved
+- **Task/context:** PR #31 made every tracked `*.sh` under `tests/` a required shell test. For the resulting open limit, that a sourced helper or fixture there would be required as a test too, `AGENTS.md` advised keeping such scripts out of `tests/` or giving them another suffix.
+- **Unexpected observation or failure:** The second option escapes another rule. `repository_scripts_run_cargo_locked` in `codex-switcher/tests/ci_workflow_policy.rs` checks only tracked `*.sh` files for cargo commands without `--locked`. A helper renamed to `.bash` could build against a re-resolved dependency graph unnoticed.
+- **Evidence:** In a scratch run, `tests/probe_helper.bash` and `probe_helper_elsewhere.sh` were added with intent-to-add (`git add -N`), each containing `cargo build`. `cargo test --locked --test ci_workflow_policy repository_scripts_run_cargo_locked` reported only `probe_helper_elsewhere.sh: line 1: `cargo build` must pass `--locked` ...`; the `.bash` helper passed. Both files were removed afterwards.
+- **Approaches tried:**
+  - **Attempt:** Exempt a helper directory such as `tests/lib/` from the shell-test rule.
+    - **Outcome:** Did not work.
+    - **Why:** A line reader cannot tell a helper from a test, so a test placed there would never run and nothing would report it.
+  - **Attempt:** Accept a helper when a gated test sources it by a literal path.
+    - **Outcome:** Did not work.
+    - **Why:** Whether a `source` line runs depends on bash control flow, such as an enclosing `if` or a function that is never called. PR #31 rejected parsing that for the same reason.
+  - **Attempt:** Keep the rule failing closed. Make its message tell the author of a script that no step mentions to move a helper out of `tests/`, keeping the `.sh` suffix. Correct the `AGENTS.md` advice.
+    - **Outcome:** Worked.
+    - **Why:** The only cost of the rule is a false positive with a clear fix. The fix no longer invites adding a CI step that runs a helper on its own, and no longer creates a scan gap.
+- **Root cause:** Two policy rules chose their files by the same `.sh` suffix, and advice written for one did not consider the other.
+- **Resolution:** `shell_test_gate.rs` adds the move-it hint only when no workflow step mentions the script; a near miss is a test with a broken gate and gets no hint. `AGENTS.md` now says to keep helpers and fixtures outside `tests/` and still named `*.sh`.
+- **Verification:** `only_a_script_no_step_mentions_is_told_it_may_be_a_misplaced_helper` in `shell_test_gate.test.rs` checks both the hint and its absence on a near miss. `cargo test --locked --test ci_workflow_policy` passed.
+- **Prevention/follow-up:** None open. A future rule that selects files by suffix should be checked against the rules that already do.
+- **Reusable learning:** Before advising a rename to get out of one suffix-based rule, check which other rules select files by that suffix. Prefer moving the file to a directory the first rule does not cover.
+- **References:** `codex-switcher/tests/ci_workflow_policy/shell_test_gate.rs`, `codex-switcher/tests/ci_workflow_policy.rs` (`repository_scripts_run_cargo_locked`), `AGENTS.md` CI paragraph, [2026-09-28 — The default step condition hid later test results in a required job](2026-09-28-default-step-condition-hid-later-ci-test-results.md).

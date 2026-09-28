@@ -11,11 +11,16 @@ const REQUIRED_JOB_FORBIDDEN_KEYS: [&str; 3] = ["if", "strategy", "continue-on-e
 
 /// Step conditions under which a step runs whenever its job can still pass,
 /// so the condition cannot skip the step that does the checking.
-const ALLOWED_STEP_CONDITIONS: [&str; 4] = [
+/// `!cancelled()` skips a step only in a cancelled run, which never reports
+/// success. Its bare form is reachable only quoted, because a leading `!` is a
+/// YAML tag that `yaml_limits.rs` rejects.
+const ALLOWED_STEP_CONDITIONS: [&str; 6] = [
     "always()",
     "success()",
+    "!cancelled()",
     "${{ always() }}",
     "${{ success() }}",
+    "${{ !cancelled() }}",
 ];
 
 /// Required branch-protection contexts must each name exactly one
