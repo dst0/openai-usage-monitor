@@ -832,12 +832,14 @@ fn changed_target_binding_during_geometry_restore_blocks_recovery() {
     let request = DistributionRequest::auto("quota_exhausted");
     let targets = vec!["captured-task".to_string()];
     let logger = DistributionAuditLogger::new(env.home().join("audit.log"));
+    let bound = super::desktop_app_session::DesktopAppSession::new("target-account");
 
     let result = DistributionRecoveryAuditService::restore_and_recover(
         &logger,
         &mock,
         RecoveryAuditContext {
             pid: 9999,
+            bound: &bound,
             targets: &targets,
             capture_mode: WindowCaptureMode::Captured,
             operation_id: "binding-changed",
