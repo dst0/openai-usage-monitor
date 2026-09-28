@@ -42,19 +42,11 @@ struct CodexClientIdentityTests {
     require(snapshot.appAccount == nil, "missing App identity must not fall back to CLI")
     require(!snapshot.autoSwitchEnabled, "an unspecified snapshot must leave auto-switch off")
 
-    let previousHome = getenv("CODEX_HOME").map { String(cString: $0) }
-    let testHome = FileManager.default.temporaryDirectory
-      .appendingPathComponent("codex-cli-identity-\(UUID().uuidString)")
-    try! FileManager.default.createDirectory(at: testHome, withIntermediateDirectories: true)
-    defer {
-      if let previousHome {
-        setenv("CODEX_HOME", previousHome, 1)
-      } else {
-        unsetenv("CODEX_HOME")
-      }
-      try? FileManager.default.removeItem(at: testHome)
-    }
-    setenv("CODEX_HOME", testHome.path, 1)
+    // Every client here reads a Codex home of this run, never the live ~/.codex.
+    let identityHome = TestCodexHome(purpose: "cli-identity")
+    defer { identityHome.tearDown() }
+    let testHome = identityHome.url
+    let client = identityHome.client()
     let staleCliCache: [String: Any] = [
       "active_account_id": "missing-account",
       "five_hour_percentage": 0.0,
@@ -65,7 +57,7 @@ struct CodexClientIdentityTests {
     ]
     let staleCliData = try! JSONSerialization.data(withJSONObject: staleCliCache)
     try! staleCliData.write(to: testHome.appendingPathComponent("usage-status.json"))
-    let staleCliSnapshot = CodexClient().loadCachedSnapshot()
+    let staleCliSnapshot = client.loadCachedSnapshot()
     require(staleCliSnapshot != nil, "the synthetic status cache must load")
     require(staleCliSnapshot?.cliAccount == nil, "unknown CLI identity must not borrow a cached account")
 
@@ -83,7 +75,7 @@ struct CodexClientIdentityTests {
     try! Data("{}".utf8).write(to: testHome.appendingPathComponent("auth.json"))
     try! FileManager.default.setAttributes(
       [.posixPermissions: 0o600], ofItemAtPath: testHome.appendingPathComponent("auth.json").path)
-    require(CodexClient().loadCachedSnapshot()?.cliAccount == nil,
+    require(client.loadCachedSnapshot()?.cliAccount == nil,
       "a cache bound to an older auth file must not display its CLI quota")
     var authInfo = stat()
     let authPath = testHome.appendingPathComponent("auth.json").path
@@ -92,10 +84,10 @@ struct CodexClientIdentityTests {
       "\(authInfo.st_dev):\(authInfo.st_ino):\(authInfo.st_mtimespec.tv_sec):\(authInfo.st_mtimespec.tv_nsec):\(authInfo.st_size)"
     try! JSONSerialization.data(withJSONObject: oldCliCache)
       .write(to: testHome.appendingPathComponent("usage-status.json"))
-    require(CodexClient().loadCachedSnapshot()?.cliAccount?.id == cli.id,
+    require(client.loadCachedSnapshot()?.cliAccount?.id == cli.id,
       "a cache bound to the current auth file must display the verified CLI quota")
     try! Data("{ }".utf8).write(to: testHome.appendingPathComponent("auth.json"), options: .atomic)
-    require(CodexClient().loadCachedSnapshot()?.cliAccount == nil,
+    require(client.loadCachedSnapshot()?.cliAccount == nil,
       "replacing auth after caching must invalidate the CLI quota")
 
     let now = Date()
@@ -190,24 +182,16 @@ struct CodexClientIdentityTests {
     require(CodexClient.readPrivateSessionMarkerData(at: privateMarkerURL) == nil,
       "a world-readable marker must not be read")
 
-    let temporaryHome = FileManager.default.temporaryDirectory
-      .appendingPathComponent("codex-status-default-\(UUID().uuidString)")
-    try! FileManager.default.createDirectory(
-      at: temporaryHome, withIntermediateDirectories: false)
-    let previousStatusHome = getenv("CODEX_HOME").map { String(cString: $0) }
-    setenv("CODEX_HOME", temporaryHome.path, 1)
-    defer {
-      if let previousStatusHome { setenv("CODEX_HOME", previousStatusHome, 1) }
-      else { unsetenv("CODEX_HOME") }
-      try? FileManager.default.removeItem(at: temporaryHome)
-    }
+    let statusHome = TestCodexHome(purpose: "status-default")
+    defer { statusHome.tearDown() }
+    let statusClient = statusHome.client()
 
     func cachedAutoSwitch(_ value: Any?) -> Bool? {
       var payload: [String: Any] = ["timestamp": formatter.string(from: now), "accounts": []]
       if let value { payload["auto_switch_enabled"] = value }
       let data = try! JSONSerialization.data(withJSONObject: payload)
-      try! data.write(to: CodexClient.statusFileURL)
-      return CodexClient().loadCachedSnapshot()?.autoSwitchEnabled
+      try! data.write(to: statusClient.statusFileURL)
+      return statusClient.loadCachedSnapshot()?.autoSwitchEnabled
     }
     require(cachedAutoSwitch(nil) == false, "missing cache flag must leave auto-switch off")
     require(cachedAutoSwitch("true") == false, "malformed cache flag must leave auto-switch off")

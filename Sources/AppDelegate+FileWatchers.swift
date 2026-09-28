@@ -6,7 +6,7 @@ extension AppDelegate {
 
   internal func startStatusFileWatcher() {
     stopStatusFileWatcher()
-    let statusPath = CodexClient.statusFileURL.path
+    let statusPath = client.statusFileURL.path
     guard FileManager.default.fileExists(atPath: statusPath) else { return }
 
     let fd = open(statusPath, O_EVTONLY)
@@ -61,7 +61,7 @@ extension AppDelegate {
 
   internal func startDesktopSessionFileWatcher() {
     stopDesktopSessionFileWatcher()
-    let markerPath = CodexClient.desktopAppSessionURL.path
+    let markerPath = client.desktopAppSessionURL.path
     guard FileManager.default.fileExists(atPath: markerPath) else {
       scheduleDesktopSessionWatcherRetry()
       return
@@ -128,7 +128,7 @@ extension AppDelegate {
 
   internal func startAuthFileWatcher() {
     stopAuthFileWatcher()
-    let authPath = CodexClient.codexHome.appendingPathComponent("auth.json").path
+    let authPath = client.authFileURL.path
     guard FileManager.default.fileExists(atPath: authPath) else {
       authRestartWorkItem?.cancel()
       let retryItem = DispatchWorkItem { [weak self] in

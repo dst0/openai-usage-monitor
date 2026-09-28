@@ -1,21 +1,19 @@
 import AppKit
 import Foundation
 
+/// The Monitor's single-instance lock, `monitor.lock` in the Codex home.
+///
+/// Building a guard only names the lock. `tryAcquire()`, which the app calls once at launch,
+/// creates the Codex home if it is missing and then the lock file, so constructing an
+/// `AppDelegate` touches nothing on disk.
 public final class SingleInstanceGuard {
+  public static let lockFileName = "monitor.lock"
+
   private var lockFd: Int32 = -1
   public let lockPath: String
 
-  public static var defaultLockPath: String {
-    let home =
-      (ProcessInfo.processInfo.environment["HOME"]).flatMap { $0.isEmpty ? nil : $0 }
-      ?? FileManager.default.homeDirectoryForCurrentUser.path
-    let codexDir = (home as NSString).appendingPathComponent(".codex")
-    try? FileManager.default.createDirectory(atPath: codexDir, withIntermediateDirectories: true)
-    return (codexDir as NSString).appendingPathComponent("monitor.lock")
-  }
-
-  public init(lockPath: String = SingleInstanceGuard.defaultLockPath) {
-    self.lockPath = lockPath
+  public init(codexHome: URL) {
+    self.lockPath = codexHome.appendingPathComponent(Self.lockFileName, isDirectory: false).path
   }
 
   public func tryAcquire() -> Bool {

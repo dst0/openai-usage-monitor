@@ -37,11 +37,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
   internal var refreshInterval: TimeInterval
 
+  /// Monitor state is read and watched only in `client.codexHome`. The app passes the shared
+  /// client on the live home; tests pass a client on a temporary one.
   internal let client: CodexClient
   /// Menu preferences. The app passes the standard store; tests pass a suite of their own.
   internal let defaults: UserDefaults
   internal var quotaRefreshOverride: ((@escaping (MultiAccountSnapshot?) -> Void) -> Void)?
-  internal let singleGuard = SingleInstanceGuard()
+  internal let singleGuard: SingleInstanceGuard
   internal let autoLaunchManager: AutoLaunchManager
   internal var ownsBackgroundAutomation = false
 
@@ -78,6 +80,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     self.client = client
     self.defaults = defaults
     self.autoLaunchManager = autoLaunchManager
+    self.singleGuard = SingleInstanceGuard(codexHome: client.codexHome)
     let saved = defaults.double(forKey: AppDelegate.refreshIntervalKey)
     self.refreshInterval = saved > 0 ? saved : 60.0  // 1 minute default
     super.init()

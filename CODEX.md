@@ -112,7 +112,8 @@ re-enable auto-switch or restore an old refresh token.
 Interactive setup propagates registry and active-auth errors and uses a private
 random login directory. The derived status cache copies current registry
 switch settings while holding the same lock; an absent or malformed Swift cache
-flag defaults to auto-switch off. Settings sync leaves a missing cache for the
+flag defaults to auto-switch off, and so does a registry without the setting
+when the menu is built. Settings sync leaves a missing cache for the
 daemon to populate with a complete quota snapshot. Status staging uses the same
 unpredictable, exclusive no-follow temporary-file pattern as credential staging.
 Manual reset-credit consumption commits only the credit cache by stable account

@@ -105,7 +105,9 @@ The installation script checks and guides you through the prerequisites automati
    ```bash
    xcode-select --install
    ```
-   Run `./scripts/test_swift.sh` before installing. If Swift reports
+   Run `./scripts/test_swift.sh` before installing. The Swift tests never
+   read or create your `~/.codex` (or `CODEX_HOME`): each builds its Monitor
+   client on a temporary Codex home. If Swift reports
    `this SDK is not supported by the compiler`, read the error printed before
    it first: an unwritable module cache produces the same message, so set
    `CLANG_MODULE_CACHE_PATH` to a writable directory. Otherwise repair or select
