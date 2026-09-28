@@ -5,26 +5,30 @@
 # menu bar until removeStatusItem(_:) takes it out or the test binary exits, and
 # nothing can list status items, so no runtime check can find one a test left
 # behind. Every tests/*.swift file, at any depth, must therefore remove as many
-# status items as it creates. Every call counts, several on one line too. Any
-# receiver counts, so an alias of NSStatusBar.system is covered, and so does a
-# call whose line ends at `statusItem(`, its argument on the next line. Text in
-# comments and string literals does not count: STRIP_SWIFT removes // and nested
-# /* */ comments and plain, multi-line, and raw strings first, and keeps the
-# code of string interpolations. The check counts calls and cannot pair them:
-# review still checks that each removal follows its item's last use.
+# status items as it creates. Every call counts, several on one line too, and
+# any receiver counts, so an alias of NSStatusBar.system is covered. A creation
+# is statusItem( followed by withLength, even on the next line. A removal counts
+# only as a direct member call, .removeStatusItem(item); any other use of that
+# name (a declaration or wrapper, a selector, a method reference) and any
+# reference to statusItem(withLength:) fails the check, because a wrapper called
+# as self.removeStatusItem(item) need not remove anything. Text in comments and
+# literals does not count: STRIP_SWIFT removes // and nested /* */ comments,
+# plain, multi-line, and raw strings, and extended regex literals (#/.../#)
+# first, and keeps the code of string interpolations. The check counts calls
+# and cannot pair them: review still checks that each removal follows its
+# item's last use.
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && /bin/pwd -P)"
 TEMP_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/codex-swift-status-item-lint.XXXXXX")"
 trap '/bin/rm -rf -- "${TEMP_ROOT}"' EXIT
 
-CREATE='statusItem[[:space:]]*\([[:space:]]*(withLength|$)'
-REMOVE='removeStatusItem[[:space:]]*\('
-
 # STRIP_SWIFT: a perl program that prints Swift source from standard input with
-# comments and string literals removed and line breaks kept. It holds no single
-# quote so it can live in this shell string: macOS bash 3.2 writes here-documents
-# outside TMPDIR (docs/leanings/2026-09-28-bash-heredocs-ignore-tmpdir-under-a-write-sandbox.md).
+# comments, string literals, and extended regex literals removed and line breaks
+# kept. A regex literal ends at the first / and its #s that no backslash
+# escapes, as Swift lexes it. The program holds no single quote so it can live
+# in this shell string: macOS bash 3.2 writes here-documents outside TMPDIR
+# (docs/leanings/2026-09-28-bash-heredocs-ignore-tmpdir-under-a-write-sandbox.md).
 STRIP_SWIFT='
 use strict; use warnings;
 local $/; my $s = <STDIN>; $s = "" unless defined $s;
@@ -48,6 +52,7 @@ sub code {
       my $k = $i; my $hashes = 0;
       while ($k < $n && substr($s, $k, 1) eq "#") { $hashes++; $k++; }
       if ($k < $n && substr($s, $k, 1) eq "\"") { $i = $k; $out .= literal($hashes); next; }
+      if ($hashes > 0 && $k < $n && substr($s, $k, 1) eq "/") { $i = $k + 1; $out .= regex($hashes); next; }
     }
     if ($inner) {
       if ($c eq "(") { $depth++; }
@@ -73,7 +78,29 @@ sub literal {
   }
   return $out;
 }
+sub regex {
+  my ($hashes) = @_; my $close = "/" . ("#" x $hashes); my $out = "\"\"";
+  while ($i < $n) {
+    if (substr($s, $i, length $close) eq $close) { $i += length $close; return $out; }
+    $i++ if substr($s, $i, 1) eq "\\";
+    $out .= "\n" if substr($s, $i, 1) eq "\n"; $i++;
+  }
+  return $out;
+}
 print code(0);
+'
+
+# COUNT_CALLS: a perl program that reads STRIP_SWIFT output and prints
+# "created removed misused": misused counts each removeStatusItem that is not a
+# .removeStatusItem(item) call and each statusItem(withLength:) reference.
+COUNT_CALLS='
+use strict; use warnings;
+local $/; my $c = <STDIN>; $c = "" unless defined $c;
+my $created = () = $c =~ /statusItem\s*\(\s*withLength\b/g;
+my $removed = () = $c =~ /\.removeStatusItem[ \t]*\((?!\s*_\s*:\s*\))/g;
+my $named = () = $c =~ /\bremoveStatusItem\b/g;
+my $references = () = $c =~ /statusItem\s*\(\s*withLength\s*:\s*\)/g;
+print $created, " ", $removed, " ", $named - $removed + $references, "\n";
 '
 
 fail() {
@@ -81,18 +108,18 @@ fail() {
     exit 1
 }
 
-# count FILE ERE -> how many times ERE matches in FILE's code, outside comments and
-# string literals. Every match counts, so two calls on one line count twice. Fails
-# if the scanner fails.
-count() {
-    /usr/bin/perl -T -e "${STRIP_SWIFT}" < "$1" \
-        | { /usr/bin/grep -o -E -- "$2" || true; } | /usr/bin/wc -l | /usr/bin/tr -d '[:space:]'
+# scan FILE -> "created removed misused" for FILE's code, outside comments and
+# literals. Every match counts, so two calls on one line count twice. Fails if
+# either program fails.
+scan() {
+    /usr/bin/perl -T -e "${STRIP_SWIFT}" < "$1" | /usr/bin/perl -T -e "${COUNT_CALLS}"
 }
 
 # check_tree ROOT -> prints each violation; returns 1 if there is any. A listing
 # error fails the check rather than skipping part of the tree.
 check_tree() {
-    local root="$1" violations="" files file rel created removed status=0
+    local root="$1" violations="" files file rel counts created removed misused status=0
+    local counts_re='^([0-9]+) ([0-9]+) ([0-9]+)$'
     [ -d "${root}/tests" ] || { printf 'tests: no such directory under %s\n' "${root}"; return 1; }
     files="$(/usr/bin/find "${root}/tests" -type f -name '*.swift')" || status=$?
     if [ "${status}" -ne 0 ]; then
@@ -106,11 +133,13 @@ check_tree() {
             violations+="${rel}: cannot be read"$'\n'
             continue
         fi
-        if ! created="$(count "${file}" "${CREATE}")" || ! removed="$(count "${file}" "${REMOVE}")" \
-            || [[ ! "${created}" =~ ^[0-9]+$ || ! "${removed}" =~ ^[0-9]+$ ]]; then
+        if ! counts="$(scan "${file}")" || [[ ! "${counts}" =~ ${counts_re} ]]; then
             violations+="${rel}: cannot be scanned"$'\n'
             continue
         fi
+        created="${BASH_REMATCH[1]}" removed="${BASH_REMATCH[2]}" misused="${BASH_REMATCH[3]}"
+        [ "${misused}" -eq 0 ] \
+            || violations+="${rel} has ${misused} uses of removeStatusItem or statusItem(withLength:) that are not direct calls; call both directly"$'\n'
         [ "${created}" -eq "${removed}" ] \
             || violations+="${rel} creates ${created} status items and removes ${removed}; remove each after its last use"$'\n'
     done < <(printf '%s\n' "${files}" | /usr/bin/sort)
@@ -146,8 +175,21 @@ expect_violation() {
     printf '%s\n' "${output}" | /usr/bin/grep -qF -- "$4" || fail "$1: unexpected report: ${output}"
 }
 
+expect_accepted() {
+    # expect_accepted NAME LINE: the fixture plus LINE in the default file is accepted
+    local dir output
+    dir="$(make_fixture "$1")"
+    printf '%s\n' "$2" >> "${dir}/tests/AppDelegateTests.swift"
+    output="$(check_tree "${dir}")" || fail "$1: the checker rejected: $2
+${output}"
+}
+
 clean="$(make_fixture clean)"
 output="$(check_tree "${clean}")" || fail "clean fixture was rejected: ${output}"
+# A call split over lines counts once; similar names and other regex literals are not status-item calls.
+expect_accepted split-calls \
+    '  let split = NSStatusBar.system.statusItem('$'\n''    withLength: 8)'$'\n''  NSStatusBar.system'$'\n''    .removeStatusItem(split)'
+expect_accepted similar-names '  cache.removeStatusItemFromCache(id); let words = #/[a-z]+/#; let label = statusItemTitle(id)'
 
 T=tests/AppDelegateTests.swift
 expect_violation kept "${T}" \
@@ -156,7 +198,7 @@ expect_violation kept "${T}" \
 expect_violation aliased "${T}" '  let other = bar.statusItem(withLength: 24)' "${T} creates 3 status items and removes 2"
 expect_violation spaced "${T}" '  let other = NSStatusBar.system.statusItem (withLength: 24)' \
     "${T} creates 3 status items and removes 2"
-expect_violation split-call "${T}" '  let other = NSStatusBar.system.statusItem(' \
+expect_violation split-call "${T}" '  let other = NSStatusBar.system.statusItem('$'\n''    withLength: 24)' \
     "${T} creates 3 status items and removes 2"
 expect_violation same-line "${T}" \
     '  let a = NSStatusBar.system.statusItem(withLength: 1); let b = NSStatusBar.system.statusItem(withLength: 2); NSStatusBar.system.removeStatusItem(a)' \
@@ -201,6 +243,15 @@ expect_violation multiline-regex-removal "${T}" \
 expect_violation regex-quote "${T}" \
     '  let quote = #/"/#; let other = NSStatusBar.system.statusItem(withLength: 7); let q = "x"' \
     "${T} creates 3 status items and removes 2"
+# Any other use of removeStatusItem fails, even when the counts balance: a wrapper
+# called through self need not remove anything.
+expect_violation wrapper-removal "${T}" \
+    "${LEAK}; func removeStatusItem(_ item: NSStatusItem) {}; self.removeStatusItem(kept)" \
+    "${T} has 1 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
+expect_violation unapplied-removal "${T}" '  let remove = NSStatusBar.system.removeStatusItem' \
+    "${T} has 1 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
+expect_violation referenced-creation "${T}" '  let make = NSStatusBar.system.statusItem(withLength:)' \
+    "${T} has 1 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
 # Code inside an interpolation is code: a status item made there counts.
 expect_violation interpolated-creation "${T}" \
     '  let width = "\(NSStatusBar.system.statusItem(withLength: 6).length)"' \
