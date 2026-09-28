@@ -15,6 +15,39 @@ pub(super) fn verify_helper_running(child: &mut Child) -> Result<(), String> {
 }
 
 impl RecoveryBanner {
+    /// An ownerless task may need a link before any Desktop window exists.
+    /// A missing window leaves the panel pending, but never authorizes IPC.
+    pub(crate) fn try_show_pending_for_mount(&mut self, ids: &[String]) -> Result<bool, String> {
+        if self.has_visible_panel() {
+            self.ensure_visible_after_owner(ids, RecoveryMode::DeferredCaptured)?;
+            return Ok(true);
+        }
+        self.try_show_pending_for_mount_with(|| {
+            Self::start_for_running_desktop(
+                &operation_id_for_banner("deferred_mount_panel"),
+                ids,
+                "thread_recovery",
+            )
+        })
+    }
+
+    pub(crate) fn try_show_pending_for_mount_with(
+        &mut self,
+        start: impl FnOnce() -> Result<Self, String>,
+    ) -> Result<bool, String> {
+        let mut next = start()?;
+        if next.expected_process() != self.expected_process() {
+            return Err("Desktop process changed before deferred mount panel appeared".into());
+        }
+        if !next.has_visible_panel() {
+            return Ok(false);
+        }
+        next.verify_panel_alive()?;
+        self.replay_pending_statuses_into(&mut next)?;
+        *self = next;
+        Ok(true)
+    }
+
     pub(crate) fn ensure_visible_after_owner(
         &mut self,
         ids: &[String],

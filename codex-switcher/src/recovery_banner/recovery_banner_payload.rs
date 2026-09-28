@@ -9,6 +9,11 @@ pub const BANNER_EXPLANATION: &str =
     "Codex перезапускается, вернёт окно на прежнее место и продолжит эти задачи:";
 pub const BANNER_EXPLANATION_WITHOUT_RESTORE: &str =
     "Codex перезапускается и продолжит эти задачи:";
+pub const WINDOW_ONLY_TITLE: &str = "Codex Monitor • Перезапуск 1 окна";
+pub const WINDOW_ONLY_EXPLANATION: &str =
+    "Проверяется восстановление выбранного окна; запуск задач не подтверждён.";
+pub const WINDOW_ONLY_EXPLANATION_WITHOUT_RESTORE: &str =
+    "Перезапускается 1 окно; положение окна не восстанавливается.";
 pub const MINIMUM_VISIBLE_MS: u64 = 5_000;
 
 /// Versioned private hand-off consumed by the native banner helper.
@@ -42,8 +47,18 @@ impl RecoveryBannerPayload {
         Ok(Self {
             version: 1,
             operation_id,
-            title: BANNER_TITLE.to_string(),
-            explanation: BANNER_EXPLANATION.to_string(),
+            title: if sessions.is_empty() {
+                WINDOW_ONLY_TITLE
+            } else {
+                BANNER_TITLE
+            }
+            .to_string(),
+            explanation: if sessions.is_empty() {
+                WINDOW_ONLY_EXPLANATION
+            } else {
+                BANNER_EXPLANATION
+            }
+            .to_string(),
             expected_process,
             saved_window,
             sessions,
@@ -58,7 +73,12 @@ impl RecoveryBannerPayload {
     }
 
     pub fn skip_window_restore(&mut self) {
-        self.explanation = BANNER_EXPLANATION_WITHOUT_RESTORE.to_string();
+        self.explanation = if self.sessions.is_empty() {
+            WINDOW_ONLY_EXPLANATION_WITHOUT_RESTORE
+        } else {
+            BANNER_EXPLANATION_WITHOUT_RESTORE
+        }
+        .to_string();
         self.updated_at_unix_ms = now_unix_ms();
     }
 

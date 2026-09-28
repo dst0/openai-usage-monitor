@@ -12,6 +12,10 @@ are valid), and every
 sanitized row in the form `project / title · short-id`. Full paths and UUID-like
 identifiers are reduced before they reach the payload. The status is per row,
 so the helper can report pending, in-progress, completed, failed, or skipped.
+When the captured restart has zero running task targets, the payload has no
+task rows and instead reports one pending window. It makes no task-resume claim.
+With window preservation disabled, that message also says position is not
+restored.
 
 The native Swift helper must acquire the sibling
 `restore-banner.display.lock` with the same-user non-blocking lease before

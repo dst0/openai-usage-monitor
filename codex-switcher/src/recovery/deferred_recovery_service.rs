@@ -1,5 +1,6 @@
 use super::{
     automation_guard::operation_lock,
+    deferred_mount_banner_service::DeferredMountBannerService,
     desktop_ipc::DesktopIpc,
     ipc_call_error::IpcCallError,
     manifest_store::{
@@ -20,7 +21,7 @@ use std::{
 
 const PROBE_INTERVAL: Duration = Duration::from_secs(15);
 const NAVIGATION_RETRY_INTERVAL: Duration = Duration::from_secs(60);
-type NavigationAttempt = Option<(Instant, DeferredNavigationRoute)>;
+pub(super) type NavigationAttempt = Option<(Instant, DeferredNavigationRoute)>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DeferredNavigationRoute {
@@ -37,9 +38,8 @@ impl DeferredNavigationRoute {
     }
 }
 
-/// Watches only targets that failed before an IPC dispatch because Desktop had
-/// no owner. The daemon owns the probe; a short worker keeps quota polling live
-/// while proof of recovered agent work is collected.
+/// Probes targets whose earlier attempt had no Desktop owner. One worker may
+/// hold a bounded owner-mount wait and recovery while quota polling continues.
 pub(crate) struct DeferredRecoveryService {
     worker: Option<thread::JoinHandle<NavigationAttempt>>,
     last_probe: Option<Instant>,
@@ -138,26 +138,24 @@ impl DeferredRecoveryService {
             return Ok(());
         };
         let mut desktop = DesktopIpc::connect(Duration::from_secs(2))?;
+        if retry_navigation
+            && DeferredMountBannerService::try_mount(
+                &targets,
+                &account_id,
+                route,
+                navigation,
+                &mut desktop,
+            )?
+        {
+            return Ok(());
+        }
         let ready = select_scanned_ready_targets(
             &targets,
             &account_id,
-            |id| {
-                probe_or_retry_navigation(
-                    || desktop.discover_owner_info_once(id).map(|_| ()),
-                    || {
-                        let result = match route {
-                            DeferredNavigationRoute::Ordinary => {
-                                switcher::retry_thread_link_in_background(id)
-                            }
-                            DeferredNavigationRoute::PinnedNative => {
-                                switcher::retry_thread_link_natively_in_background(id)
-                            }
-                        };
-                        record_navigation_attempt(navigation, route, Instant::now());
-                        result
-                    },
-                    retry_navigation,
-                )
+            |id| match desktop.discover_owner_info_once(id) {
+                Ok(_) => Ok(true),
+                Err(IpcCallError::NoClientFound) => Ok(false),
+                Err(error) => Err(error.to_string()),
             },
             |target, budget| Ok(post_checkpoint_status_with_budget(&home, target, budget).is_some()),
         )?;

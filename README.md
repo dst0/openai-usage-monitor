@@ -57,7 +57,7 @@ The switching and monitoring core is written in **Rust**, paired with a native m
    - Detects eligible mid-turn tasks captured for a restart and threads whose latest quota-error `task_complete` rollout event occurred within the last 4 hours (`RECENT_QUOTA_WINDOW_SECS = 14400s`); discovery-only recovery does not guess about an ambiguous active turn.
    - Scans up to 30 recent threads ordered by `state_5.sqlite` `updated_at`, then checks quota age from the rollout event timestamp. Bounded 128 KB tail reads (`read_rollout_tail_lines`) avoid reading entire large session files during discovery.
    - Resumes through the official Codex Desktop owner's IPC connection to the Desktop-bundled app-server; it never launches a second/headless app-server, uses `codex exec resume`, or clicks UI controls. For an interrupted turn it sends one protocol-valid text input, `continue`, through `thread-follower-start-turn`.
-   - Shows a verified semi-transparent banner when an eligible window and recovery target are present, including when exact window restoration is disabled. Requires a new exact-ID `task_started`, real agent work, and a 10-second error-free observation window before reporting success.
+   - Shows a verified semi-transparent banner when an eligible window and recovery target are present, including when exact window restoration is disabled. When there are zero running recovery targets, a captured selected window instead gets a generic one-window restart panel with no task rows or resume claim. Requires a new exact-ID `task_started`, real agent work, and a 10-second error-free observation window before reporting task recovery success.
    - Recovery in an already running ChatGPT uses read-only WindowServer geometry for its banner. If the first capture finds no window, it tries again after Desktop confirms the task owner. A visible, live panel and unchanged queue/rollout are required before IPC; helper and process identity are checked again after SQLite waits, followed by a final queue/rollout check. Failed status replay into a late banner also blocks dispatch. Failures retain the original checkpoint for a later attempt. Window access/geometry failure, panel timeout, identity changes, missing helper, payload/lease failure, and malformed helper responses fail closed before dispatch.
    - Filters out internal subagent threads and never resumes cleanly completed or user-aborted tasks.
 
@@ -687,7 +687,7 @@ Detection runs through a two-phase analysis pipeline before terminating or resta
 | Pre-dispatch activity grace | `3 s` | Detects a task that the user or Desktop has already resumed before any command is sent. |
 | Recovery verification | `90 s` to dispatch, `600 s` to produce work, then `10 s` soak | Requires the IPC-confirmed turn ID, substantive agent work, and no later abort/error; IPC acknowledgement is not success. |
 | Desktop stabilization | `3 s` | Requires the same singleton main PID throughout; verifies the visible window only when one was captured before restart. |
-| Banner minimum visibility | `5 s` | Keeps the semi-transparent recovery banner visible when an eligible window and recovery target were found. |
+| Banner minimum visibility | `5 s` | Keeps the semi-transparent recovery banner visible when an eligible window was captured, including the zero-target window-only panel. |
 
 The tail reader checks the byte before its seek point. It discards a partial
 first record before strict UTF-8 decoding, retains a full record at an exact
@@ -765,8 +765,11 @@ turn-progress verification. Deferred dispatch uses the Desktop session recorded
 by a successful, exact-process relaunch; it checks the saved PID, birth identity,
 and expected CLI account independently of the CLI account selected for Desktop.
 Legacy sessions without that binding fail closed. The first banner closes after
-bounded owner waits, and a fresh visible banner is required when a deferred
-owner-routed recovery actually begins. It rechecks the
+bounded owner waits. A later deferred navigation attempt for a same-account,
+eligible ownerless task holds a `Pending` banner during its bounded mount wait
+once a Desktop window is visible, then passes the same panel into recovery after
+owner proof. A missing window, timeout, account or process change, or exited
+helper retains the checkpoint without IPC. It rechecks the
 queue and rollout after owner discovery, durably clears retry intent before
 any IPC request, and never retries a request whose outcome is unknown. A URL
 launch or Desktop IPC startup failure before dispatch retains the checkpoint. A
