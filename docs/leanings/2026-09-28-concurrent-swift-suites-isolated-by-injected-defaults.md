@@ -9,7 +9,7 @@
   - A second process writing `false` into the binary's domain in a loop: the pre-fix binary failed at line 253 in 2 of 10 runs.
   - Red step: with the store injected into `AppDelegate` but its readers still on the standard store, the new Test 4 failed at `tests/AppDelegatePreferencesTests.swift:73` with `[true] != [false] - stackPercentages must be read from the given store`.
   - After the fix: 0 of 30 concurrent pairs and 0 of 10 writer runs failed. Under `lldb`, writing `stackPercentages`, `codex_refresh_interval`, and `CodexMonitorLaunchAtLogin` into the binary's standard domain before Test 4's first read left every Test 4 assertion passing, 3 of 3 times. Run alone under a private name, the fixed binary created no preferences domain at all; the pre-fix binary left `stackPercentages = 1` in its own.
-  - Two full `./scripts/test_swift.sh` runs at the same time from one checkout, each with its own module cache, after the fix: 6 of 6 pairs (12 runs) passed, each running the new Test 4.
+  - Two full `./scripts/test_swift.sh` runs at the same time from one checkout, each with its own module cache, after the fix: 6 of 6 pairs (12 runs) passed, each running the new Test 4, and after the review changes 5 of 5 more pairs (10 runs) passed, each also running `tests/TestPreferencesSuiteTests.swift`.
 - **Approaches tried:**
   - **Attempt:** Run the suite one at a time per user account (the `Open` record's interim advice).
     - **Outcome:** Partial.
