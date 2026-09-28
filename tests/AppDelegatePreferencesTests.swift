@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 import ServiceManagement
 
-/// Login-item script runner that always fails, so launch-at-login state falls back to the
-/// injected store and no test asks System Events through `osascript`.
+/// Login-item script runner that always fails, so no test asks System Events through
+/// `osascript`; the Launch at Login item then reads as unknown.
 final class FailingLoginItemScripts: ScriptExecuting {
   func executeAppleScript(_ script: String) -> (exitCode: Int32, output: String) { (1, "") }
 }
@@ -20,7 +20,7 @@ final class UnavailableMainAppService: SMAppServiceManaging {
 func makeTestAppDelegate(client: CodexClient, preferences: TestPreferencesSuite) -> AppDelegate {
   let store = preferences.defaults
   let scripts = FailingLoginItemScripts(), service = UnavailableMainAppService()
-  let loginItems = AutoLaunchManager(scriptExecutor: scripts, smService: service, userDefaults: store)
+  let loginItems = AutoLaunchManager(scriptExecutor: scripts, smService: service)
   return AppDelegate(client: client, defaults: store, autoLaunchManager: loginItems)
 }
 
@@ -46,7 +46,6 @@ func runAppDelegatePreferencesTests() {
   let client = CodexClient(distributionRunner: { _ in false })
   let stackKey = AppDelegate.stackPercentagesKey
   let intervalKey = AppDelegate.refreshIntervalKey
-  let loginKey = AutoLaunchManager.userDefaultsKey
 
   // An empty store gives the documented defaults.
   let fresh = TestPreferencesSuite(purpose: "fresh")
@@ -55,7 +54,6 @@ func runAppDelegatePreferencesTests() {
   assertTrue(freshDelegate.stacksPercentages, "An unset stackPercentages must mean stacked")
   assertEqual(freshDelegate.stackPercentagesItem?.state, .on, "Menu must show the stacked default")
   assertEqual(freshDelegate.refreshInterval, 60.0, "An unset refresh interval must be one minute")
-  assertEqual(freshDelegate.launchAtLoginItem?.state, .off, "Unset launch-at-login must be off")
   assertTrue(fresh.defaults.object(forKey: stackKey) == nil, "Reading a default must not store it")
   for unusable in [0.0, -5.0] {
     fresh.defaults.set(unusable, forKey: intervalKey)
@@ -79,13 +77,11 @@ func runAppDelegatePreferencesTests() {
   assertTrue(stackedWidth != horizontalWidth, "Stacked and horizontal status items must differ in width")
   for value in [false, true] {
     stored.defaults.set(value, forKey: stackKey)
-    stored.defaults.set(value, forKey: loginKey)
     stored.defaults.set(value ? 900.0 : 300.0, forKey: intervalKey)
     let delegate = makeTestAppDelegate(client: client, preferences: stored)
     _ = delegate.buildMenu()
     assertEqual(delegate.stacksPercentages, value, "stackPercentages must be read from the given store")
     assertEqual(delegate.stackPercentagesItem?.state, value ? .on : .off, "Stack menu item must follow the store")
-    assertEqual(delegate.launchAtLoginItem?.state, value ? .on : .off, "Launch-at-login fallback must follow the store")
     assertEqual(delegate.refreshInterval, value ? 900.0 : 300.0, "Refresh interval must be read from the given store")
 
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)

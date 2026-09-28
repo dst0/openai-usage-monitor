@@ -33,6 +33,9 @@
 "uninstall_failed_title" = "UNINSTALL FAILED";
 "uninstall_failed_message" = "Could not start the uninstaller. No changes were made.";
 "launch_at_login" = "Launch at Login";
+"launch_at_login_enable_failed" = "Codex Monitor could not add itself to Login Items, so it will not open at login. You can add it in System Settings > General > Login Items.";
+"launch_at_login_disable_failed" = "Codex Monitor could not remove itself from Login Items, so it will still open at login. You can remove it in System Settings > General > Login Items.";
+"launch_at_login_unknown" = "Codex Monitor cannot read its login item, so it cannot tell whether it opens at login. Check System Settings > General > Login Items. If Codex Monitor is listed in System Settings > Privacy & Security > Automation, allow it to control System Events.";
 "duration_days_hours" = "%dd %dh";
 "duration_hours_minutes" = "%dh %dm";
 "no_connection_error" = "No connection to Codex and Keychain";

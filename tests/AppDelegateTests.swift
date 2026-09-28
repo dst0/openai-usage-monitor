@@ -254,6 +254,11 @@ struct AppDelegateTestRunner {
     runAppDelegatePreferencesTests()
 
     // ====================================================================
+    // Test 4b: Launch at Login shows the login item macOS reports
+    // ====================================================================
+    runLaunchAtLoginTests()
+
+    // ====================================================================
     // Test 5: Auto-Switch localization and client default
     // ====================================================================
     let ruStr = L10n.autoSwitchOnLimit
@@ -2308,6 +2313,7 @@ struct AppDelegateTestRunner {
       "Sources/AppDelegate+AutoSwitch.swift",
       "Sources/AppDelegate+AutoReset.swift",
       "Sources/AppDelegate+SettingsActions.swift",
+      "Sources/LaunchAtLoginMenuController.swift",
     ]
     for relPath in sourceFilesToCheck {
       let fullPath = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(relPath)

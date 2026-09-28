@@ -151,6 +151,12 @@ public final class LocalizationManager: @unchecked Sendable {
       "help_guide": "📖 Справка и руководство",
       "restart_app": "🚀 Перезапустить Codex App",
       "launch_at_login": "Запускать при входе",
+      "launch_at_login_enable_failed":
+        "Не удалось добавить Codex Monitor в объекты входа, поэтому он не будет запускаться при входе. Добавьте его в Системных настройках > Основные > Объекты входа.",
+      "launch_at_login_disable_failed":
+        "Не удалось убрать Codex Monitor из объектов входа, поэтому он продолжит запускаться при входе. Уберите его в Системных настройках > Основные > Объекты входа.",
+      "launch_at_login_unknown":
+        "Codex Monitor не может прочитать свой объект входа и не знает, запускается ли он при входе. Проверьте Системные настройки > Основные > Объекты входа. Если Codex Monitor есть в Системных настройках > Конфиденциальность и безопасность > Автоматизация, разрешите ему управлять System Events.",
       "quit": "Выход",
       "uninstall_action": "⛔ UNINSTALL CODEX MONITOR…",
       "uninstall_title": "UNINSTALL CODEX MONITOR?",
@@ -244,6 +250,12 @@ public final class LocalizationManager: @unchecked Sendable {
       "help_guide": "📖 Help & Documentation",
       "restart_app": "🚀 Restart Codex Desktop App",
       "launch_at_login": "Launch at Login",
+      "launch_at_login_enable_failed":
+        "Codex Monitor could not add itself to Login Items, so it will not open at login. You can add it in System Settings > General > Login Items.",
+      "launch_at_login_disable_failed":
+        "Codex Monitor could not remove itself from Login Items, so it will still open at login. You can remove it in System Settings > General > Login Items.",
+      "launch_at_login_unknown":
+        "Codex Monitor cannot read its login item, so it cannot tell whether it opens at login. Check System Settings > General > Login Items. If Codex Monitor is listed in System Settings > Privacy & Security > Automation, allow it to control System Events.",
       "quit": "Quit",
       "uninstall_action": "⛔ UNINSTALL CODEX MONITOR…",
       "uninstall_title": "UNINSTALL CODEX MONITOR?",
@@ -337,6 +349,12 @@ public final class LocalizationManager: @unchecked Sendable {
       "help_guide": "📖 Довідка та керівництво",
       "restart_app": "🚀 Перезапустити Codex App",
       "launch_at_login": "Запускати при вході",
+      "launch_at_login_enable_failed":
+        "Не вдалося додати Codex Monitor до елементів входу, тож він не запускатиметься під час входу. Додайте його в Системних параметрах > Загальні > Елементи входу.",
+      "launch_at_login_disable_failed":
+        "Не вдалося прибрати Codex Monitor з елементів входу, тож він і далі запускатиметься під час входу. Приберіть його в Системних параметрах > Загальні > Елементи входу.",
+      "launch_at_login_unknown":
+        "Codex Monitor не може прочитати свій елемент входу, тож не знає, чи запускається він під час входу. Перевірте Системні параметри > Загальні > Елементи входу. Якщо Codex Monitor є в Системних параметрах > Приватність і безпека > Автоматизація, дозвольте йому керувати System Events.",
       "quit": "Вихід",
       "remove_account": "🗑 Видалити акаунт...",
       "remove_account_title": "Видалити акаунт",
@@ -997,6 +1015,9 @@ public enum L10n {
   public static var helpGuide: String { tr("help_guide") }
   public static var restartApp: String { tr("restart_app") }
   public static var launchAtLogin: String { tr("launch_at_login") }
+  public static var launchAtLoginEnableFailed: String { tr("launch_at_login_enable_failed") }
+  public static var launchAtLoginDisableFailed: String { tr("launch_at_login_disable_failed") }
+  public static var launchAtLoginUnknown: String { tr("launch_at_login_unknown") }
   public static var quit: String { tr("quit") }
   public static var uninstallAction: String { tr("uninstall_action") }
   public static var uninstallTitle: String { tr("uninstall_title") }

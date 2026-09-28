@@ -41,8 +41,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
   /// Menu preferences. The app passes the standard store; tests pass a suite of their own.
   internal let defaults: UserDefaults
   internal var quotaRefreshOverride: ((@escaping (MultiAccountSnapshot?) -> Void) -> Void)?
+  /// Receives alerts instead of a modal NSAlert; tests set it, the app leaves it nil.
+  internal var alertOverride: ((_ title: String, _ message: String, _ style: NSAlert.Style) -> Void)?
   internal let singleGuard = SingleInstanceGuard()
   internal let autoLaunchManager: AutoLaunchManager
+  /// Shows the login-item state read back from macOS in the Launch at Login item.
+  internal lazy var launchAtLogin = LaunchAtLoginMenuController(manager: autoLaunchManager) {
+    [weak self] failure in
+    self?.statusItem?.menu?.cancelTracking()
+    self?.showAlert(title: L10n.launchAtLogin, message: failure.message, style: .warning)
+  }
   internal var ownsBackgroundAutomation = false
 
   internal var accountsSeparatorTop: NSMenuItem?
@@ -50,7 +58,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
   internal var dynamicAccountItems: [NSMenuItem] = []
   internal var lastUpdatedMenuItem: NSMenuItem?
   internal var updateCLIItem: NSMenuItem?
-  internal var launchAtLoginItem: NSMenuItem?
   internal var stackPercentagesItem: NSMenuItem?
   internal var autoSwitchItem: NSMenuItem?
   internal var autoSwitchBusinessOnlyItem: NSMenuItem?

@@ -1,0 +1,36 @@
+# 2026-09-28 — The Launch at Login checkmark showed the request, not the login item
+
+- **Status:** Partial
+- **Task/context:** Found while isolating the Swift test preferences (#32): the Monitor menu's `Launch at Login` item could show a checkmark while no login item existed. Branch `fix/login-item-state-truth` made the item show the login item macOS reports. `scripts/install.sh` registers the same login item through System Events, so the app's reading had to agree with that registration.
+- **Unexpected observation or failure:** `toggleLaunchAtLogin()` set the checkmark to the state it asked for and ignored what `AutoLaunchManager.setEnabled` returned. The menu read the login item only once, when it was built, so a change made in System Settings never reached it. When System Events could not be read, `AutoLaunchManager.isEnabled` returned a cached `CodexMonitorLaunchAtLogin` preference, and the old Test 4 asserted that fallback.
+- **Evidence:** A scratch reproduction (not committed) built the pre-fix sources with `AutoLaunchManager` fakes: a script runner that fails like a denied Automation request (`-1743`) and an in-memory main-app login service. All four symptoms reproduced:
+  - Enabling failed (no main-app service, System Events denied): the item went from off to on while `isEnabled` read `false`.
+  - Disabling failed (service enabled, `unregister()` throwing, System Events denied): the item went to off while `isEnabled` read `true`.
+  - The service was switched off behind the app and the menu opened again: the menu had no delegate, so the item stayed on while `isEnabled` read `false`.
+  - A stored `CodexMonitorLaunchAtLogin = true` with unreadable login items produced a checkmark.
+  - A pure AppleScript check (no application addressed) showed that `POSIX path of` returns a POSIX path string unchanged, so `scripts/uninstall.sh`'s path match works on the POSIX `path` System Events reports, and that a `class of item is text` filter skips `missing value` entries.
+- **Approaches tried:**
+  - **Attempt:** Keep the old flow and use `setEnabled`'s `Bool` for the checkmark.
+    - **Outcome:** Rejected.
+    - **Why:** The `Bool` was the exit status of one step. `osascript` exiting 0 after `make login item` does not prove an item that opens this bundle exists, and on disable the result ignored whether the main-app service was unregistered.
+  - **Attempt:** Keep a cached preference as the fallback when System Events cannot be read.
+    - **Outcome:** Did not work.
+    - **Why:** That fallback was the fourth symptom. The item `scripts/install.sh` adds is invisible to it, and a preference saved before the user removed the item in System Settings shows a checkmark for nothing.
+  - **Attempt:** Read the login item synchronously each time the menu opens.
+    - **Outcome:** Rejected.
+    - **Why:** The read starts `osascript`, which can wait for System Events to launch or for an Automation prompt, and would hold up every menu open on the main thread.
+  - **Attempt:** Match System Events items by name, as the old reader did.
+    - **Outcome:** Rejected.
+    - **Why:** A same-name item for another copy (an old `~/Applications` install, a build directory) does not open this app. `scripts/uninstall.sh` already matches by bundle path for the same reason.
+  - **Attempt:** Read back a three-state result (`enabled`, `disabled`, `unknown`) off the main thread when the menu is built and on `menuWillOpen`, match items by file identity with the running bundle, and make a toggle show its own read-back and report any difference.
+    - **Outcome:** Worked.
+    - **Why:** The checkmark is only ever a read result; a failed or unconfirmed change is reported instead of hidden.
+- **Root cause:** Confirmed by the reproduction. The menu trusted its own request and a cached preference instead of reading the login item back, and read it only when the menu was built.
+- **Resolution:** `AutoLaunchManager` keeps no store. `state` reports `enabled` when the main-app service is enabled or a System Events item opens the running bundle (same device and inode, following the `~/Applications` link; otherwise the same standardized path; absolute paths only), `disabled` when both reads confirm none, and `unknown` when System Events cannot be read. `setEnabled` returns the state read back after the change. `LaunchAtLoginMenuController` runs reads and changes on a serial queue, shows a checkmark, no mark, or a dash with a tooltip, disables the item while a change runs, drops a read that started before a toggle, merges reads requested during a read into one more, and reports a toggle whose read-back differs from the request. `AppDelegate` sets itself as the status menu's delegate, refreshes on `menuWillOpen`, and shows the failure with its existing warning `NSAlert`. `tests/swift_test_defaults_isolation.sh` now requires tests to build `AutoLaunchManager` with fake `scriptExecutor:` and `smService:` and rejects the live login-item types in tests.
+- **Verification:** `./scripts/test_swift.sh` passes, including the new Test 4b (`tests/LaunchAtLoginTests.swift`). Test 4b runs the listing's printing AppleScript through `osascript` on a literal list and checks that `scripts/install.sh` registers the bundle it installs under the name the app uses. A scratch mutation run of the fix (the original request-shows-as-state bug among them) was killed by Test 4b; see the pull request for the list. `cargo test --locked --test ci_workflow_policy` passes.
+- **Prevention/follow-up:**
+  - Test 4b and the static check guard the fix; `AGENTS.md` records the Launch at Login truth invariant.
+  - Still unverified on a real login session: the installed app's toggle, its menu-open read, and what System Events returns to the Monitor itself. The Monitor sends Apple Events to System Events through `osascript` without an `NSAppleEventsUsageDescription`; whether macOS then prompts or refuses silently was not tested, because tests must not touch the real login items. If the Monitor cannot read System Events on a host, the item shows a dash until the main-app service is enabled.
+  - Not changed: `scripts/uninstall.sh` removes only System Events items, not a main-app service registration the app made; `scripts/install.sh` ignores a failed registration (`|| true`).
+- **Reusable learning:** A menu toggle for system state must show the state read back from the system after each change and whenever the menu opens, with an explicit unknown state, never the requested state or a cached copy.
+- **References:** `Sources/AutoLaunchManager.swift`, `Sources/LaunchAtLoginMenuController.swift`, `Sources/AppDelegate+Menu.swift`, `tests/LaunchAtLoginTests.swift`, `tests/FakeLoginItems.swift`, `tests/swift_test_defaults_isolation.sh`, `scripts/install.sh`, `scripts/uninstall.sh`, [2026-09-28 — Concurrent Swift suite runs isolated by an injected defaults store](2026-09-28-concurrent-swift-suites-isolated-by-injected-defaults.md).

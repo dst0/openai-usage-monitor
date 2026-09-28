@@ -204,11 +204,10 @@ extension AppDelegate {
     stackPercentagesItem = stackItem
     menu.addItem(stackItem)
 
-    // Launch at login
+    // Launch at login: shows the login item macOS reports, read again whenever the menu opens
     let autostart = NSMenuItem(title: L10n.launchAtLogin, action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
     autostart.target = self
-    autostart.state = autoLaunchManager.isEnabled ? .on : .off
-    launchAtLoginItem = autostart
+    launchAtLogin.item = autostart
     menu.addItem(autostart)
 
     // Destructive action: Uninstall
@@ -222,8 +221,14 @@ extension AppDelegate {
     quitItem.target = self
     menu.addItem(quitItem)
 
+    menu.delegate = self
     statusItem?.menu = menu
+    launchAtLogin.refresh()
     return menu
+  }
+
+  public func menuWillOpen(_ menu: NSMenu) {
+    launchAtLogin.refresh()
   }
 
   // MARK: - Factory Helpers

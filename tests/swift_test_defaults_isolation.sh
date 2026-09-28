@@ -1,30 +1,37 @@
 #!/bin/bash
-# Static check: Swift tests never use the standard defaults store.
+# Static check: Swift tests never use the standard defaults store or the live
+# login items.
 #
 # A Swift test binary has no bundle, so its standard defaults are the per-user
 # domain named after the executable (`app_delegate_test`). Every concurrent run
 # of the suite on the machine shares it, so one run's write could change what
 # another run read. Tests build AppDelegate through its designated initializer
 # with a tests/TestPreferencesSuite.swift store private to the run; in Sources/
-# only the composition roots, AppDelegate() and AutoLaunchManager.shared, pick
-# the standard store. See
+# only the composition root AppDelegate() picks the standard store. See
 # docs/leanings/2026-09-28-concurrent-swift-suites-isolated-by-injected-defaults.md.
+# The login-item manager keeps no store: it reads the login item back from
+# macOS. Its live parts, System Events through `osascript` and the main-app
+# login service, would change the user's real login items, so only
+# AutoLaunchManager.shared uses them and tests pass fakes. See
+# docs/leanings/2026-09-28-launch-at-login-checkmark-trusted-the-request.md.
 #
 # Rules, for every *.swift file under tests/ and Sources/ (lines that start
 # with // are ignored; block comments, trailing comments, and strings are not):
 #   tests   - no standard store in any spelling (including `UserDefaults()`,
 #             `suiteName: nil`, `@AppStorage`, and any `.standard` shorthand;
 #             spell another type's member as `Type.standard`), no CFPreferences
-#             or `defaults` tool, no `AppDelegate()`, and every AutoLaunchManager
-#             is built with `userDefaults:` on the same line. Suites are created
-#             and removed only in TestPreferencesSuite.swift. The one exception
-#             is the pair of identity checks that prove AppDelegate() keeps the
-#             standard store and shared login items; both must be present.
-#   Sources - the standard store appears once in AppDelegate.swift (the
-#             `defaults:` argument of AppDelegate()) and once in
-#             AutoLaunchManager.swift (its default argument), nowhere else, and
-#             only AutoLaunchManager.shared builds a login-item manager without
-#             `userDefaults:`.
+#             or `defaults` tool, no `AppDelegate()`, no live login-item part
+#             (`DefaultScriptExecutor`, `DefaultSMAppServiceManager`,
+#             `SMAppService.mainApp`), and every AutoLaunchManager is built with
+#             `scriptExecutor:` and `smService:` on the same line. Suites are
+#             created and removed only in TestPreferencesSuite.swift. The one
+#             exception is the pair of identity checks that prove AppDelegate()
+#             keeps the standard store and shared login items; both must be
+#             present.
+#   Sources - the standard store appears once, in AppDelegate.swift (the
+#             `defaults:` argument of AppDelegate()), and nowhere else, and only
+#             AutoLaunchManager.shared builds a login-item manager without
+#             `scriptExecutor:` and `smService:`.
 # scripts/*.swift helpers are not scanned: they are separate programs, and the
 # one that reads defaults only reads ChatGPT's and the global domain.
 set -euo pipefail
@@ -44,15 +51,18 @@ INIT="(\\.${S}init${S})?"
 # domain like the standard store, and `@AppStorage` defaults to it. A line that
 # starts with `.standard` continues a member chain split across lines.
 STANDARD_STORE="UserDefaults${S}\\.${S}standard|UserDefaults${S}=${S}\\.standard|UserDefaults${S}${INIT}\\(${S}\\)|suiteName${S}:${S}nil|^${S}\\.${S}standard([^[:alnum:]_]|\$)|standardUserDefaults|NSUserDefaults|CFPreferences|@AppStorage"
-TEST_ONLY_FORBIDDEN="${STANDARD_STORE}|(^|[^[:alnum:]_])\\.standard([^[:alnum:]_]|\$)|AppDelegate${S}${INIT}\\(${S}\\)|(^|[^[:alnum:]_])\\.init${S}\\(${S}\\)|AutoLaunchManager${S}\\.${S}shared|/usr/bin/defaults"
+# The live login items: System Events through osascript and the main-app login service.
+LIVE_LOGIN_ITEMS="DefaultScriptExecutor|DefaultSMAppServiceManager|SMAppService${S}\\.${S}mainApp"
+TEST_ONLY_FORBIDDEN="${STANDARD_STORE}|(^|[^[:alnum:]_])\\.standard([^[:alnum:]_]|\$)|AppDelegate${S}${INIT}\\(${S}\\)|(^|[^[:alnum:]_])\\.init${S}\\(${S}\\)|AutoLaunchManager${S}\\.${S}shared|/usr/bin/defaults|${LIVE_LOGIN_ITEMS}"
 SUITE_LIFECYCLE="UserDefaults${S}${INIT}\\(${S}suiteName|(^|[^[:alnum:]_])\\.init${S}\\(${S}suiteName|PersistentDomain${S}\\("
 LOGIN_ITEMS_BUILT="AutoLaunchManager${S}${INIT}\\(|AutoLaunchManager${S}=${S}\\.init"
+# A login-item manager built with both of its system seams injected.
+LOGIN_ITEMS_INJECTED='.*scriptExecutor:.*smService:'
 # The production wiring checks, spelled exactly; nothing else may follow them.
 WIRING_DEFAULTS="${S}assertTrue\\(AppDelegate\\(\\)\\.defaults === UserDefaults\\.standard, \"[^\"]*\"\\)\$"
 WIRING_LOGIN_ITEMS="${S}assertTrue\\(AppDelegate\\(\\)\\.autoLaunchManager === AutoLaunchManager\\.shared, \"[^\"]*\"\\)\$"
 # A composition root passes the standard store as an argument, not a receiver.
 APP_DELEGATE_ROOT="defaults:${S}UserDefaults\\.standard([^[:alnum:]_.]|\$)"
-LOGIN_ITEMS_ROOT="userDefaults:${S}UserDefaults${S}=${S}\\.standard([^[:alnum:]_.]|\$)"
 SHARED_LOGIN_ITEMS="static let shared = AutoLaunchManager\\(\\)"
 
 # code_matches FILE ERE -> "file:line:text" for each matching line that is not
@@ -85,7 +95,7 @@ count_matching() {
 # check_tree ROOT -> prints each violation; returns 1 if there is any
 check_tree() {
     ROOT="$1"
-    local violations="" file rel found count root wiring_defaults=0 wiring_login_items=0
+    local violations="" file rel found count wiring_defaults=0 wiring_login_items=0
     while IFS= read -r file; do
         rel="${file#"${ROOT}"/}"
         [ -z "$(code_matches "${file}" "^${WIRING_DEFAULTS}")" ] || wiring_defaults=1
@@ -101,8 +111,8 @@ check_tree() {
                 [ -z "${found}" ] || violations+="${found} (create and remove suites only in TestPreferencesSuite.swift)"$'\n'
                 ;;
         esac
-        found="$(without "$(code_matches "${file}" "${LOGIN_ITEMS_BUILT}")" '.*userDefaults:')"
-        [ -z "${found}" ] || violations+="${found} (build AutoLaunchManager( with userDefaults: on the same line)"$'\n'
+        found="$(without "$(code_matches "${file}" "${LOGIN_ITEMS_BUILT}")" "${LOGIN_ITEMS_INJECTED}")"
+        [ -z "${found}" ] || violations+="${found} (build AutoLaunchManager( with scriptExecutor: and smService: on the same line)"$'\n'
     done < <(/usr/bin/find "${ROOT}/tests" -type f -name '*.swift' | /usr/bin/sort)
     [ "${wiring_defaults}" -eq 1 ] \
         || violations+="tests: no check that AppDelegate() uses UserDefaults.standard"$'\n'
@@ -115,26 +125,22 @@ check_tree() {
     while IFS= read -r file; do
         rel="${file#"${ROOT}"/}"
         found="$(code_matches "${file}" "${STANDARD_STORE}")"
-        case "${rel}" in
-            Sources/AppDelegate.swift | Sources/AutoLaunchManager.swift)
-                root="${LOGIN_ITEMS_ROOT}"
-                [ "${rel}" != Sources/AppDelegate.swift ] || root="${APP_DELEGATE_ROOT}"
-                count="$(count_matching "${found}" "${root}")"
-                [ "${count}" -eq 1 ] \
-                    || violations+="${rel} passes the standard store ${count} times; its composition root must pass it once"$'\n'
-                found="$(without "${found}" ".*${root}")"
-                ;;
-        esac
+        if [ "${rel}" = Sources/AppDelegate.swift ]; then
+            count="$(count_matching "${found}" "${APP_DELEGATE_ROOT}")"
+            [ "${count}" -eq 1 ] \
+                || violations+="${rel} passes the standard store ${count} times; its composition root must pass it once"$'\n'
+            found="$(without "${found}" ".*${APP_DELEGATE_ROOT}")"
+        fi
         [ -z "${found}" ] \
-            || violations+="${found} (inject the store; only AppDelegate() and AutoLaunchManager.shared choose the standard one)"$'\n'
-        found="$(without "$(code_matches "${file}" "${LOGIN_ITEMS_BUILT}")" '.*userDefaults:')"
+            || violations+="${found} (inject the store; only AppDelegate() chooses the standard one)"$'\n'
+        found="$(without "$(code_matches "${file}" "${LOGIN_ITEMS_BUILT}")" "${LOGIN_ITEMS_INJECTED}")"
         if [ "${rel}" = Sources/AutoLaunchManager.swift ]; then
             count="$(count_matching "${found}" "${SHARED_LOGIN_ITEMS}")"
             [ "${count}" -le 1 ] || violations+="${rel} builds the shared login items ${count} times"$'\n'
             found="$(without "${found}" ".*${SHARED_LOGIN_ITEMS}")"
         fi
         [ -z "${found}" ] \
-            || violations+="${found} (pass userDefaults:; only AutoLaunchManager.shared uses the default store)"$'\n'
+            || violations+="${found} (pass scriptExecutor: and smService:; only AutoLaunchManager.shared uses the live login items)"$'\n'
     done < <(/usr/bin/find "${ROOT}/Sources" -type f -name '*.swift' | /usr/bin/sort)
     if [ -n "${violations}" ]; then
         printf '%s' "${violations}"
@@ -152,7 +158,7 @@ make_fixture() {
     printf '%s\n' \
         '// Never touch UserDefaults.standard here.' \
         'let delegate = AppDelegate(client: client, defaults: suite, autoLaunchManager: manager)' \
-        'let manager = AutoLaunchManager(scriptExecutor: s, smService: m, userDefaults: suite)' \
+        'let manager = AutoLaunchManager(scriptExecutor: s, smService: m, bundle: b)' \
         > "${dir}/tests/AppDelegateTests.swift"
     printf '%s\n' \
         '  assertTrue(AppDelegate().defaults === UserDefaults.standard, "standard store")' \
@@ -163,7 +169,7 @@ make_fixture() {
         'let stacked = defaults.object(forKey: AppDelegate.stackPercentagesKey)' > "${dir}/Sources/AppDelegate.swift"
     printf '%s\n' \
         '  public static let shared = AutoLaunchManager()' \
-        '    userDefaults: UserDefaults = .standard,' > "${dir}/Sources/AutoLaunchManager.swift"
+        '    scriptExecutor: ScriptExecuting = DefaultScriptExecutor(),' > "${dir}/Sources/AutoLaunchManager.swift"
     printf '%s\n' 'let stacked = stacksPercentages' > "${dir}/Sources/AppDelegate+Menu.swift"
     echo "${dir}"
 }
@@ -220,9 +226,17 @@ expect_violation test-production-delegate-shorthand "${T}" 'let delegate: AppDel
 expect_violation test-wiring-line-with-write "${T}" \
     '  assertTrue(AppDelegate().defaults === UserDefaults.standard, "x"); UserDefaults.standard.set(1, forKey: "k")' "${T}:4:"
 expect_violation test-shared-login-items "${T}" 'let manager = AutoLaunchManager.shared' 'AutoLaunchManager.shared'
-expect_violation test-default-login-items "${T}" 'let manager = AutoLaunchManager(scriptExecutor: s)' 'userDefaults: on the same line'
+expect_violation test-default-login-items "${T}" 'let manager = AutoLaunchManager(scriptExecutor: s)' \
+    'scriptExecutor: and smService: on the same line'
 expect_violation test-default-login-items-init "${T}" \
-    'let manager: AutoLaunchManager = .init(scriptExecutor: s)' 'userDefaults: on the same line'
+    'let manager: AutoLaunchManager = .init(smService: m)' 'scriptExecutor: and smService: on the same line'
+expect_violation test-store-only-login-items "${T}" \
+    'let manager = AutoLaunchManager(userDefaults: suite)' 'scriptExecutor: and smService: on the same line'
+expect_violation test-live-script-executor "${T}" \
+    'let manager = AutoLaunchManager(scriptExecutor: DefaultScriptExecutor(), smService: m)' 'DefaultScriptExecutor'
+expect_violation test-live-login-service "${T}" 'let m: SMAppServiceManaging = DefaultSMAppServiceManager()' \
+    'DefaultSMAppServiceManager'
+expect_violation test-main-app-service "${T}" 'try SMAppService .mainApp.unregister()' 'SMAppService .mainApp'
 expect_violation test-defaults-tool "${T}" \
     'process.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")' '/usr/bin/defaults'
 expect_violation test-foreign-suite "${T}" \
@@ -246,6 +260,8 @@ expect_violation source-new-default-arg "${M}" 'init(store: UserDefaults = .stan
 expect_violation source-default-init "${M}" 'let store = UserDefaults()' "${M}:2:"
 expect_violation source-nil-suite "${M}" 'let store = UserDefaults(suiteName: nil)!' "${M}:2:"
 expect_violation source-default-login-items "${M}" 'let items = AutoLaunchManager()' "${M}:2:"
+expect_violation source-half-injected-login-items "${M}" 'let items = AutoLaunchManager(smService: m)' \
+    'only AutoLaunchManager.shared uses the live login items'
 expect_violation source-second-shared-login-items Sources/AutoLaunchManager.swift \
     '  public static let other = AutoLaunchManager()' 'Sources/AutoLaunchManager.swift:3:'
 expect_violation source-root-reader Sources/AutoLaunchManager.swift \
@@ -256,9 +272,10 @@ expect_violation source-second-root-argument Sources/AppDelegate.swift \
 expect_replaced source-lost-root Sources/AppDelegate.swift \
     'self.init(client: CodexClient.shared, defaults: UserDefaults(suiteName: "x")!, autoLaunchManager: AutoLaunchManager.shared)' \
     'Sources/AppDelegate.swift passes the standard store 0 times'
-expect_replaced source-lost-login-root Sources/AutoLaunchManager.swift \
-    '    userDefaults: UserDefaults,' 'Sources/AutoLaunchManager.swift passes the standard store 0 times'
+expect_violation source-login-items-store Sources/AutoLaunchManager.swift \
+    '    userDefaults: UserDefaults = .standard,' 'Sources/AutoLaunchManager.swift:3:'
 expect_missing source-missing-root Sources/AppDelegate.swift 'Sources/AppDelegate.swift is missing'
+expect_missing source-missing-login-root Sources/AutoLaunchManager.swift 'Sources/AutoLaunchManager.swift is missing'
 
 # An unreadable file fails the check instead of passing it.
 if [ "$(/usr/bin/id -u)" -ne 0 ]; then
