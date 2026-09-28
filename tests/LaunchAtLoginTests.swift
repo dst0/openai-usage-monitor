@@ -535,7 +535,8 @@ private func checkDelegateMenu(_ fixture: InstalledBundleFixture) {
   preferences.defaults.set(true, forKey: "CodexMonitorLaunchAtLogin")
   let (scripts, service, manager) = fixture.fakes()
   let client = codexHome.client()
-  let delegate = AppDelegate(client: client, defaults: preferences.defaults, autoLaunchManager: manager)
+  let delegate = AppDelegate(
+    client: client, defaults: preferences.defaults, autoLaunchManager: manager, desktopWindows: { [] })
   var alerts: [String] = []
   delegate.alertOverride = { title, message, style in
     alerts.append("\(title)|\(message)|\(style == .warning ? "warning" : "other")")

@@ -17,11 +17,16 @@ final class UnavailableMainAppService: SMAppServiceManaging {
 }
 
 /// Builds a delegate that reads and writes preferences only in `preferences`.
-func makeTestAppDelegate(client: CodexClient, preferences: TestPreferencesSuite) -> AppDelegate {
+/// Its window list is `desktopWindows`, empty unless a test passes one, never the live one.
+func makeTestAppDelegate(
+  client: CodexClient, preferences: TestPreferencesSuite,
+  desktopWindows: @escaping () -> [[String: Any]] = { [] }
+) -> AppDelegate {
   let store = preferences.defaults
   let scripts = FailingLoginItemScripts(), service = UnavailableMainAppService()
   let loginItems = AutoLaunchManager(scriptExecutor: scripts, smService: service)
-  let delegate = AppDelegate(client: client, defaults: store, autoLaunchManager: loginItems)
+  let delegate = AppDelegate(
+    client: client, defaults: store, autoLaunchManager: loginItems, desktopWindows: desktopWindows)
   // A modal alert would stop the suite; no test built here expects one.
   delegate.alertOverride = { title, message, _ in
     assertTrue(false, "Unexpected alert: \(title): \(message)")

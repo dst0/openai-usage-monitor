@@ -382,7 +382,8 @@ fi
 # --- 4. install.sh, which cannot run here, calls the helper before compiling --
 # bash prints a parsed script back with comments removed, one command per line,
 # and top-level commands indented by exactly four spaces. test_swift.sh gets
-# the same scan, and section 2 sees every compile it makes.
+# the same scan, and section 2 sees every compile it makes. So does
+# swift_live_diagnostics.sh, the opt-in live diagnostic, which no test runs.
 canonical() {
     /bin/bash -c 'body="$(/bin/cat -- "$1")" && eval "__codex_canonical() {
 ${body}
@@ -540,7 +541,7 @@ bad_case variable-after ':' '"${SWIFTC}" -o x y.swift'
     > "${bad_dir}/scripts/late.sh"
 ! scan_accepts late || fail "the ordering scan accepted a compile before the call"
 
-for script in scripts/install.sh scripts/test_swift.sh; do
+for script in scripts/install.sh scripts/test_swift.sh scripts/swift_live_diagnostics.sh; do
     check_script "${script}"
 done
 
