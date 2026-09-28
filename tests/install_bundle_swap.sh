@@ -3,7 +3,9 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && /bin/pwd -P)"
 TEMP_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/codex-monitor-swap-test.XXXXXX")"
-trap '/bin/rm -rf -- "${TEMP_ROOT}"' EXIT INT TERM
+trap '/bin/rm -rf -- "${TEMP_ROOT}"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 HELPER="${PROJECT_DIR}/scripts/install_bundle_swap.sh"
 

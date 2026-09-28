@@ -40,6 +40,8 @@
     </array>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Codex Monitor asks System Events for its own login item, so Launch at Login shows whether it opens at login and can add or remove it.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSAppTransportSecurity</key>

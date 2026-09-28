@@ -152,9 +152,7 @@ extension AppDelegate {
   }
 
   @objc internal func toggleLaunchAtLogin() {
-    let newState = !autoLaunchManager.isEnabled
-    autoLaunchManager.setEnabled(newState)
-    launchAtLoginItem?.state = newState ? .on : .off
+    launchAtLogin.toggle()
   }
 
   @objc internal func toggleStackPercentages() {

@@ -33,6 +33,9 @@
 "uninstall_failed_title" = "UNINSTALL FAILED";
 "uninstall_failed_message" = "Не удалось запустить uninstaller. Изменения не внесены.";
 "launch_at_login" = "Запускать при входе";
+"launch_at_login_enable_failed" = "Не удалось добавить Codex Monitor в объекты входа, поэтому он не будет запускаться при входе. Добавьте его в Системных настройках > Основные > Объекты входа.";
+"launch_at_login_disable_failed" = "Не удалось убрать Codex Monitor из объектов входа, поэтому он продолжит запускаться при входе. Уберите его в Системных настройках > Основные > Объекты входа.";
+"launch_at_login_unknown" = "Codex Monitor не может прочитать свой объект входа и не знает, запускается ли он при входе. Проверьте Системные настройки > Основные > Объекты входа. Если Codex Monitor есть в Системных настройках > Конфиденциальность и безопасность > Автоматизация, разрешите ему управлять System Events.";
 "duration_days_hours" = "%dд %dч";
 "duration_hours_minutes" = "%dч %dм";
 "no_connection_error" = "Нет связи с Codex и Keychain";

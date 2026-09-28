@@ -18,7 +18,7 @@
 #             no setenv, unsetenv, or putenv, and no read of CODEX_HOME or HOME from the
 #             environment; no API or literal that locates the user's real home
 #             (homeDirectoryForCurrentUser, NSHomeDirectory, NSUserName, getpwuid,
-#             tilde expansion, "~/", "/Users/").
+#             tilde expansion, "~/", a /Users/.../.codex path).
 #   Sources - the live home is resolved once: the "CODEX_HOME" name and a ".codex" path
 #             literal each appear once, in CodexClient.swift; liveCodexHome is declared
 #             there and used once, by CodexClient(); CodexClient() is built only as
@@ -47,7 +47,8 @@ DEFAULT_CLIENT="CodexClient${S}${INIT}\\(${S}\\)|CodexClient${S}[?!]?${S}=${S}\\
 ENV_CHANGE="(^|[^[:alnum:]_])(setenv|unsetenv|putenv)${S}\\("
 HOME_ENV_READ="(environment${S}\\[|getenv${S}\\()${S}\"(CODEX_)?HOME\""
 SOURCE_HOME_ENV_READ="(environment${S}\\[|getenv${S}\\()${S}\"HOME\""
-REAL_HOME="homeDirectoryForCurrentUser|homeDirectory${S}\\(${S}forUser|NSHomeDirectory|NSUserName|getpwuid|getpwnam|TildeInPath|CFCopyHomeDirectoryURL|\"~/|\"/Users/"
+# A fake path under /Users in a fixture is fine; one into a .codex directory there is not.
+REAL_HOME="homeDirectoryForCurrentUser|homeDirectory${S}\\(${S}forUser|NSHomeDirectory|NSUserName|getpwuid|getpwnam|TildeInPath|CFCopyHomeDirectoryURL|\"~/|/Users/[^\"[:space:]]*/\\.codex"
 # The production wiring check, spelled exactly; nothing else may follow it.
 WIRING="${S}assertTrue\\(CodexClient\\.shared\\.codexHome == CodexClient\\.liveCodexHome, \"[^\"]*\"\\)\$"
 CODEX_HOME_NAME="\"CODEX_HOME\""
@@ -163,6 +164,7 @@ make_fixture() {
         '  let client = CodexClient(codexHome: home.url, distributionRunner: { _ in false })' \
         '  let delegate = AppDelegate(client: client, defaults: suite, autoLaunchManager: manager)' \
         '  let resolved = CodexClient.resolveCodexHome(environment: ["CODEX_HOME": ""], userHome: user)' \
+        '  let listing = "{\"/Users/me/Applications/Other App.app/\"}"' \
         > "${dir}/tests/AppDelegateTests.swift"
     printf '%s\n' \
         '  assertTrue(CodexClient.shared.codexHome == CodexClient.liveCodexHome, "shared client on the live home")' \
@@ -219,12 +221,12 @@ output="$(check_tree "${clean}")" || fail "clean fixture was rejected: ${output}
 
 T=tests/AppDelegateTests.swift
 expect_violation test-shared-client "${T}" \
-    'let delegate = makeTestAppDelegate(client: CodexClient.shared, preferences: preferences)' "${T}:5:"
+    'let delegate = makeTestAppDelegate(client: CodexClient.shared, preferences: preferences)' "${T}:6:"
 expect_violation test-shared-client-read "${T}" \
     'let enabled = CodexClient.shared.getAutoSwitchEnabled()' 'only the wiring check names the live home'
-expect_violation test-live-home "${T}" 'let home = CodexClient.liveCodexHome' "${T}:5:"
+expect_violation test-live-home "${T}" 'let home = CodexClient.liveCodexHome' "${T}:6:"
 expect_violation test-wiring-line-with-read "${T}" \
-    '  assertTrue(CodexClient.shared.codexHome == CodexClient.liveCodexHome, "x"); _ = CodexClient.shared.loadCachedSnapshot()' "${T}:5:"
+    '  assertTrue(CodexClient.shared.codexHome == CodexClient.liveCodexHome, "x"); _ = CodexClient.shared.loadCachedSnapshot()' "${T}:6:"
 expect_violation test-default-client "${T}" 'let client = CodexClient()' 'codexHome: on the same line'
 expect_violation test-default-client-init "${T}" 'let client = CodexClient.init()' 'codexHome: on the same line'
 expect_violation test-default-client-shorthand "${T}" 'let client: CodexClient = .init()' 'codexHome: on the same line'
@@ -244,6 +246,8 @@ expect_violation test-ns-home "${T}" 'let home = NSHomeDirectory()' "tests must 
 expect_violation test-tilde "${T}" 'let home = ("~/.codex" as NSString).expandingTildeInPath' \
     "tests must not locate the user's real home"
 expect_violation test-users-path "${T}" 'let home = URL(fileURLWithPath: "/Users/someone/.codex")' \
+    "tests must not locate the user's real home"
+expect_violation test-users-subpath "${T}" 'let registry = "/Users/someone/.codex/accounts.json"' \
     "tests must not locate the user's real home"
 expect_violation test-in-subdirectory tests/support/Helpers.swift \
     'let client = CodexClient.shared' 'tests/support/Helpers.swift:1:'

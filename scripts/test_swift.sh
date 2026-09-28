@@ -41,6 +41,7 @@ swiftc -parse-as-library \
     Sources/CodexDesktopProcessIdentity.swift \
     Sources/CodexRecoveryProcessIdentity.swift \
     Sources/AutoLaunchManager.swift \
+    Sources/LaunchAtLoginMenuController.swift \
     Sources/SingleInstanceGuard.swift \
     Sources/MenuIconButton.swift \
     Sources/InsetSeparatorView.swift \
@@ -72,6 +73,8 @@ swiftc -parse-as-library \
     tests/TestCodexHome.swift \
     tests/AppDelegatePreferencesTests.swift \
     tests/AppDelegateCodexHomeTests.swift \
+    tests/FakeLoginItems.swift \
+    tests/LaunchAtLoginTests.swift \
     tests/AppDelegateTests.swift \
     -o "${TMP_BIN_DIR}/app_delegate_test"
 "${TMP_BIN_DIR}/app_delegate_test"

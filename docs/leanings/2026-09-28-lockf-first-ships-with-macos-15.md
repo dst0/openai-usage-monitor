@@ -1,0 +1,28 @@
+# 2026-09-28 — `lockf(1)` first ships with macOS 15, and its descriptor wait spins a CPU
+
+- **Status:** Resolved
+- **Task/context:** A late review of PR #30 said that macOS 13 and 14 ship a `lockf` without the descriptor form (the `shell_cmds-309.120.3` source takes only `lockf [-knsw] [-t seconds] file command`). If so, `install.sh`'s `lockf 9` would exit 64 and kill every install there. The earlier learning [2026-09-28-macos-14-has-no-lockf.md](2026-09-28-macos-14-has-no-lockf.md) reported the opposite: the macOS 14 runner had no `lockf` at all, and the installer quietly locked through `python3`. This entry reconciles the two while fixing the install lock ([2026-09-28-install-lock-waiter-held-a-removed-lock-file.md](2026-09-28-install-lock-waiter-held-a-removed-lock-file.md)).
+- **Unexpected observation or failure:**
+  - Both claims come from real evidence. `lockf.c` is in every `shell_cmds` source since `278`, but a source file is not a shipped binary.
+  - Separately, `lockf`'s descriptor form waits by spinning a CPU. A second process running `lockf -s 7` on a held lock used 99–100% CPU (per `ps`) until it got the lock.
+- **Evidence:**
+  - Apple's `distribution-macOS` submodules pin `shell_cmds-278` (macOS 13.0), `279.120.2` (13.5), `302.0.1` (14.0), `309.120.3` (14.6), `319.0.1` (15.0), and `326` (15.6).
+  - In `shell_cmds.xcodeproj/project.pbxproj`, a native `lockf` target exists from `278`, but before `319.0.1` no aggregate target depends on it. The file has no `remoteInfo = lockf;` proxy in `278`, `279.120.2`, `302.60.2`, or `309.120.3`, and three in `319.0.1`, like `mktemp`, which has three in every version. So `lockf` is built into the project but not installed before macOS 15, and it arrives already with the descriptor form.
+  - In `lockf.c` at `319.0.1`, `acquire_lock` always passes `LOCK_EX | LOCK_NB` for a descriptor. The blocking loop `while (lockfd == -1 && ...) lockfd = acquire_lock(...)` therefore retries without sleeping.
+  - The PR #30 CI run printed `lockf on PATH: none` on macOS 14.8.9. `tests/install_lock.sh` now prints the lock tools of every host it runs on. PR #35's first CI run printed `install lock tools: /usr/bin/lockf missing; /usr/bin/perl present; macOS 14.8.9` on the required `macos-14` runner, and `install lock tools: /usr/bin/lockf present; /usr/bin/perl present; macOS 15.7.9` on the `macos-15` runner.
+- **Approaches tried:**
+  - **Attempt:** Keep `lockf 9` as the installer's wait.
+    - **Outcome:** Rejected.
+    - **Why:** On macOS 15 and later it spins a core for as long as another install runs. The installer now retries a non-blocking attempt once a second (`INSTALL_LOCK_POLL_SECONDS`), with whichever tool is available.
+  - **Attempt:** Keep the `python3` fallback on macOS 13 and 14.
+    - **Outcome:** Rejected.
+    - **Why:** The lock is taken before the installer checks for the Command Line Tools. Without them, `/usr/bin/python3` is a stub that opens an install dialog and fails, and the old code treated that failure as a held lock. perl's `flock` is the same `flock(2)` lock, and `/usr/bin/perl` is part of the base system (seen on the macOS 14.8.9 runner and on macOS 27.2; not checked on a macOS 13 host), so both scripts use one identical `flock_fd_now`: `lockf`'s descriptor form, then perl, then fail closed.
+  - **Attempt:** Detect a `lockf` without the descriptor form.
+    - **Outcome:** Worked, as a guard only.
+    - **Why:** No shipped release has such a `lockf`, but one earlier on `PATH` is conceivable and `/usr/bin/lockf` is cheap to check. Its `EX_USAGE` (64) falls back to perl, and a fake old `lockf` in `tests/install_lock.sh` covers that path.
+- **Root cause:** The presence of a tool's source in Apple's open-source tree was taken to mean that the tool ships. What ships is decided by the Xcode project's install aggregates.
+- **Resolution:** `flock_fd_now` and the polling wait in `scripts/install.sh`; the identical `flock_fd_now` in `scripts/uninstall.sh`. The installer no longer uses `python3` or `lockf` from `PATH`.
+- **Verification:** `tests/install_lock.sh` runs the perl path on every host, the `lockf` path where `/usr/bin/lockf` exists, the old-`lockf` fallback, and both directions across the tools (perl holds while `lockf` waits, and back). It also checks that a host without either tool fails closed, and that no script runs `lockf` without `-t 0`. It passes with every `lockf` path replaced by a missing one, which emulates macOS 13 and 14.
+- **Prevention/follow-up:** `AGENTS.md`, `README.md`, and `CODEX.md` name the release each tool comes from. The shell test's first line records the runner's tools in every CI log. The required jobs run on macOS 14 (perl path). A non-required `macos-15` job first requires `/usr/bin/lockf`, then runs the same test under `/bin/bash`, so CI also runs the `lockf` path that macOS 15 and later take.
+- **Reusable learning:** To decide whether a macOS release ships a command, check that release's `distribution-macOS` submodule and the project's install aggregate targets (or the runner itself), not only whether the source file exists. Never block on `lockf <fd>`; poll with `lockf -s -t 0 <fd>` or use a tool whose wait sleeps in the kernel.
+- **References:** `scripts/install.sh` (`flock_fd_now`, `acquire_install_lock`), `scripts/uninstall.sh` (`flock_fd_now`, `try_flock`), `tests/install_lock.sh`, apple-oss-distributions/shell_cmds `lockf/lockf.c` and `shell_cmds.xcodeproj/project.pbxproj` at `shell_cmds-309.120.3` and `shell_cmds-319.0.1`, apple-oss-distributions/distribution-macOS tags `macos-130` through `macos-156`.

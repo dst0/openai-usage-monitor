@@ -11,9 +11,10 @@ set -o pipefail
 #
 # This removes this project's installed app, helper binaries, notifier, launch
 # items, app-owned state/logs, and the exact shell/skill registrations written
-# by scripts/install.sh. Staging, backup, and clone leftovers of a killed
-# install are removed only while no installer holds the install lock. It
-# deliberately preserves ChatGPT.app and Codex data
+# by scripts/install.sh. While an installer holds the install lock, a
+# confirmed run stops before changing anything; staging, backup, and clone
+# leftovers of a killed install are removed only while no installer holds
+# it. It deliberately preserves ChatGPT.app and Codex data
 # shared with it: auth.json, state_5.sqlite, sessions/, thread-writer-locks/,
 # and other transcript/database files. Source checkouts and build directories
 # are left untouched.
@@ -129,7 +130,6 @@ case "$TMP_ROOT" in
     *) die "TMPDIR must be an absolute path" ;;
 esac
 [ "$TMP_ROOT" != "/" ] || die "refusing to use the filesystem root as TMPDIR"
-INSTALL_LOCK_FILE="${TMP_ROOT}/codex_monitor_install_${CURRENT_UID}.lock"
 DAEMON_PLIST="${LAUNCH_AGENTS}/${DAEMON_LABEL}.plist"
 APP_SERVICE_PLIST="${LAUNCH_AGENTS}/${APP_SERVICE_LABEL}.plist"
 # install.sh uses the first when it is writable, otherwise the second.
@@ -213,7 +213,8 @@ monitor_state_temps() {
 MKTEMP_CHAR='[0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]'
 CLI_STAGING_NAME="^\\.codex-mon\\.install\\.${MKTEMP_CHAR}{6}(\\.cstemp)?\$"
 BUNDLE_STAGING_NAME="^\\.codex-monitor-(install|backup)\\.${MKTEMP_CHAR}{6}\$"
-REMOTE_CLONE_NAME="^codex-mon-install-XXXXXX\\.${MKTEMP_CHAR}{10}\$"
+# `mktemp -t` appends eight characters on macOS 13 and ten from macOS 14.
+REMOTE_CLONE_NAME="^codex-mon-install-XXXXXX\\.(${MKTEMP_CHAR}{8}|${MKTEMP_CHAR}{10})\$"
 UNINSTALL_COPY_NAME="^(\\.zshrc|\\.bash_profile|config\\.toml)\\.codex-monitor-uninstall\\.${MKTEMP_CHAR}{6}\$"
 INSTALL_LOCK_HELD='an installer holds the install lock'
 INSTALL_LOCK_UNVERIFIED='the install lock cannot be verified'
@@ -230,6 +231,27 @@ per_user_temp_dir() {
         *) return 1 ;;
     esac
 }
+
+# Every file an installer may hold as its install lock, each once. install.sh
+# locks one in the per-user temporary directory whatever TMPDIR says; earlier
+# installers locked ${TMPDIR:-/tmp}'s, so this TMPDIR's and /tmp's are
+# checked too. PER_USER_TEMP_DIR is empty when that directory is unknown,
+# which leaves the install lock unverifiable.
+INSTALL_LOCK_NAME="codex_monitor_install_${CURRENT_UID}.lock"
+INSTALL_LOCK_FILES=()
+add_install_lock_dir() {
+    local dir="$1" path existing
+    while [ "${dir%/}" != "$dir" ]; do dir="${dir%/}"; done
+    path="${dir}/${INSTALL_LOCK_NAME}"
+    for existing in ${INSTALL_LOCK_FILES[@]+"${INSTALL_LOCK_FILES[@]}"}; do
+        [ "$existing" != "$path" ] || return 0
+    done
+    INSTALL_LOCK_FILES+=("$path")
+}
+PER_USER_TEMP_DIR="$(per_user_temp_dir)" || PER_USER_TEMP_DIR=""
+[ -z "$PER_USER_TEMP_DIR" ] || add_install_lock_dir "$PER_USER_TEMP_DIR"
+add_install_lock_dir "$TMP_ROOT"
+add_install_lock_dir "/tmp"
 
 private_directory() {
     [ ! -L "$1" ] && [ -d "$1" ] &&
@@ -250,12 +272,12 @@ holds_only_monitor_bundle() {
 # Leftovers of a killed install. install.sh creates these only while it holds
 # the install lock, and its EXIT cleanup removes them before releasing it.
 # macOS mktemp(1) fills each X from MKTEMP_CHAR; `mktemp -t` keeps the Xs of
-# its prefix and appends a dot and ten such characters.
+# its prefix and appends a dot and ten such characters (eight on macOS 13).
 #   ~/.local/bin/.codex-mon.install.XXXXXX         CLI staging (0600, 0755 after chmod)
 #   ~/.local/bin/.codex-mon.install.XXXXXX.cstemp  codesign's copy while signing (0755 only)
 #   APPLICATION_DIRS/.codex-monitor-install.XXXXXX app staging root (0700)
 #   APPLICATION_DIRS/.codex-monitor-backup.XXXXXX  prior-app backup root (0700)
-#   <per-user temp dir>/codex-mon-install-XXXXXX.XXXXXXXXXX
+#   <per-user temp dir>/codex-mon-install-XXXXXX.XXXXXXXXXX (or .XXXXXXXX)
 #                                                  remote-install clone (0700)
 # A staging or backup root may hold only the Monitor bundle. While an install
 # runs, a backup root can hold the only copy of the previous app, so callers
@@ -284,7 +306,8 @@ installer_temps() {
             printf '%s\n' "$path"
         done
     done
-    temp_dir="$(per_user_temp_dir)" || return 0
+    temp_dir="$PER_USER_TEMP_DIR"
+    [ -n "$temp_dir" ] || return 0
     for path in "$temp_dir"/codex-mon-install-XXXXXX.*; do
         name="${path##*/}"
         [[ "$name" =~ $REMOTE_CLONE_NAME ]] || continue
@@ -293,52 +316,102 @@ installer_temps() {
     done
 }
 
-# Takes the exclusive BSD flock(2) lock on an existing file without waiting,
-# then releases it; with `unlink`, also tries to remove the file while holding
-# it, ignoring a failure as lockf does (the caller removes and reports it).
-# Exit status 0: taken; 75 (EX_TEMPFAIL): another process holds it; anything
-# else: unknown. Newer macOS releases ship lockf(1); macOS 14 does not, so perl's
-# flock, the same lock, is the fallback. A file is opened only for reading.
+# Tries once to take the exclusive flock(2) lock of the file open as
+# descriptor $1. Exit status 0: taken (or already held through this
+# descriptor); 75 (EX_TEMPFAIL): another open file holds it; anything else:
+# unknown. /usr/bin/lockf, and its descriptor form, first ship with macOS 15;
+# macOS 13 and 14 have perl's flock, the same lock. A lockf without the
+# descriptor form rejects it as a usage error (64), which falls back too.
+# Callers wait by retrying: lockf's own wait on a descriptor spins a CPU.
+# perl runs with -T, which ignores PERL5OPT and PERL5LIB from the caller's
+# environment. scripts/install.sh keeps an identical copy of this function.
+flock_fd_now() {
+    local fd="$1"
+    local status=69
+    if [ -x /usr/bin/lockf ]; then
+        /usr/bin/lockf -s -t 0 "${fd}" 2>/dev/null && return 0 || status=$?
+        [ "${status}" -eq 64 ] || return "${status}"
+    fi
+    [ -x /usr/bin/perl ] || return 69
+    /usr/bin/perl -T -MErrno -MFcntl=:flock -e '
+        open(my $lock, "<&=", $ARGV[0]) or exit 71;
+        flock($lock, LOCK_EX | LOCK_NB) or exit($!{EWOULDBLOCK} ? 75 : 71);
+        exit 0;
+    ' "${fd}" 2>/dev/null
+}
+
+# Probes the exclusive flock(2) lock of an existing regular file without
+# waiting, through descriptor 8, and releases it; with `unlink`, removes the
+# file while still holding the lock. The file is opened only for reading, so
+# a probe never creates it. A path that no longer names the locked file was
+# replaced or removed meanwhile (an installer that locked a removed lock file
+# locks the new one instead), so the probe starts over, a bounded number of
+# times. Exit status 0: free (and removed with `unlink`); 66: the path does
+# not exist; 74: the free file could not be removed; 75 (EX_TEMPFAIL):
+# another process holds it; 71: unknown. Every lock-tool status other than
+# 0 and 75 becomes 71, so no tool status can pass for 66 or 74.
 try_flock() {
     local path="$1"
     local action="${2:-keep}"
-    if [ -x /usr/bin/lockf ]; then
-        if [ "$action" = unlink ]; then
-            /usr/bin/lockf -s -t 0 "$path" /usr/bin/true >/dev/null 2>&1
-        else
-            /usr/bin/lockf -k -s -t 0 "$path" /usr/bin/true >/dev/null 2>&1
+    local attempt status opened
+    for attempt in 1 2 3 4 5; do
+        is_present "$path" || return 66
+        [ ! -L "$path" ] && [ -f "$path" ] || return 71
+        if ! { exec 8<"$path"; } 2>/dev/null; then
+            is_present "$path" || return 66
+            return 71
         fi
-        return
-    fi
-    [ -x /usr/bin/perl ] || return 69
-    /usr/bin/perl -MErrno -MFcntl=:flock -e '
-        open(my $lock, "<", $ARGV[0]) or exit 71;
-        flock($lock, LOCK_EX | LOCK_NB) or exit($!{EWOULDBLOCK} ? 75 : 71);
-        unlink($ARGV[0]) if $ARGV[1] eq "unlink";
-        exit 0;
-    ' "$path" "$action" >/dev/null 2>&1
+        flock_fd_now 8
+        status=$?
+        case "$status" in
+            0|75) ;;
+            *) status=71 ;;
+        esac
+        if [ "$status" -eq 0 ]; then
+            opened="$(/usr/bin/stat -f '%d:%i' 0<&8 2>/dev/null)"
+            if [ -z "$opened" ] || [ "$opened" != "$(/usr/bin/stat -f '%d:%i' "$path" 2>/dev/null)" ]; then
+                exec 8<&-
+                continue
+            fi
+            if [ "$action" = unlink ]; then
+                /bin/rm -f -- "$path" 2>/dev/null || status=74
+            fi
+        fi
+        exec 8<&-
+        return "$status"
+    done
+    return 71
 }
 
-# Prints nothing when no installer holds the install lock (or it does not
-# exist), otherwise why installer leftovers must be kept. The probe keeps
-# the file, and runs only when it exists, so a dry run changes nothing. An
-# installer started with another TMPDIR uses another lock file and is not
-# detected.
+# Prints nothing when no installer holds an install lock (or none exists),
+# otherwise why an installer may still be running. The probe keeps each lock
+# file and never creates one, so a dry run changes nothing. A held lock wins
+# over one that cannot be verified: a lock file that is a symlink, not a
+# regular file, another user's, or unreadable, or an unknown per-user
+# temporary directory.
 install_lock_blocker() {
-    local status
-    is_present "$INSTALL_LOCK_FILE" || return 0
-    if [ -L "$INSTALL_LOCK_FILE" ] || [ ! -f "$INSTALL_LOCK_FILE" ] ||
-       [ "$(/usr/bin/stat -f '%u' "$INSTALL_LOCK_FILE" 2>/dev/null || true)" != "$CURRENT_UID" ]; then
-        printf '%s\n' "$INSTALL_LOCK_UNVERIFIED"
-        return 0
-    fi
-    try_flock "$INSTALL_LOCK_FILE"
-    status=$?
-    case "$status" in
-        0) ;;
-        75) printf '%s\n' "$INSTALL_LOCK_HELD" ;;
-        *) printf '%s\n' "$INSTALL_LOCK_UNVERIFIED" ;;
-    esac
+    local path status
+    local verdict=""
+    [ -n "$PER_USER_TEMP_DIR" ] || verdict="$INSTALL_LOCK_UNVERIFIED"
+    for path in "${INSTALL_LOCK_FILES[@]}"; do
+        is_present "$path" || continue
+        if [ -L "$path" ] || [ ! -f "$path" ] ||
+           [ "$(/usr/bin/stat -f '%u' "$path" 2>/dev/null || true)" != "$CURRENT_UID" ]; then
+            verdict="$INSTALL_LOCK_UNVERIFIED"
+            continue
+        fi
+        try_flock "$path"
+        status=$?
+        case "$status" in
+            0|66) ;;
+            75)
+                printf '%s\n' "$INSTALL_LOCK_HELD"
+                return 0
+                ;;
+            *) verdict="$INSTALL_LOCK_UNVERIFIED" ;;
+        esac
+    done
+    [ -z "$verdict" ] || printf '%s\n' "$verdict"
 }
 
 # Private copies an interrupted uninstall leaves while clean_rc_file or
@@ -417,8 +490,8 @@ print_plan_path() {
 }
 
 print_installer_temp_plan() {
-    local path blocker
-    blocker="$(install_lock_blocker)"
+    local blocker="$1"
+    local path
     while IFS= read -r path; do
         if [ -n "$blocker" ]; then
             printf '  preserve %s (%s)\n' "$path" "$blocker"
@@ -426,20 +499,49 @@ print_installer_temp_plan() {
             printf '  remove %s\n' "$path"
         fi
     done < <(installer_temps)
-    per_user_temp_dir >/dev/null ||
+    [ -n "$PER_USER_TEMP_DIR" ] ||
         printf '  preserve remote-install clones (%s)\n' "$TEMP_DIR_UNKNOWN"
 }
 
+# How a confirmed run would treat each install lock file that exists.
+print_install_lock_plan() {
+    local path status
+    for path in "${INSTALL_LOCK_FILES[@]}"; do
+        is_present "$path" || continue
+        if [ -L "$path" ] || [ ! -f "$path" ]; then
+            printf '  remove %s\n' "$path"
+            continue
+        fi
+        if [ "$(/usr/bin/stat -f '%u' "$path" 2>/dev/null || true)" != "$CURRENT_UID" ]; then
+            printf '  preserve %s (another user owns it)\n' "$path"
+            continue
+        fi
+        try_flock "$path"
+        status=$?
+        case "$status" in
+            0) printf '  remove %s\n' "$path" ;;
+            66) ;;
+            75) printf '  preserve %s (an installer holds it)\n' "$path" ;;
+            *) printf '  preserve %s (cannot tell whether the lock is held)\n' "$path" ;;
+        esac
+    done
+}
+
 print_plan() {
+    local blocker
+    blocker="$(install_lock_blocker)"
+    if [ "$blocker" = "$INSTALL_LOCK_HELD" ]; then
+        note "${INSTALL_LOCK_HELD}: a confirmed uninstall stops without changing anything until the installation ends."
+    fi
     note "This will remove installed ${APP_NAME} components for user ${USER_HOME}:"
     for path in "${APP_PATHS[@]}"; do print_plan_path "$path"; done
     print_plan_path "$NOTIFIER_PATH"
     print_plan_path "$DAEMON_PLIST"
     print_plan_path "$APP_SERVICE_PLIST"
-    print_plan_path "$INSTALL_LOCK_FILE"
+    print_install_lock_plan
     for path in "${ALWAYS_STATE_PATHS[@]}"; do print_plan_path "$path"; done
     while IFS= read -r path; do print_plan_path "$path"; done < <(monitor_state_temps)
-    print_installer_temp_plan
+    print_installer_temp_plan "$blocker"
     while IFS= read -r path; do print_plan_path "$path"; done < <(uninstaller_temps)
     print_monitor_log_plan
     for path in "${ALWAYS_ARTIFACT_PATHS[@]}"; do print_plan_path "$path"; done
@@ -459,7 +561,7 @@ print_plan() {
     note "  ${CODEX_HOME}/state_5.sqlite and its -wal/-shm files"
     note "  ${CODEX_HOME}/sessions/ and ${CODEX_HOME}/thread-writer-locks/"
     note "  ${USER_HOME}/Library/Application Support/ChatGPT and /Applications/ChatGPT.app"
-    note "  this source checkout and its build directories"
+    note "  this repository checkout and its build directories"
 }
 
 if [ "$DRY_RUN" -eq 1 ]; then
@@ -492,10 +594,12 @@ remove_path() {
     fi
 }
 
+# Removes a lock file only while holding its lock, so a process that later
+# locks the removed file sees that its path no longer names it.
 remove_unlocked_file() {
     local path="$1"
     is_present "$path" || return 0
-    if [ ! -f "$path" ]; then
+    if [ -L "$path" ] || [ ! -f "$path" ]; then
         remove_path "$path"
         return
     fi
@@ -503,9 +607,12 @@ remove_unlocked_file() {
     try_flock "$path" unlink
     status=$?
     case "$status" in
-        # The probe normally unlinked it already; this removes and reports
-        # a file it could not unlink.
-        0) remove_path "$path" ;;
+        # Removed, or removed by someone else meanwhile.
+        0|66) ;;
+        74)
+            warn "could not remove file: $path"
+            FAILED=1
+            ;;
         75)
             warn "lock is still held; preserving: $path"
             FAILED=1
@@ -515,6 +622,20 @@ remove_unlocked_file() {
             FAILED=1
             ;;
     esac
+}
+
+# Installers leave their lock file behind; remove each one this user owns.
+remove_install_lock_files() {
+    local path
+    for path in "${INSTALL_LOCK_FILES[@]}"; do
+        if [ -f "$path" ] && [ ! -L "$path" ] &&
+           [ "$(/usr/bin/stat -f '%u' "$path" 2>/dev/null || true)" != "$CURRENT_UID" ]; then
+            warn "preserving an install lock file this user does not own: $path"
+            FAILED=1
+            continue
+        fi
+        remove_unlocked_file "$path"
+    done
 }
 
 arm_cancellation_marker() {
@@ -531,8 +652,8 @@ arm_cancellation_marker() {
 
 unload_label() {
     local label="$1"
-    if ! command -v launchctl >/dev/null 2>&1; then
-        warn "launchctl is unavailable; could not unload $label"
+    if [ ! -x /bin/launchctl ]; then
+        warn "/bin/launchctl is unavailable; could not unload $label"
         FAILED=1
         return
     fi
@@ -543,7 +664,7 @@ unload_label() {
 unload_matching_labels() {
     local prefix="$1"
     local label
-    command -v launchctl >/dev/null 2>&1 || return 0
+    [ -x /bin/launchctl ] || return 0
     while IFS= read -r label; do
         [ -n "$label" ] || continue
         unload_label "$label"
@@ -560,11 +681,11 @@ unload_plist() {
             unload_label "$label"
             return
         fi
-        if command -v launchctl >/dev/null 2>&1; then
+        if [ -x /bin/launchctl ]; then
             /bin/launchctl bootout "gui/${CURRENT_UID}" "$plist" >/dev/null 2>&1 || true
             /bin/launchctl unload "$plist" >/dev/null 2>&1 || true
         else
-            warn "launchctl is unavailable; could not unload $label"
+            warn "/bin/launchctl is unavailable; could not unload $label"
             FAILED=1
         fi
     fi
@@ -776,7 +897,7 @@ unregister_bundle() {
 
 remove_installer_temps() {
     local path paths blocker
-    if ! per_user_temp_dir >/dev/null; then
+    if [ -z "$PER_USER_TEMP_DIR" ]; then
         warn "${TEMP_DIR_UNKNOWN}; remote-install clones were not checked"
         FAILED=1
     fi
@@ -796,6 +917,16 @@ remove_installer_temps() {
     done <<< "$paths"
 }
 
+# An installer that holds the install lock may be replacing or rolling back
+# the app right now. Stop before changing anything, with EX_TEMPFAIL (75)
+# rather than the 1 of an uninstall with warnings. This check does not keep
+# an installer from starting during the uninstall; the per-leftover check in
+# remove_installer_temps only keeps such an installer's temporary paths.
+if [ "$(install_lock_blocker)" = "$INSTALL_LOCK_HELD" ]; then
+    printf 'Error: %s; nothing was changed. Rerun the uninstaller after the installation ends.\n' "$INSTALL_LOCK_HELD"
+    exit 75
+fi
+
 note "Stopping OpenAI Codex Monitor & Switcher..."
 arm_cancellation_marker
 
@@ -805,7 +936,7 @@ unload_label "$RESTART_WORKER_LABEL"
 unload_matching_labels "$APP_SERVICE_LABEL_PREFIX"
 unload_matching_labels "$NOTIFIER_SERVICE_LABEL_PREFIX"
 
-if command -v osascript >/dev/null 2>&1; then
+if [ -x /usr/bin/osascript ]; then
     # Match the exact bundle path written by install.sh, not an unrelated
     # login item that happens to share the display name.
     /usr/bin/osascript - "$USER_HOME" <<'APPLESCRIPT' >/dev/null 2>&1 || {
@@ -828,7 +959,7 @@ APPLESCRIPT
         FAILED=1
     }
 else
-    warn 'osascript is unavailable; could not remove the Codex Monitor login item'
+    warn '/usr/bin/osascript is unavailable; could not remove the Codex Monitor login item'
     FAILED=1
 fi
 
@@ -885,16 +1016,16 @@ done
 while IFS= read -r path; do remove_path "$path"; done < <(monitor_state_temps)
 # Clear the preference domains as well as their plist files. This is scoped to
 # the two bundle identifiers owned by this project and does not touch ChatGPT.
-if command -v defaults >/dev/null 2>&1; then
+if [ -x /usr/bin/defaults ]; then
     /usr/bin/defaults delete com.codex.monitor >/dev/null 2>&1 || true
     /usr/bin/defaults delete com.dst.codex-monitor >/dev/null 2>&1 || true
     /usr/bin/defaults delete "${NOTIFIER_BUNDLE_ID}" >/dev/null 2>&1 || true
 fi
 for path in "${ALWAYS_ARTIFACT_PATHS[@]}"; do remove_path "$path"; done
 
-# The installer leaves this coordination file in TMPDIR. Remove it only after
-# the app and workers have stopped and only when no other installer holds it.
-remove_unlocked_file "$INSTALL_LOCK_FILE"
+# Remove the installers' coordination files only after the app and workers
+# have stopped, and each only while no installer holds it.
+remove_install_lock_files
 
 if [ "$FAILED" -ne 0 ]; then
     warn 'uninstall completed with warnings; inspect the paths reported above'
