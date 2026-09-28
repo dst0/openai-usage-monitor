@@ -27,8 +27,12 @@ fail() {
     exit 1
 }
 
-STANDARD_STORE='UserDefaults[[:space:]]*\.[[:space:]]*standard|UserDefaults[[:space:]]*=[[:space:]]*\.standard|standardUserDefaults|NSUserDefaults|CFPreferences'
-TEST_ONLY_FORBIDDEN="${STANDARD_STORE}"'|AppDelegate[[:space:]]*\([[:space:]]*\)|AutoLaunchManager[[:space:]]*\.[[:space:]]*shared|AutoLaunchManager[[:space:]]*\([[:space:]]*\)|/usr/bin/defaults'
+# `UserDefaults()` searches the app's own domain like the standard store, and
+# `@AppStorage` defaults to it. A line that starts with `.standard` continues
+# a member chain split across lines.
+STANDARD_STORE='UserDefaults[[:space:]]*\.[[:space:]]*standard|UserDefaults[[:space:]]*=[[:space:]]*\.standard|UserDefaults[[:space:]]*(\.[[:space:]]*init[[:space:]]*)?\([[:space:]]*\)|^[[:space:]]*\.[[:space:]]*standard([^[:alnum:]_]|$)|standardUserDefaults|NSUserDefaults|CFPreferences|@AppStorage'
+# In tests any `.standard` shorthand, such as `defaults: .standard`, is forbidden.
+TEST_ONLY_FORBIDDEN="${STANDARD_STORE}"'|(^|[^[:alnum:]_])\.standard([^[:alnum:]_]|$)|AppDelegate[[:space:]]*\([[:space:]]*\)|AutoLaunchManager[[:space:]]*\.[[:space:]]*shared|AutoLaunchManager[[:space:]]*\([[:space:]]*\)|/usr/bin/defaults'
 SUITE_LIFECYCLE='UserDefaults[[:space:]]*\([[:space:]]*suiteName|PersistentDomain[[:space:]]*\('
 
 # code_matches FILE ERE -> "file:line: text" for each non-comment matching line
@@ -114,6 +118,16 @@ expect_violation test-standard-read tests/AppDelegateTests.swift \
     'let stacked = UserDefaults.standard.bool(forKey: "stackPercentages")' 'tests/AppDelegateTests.swift:4:'
 expect_violation test-standard-spaced tests/AppDelegateTests.swift \
     'let d = UserDefaults .standard' 'tests/AppDelegateTests.swift:4:'
+expect_violation test-standard-split tests/AppDelegateTests.swift \
+    '  .standard.set(false, forKey: "stackPercentages")' 'tests/AppDelegateTests.swift:4:'
+expect_violation test-standard-shorthand tests/AppDelegateTests.swift \
+    'let delegate = AppDelegate(client: client, defaults: .standard, autoLaunchManager: manager)' 'defaults: .standard'
+expect_violation test-default-init tests/AppDelegateTests.swift \
+    'let store = UserDefaults()' 'UserDefaults()'
+expect_violation test-default-init-explicit tests/AppDelegateTests.swift \
+    'let store = UserDefaults.init()' 'UserDefaults.init()'
+expect_violation test-app-storage tests/AppDelegateTests.swift \
+    '@AppStorage("stackPercentages") var stacked = true' '@AppStorage'
 expect_violation test-cfpreferences tests/AppDelegateTests.swift \
     'CFPreferencesSetAppValue(key, value, domain)' 'CFPreferencesSetAppValue'
 expect_violation test-production-delegate tests/AppDelegateTests.swift \
@@ -134,6 +148,8 @@ expect_violation source-second-root-read Sources/AppDelegate.swift \
     'let saved = UserDefaults.standard.double(forKey: AppDelegate.refreshIntervalKey)' 'Sources/AppDelegate.swift:3:'
 expect_violation source-new-default-arg Sources/AppDelegate+Menu.swift \
     'init(store: UserDefaults = .standard) {}' 'Sources/AppDelegate+Menu.swift:2:'
+expect_violation source-default-init Sources/AppDelegate+Menu.swift \
+    'let store = UserDefaults()' 'Sources/AppDelegate+Menu.swift:2:'
 expect_violation source-root-reader Sources/AutoLaunchManager.swift \
     'return UserDefaults.standard.bool(forKey: Self.userDefaultsKey)' 'Sources/AutoLaunchManager.swift:2:'
 expect_violation source-second-root-argument Sources/AppDelegate.swift \
