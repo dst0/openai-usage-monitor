@@ -1,0 +1,22 @@
+# 2026-09-28 — A status item built before any drawing aborted the AppDelegate test binary
+
+- **Status:** Partial
+- **Task/context:** Keeping the Swift tests out of the live `~/.codex` ([2026-09-28 — Swift tests resolved the live `~/.codex`](2026-09-28-swift-tests-resolved-the-live-codex-home.md)). The new Test 0 (`tests/AppDelegateCodexHomeTests.swift`) at first ran before everything else in `app_delegate_test`. It builds a delegate, sets its status item's menu from `buildMenu()`, and shows a snapshot in a new `NSStatusItem`.
+- **Unexpected observation or failure:** In the two red CI steps, Test 0 stopped at a Codex home tripwire before reaching the menu. At the fix commit it got past that point, and the binary aborted with `Assertion failed: (CGAtomicGet(&is_initialized)), function CGSConnectionByID, file CGSConnection.mm, line 419.` (exit 134, `Abort trap: 6`), before Test 0 printed anything.
+- **Evidence:**
+  - [Run 36379235765](https://github.com/dst0/openai-usage-monitor/actions/runs/36379235765), head `0f8ba02`, macos-14, Swift 5.10: the abort above.
+  - [Run 36379597642](https://github.com/dst0/openai-usage-monitor/actions/runs/36379597642), head `5523264`: the same Test 0, run just before Test 4 (after Tests 1–3), passed, as did the rest of the suite.
+  - Tests 1–3 only build and draw attributed strings and images. Test 4 had always built its menus and status items after them.
+- **Approaches tried:**
+  - **Attempt:** Run Test 0 after Tests 1–3, where the suite first built a delegate before this change.
+    - **Outcome:** Worked.
+    - **Why:** Test 0 then builds its menu and status item in the same state Test 4 always did. Tests 1–3 read no Monitor state, so Test 0 is still the binary's first read of it.
+  - **Attempt:** Call `NSApplication.shared` first in the test's `main`, as `Sources/main.swift` does.
+    - **Outcome:** Rejected, not run.
+    - **Why:** With `NSApp` set, a test that reaches `NSApp.terminate(nil)` (the Quit action, or the second-instance path of `applicationDidFinishLaunching`) would end the binary with status 0 and skip the rest of the suite, and `scripts/test_swift.sh` would report success. With `NSApp` nil, the same test crashes and fails the run.
+- **Root cause:** Not isolated. The assertion is in the window-server connection code. The leading hypothesis is that nothing had connected this bundle-less binary to the window server yet, and that the image drawing in Tests 1–3 does so as a side effect. Missing evidence: which of `buildMenu()` and `NSStatusBar.system.statusItem(withLength:)` hit the assertion, and which earlier call opens the connection.
+- **Resolution:** Test 0 runs just before Test 4. The call site in `tests/AppDelegateTests.swift` says why, and AGENTS.md says that the suite's first menu and status item come after Tests 1–3.
+- **Verification:** Run 36379597642 passed with this order. No experiment isolated the exact call.
+- **Prevention/follow-up:** To close this entry, run the binary with Test 0 first and one candidate at a time: `buildMenu()` alone, a status item alone, and a status item after one image draw. Then record which call needs the connection.
+- **Reusable learning:** In a bundle-less AppKit test binary, build menus and status items only after the binary has done what the existing suite does first (here, drawing images), or prove the new order on CI. Do not initialize `NSApplication.shared` just to get a connection: it turns a test that quits the app into a silent pass.
+- **References:** `tests/AppDelegateTests.swift` (Test 0 call site), `tests/AppDelegateCodexHomeTests.swift`, `Sources/main.swift`, `Sources/AppDelegate+SettingsActions.swift` (`NSApp.terminate`).

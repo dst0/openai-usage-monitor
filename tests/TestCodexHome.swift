@@ -8,8 +8,10 @@ import Foundation
 ///
 /// Monitor state lives in `CODEX_HOME`, or in the live `~/.codex` when that variable is unset.
 /// A test binary that compiles a Source which resolves it calls `activate()` first: that makes a
-/// directory private to this run and points `CODEX_HOME` at `<run>/home`. A test that needs a
-/// home of its own takes one with `enter(_:create:)` and gives it back with `leave(_:)`.
+/// directory private to this run and points `CODEX_HOME` at `<run>/home`. The directory is removed
+/// when the binary exits, also after a failed assertion or a tripwire; a crash or an abort leaves
+/// it in the temporary directory. A test that needs a home of its own takes one with
+/// `enter(_:create:)` and gives it back with `leave(_:)`.
 ///
 /// `scripts/test_swift.sh` builds tests with `-D CODEX_MONITOR_TESTS`, which compiles tripwires
 /// into `Sources/`: `CodexClient.codexHome` calls `requireIsolated(_:seam:)` with the raw

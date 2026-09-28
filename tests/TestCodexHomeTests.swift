@@ -2,10 +2,13 @@ import Foundation
 
 /// Tests for tests/TestCodexHome.swift and the Codex home tripwires it backs in `Sources/`.
 ///
-/// The path decision is checked in this process. Each tripwire's stop is checked in a child: this
-/// binary run again in a probe mode, with `HOME` pointed at a temporary directory. A tripwire
-/// stops the child before the path is built. If one were removed, its probe would only build a
-/// path or check whether a file exists, and would never write anything.
+/// The path decision is checked in this process. Each tripwire's stop, and each misuse the guard
+/// refuses, is checked in a child: this binary run again in a probe mode. The child's home is a
+/// temporary directory: `HOME` for `SingleInstanceGuard`, and `CFFIXED_USER_HOME` for
+/// `homeDirectoryForCurrentUser`, which on macOS ignores `HOME` (the passing probe checks that it
+/// took effect). A tripwire stops the child before the path is built. If one were removed, its
+/// probe would build a path in that directory or check whether the installed Monitor's help page
+/// exists, and would never write anything.
 @main
 struct TestCodexHomeTests {
   static let probeMode = "CODEX_TEST_HOME_PROBE"
@@ -97,11 +100,12 @@ struct TestCodexHomeTests {
     // With CODEX_HOME unset, as on a runner or a desktop, the client would use the live ~/.codex.
     expectStopped(
       runChild("home", work: work, codexHome: .some(nil)), "unset",
-      "CodexClient.codexHome with CODEX_HOME unset names the live ~/.codex")
+      "CodexClient.codexHome with CODEX_HOME unset names the live ~/.codex", activated: false)
     // A home set before activate() is not trusted: it may be the live one.
     expectStopped(
       runChild("home", work: work), "unactivated",
-      "CodexClient.codexHome resolved CODEX_HOME=\(work.path) before TestCodexHome.activate()")
+      "CodexClient.codexHome resolved CODEX_HOME=\(work.path) before TestCodexHome.activate()",
+      activated: false)
     // After activate(), a home set around the guard is rejected before it is read.
     let foreign = FileManager.default.temporaryDirectory.appendingPathComponent("codex-foreign-home").path
     expectStopped(
@@ -116,6 +120,15 @@ struct TestCodexHomeTests {
       runChild("helps", work: work), "helps",
       "HelpsDocHelper.findHelpsHTMLURL home fallback names the live ~/.codex")
     print("  ✅ Every Codex home tripwire stops its probe before the path is built")
+
+    // Misuse the guard refuses, so a test cannot remove or reuse a home it does not own.
+    expectStopped(runChild("twice", work: work), "twice", "TestCodexHome.activate() was called twice")
+    expectStopped(
+      runChild("purpose", work: work), "purpose", "A test home purpose must be one path component")
+    expectStopped(
+      runChild("misordered", work: work), "misordered",
+      "TestCodexHome.leave(_:) must give back the innermost enter(_:create:) home")
+    print("  ✅ The guard refuses a second activate(), a purpose that is a path, and an out-of-order leave")
   }
 
   /// Child side. Every mode but `home` activates first; `returned` follows the call under test.
@@ -127,6 +140,10 @@ struct TestCodexHomeTests {
     }
     switch mode {
     case "allowed":
+      guard FileManager.default.homeDirectoryForCurrentUser.path == scratch else {
+        print("CFFIXED_USER_HOME must move the home directory, got \(FileManager.default.homeDirectoryForCurrentUser.path)")
+        exit(2)
+      }
       _ = CodexClient.codexHome
       _ = SingleInstanceGuard(lockPath: TestCodexHome.home.appendingPathComponent("monitor.lock").path)
       // The help page next to the executable is found before the home fallback is reached.
@@ -150,6 +167,14 @@ struct TestCodexHomeTests {
       _ = HelpsDocHelper.findHelpsHTMLURL(
         fileManager: HomeOverridingFileManager(home: scratch), bundle: emptyBundle(scratch),
         arguments: [scratch + "/MacOS/Missing"])
+    case "twice":
+      TestCodexHome.activate()
+    case "purpose":
+      _ = TestCodexHome.enter("../escape", create: true)
+    case "misordered":
+      let outer = TestCodexHome.enter("outer", create: true)
+      _ = TestCodexHome.enter("inner", create: true)
+      TestCodexHome.leave(outer)
     default:
       print("Unknown probe mode \(mode)")
       exit(2)
@@ -168,9 +193,9 @@ struct TestCodexHomeTests {
     return bundle
   }
 
-  /// Runs this binary in probe `mode` with its own scratch `HOME` in `work`. `codexHome` replaces
-  /// `CODEX_HOME` when given; `.some(nil)` removes it. A child still running after 60 seconds is
-  /// killed and fails the test.
+  /// Runs this binary in probe `mode` with its own scratch home in `work` (`HOME` and
+  /// `CFFIXED_USER_HOME`). `codexHome` replaces `CODEX_HOME` when given; `.some(nil)` removes it.
+  /// A child still running after 60 seconds is killed and fails the test.
   static func runChild(
     _ mode: String, work: URL, codexHome: String?? = .none
   ) -> (status: Int32, output: String) {
@@ -186,6 +211,7 @@ struct TestCodexHomeTests {
     environment[probeMode] = mode
     environment[probeHome] = scratch.path
     environment["HOME"] = scratch.path
+    environment["CFFIXED_USER_HOME"] = scratch.path
     if case .some(let replacement) = codexHome { environment["CODEX_HOME"] = replacement }
     let process = Process()
     process.executableURL = Bundle.main.executableURL
@@ -206,20 +232,26 @@ struct TestCodexHomeTests {
     return (process.terminationStatus, output)
   }
 
-  static func expectStopped(_ result: (status: Int32, output: String), _ name: String, _ message: String) {
+  static func expectStopped(
+    _ result: (status: Int32, output: String), _ name: String, _ message: String, activated: Bool = true
+  ) {
     require(result.status == 1, "Probe \(name) must stop with status 1: \(result.output)")
     require(
       result.output.contains("❌ Codex home isolation failed: \(message)"),
       "Probe \(name) must stop at its tripwire: \(result.output)")
     require(!result.output.contains(returned), "Probe \(name) must stop before the call returns: \(result.output)")
-    requireRunRemoved(result.output, name)
+    if activated {
+      requireRunRemoved(result.output, name)
+    } else {
+      require(!result.output.contains("RUN_DIR="), "Probe \(name) must not have a run directory")
+    }
   }
 
-  /// A probe that activated must have removed its run directory on exit, even after a tripwire.
+  /// A probe that activated must have removed its run directory at exit, even after a tripwire.
   static func requireRunRemoved(_ output: String, _ name: String) {
-    guard let line = output.split(separator: "\n").first(where: { $0.hasPrefix("RUN_DIR=") }) else { return }
-    let path = String(line.dropFirst("RUN_DIR=".count))
-    require(!path.isEmpty, "Probe \(name) must report its run directory")
+    let line = output.split(separator: "\n").first(where: { $0.hasPrefix("RUN_DIR=") })
+    let path = line.map { String($0.dropFirst("RUN_DIR=".count)) } ?? ""
+    require(!path.isEmpty, "Probe \(name) must report its run directory: \(output)")
     require(!FileManager.default.fileExists(atPath: path), "Probe \(name) must remove its run directory \(path)")
   }
 

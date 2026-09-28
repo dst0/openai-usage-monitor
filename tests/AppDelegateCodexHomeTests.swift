@@ -17,7 +17,9 @@ func runCodexHomeIsolationTests(preferences: TestPreferencesSuite) {
   delegate.statusItem = statusItem
   delegate.statusItem?.menu = delegate.buildMenu()
   delegate.updateUI(with: codexHomeSnapshot())
-  assertTrue(delegate.statusItem?.button?.image != nil, "The status item must show the snapshot")
+  assertTrue(
+    delegate.statusItem?.button?.image != nil,
+    "updateUI must reach the status item, so this pass covers the status bar path too")
   NSStatusBar.system.removeStatusItem(statusItem)
 
   // The menu shows the settings stored in the home CODEX_HOME names. Across the passes each

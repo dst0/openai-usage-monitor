@@ -255,7 +255,7 @@ struct AppDelegateTestRunner {
     // ====================================================================
     // Tests 1-3 only build and draw attributed strings, so this is still the suite's first read
     // of Monitor state. Run before them, its menu and status item aborted the binary in
-    // CGSConnectionByID; see docs/leanings/2026-09-28-swift-tests-resolved-the-live-codex-home.md.
+    // CGSConnectionByID; see docs/leanings/2026-09-28-status-item-before-drawing-aborted-test-binary.md.
     runCodexHomeIsolationTests(preferences: preferences)
 
     // ====================================================================
