@@ -18,7 +18,11 @@ use std::{fs::File, path::Path, time::Instant};
 
 #[path = "target_dispatch_policy.rs"]
 mod target_dispatch_policy;
+#[cfg(test)]
 pub(super) use target_dispatch_policy::{should_dispatch, should_resume_queued};
+pub(super) use target_dispatch_policy::{
+    should_dispatch_with_auth_rotation, should_resume_queued_with_auth_rotation,
+};
 
 pub(super) fn writer_is_locked(home: &Path, id: &str) -> bool {
     let path = home.join("thread-writer-locks").join(format!("{id}.lock"));
@@ -96,9 +100,9 @@ pub(super) fn revalidate_after_owner_with_budget(
     }
     let current_state = switcher::inspect_thread_rollout_state(home, &target.id);
     let still_eligible = if prior_pending == 0 {
-        should_dispatch(current_state, 0, mode)
+        should_dispatch_with_auth_rotation(current_state, 0, mode, target.auth_rotation_eligible)
     } else {
-        should_resume_queued(current_state, mode)
+        should_resume_queued_with_auth_rotation(current_state, mode, target.auth_rotation_eligible)
     };
     if !still_eligible {
         return Err("Thread state changed while Desktop was mounting it; refusing recovery".into());
@@ -184,7 +188,11 @@ pub(super) fn dispatch_if_needed(
     validate_queue_snapshot_revision(queue_revision_before, queue_revision_after)?;
     let pending = messages.len();
     if pending > 0 {
-        if !should_resume_queued(target.state, mode) {
+        if !should_resume_queued_with_auth_rotation(
+            target.state,
+            mode,
+            target.auth_rotation_eligible,
+        ) {
             return Err("Thread state is not eligible for queued recovery in this mode".into());
         }
         target.existing_queue = pending;
@@ -237,7 +245,12 @@ pub(super) fn dispatch_if_needed(
         return Ok(());
     }
     target.writer_locked = writer_is_locked(home, &target.id);
-    if !should_dispatch(target.state, pending, mode) {
+    if !should_dispatch_with_auth_rotation(
+        target.state,
+        pending,
+        mode,
+        target.auth_rotation_eligible,
+    ) {
         return Err(format!(
             "Thread state {:?} is ambiguous without a pre-restart checkpoint; refusing to touch a possibly manually resumed task",
             target.state,

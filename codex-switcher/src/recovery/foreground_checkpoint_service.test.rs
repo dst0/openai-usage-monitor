@@ -40,6 +40,7 @@ fn candidate(home: &Path, suffix: usize, bytes_after_checkpoint: u64) -> Recover
         mounted_by_recovery: false,
         owner_unavailable: false,
         account_mismatch: false,
+        auth_rotation_eligible: false,
         dispatched: false,
         completed: false,
         failure: None,

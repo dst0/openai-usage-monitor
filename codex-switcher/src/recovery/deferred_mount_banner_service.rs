@@ -11,10 +11,13 @@ use super::{
     restart_checkpoint_service::{
         post_checkpoint_status_with_budget, POST_CHECKPOINT_SCAN_BUDGET_BYTES,
     },
-    target_dispatch::{should_dispatch, should_resume_queued},
+    target_dispatch::{
+        should_dispatch_with_auth_rotation, should_resume_queued_with_auth_rotation,
+    },
 };
 use crate::{storage, switcher, switcher::ThreadRolloutState};
 use std::{
+    path::Path,
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -52,7 +55,7 @@ impl DeferredMountBannerService {
             let checkpoint = post_checkpoint_status_with_budget(&home, item, &mut budget);
             let pending = pending_count(&home, &item.id)?;
             let state = switcher::inspect_thread_rollout_state(&home, &item.id);
-            if !eligible_mount(item, account_id, state, pending, checkpoint) {
+            if !eligible_mount(&home, item, account_id, state, pending, checkpoint) {
                 continue;
             }
             match desktop.discover_owner_info_once(&item.id) {
@@ -160,6 +163,7 @@ impl DeferredMountBannerService {
 }
 
 pub(super) fn eligible_mount(
+    home: &Path,
     target: &PendingTarget,
     account_id: &str,
     state: ThreadRolloutState,
@@ -177,10 +181,14 @@ pub(super) fn eligible_mount(
     } else {
         RecoveryMode::DeferredOwned
     };
+    let auth_rotation_eligible = target
+        .auth_rotation
+        .as_ref()
+        .is_some_and(|evidence| evidence.eligible_for(home, &target.id, account_id, target.offset));
     if pending == 0 {
-        should_dispatch(state, pending, mode)
+        should_dispatch_with_auth_rotation(state, pending, mode, auth_rotation_eligible)
     } else {
-        should_resume_queued(state, mode)
+        should_resume_queued_with_auth_rotation(state, mode, auth_rotation_eligible)
     }
 }
 

@@ -26,6 +26,7 @@ fn failed_explicit_claim_keeps_older_owner_binding_through_manifest_finalize() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("original-account".into()),
+        auth_rotation: None,
     };
     write_manifest(std::slice::from_ref(&original)).unwrap();
     let mut manifest = load_manifest().unwrap();
@@ -54,6 +55,7 @@ fn failed_explicit_claim_keeps_older_owner_binding_through_manifest_finalize() {
         mounted_by_recovery: false,
         owner_unavailable: false,
         account_mismatch: true,
+        auth_rotation_eligible: false,
         dispatched: false,
         completed: false,
         failure: Some("Active Desktop account changed".into()),
@@ -109,6 +111,7 @@ fn foreground_recovery_scans_large_checkpoint_in_bounded_steps_before_claiming_p
         mounted_by_recovery: false,
         owner_unavailable: false,
         account_mismatch: false,
+        auth_rotation_eligible: false,
         dispatched: false,
         completed: false,
         failure: None,
@@ -163,6 +166,7 @@ fn desktop_ipc_startup_failure_keeps_undispatched_checkpoint() {
         mounted_by_recovery: false,
         owner_unavailable: false,
         account_mismatch: false,
+        auth_rotation_eligible: false,
         dispatched: false,
         completed: false,
         failure: None,
@@ -180,6 +184,7 @@ fn desktop_ipc_startup_failure_keeps_undispatched_checkpoint() {
         awaiting_owner: false,
         captured_restart: true,
         owner_account_id: None,
+        auth_rotation: None,
     }];
     finalize_target(
         &mut manifest,
@@ -215,6 +220,7 @@ fn sqlite_failure_before_dispatch_keeps_checkpoint_but_uncertain_send_does_not()
         mounted_by_recovery: false,
         owner_unavailable: false,
         account_mismatch: false,
+        auth_rotation_eligible: false,
         dispatched: false,
         completed: false,
         failure: None,

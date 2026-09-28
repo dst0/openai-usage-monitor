@@ -28,6 +28,7 @@ fn marker_write_failure_after_rename_restores_exact_checkpoint_before_ipc() {
         awaiting_owner: false,
         captured_restart: true,
         owner_account_id: None,
+        auth_rotation: None,
     };
     write_manifest(std::slice::from_ref(&original)).unwrap();
     let error = mark_dispatch_attempt_with_writer(
@@ -135,6 +136,7 @@ fn unreadable_thread_index_does_not_erase_deferred_checkpoint() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     };
     let mut pending = vec![target.clone()];
     assert!(prune_ineligible_targets_with(&home, &mut pending, |_| {
@@ -203,6 +205,7 @@ fn only_failed_pre_dispatch_owner_resolution_keeps_a_retry_checkpoint() {
         awaiting_owner: false,
         captured_restart: true,
         owner_account_id: None,
+        auth_rotation: None,
     };
     let mut no_owner = vec![entry.clone()];
     finalize_target(&mut no_owner, id, true, false, Some("account-a"), false);
@@ -256,6 +259,7 @@ fn wrong_account_cannot_recheckpoint_or_rebind_an_ownerless_target() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     };
     let targets = vec![entry];
     assert!(validate_target_account_binding(&targets, &[id.into()], Some("account-b")).is_err());
@@ -277,6 +281,7 @@ fn dispatch_marker_is_durable_before_any_ipc_send() {
             awaiting_owner: true,
             captured_restart: true,
             owner_account_id: Some("account-a".into()),
+            auth_rotation: None,
         },
         PendingTarget {
             id: other.into(),
@@ -284,6 +289,7 @@ fn dispatch_marker_is_durable_before_any_ipc_send() {
             awaiting_owner: true,
             captured_restart: false,
             owner_account_id: Some("account-a".into()),
+            auth_rotation: None,
         },
     ])
     .unwrap();
@@ -321,6 +327,7 @@ fn new_restart_preserves_an_older_ownerless_checkpoint_and_account() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     }])
     .unwrap();
     save_pending(&[new.into()]).unwrap();
@@ -370,6 +377,7 @@ fn new_turn_needs_work_before_replacing_stale_ownerless_checkpoint() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
+        auth_rotation: None,
     }])
     .unwrap();
 
@@ -445,6 +453,7 @@ fn queued_follow_up_preserves_old_ownerless_checkpoint_after_new_work() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
+        auth_rotation: None,
     }])
     .unwrap();
     let queue = home.join("queue_1.sqlite");
@@ -495,6 +504,7 @@ fn long_rollout_after_old_checkpoint_still_supersedes_stale_binding() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
+        auth_rotation: None,
     }])
     .unwrap();
     let mut writer = std::fs::OpenOptions::new()
@@ -573,6 +583,7 @@ fn cached_proof_fixture(home: &std::path::Path, id: &str) -> (PathBuf, PendingTa
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
+        auth_rotation: None,
     };
     assert_eq!(post_checkpoint_status(home, &target), Some((true, true)));
     (rollout, target)
@@ -642,7 +653,7 @@ fn foreground_prepare_rechecks_middle_only_rewrite_from_checkpoint() {
         .success());
     rewrite_middle_after_cached_proof(&rollout);
 
-    let target = super::recovery_target::prepare_target(&home, id, Some(11), 1024 * 1024)
+    let target = super::recovery_target::prepare_target(&home, id, Some(11), 1024 * 1024, false)
         .unwrap()
         .unwrap();
     assert!(target.scan_complete);
@@ -684,6 +695,7 @@ fn completed_tail_before_checkpoint_does_not_erase_ownerless_retry() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     }];
     prune_ineligible_targets_with(&home, &mut targets, indexed_before_the_pass()).unwrap();
     assert_eq!(targets.len(), 1);
@@ -711,6 +723,7 @@ fn prune_rotates_one_ownerless_rollout_scan_per_pass() {
             awaiting_owner: true,
             captured_restart: true,
             owner_account_id: Some("account-a".into()),
+            auth_rotation: None,
         });
     }
     for expected_scanned in 1..=3 {
@@ -763,6 +776,7 @@ fn production_prune_passes_share_one_rotation() {
             awaiting_owner: true,
             captured_restart: true,
             owner_account_id: Some("owner".into()),
+            auth_rotation: None,
         });
     }
     assert!(Command::new("/usr/bin/sqlite3")
@@ -805,6 +819,7 @@ fn ownerless_rotation_is_fair_when_other_homes_are_probed() {
             awaiting_owner: true,
             captured_restart: true,
             owner_account_id: Some("owner".into()),
+            auth_rotation: None,
         });
     }
     // Two targets, because a single-target pass leaves every cursor alone
@@ -824,6 +839,7 @@ fn ownerless_rotation_is_fair_when_other_homes_are_probed() {
             awaiting_owner: true,
             captured_restart: true,
             owner_account_id: Some("owner".into()),
+            auth_rotation: None,
         });
     }
     for _ in 0..3 {
@@ -870,6 +886,7 @@ fn ownerless_prune_inspects_only_the_selected_tail() {
             awaiting_owner: true,
             captured_restart: true,
             owner_account_id: Some("owner".into()),
+            auth_rotation: None,
         });
     }
     let mut tail_reads = 0;
@@ -912,6 +929,7 @@ fn manually_started_turn_retires_old_ownerless_retry() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
+        auth_rotation: None,
     }];
     prune_ineligible_targets_with(&home, &mut targets, indexed_before_the_pass()).unwrap();
     assert_eq!(targets.len(), 1, "a start alone is not resumed work");
@@ -949,6 +967,7 @@ fn failed_new_turn_does_not_retire_deferred_retry_as_verified_work() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
+        auth_rotation: None,
     }];
     prune_ineligible_targets_with(&home, &mut targets, indexed_before_the_pass()).unwrap_err();
     assert_eq!(targets.len(), 1);
@@ -970,6 +989,7 @@ fn incomplete_failed_turn_cannot_retire_ownerless_checkpoint() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
+        auth_rotation: None,
     };
     write_manifest(std::slice::from_ref(&old)).unwrap();
     let started = b"{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"new-turn\"}}\n";
@@ -1020,6 +1040,7 @@ fn oversized_completed_failure_cannot_retire_ownerless_checkpoint() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
+        auth_rotation: None,
     };
     write_manifest(std::slice::from_ref(&old)).unwrap();
     let started = serde_json::json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"new-turn"}});
@@ -1072,6 +1093,7 @@ fn new_agent_work_does_not_discard_an_existing_queued_follow_up() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
+        auth_rotation: None,
     }];
     prune_ineligible_targets_with(&home, &mut targets, indexed_before_the_pass()).unwrap();
     assert_eq!(targets.len(), 1);
@@ -1104,6 +1126,7 @@ fn unchanged_ownerless_rollout_is_not_rescanned_on_every_probe() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     };
     assert_eq!(post_checkpoint_status(&home, &target), Some((true, false)));
     let first_bytes = scanned_bytes_for(&rollout, 11).unwrap();
@@ -1152,6 +1175,7 @@ fn foreground_recovery_rechecks_the_checkpoint_after_deferred_scan() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     };
     assert_eq!(post_checkpoint_status(&home, &target), Some((true, false)));
     let scanned_before_handoff = scanned_bytes_for(&rollout, 11).unwrap();
@@ -1166,9 +1190,10 @@ fn foreground_recovery_rechecks_the_checkpoint_after_deferred_scan() {
         .status()
         .unwrap()
         .success());
-    let prepared = super::recovery_target::prepare_target(&home, id, Some(11), 16 * 1024 * 1024)
-        .unwrap()
-        .unwrap();
+    let prepared =
+        super::recovery_target::prepare_target(&home, id, Some(11), 16 * 1024 * 1024, false)
+            .unwrap()
+            .unwrap();
     let mut observer = prepared.observer;
     assert_eq!(observer.offset, std::fs::metadata(&rollout).unwrap().len());
     assert!(observer.evidence.started);
@@ -1209,6 +1234,7 @@ fn checkpoint_cursor_resets_after_rollout_replacement_or_truncation() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     };
     assert_eq!(post_checkpoint_status(&home, &target), Some((true, true)));
 
@@ -1241,6 +1267,7 @@ fn appended_fragment_completes_one_lifecycle_record() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     };
     assert_eq!(post_checkpoint_status(&home, &target), Some((false, false)));
     let first_bytes = scanned_bytes_for(&rollout, 11).unwrap();
@@ -1281,6 +1308,7 @@ fn long_snapshot_scans_in_bounded_chunks_before_reporting_evidence() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     };
     assert_eq!(post_checkpoint_status(&home, &target), None);
     assert!(scanned_bytes_for(&rollout, 11).unwrap() <= 16 * 1024 * 1024);
@@ -1307,6 +1335,7 @@ fn oversized_lines_do_not_pin_buffers_across_cold_targets() {
             awaiting_owner: true,
             captured_restart: true,
             owner_account_id: Some("account-a".into()),
+            auth_rotation: None,
         };
         assert_eq!(post_checkpoint_status(&home, &target), None);
         assert!(cached_partial_capacity_for(&rollout, 11).unwrap() < 1024);
@@ -1338,6 +1367,7 @@ fn same_inode_rewrite_with_preserved_boundary_invalidates_evidence() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     };
     assert_eq!(post_checkpoint_status(&home, &target), Some((true, true)));
 
@@ -1367,6 +1397,7 @@ fn load_pending_skips_ownerless_targets_without_a_thread_index() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     };
     write_manifest(&[target]).unwrap();
     assert!(load_pending().unwrap().is_empty());
@@ -1384,6 +1415,7 @@ fn manifest_cleared_when_targets_empty() {
         awaiting_owner: false,
         captured_restart: false,
         owner_account_id: None,
+        auth_rotation: None,
     }];
     assert!(write_manifest(&targets).is_ok());
     let manifest_path = temp_dir.join("desktop-recovery.json");
@@ -1410,10 +1442,12 @@ fn duplicate_thread_ids_in_recovery_manifest_fail_closed() {
         awaiting_owner: false,
         captured_restart: true,
         owner_account_id: None,
+        auth_rotation: None,
     };
     let second = PendingTarget {
         awaiting_owner: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
         ..first.clone()
     };
     assert!(write_manifest(&[first.clone(), second.clone()]).is_err());
@@ -1430,6 +1464,17 @@ fn duplicate_thread_ids_in_recovery_manifest_fail_closed() {
         RecoveryMode::DeferredCaptured
     )
     .is_err());
+}
+
+#[test]
+fn oversized_or_dangling_recovery_manifest_fails_closed() {
+    let test_home = TestCodexHome::new("unsafe-manifest-input");
+    let path = test_home.path().join("desktop-recovery.json");
+    std::fs::write(&path, vec![b' '; 1024 * 1024 + 1]).unwrap();
+    assert!(load_manifest().is_err());
+    std::fs::remove_file(&path).unwrap();
+    std::os::unix::fs::symlink(test_home.path().join("missing"), &path).unwrap();
+    assert!(load_manifest().is_err());
 }
 
 #[test]
@@ -1504,6 +1549,7 @@ fn load_pending_filters_stale_targets_without_writing_the_manifest() {
             awaiting_owner: false,
             captured_restart: false,
             owner_account_id: None,
+            auth_rotation: None,
         },
         PendingTarget {
             id: completed_id.to_string(),
@@ -1511,6 +1557,7 @@ fn load_pending_filters_stale_targets_without_writing_the_manifest() {
             awaiting_owner: false,
             captured_restart: false,
             owner_account_id: None,
+            auth_rotation: None,
         },
         PendingTarget {
             id: active_id.to_string(),
@@ -1518,6 +1565,7 @@ fn load_pending_filters_stale_targets_without_writing_the_manifest() {
             awaiting_owner: false,
             captured_restart: false,
             owner_account_id: None,
+            auth_rotation: None,
         },
         PendingTarget {
             id: queued_id.to_string(),
@@ -1525,6 +1573,7 @@ fn load_pending_filters_stale_targets_without_writing_the_manifest() {
             awaiting_owner: true,
             captured_restart: true,
             owner_account_id: Some("account-a".into()),
+            auth_rotation: None,
         },
     ];
     assert!(write_manifest(&initial_targets).is_ok());
@@ -1580,6 +1629,7 @@ fn fresh_confirmation_rejects_growth_after_scan() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("old-account".into()),
+        auth_rotation: None,
     };
     let result = post_checkpoint_status_fresh_after_scan(&home, &target, |path| {
         std::fs::OpenOptions::new()
@@ -1629,6 +1679,7 @@ fn unattended_retry_intent_is_dropped_for_error_ended_turns_only() {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     };
     let mut pending = vec![target(error_id), target(quota_id)];
     let now = chrono::Utc::now().timestamp();
