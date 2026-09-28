@@ -2,40 +2,52 @@
 
 - **Status:** Resolved
 - **Task/context:** Grouping the Menu Bar's switch-time settings into one `⚙️ Auto-Switch Settings` submenu, as the AGY monitor does.
-- **Unexpected observation or failure:** `README.md` and `resources/helps.html` already described one "⚙️ Auto-Switch Settings" item with live toggles, but `buildMenu()` added four loose checkmark items to the status menu. Three more defects surfaced while moving them:
-  - Every toggle flipped its own mark before the CLI ran and never read the result back. A failed or missing CLI left a mark that did not match the registry, and restart-on-switch never re-synced, because the status cache does not carry it.
-  - Each setter ran its `cxi config` process on the concurrent global queue. Two quick toggles of one setting could save in reverse order.
+- **Unexpected observation or failure:** `README.md` and `resources/helps.html` already described one "⚙️ Auto-Switch Settings" item with live toggles. `buildMenu()` instead added four loose checkmark items to the status menu. Moving them surfaced more defects:
+  - Every toggle flipped its own mark before the CLI ran and never read the result back. A failed or missing CLI left a mark that did not match the registry. Restart-on-switch never re-synced, because the status cache does not carry it.
+  - Each setter ran its `cxi config` process on the concurrent global queue, so two quick toggles of one setting could save in reverse order.
   - `restart_app_on_switch` had no translation in 8 of the 13 languages, so those users saw an English row among translated ones.
-  - `preserve_window_bounds_on_restart` was settable only with `cxi config`.
+  - `preserve_window_bounds_on_restart` could be set only with `cxi config`.
+  - In seven languages the help page's dropdown card described another product's menu.
+  - A review of the first fix found two more traps:
+    - The CLI's exit status does not say whether a setting was saved. Every auto-switch setter commits `accounts.json` first and then syncs the status cache, which can fail.
+    - Swift's `as? Bool` reads the JSON number `1` as `true`, while serde rejects it and, with it, the whole registry.
 - **Evidence:**
   - Each old setter called `DispatchQueue.global(qos: .userInitiated).async`, which starts the next write without waiting for the one before it.
-  - The new ordering check in `tests/AutoSwitchSettingsMenuTests.swift` uses a fake CLI that waits a second before recording a `true` write. It expects the `true` write to be recorded before the `false` write that followed it. This check was written after the fix and has not been run against the old setters; Linux has no AppKit.
+  - The new ordering check in `tests/AutoSwitchSettingsMenuTests.swift` uses a fake CLI that waits a second before recording a `true` write. It expects that write to be recorded before the `false` write that followed it. The check was written after the fix and was never run against the old setters, because Linux has no AppKit.
   - A dictionary scan of `Sources/Localization.swift` found `restart_app_on_switch` only for en, ru, ja, zh-Hans, and vi.
-  - The old toggles set `sender.state` before the write. The auto-switch trio re-synced only from `usage-status.json`, which the Rust core updates only when that file already exists.
+  - `codex-switcher/src/setup/account_configuration.rs` calls `update_accounts_atomically` before `sync_settings_to_status_file()?`.
 - **Approaches tried:**
-  - **Attempt:** Move the items into a submenu and keep the per-click mark flip.
-    - **Outcome:** Rejected.
+  - **Attempt:** Move the items into a submenu and keep the mark flip on each click.
+    - **Outcome:** Did not work
     - **Why:** Choosing an item closes the menu, so the flip is never seen. It only leaves a wrong mark behind when the write fails.
   - **Attempt:** Keep the auto-switch trio synced from the status cache and read the other two settings from the registry.
-    - **Outcome:** Rejected.
-    - **Why:** Two sources of truth disagree whenever the cache is missing or stale. The cache also never carries the other two settings.
-  - **Attempt:** One registry read, `CodexClient.getAutoSwitchSettings()`, applied when the menu is built, when it opens, after every status update, and after each write. Writes run on one serial queue, and a failed write shows a warning.
-    - **Outcome:** Worked.
-- **Root cause:** Confirmed. The documentation was written for a menu layout that was never implemented. The toggles treated the click as the saved state, and the setters did not order their writes.
+    - **Outcome:** Did not work
+    - **Why:** Two sources of truth disagree whenever the cache is missing or stale, and the cache does not carry the other two settings.
+  - **Attempt:** Warn when the CLI exits non-zero.
+    - **Outcome:** Did not work
+    - **Why:** The warning said "not saved" for a setting that the registry, and so the daemon, already had.
+  - **Attempt:** Read the registry once through `CodexClient.getAutoSwitchSettings()`, counting only JSON booleans, and apply it at four points: when the menu is built, when it opens, after every status update, and after each write. Keep the rows disabled while a write is pending. Warn, outside menu tracking, only when the read-back does not show the requested mark. Run the writes on one serial queue.
+    - **Outcome:** Worked
+- **Root cause:** Confirmed.
+  - The documentation was written for a menu layout that was never implemented.
+  - The toggles treated the click, and later the exit status, as the saved state.
+  - The setters did not order their writes.
 - **Resolution:**
-  - `⚙️ Auto-Switch Settings` holds the five settings, in AGY's order.
-  - The marks come only from the registry, and the status cache's copy of three of them was removed from `MultiAccountSnapshot`.
-  - `cxi config` writes are serialized, and a failed save shows `setting_save_failed`.
-  - `🪟 Preserve Window Bounds on Restart` joins the submenu.
-  - The missing translations were added.
-- **Verification:** macOS CI runs `./scripts/test_swift.sh`, which includes Test 5b, and `cargo test --locked`, which includes `menu_bar_setting_flags_parse_as_booleans`. Linux has no AppKit, so these could not run locally. There, the Swift static guards, a Clippy run for `aarch64-apple-darwin` with `-D warnings`, and `cargo fmt --check` passed. The installed app was not exercised.
+  - `⚙️ Auto-Switch Settings` holds the five settings in AGY's order, including the new `🪟 Preserve Window Bounds on Restart`.
+  - The marks come only from the registry. The status cache's copy of three of these settings was removed from `MultiAccountSnapshot`.
+  - `cxi config` writes are serialized, and a request the registry does not reflect shows `setting_save_failed`.
+  - The missing translations and the help page were fixed.
+- **Verification:**
+  - macOS CI ran `./scripts/test_swift.sh`, including Test 5b, and `cargo test --locked`, including the CLI flag parsing tests.
+  - On Linux: the Swift static guards, a Clippy run for `aarch64-apple-darwin` with `-D warnings`, `cargo fmt --check`, and `node --check` on the help page's script.
 - **Prevention/follow-up:**
-  - Test 5b checks where each row sits, its action, marks read from the registry, the CLI arguments, write order, and the failure alert.
-  - The localization test requires every submenu key to be translated for every language.
+  - Test 5b checks the rows' placement and actions, that the marks come from the registry (JSON booleans only), the rows staying disabled while a write is pending, the CLI arguments, the business-mode click, a failed exit after a save, write order, main-thread completion, and the unsaved-setting alert.
+  - The localization test requires every submenu key, translated, in every language.
   - `AGENTS.md` states the Auto-Switch Settings Truth Invariant.
-  - `helps.html` keeps a stale `dd_item1`–`dd_item4` block in seven languages, which describes another product's dropdown. That fix is tracked separately.
+  - The submenu still has to be exercised in the installed app.
 - **Reusable learning:**
   - When documentation names a UI element, check that the code builds it.
-  - A menu checkmark must show the saved setting read back from its owner, never the click.
+  - A menu checkmark must show the setting read back from its owner, never the click or an exit status.
+  - Parse the owner's file with the owner's type rules.
   - Settings written by separate processes need one ordered queue.
 - **References:** `Sources/AppDelegate+AutoSwitch.swift`, `Sources/CodexClient.swift`, `tests/AutoSwitchSettingsMenuTests.swift`, `codex-switcher/src/commands.test.rs`, [2026-09-28 — The menu showed automatic switching on for a registry without the setting](2026-09-28-menu-showed-auto-switch-on-without-a-registry-setting.md).

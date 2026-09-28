@@ -854,7 +854,7 @@ public final class CodexClient: @unchecked Sendable {
   private func runConfig(_ arguments: [String], completion: ((Bool) -> Void)?) {
     configQueue.async {
       let proc = Process()
-      proc.executableURL = URL(fileURLWithPath: self.cliExecutableURL.path)
+      proc.executableURL = self.cliExecutableURL
       proc.arguments = ["config"] + arguments
       let success: Bool
       do {
@@ -894,12 +894,21 @@ public final class CodexClient: @unchecked Sendable {
     public let preserveWindowBoundsOnRestart: Bool
 
     init(registrySettings settings: [String: Any]?) {
-      autoSwitchEnabled = settings?["auto_switch_enabled"] as? Bool ?? false
-      businessOnly = settings?["auto_switch_business_only"] as? Bool ?? false
-      businessPriority = settings?["auto_switch_business_priority"] as? Bool ?? false
-      restartAppOnSwitch = settings?["restart_app_on_switch"] as? Bool ?? false
+      autoSwitchEnabled = Self.flag(settings?["auto_switch_enabled"], otherwise: false)
+      businessOnly = Self.flag(settings?["auto_switch_business_only"], otherwise: false)
+      businessPriority = Self.flag(settings?["auto_switch_business_priority"], otherwise: false)
+      restartAppOnSwitch = Self.flag(settings?["restart_app_on_switch"], otherwise: false)
       preserveWindowBoundsOnRestart =
-        settings?["preserve_window_bounds_on_restart"] as? Bool ?? true
+        Self.flag(settings?["preserve_window_bounds_on_restart"], otherwise: true)
+    }
+
+    /// A JSON `true` or `false` only. `as? Bool` also accepts the number 1, which serde rejects
+    /// for a bool, and with it the whole registry, so the daemon would not be switching.
+    private static func flag(_ value: Any?, otherwise fallback: Bool) -> Bool {
+      guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
+        return fallback
+      }
+      return number.boolValue
     }
   }
 

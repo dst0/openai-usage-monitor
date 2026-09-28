@@ -115,8 +115,12 @@ switch settings while holding the same lock. The Menu Bar's Auto-Switch
 Settings submenu reads its marks from the registry itself, never from that
 cache copy: when the menu is built, whenever it opens, after every status cache
 update, and after each of its own `cxi config` writes, which run one at a time
-in the order chosen. A missing registry or key shows every automation off and
-window-bounds preservation on, the Rust defaults. Settings sync leaves a missing
+in the order chosen. A missing registry or key, or a value that is not a JSON
+boolean (serde rejects it and with it the registry), shows every automation off
+and window-bounds preservation on, the Rust defaults. A write counts as saved when
+that read-back shows the requested value, not by the CLI's exit status, which can
+report a failed status cache sync after the registry was saved. The cache's copy
+of the auto-switch settings has no Menu Bar reader. Settings sync leaves a missing
 cache for the daemon to populate with a complete quota snapshot. Status staging uses the same
 unpredictable, exclusive no-follow temporary-file pattern as credential staging.
 Manual reset-credit consumption commits only the credit cache by stable account

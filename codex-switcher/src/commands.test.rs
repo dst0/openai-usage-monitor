@@ -86,3 +86,27 @@ fn menu_bar_setting_flags_parse_as_booleans() {
     assert!(parse(&["config", "--preserve-window-bounds"]).is_err());
     assert!(parse(&["config", "--preserve-window-bounds", "maybe"]).is_err());
 }
+
+/// The weekly reset submenu saves both values in one `config` run.
+#[test]
+fn menu_bar_weekly_reset_flags_parse_within_range() {
+    let args = [
+        "config",
+        "--auto-reset-weekly-enabled",
+        "true",
+        "--auto-reset-weekly-min-hours",
+        "167",
+    ];
+    match parse(&args).unwrap() {
+        Some(Commands::Config {
+            auto_reset_weekly_enabled,
+            auto_reset_weekly_min_hours,
+            ..
+        }) => {
+            assert_eq!(auto_reset_weekly_enabled, Some(true));
+            assert_eq!(auto_reset_weekly_min_hours, Some(167));
+        }
+        _ => panic!("config did not parse"),
+    }
+    assert!(parse(&["config", "--auto-reset-weekly-min-hours", "168"]).is_err());
+}

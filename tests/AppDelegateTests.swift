@@ -783,7 +783,8 @@ struct AppDelegateTestRunner {
       // Every row of the Auto-Switch Settings submenu, and its failure alert, is translated:
       // an English row inside a translated submenu reads as a missing feature.
       for key in [
-        "auto_switch_settings", "auto_switch_business_priority", "auto_switch_business_only",
+        "auto_switch_settings", "auto_switch_on_limit", "auto_switch_business_priority",
+        "auto_switch_business_only",
         "restart_app_on_switch", "preserve_window_bounds_on_restart", "setting_save_failed",
       ] {
         assertTrue(dict?[key] != nil, "\(key) must exist for \(lang.rawValue)")

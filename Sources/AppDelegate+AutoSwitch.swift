@@ -33,7 +33,7 @@ extension AppDelegate {
 
   /// Sets every mark from one read of the registry, which only the Rust core writes, so a
   /// change made with `cxi config` shows too. The business modes only shape automatic
-  /// switching, so they show on only while it is on.
+  /// switching, so they show on only while it is on. Rows stay disabled while a write is pending.
   internal func syncAutoSwitchSettingsMarks() {
     let settings = client.getAutoSwitchSettings()
     autoSwitchItem?.state = settings.autoSwitchEnabled ? .on : .off
@@ -43,49 +43,59 @@ extension AppDelegate {
       (settings.autoSwitchEnabled && settings.businessOnly) ? .on : .off
     restartAppOnSwitchItem?.state = settings.restartAppOnSwitch ? .on : .off
     preserveWindowBoundsItem?.state = settings.preserveWindowBoundsOnRestart ? .on : .off
+    let idle = pendingAutoSwitchSettingWrites == 0
+    for row in [
+      autoSwitchItem, autoSwitchBusinessPriorityItem, autoSwitchBusinessOnlyItem,
+      restartAppOnSwitchItem, preserveWindowBoundsItem,
+    ] {
+      row?.isEnabled = idle
+    }
   }
 
   // MARK: - Auto-Switch Policy & Toggles
 
-  // Each toggle asks for the opposite of its mark and leaves the mark alone: choosing an item
-  // closes the menu, and the mark then shows what the Rust core saved (which may change other
-  // settings too), read back when the write finishes and again whenever the menu opens.
-
   @objc internal func toggleAutoSwitchOnLimit(_ sender: NSMenuItem) {
-    client.setAutoSwitchEnabled(
-      sender.state != .on, completion: autoSwitchSettingSaved(L10n.autoSwitchOnLimit))
+    requestAutoSwitchSetting(sender, L10n.autoSwitchOnLimit, client.setAutoSwitchEnabled)
   }
 
   @objc internal func toggleAutoSwitchBusinessOnly(_ sender: NSMenuItem) {
-    client.setAutoSwitchBusinessOnly(
-      sender.state != .on, completion: autoSwitchSettingSaved(L10n.autoSwitchBusinessOnly))
+    requestAutoSwitchSetting(sender, L10n.autoSwitchBusinessOnly, client.setAutoSwitchBusinessOnly)
   }
 
   @objc internal func toggleAutoSwitchBusinessPriority(_ sender: NSMenuItem) {
-    client.setAutoSwitchBusinessPriority(
-      sender.state != .on, completion: autoSwitchSettingSaved(L10n.autoSwitchBusinessPriority))
+    requestAutoSwitchSetting(
+      sender, L10n.autoSwitchBusinessPriority, client.setAutoSwitchBusinessPriority)
   }
 
   @objc internal func toggleRestartAppOnSwitch(_ sender: NSMenuItem) {
-    client.setRestartAppOnSwitch(
-      sender.state != .on, completion: autoSwitchSettingSaved(L10n.restartAppOnSwitch))
+    requestAutoSwitchSetting(sender, L10n.restartAppOnSwitch, client.setRestartAppOnSwitch)
   }
 
   @objc internal func togglePreserveWindowBounds(_ sender: NSMenuItem) {
-    client.setPreserveWindowBoundsOnRestart(
-      sender.state != .on, completion: autoSwitchSettingSaved(L10n.preserveWindowBoundsOnRestart))
+    requestAutoSwitchSetting(
+      sender, L10n.preserveWindowBoundsOnRestart, client.setPreserveWindowBoundsOnRestart)
   }
 
-  /// A setter's completion: the marks show what the registry now holds, and a write that
-  /// failed (a missing CLI, say) says so instead of leaving a click that changed nothing.
-  private func autoSwitchSettingSaved(_ title: String) -> (Bool) -> Void {
-    return { [weak self] success in
+  /// Asks `write` for the opposite of `row`'s mark and leaves the mark alone: choosing an item
+  /// closes the menu, and the mark then shows what the Rust core saved, read back when the
+  /// write finishes. Every row stays disabled until then, so a second click cannot repeat a
+  /// request the mark does not show yet. A write whose read-back does not show the request
+  /// raises a warning; the CLI's exit status is not the test, because it can fail after the
+  /// registry is saved (syncing the status cache) and the daemon reads the registry.
+  private func requestAutoSwitchSetting(
+    _ row: NSMenuItem, _ title: String, _ write: (Bool, ((Bool) -> Void)?) -> Void
+  ) {
+    let requested: NSControl.StateValue = row.state == .on ? .off : .on
+    pendingAutoSwitchSettingWrites += 1
+    syncAutoSwitchSettingsMarks()
+    write(requested == .on, { [weak self, weak row] _ in
       guard let self = self else { return }
+      self.pendingAutoSwitchSettingWrites -= 1
       self.syncAutoSwitchSettingsMarks()
-      if !success {
-        self.showAlert(title: title, message: L10n.settingSaveFailed, style: .warning)
+      if let row = row, row.state != requested {
+        self.showAlertOutsideMenuTracking(title: title, message: L10n.settingSaveFailed)
       }
-    }
+    })
   }
 
   @objc internal func autoDistributeAccountsAction() {

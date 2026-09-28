@@ -51,14 +51,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
   /// live WindowServer list; tests pass their own.
   internal let desktopWindows: () -> [[String: Any]]
   /// Shows the login-item state read back from macOS in the Launch at Login item. A failed toggle
-  /// closes the menu if it was reopened and shows its warning once the run loop is back in the
-  /// default mode, so the alert never runs inside menu tracking.
+  /// shows its warning outside menu tracking.
   internal lazy var launchAtLogin = LaunchAtLoginMenuController(manager: autoLaunchManager) {
     [weak self] failure in
-    self?.statusItem?.menu?.cancelTracking()
-    RunLoop.main.perform(inModes: [.default]) {
-      self?.showAlert(title: L10n.launchAtLogin, message: failure.message, style: .warning)
-    }
+    self?.showAlertOutsideMenuTracking(title: L10n.launchAtLogin, message: failure.message)
   }
   internal var ownsBackgroundAutomation = false
 
@@ -75,6 +71,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
   internal var autoSwitchBusinessPriorityItem: NSMenuItem?
   internal var restartAppOnSwitchItem: NSMenuItem?
   internal var preserveWindowBoundsItem: NSMenuItem?
+  /// Auto-Switch Settings writes not yet finished; the submenu rows stay disabled meanwhile.
+  internal var pendingAutoSwitchSettingWrites = 0
   internal var autoResetWeeklyItem: NSMenuItem?
   internal var autoResetWeeklyStatusItem: NSMenuItem?
   internal var autoResetWeeklyThresholdItems: [NSMenuItem] = []
