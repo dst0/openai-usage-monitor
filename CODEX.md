@@ -458,6 +458,28 @@ the agent executable and associated app to share a Team Identifier, while the
 installer currently signs the Monitor app ad hoc. Do not add that key as a
 privacy-grant workaround without matching signatures and live verification.
 
+The multi-window shutdown guard (`count-standard-windows`) still reads
+Accessibility in both modes: it counts standard windows through Accessibility
+before cross-checking WindowServer. From the launchd daemon, macOS attributes
+that request to `~/.local/bin/cxi`, so without Accessibility for `cxi` the guard
+returns `WINDOW_ACCESS_FAILED` from `DistributionCheckpointService::prepare`,
+before any checkpoint write or signal. The switch logs
+`SHUTDOWN_WINDOW_GUARD_FAILED` and an `OUTCOME` with
+`pre_signal_phase=SHUTDOWN_WINDOW_GUARD_FAILED`. A launchd context also lacked
+Screen Recording in a probe; WindowServer then may omit window titles, which
+the guard rejects as an inventory mismatch. The daemon's
+`AutomaticDistributionBackoff` holds back an automatic plan (cause, current and
+target accounts) after two consecutive identical pre-signal failures, for 5
+minutes doubling to 30, in memory only; manual requests never consult or
+change it. It remembers only the latest plan, ends a streak after any other
+attempt result or an hour without a failure, logs `AUTO_BACKOFF_ACTIVE` once
+per hold, and counts awake time (`Instant`).
+The watchdog suppresses its two-second depleted-account full quota-refresh wake
+during an active hold. An enabled weekly auto-reset can still wake a full tick
+for a recent blocked task, at most once every 30 seconds. Normal interval
+ticks, auth-file wakeups, and lightweight deferred recovery polling continue;
+a different plan is reconsidered at the next tick.
+
 Deferred recovery in an already running ChatGPT never restores window bounds.
 It locates its banner through the read-only WindowServer helper, so a launchd
 Accessibility denial cannot stop IPC recovery when WindowServer can place the
@@ -471,12 +493,13 @@ and malformed helper output block dispatch and retain the original checkpoint.
 Automatic switching stays disabled until quota-interrupted cold tasks complete
 end-to-end recovery and exact selected-task restoration across multiple windows
 is verified in the installed app. Historical logs show URL-to-owner-to-IPC
-recovery; current live checks show that accepted URL delivery may leave the
-task ownerless at an immediate check. The installed ChatGPT 26.924.20706
-deep-link handler shows its primary window before ordinary task navigation,
-which the owner accepts. No supported background mount IPC method was evident.
-These checks dispatched no recovery turn or account switch. URL acceptance is
-not owner or recovery proof.
+recovery; checks on 2026-09-28 with ChatGPT 26.924.20706 showed that accepted
+URL delivery may leave the task ownerless at an immediate check. That version's
+deep-link handler showed its primary window before ordinary task navigation,
+which the owner accepted. No supported background mount IPC method was evident.
+Those checks dispatched no recovery turn or account switch. The app currently
+installed on this host is 26.924.22138; the prior observation is not live
+proof for it. URL acceptance is not owner or recovery proof.
 
 The Menu Bar's APP quota comes from `desktop-app-session.json` only when its
 saved account is bound to the exact live ChatGPT PID and process birth time.

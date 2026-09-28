@@ -31,6 +31,7 @@ pub struct MockAppLifecycle {
     pub require_window_on_stability: Mutex<Option<bool>>,
     pub stop_error: Mutex<Option<String>>,
     pub preflight_error_on_call: Mutex<Option<(usize, String)>>,
+    pub preflight_error: Mutex<Option<String>>,
     pub block_checkpoint_on_preflight_call: Mutex<Option<(usize, PathBuf)>>,
     pub block_checkpoint_on_stop_error: Mutex<Option<PathBuf>>,
     pub corrupt_manifest_after_stop: Mutex<Option<PathBuf>>,
@@ -86,6 +87,7 @@ impl MockAppLifecycle {
             require_window_on_stability: Mutex::new(None),
             stop_error: Mutex::new(None),
             preflight_error_on_call: Mutex::new(None),
+            preflight_error: Mutex::new(None),
             block_checkpoint_on_preflight_call: Mutex::new(None),
             block_checkpoint_on_stop_error: Mutex::new(None),
             corrupt_manifest_after_stop: Mutex::new(None),
@@ -134,6 +136,11 @@ impl MockAppLifecycle {
 
     pub fn set_preflight_error_on_call(&self, call: usize, err: impl Into<String>) {
         *self.preflight_error_on_call.lock().unwrap() = Some((call, err.into()));
+    }
+
+    /// Fails every shutdown window preflight, as a denied Accessibility read does.
+    pub fn set_preflight_error(&self, err: impl Into<String>) {
+        *self.preflight_error.lock().unwrap() = Some(err.into());
     }
 
     pub fn block_checkpoint_at_preflight(&self, call: usize, path: PathBuf) {
@@ -234,6 +241,9 @@ impl AppLifecycle for MockAppLifecycle {
             if call == *failure_call {
                 return Err(error.clone());
             }
+        }
+        if let Some(error) = self.preflight_error.lock().unwrap().as_ref() {
+            return Err(error.clone());
         }
         Ok(())
     }

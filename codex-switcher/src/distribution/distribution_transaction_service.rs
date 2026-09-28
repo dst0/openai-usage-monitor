@@ -11,6 +11,7 @@ use super::distribution_plan::DistributionPlan;
 use super::distribution_request::DistributionRequest;
 use super::distribution_shared_auth_guard::DistributionSharedAuthGuard;
 use super::distribution_state_preflight_service::DistributionStatePreflightService;
+use super::distribution_transaction_error::DistributionTransactionError;
 use super::system_app_lifecycle::SystemAppLifecycle;
 use crate::models::AccountsFile;
 use crate::recovery;
@@ -50,6 +51,7 @@ impl DistributionTransactionService {
     ) -> Result<DistributionOutcome, String> {
         let operation_lock = recovery::operation_lock()?;
         self.execute_locked(op_id, plan, request, accounts_file, &operation_lock)
+            .map_err(DistributionTransactionError::into_message)
     }
 
     pub(super) fn execute_locked(
@@ -59,7 +61,7 @@ impl DistributionTransactionService {
         request: &DistributionRequest,
         mut accounts_file: AccountsFile,
         _operation_lock: &File,
-    ) -> Result<DistributionOutcome, String> {
+    ) -> Result<DistributionOutcome, DistributionTransactionError> {
         let home = storage::codex_home();
         let trigger_str = request.trigger.as_str();
         self.logger.log_lock(

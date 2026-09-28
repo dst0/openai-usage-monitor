@@ -703,6 +703,7 @@ Detection runs through a two-phase analysis pipeline before terminating or resta
 | Recovery verification | `90 s` to dispatch, `600 s` to produce work, then `10 s` soak | Requires the IPC-confirmed turn ID, substantive agent work, and no later abort/error; IPC acknowledgement is not success. |
 | Desktop stabilization | `3 s` | Requires the same singleton main PID throughout; verifies the visible window only when one was captured before restart. |
 | Banner minimum visibility | `5 s` | Keeps the semi-transparent recovery banner visible when an eligible window was captured, including the zero-target window-only panel. |
+| Automatic distribution backoff | after `2` identical pre-signal failures: `5 min`, doubling to at most `30 min` | Daemon only, in memory. Holds back the same automatic plan (cause and accounts) after it failed the same way before Desktop was signalled, so a doomed switch does not repeat its thread scan every tick. Manual switches ignore it. |
 
 An ownerless deferred mount shows a pending banner while ChatGPT opens the task.
 The banner describes verification in progress; it does not promise a restart or
@@ -711,6 +712,12 @@ and direct switching check the target Desktop account and session both before
 and after window restoration, immediately before recovery IPC. A confirmed
 account-switch auth error is eligible for this mount only while its saved
 rollout interval and queue snapshot remain current.
+
+While that hold is active, the daemon's two-second depleted-account watchdog
+does not wake another full tick. An enabled weekly auto-reset can still wake a
+full tick for a recent blocked task, at most once every 30 seconds. The
+configured polling interval and auth-file-change wakeup still apply, and
+deferred task recovery continues its lightweight polling.
 
 The tail reader checks the byte before its seek point. It discards a partial
 first record before strict UTF-8 decoding, retains a full record at an exact
@@ -728,6 +735,42 @@ verify a launchd-origin window inventory before relying on an automatic restart.
 The installer never grants either permission. Automatic distribution now
 captures and restores selected tasks in code, but a successful grant does not
 prove that behavior across multiple windows on the installed Desktop.
+
+The multi-window shutdown guard is not covered by that setting: before every
+restart it counts ChatGPT's standard windows through Accessibility and
+cross-checks them against WindowServer. From `launchd`, macOS attributes the
+helper's Accessibility request to the daemon's `~/.local/bin/cxi`, not to your
+terminal, so unless `cxi` itself has Accessibility access the guard fails with
+`WINDOW_ACCESS_FAILED` and the switch stops before Desktop is signalled. The
+audit log records that as `phase=SHUTDOWN_WINDOW_GUARD_FAILED`, and the
+`OUTCOME` line adds `pre_signal_phase=SHUTDOWN_WINDOW_GUARD_FAILED`. Adding
+`~/.local/bin/cxi` under System Settings > Privacy & Security > Accessibility
+and restarting the daemon should let the guard read the windows (not yet
+verified live); the installer re-signs `cxi`, so a reinstall may need the grant
+again. The guard also requires
+WindowServer window titles, which macOS may withhold from a process without
+Screen Recording access; the `launchd` context was observed without it, and
+missing titles fail the guard as `WINDOW_INVENTORY_MISMATCH` (shown as
+`Codex window restore helper rejected the request`).
+
+Every pre-signal failure (`WINDOW_CAPTURE_FAILED`, `WINDOW_TASK_CAPTURE_FAILED`,
+`SHUTDOWN_WINDOW_GUARD_FAILED`, `RECOVERY_CHECKPOINT_FAILED`,
+`RECOVERY_PREFLIGHT_FAILED`, or a `SHUTDOWN_FAILED` rejected before the signal)
+leaves credentials and Desktop unchanged. When the daemon's same automatic plan
+fails twice in a row with the same phase and message, it logs
+`AUTO_BACKOFF_ARMED` and defers that plan (status `deferred_cooldown`, with one
+`AUTO_BACKOFF_ACTIVE` line per hold) for 5 minutes, doubling with each further
+identical failure up to 30 minutes. A plan with a different cause, target, or
+current account is not held. The streak ends when an attempt of the plan has
+any other result (success, or a failure after Desktop was signalled), when a
+different plan or failure is recorded (only the latest plan is remembered),
+when an hour passes without a failure, or when the daemon restarts. Ticks that
+never reach an attempt (no action needed, cooldown, an in-flight journal) do
+not change it. Changing settings does not lift a hold; run `cxi switch` or
+restart the daemon to retry sooner. The hold is measured in awake time, so it
+pauses while the Mac sleeps. `cxi switch` and the Menu Bar app are never held
+back. The `codex` wrapper's preflight runs in its own process and is not
+covered.
 
 ### 🚦 Rollout Lifecycle States (`ThreadRolloutState`)
 

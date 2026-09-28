@@ -12,6 +12,8 @@ use super::distribution_recovery_audit_service::DistributionRecoveryAuditService
 use super::distribution_recovery_preflight_service::DistributionRecoveryPreflightService;
 use super::distribution_request::DistributionRequest;
 use super::distribution_shared_auth_guard::DistributionSharedAuthGuard;
+use super::distribution_transaction_error::DistributionTransactionError;
+use super::distribution_window_task_lifecycle_service::DistributionWindowTaskLifecycleService;
 use super::log_redaction_service::LogRedactionService;
 use crate::models::AccountsFile;
 use crate::{recovery, switcher};
@@ -60,7 +62,7 @@ impl<'a> DistributionDesktopSwitchService<'a> {
         request: &DistributionRequest,
         accounts: &mut AccountsFile,
         operation_id: &str,
-    ) -> Result<DistributionDesktopSwitchOutcome, String> {
+    ) -> Result<DistributionDesktopSwitchOutcome, DistributionTransactionError> {
         let trigger = request.trigger.as_str();
         let target_id = plan
             .target_app_id
@@ -92,41 +94,35 @@ impl<'a> DistributionDesktopSwitchService<'a> {
             Ok(mode) => mode,
             Err(error) => {
                 let _ = DistributionJournal::clear(home);
-                return Err(format!(
-                    "Could not capture ChatGPT window before shutdown: {error}"
+                return Err(DistributionTransactionError::pre_signal(
+                    "WINDOW_CAPTURE_FAILED",
+                    format!("Could not capture ChatGPT window before shutdown: {error}"),
                 ));
             }
         };
-        if let Err(error) = self.lifecycle.capture_window_tasks() {
-            self.lifecycle.abort_recovery();
-            let cleanup = DistributionJournal::clear(home).err();
-            return Err(match cleanup {
-                Some(cleanup) => format!(
-                    "Could not capture Desktop window tasks before shutdown: {error}; journal cleanup failed: {cleanup}"
-                ),
-                None => format!("Could not capture Desktop window tasks before shutdown: {error}"),
-            });
-        }
-        let checkpoint = match DistributionCheckpointService::prepare(
+        DistributionWindowTaskLifecycleService::new(self.lifecycle, self.logger).capture(
+            home,
+            operation_id,
+            request,
+        )?;
+        let checkpoint = DistributionCheckpointService::prepare_for_switch(
             home,
             self.lifecycle,
             &running_threads,
-            previous_id,
-            target_id,
-        ) {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                self.lifecycle.abort_recovery();
-                let _ = self.lifecycle.finish_window_tasks();
-                return Err(error);
-            }
-        };
+            (previous_id, target_id),
+            self.logger,
+            operation_id,
+            request,
+        )?;
         if let Err(error) =
             self.recovery_preflight
                 .run(home, &checkpoint, &running_threads, operation_id, request)
         {
             let _ = self.lifecycle.finish_window_tasks();
-            return Err(error);
+            return Err(DistributionTransactionError::pre_signal(
+                "RECOVERY_PREFLIGHT_FAILED",
+                error,
+            ));
         }
         let _ = recovery::arm_automation_cooldown();
 
@@ -146,15 +142,22 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 message
             };
             let windows = self.lifecycle.finish_window_tasks().err();
-            return Err(match (error.before_signal, windows) {
+            let message = match (error.before_signal, windows) {
                 (false, Some(windows)) => format!("{message}; {windows}"),
                 _ => message,
+            };
+            return Err(if error.before_signal {
+                DistributionTransactionError::pre_signal("SHUTDOWN_FAILED", message)
+            } else {
+                message.into()
             });
         }
         if let Err(error) =
             DistributionCheckpointService::finalize_after_stop(home, &running_threads)
         {
-            return Err(rollback.before_auth_commit(home, accounts, plan, error, false));
+            return Err(rollback
+                .before_auth_commit(home, accounts, plan, error, false)
+                .into());
         }
         let handoff = DistributionSharedAuthGuard::require_desktop_stopped(self.lifecycle)
             .and_then(|_| {
@@ -165,17 +168,23 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 DistributionDesktopAuthHandoffService::preserve_after_stop(accounts, current_id)
             });
         if let Err(error) = handoff {
-            return Err(rollback.before_auth_commit(home, accounts, plan, error, true));
+            return Err(rollback
+                .before_auth_commit(home, accounts, plan, error, true)
+                .into());
         }
         let target_account =
             match DistributionAccountCommitService::find_account(accounts, target_id) {
                 Ok(account) => account,
                 Err(error) => {
-                    return Err(rollback.before_auth_commit(home, accounts, plan, error, false))
+                    return Err(rollback
+                        .before_auth_commit(home, accounts, plan, error, false)
+                        .into())
                 }
             };
         if let Err(error) = journal.update_phase(home, "auth_commit_app") {
-            return Err(rollback.before_auth_commit(home, accounts, plan, error, false));
+            return Err(rollback
+                .before_auth_commit(home, accounts, plan, error, false)
+                .into());
         }
         self.logger.log_action(
             operation_id,
@@ -194,18 +203,22 @@ impl<'a> DistributionDesktopSwitchService<'a> {
             ) {
                 Ok(snapshot) => snapshot,
                 Err(error) => {
-                    return Err(rollback.before_auth_commit(home, accounts, plan, error, false))
+                    return Err(rollback
+                        .before_auth_commit(home, accounts, plan, error, false)
+                        .into())
                 }
             };
         if let Err(error) = journal.update_phase(home, "relaunching_desktop") {
-            return Err(rollback.after_auth_commit(
-                home,
-                accounts,
-                previous_id,
-                &previous_auth,
-                &committed_auth,
-                error,
-            ));
+            return Err(rollback
+                .after_auth_commit(
+                    home,
+                    accounts,
+                    previous_id,
+                    &previous_auth,
+                    &committed_auth,
+                    error,
+                )
+                .into());
         }
         self.logger.log_action(
             operation_id,
@@ -242,9 +255,7 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 Ok(_) => {
                     self.lifecycle.abort_recovery();
                     DistributionJournal::clear(home)?;
-                    Err(format!(
-                        "Desktop switch rolled back after launch failure: {reason}"
-                    ))
+                    Err(format!("Desktop switch rolled back after launch failure: {reason}").into())
                 }
                 Err(rollback_error) => Ok(DistributionDesktopSwitchOutcome {
                     restarted_desktop: false,
@@ -255,12 +266,9 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 }),
             };
         }
-        let window_error = self.lifecycle.finish_window_tasks().err();
-        let recovery_error = match (recovery_error, window_error) {
-            (Some(recovery), Some(windows)) => Some(format!("{recovery}; {windows}")),
-            (None, Some(windows)) => Some(windows),
-            (recovery, None) => recovery,
-        };
+        let recovery_error =
+            DistributionWindowTaskLifecycleService::new(self.lifecycle, self.logger)
+                .finish_with_recovery_error(recovery_error);
 
         let registry_result = DistributionAccountCommitService::commit_latest_desktop_auth(
             self.lifecycle,
