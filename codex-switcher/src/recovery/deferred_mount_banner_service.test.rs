@@ -1,7 +1,11 @@
 use super::{eligible_mount, mount_with_banner};
+use crate::recovery::auth_rotation_queue_snapshot::AuthRotationQueueSnapshot;
+use crate::recovery::auth_rotation_recovery_evidence::AuthRotationRecoveryEvidence;
 use crate::recovery::pending_target::PendingTarget;
+use crate::storage::test_codex_home::TestCodexHome;
 use crate::switcher::ThreadRolloutState;
 use std::cell::{Cell, RefCell};
+use std::{fs, os::unix::fs::MetadataExt, path::Path, process::Command};
 
 fn target(account: &str) -> PendingTarget {
     PendingTarget {
@@ -10,13 +14,16 @@ fn target(account: &str) -> PendingTarget {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some(account.into()),
+        auth_rotation: None,
     }
 }
 
 #[test]
 fn pending_panel_candidate_requires_same_account_and_dispatchable_work() {
     let item = target("account-a");
+    let home = Path::new("/nonexistent-codex-home");
     assert!(eligible_mount(
+        home,
         &item,
         "account-a",
         ThreadRolloutState::InterruptedByQuota,
@@ -24,6 +31,7 @@ fn pending_panel_candidate_requires_same_account_and_dispatchable_work() {
         Some((false, false))
     ));
     assert!(!eligible_mount(
+        home,
         &item,
         "account-b",
         ThreadRolloutState::InterruptedByQuota,
@@ -31,6 +39,7 @@ fn pending_panel_candidate_requires_same_account_and_dispatchable_work() {
         Some((false, false))
     ));
     assert!(!eligible_mount(
+        home,
         &item,
         "account-a",
         ThreadRolloutState::InterruptedByError,
@@ -38,6 +47,7 @@ fn pending_panel_candidate_requires_same_account_and_dispatchable_work() {
         Some((false, false))
     ));
     assert!(!eligible_mount(
+        home,
         &item,
         "account-a",
         ThreadRolloutState::InterruptedByQuota,
@@ -45,6 +55,7 @@ fn pending_panel_candidate_requires_same_account_and_dispatchable_work() {
         None
     ));
     assert!(!eligible_mount(
+        home,
         &item,
         "account-a",
         ThreadRolloutState::InterruptedByQuota,
@@ -52,6 +63,7 @@ fn pending_panel_candidate_requires_same_account_and_dispatchable_work() {
         Some((true, false))
     ));
     assert!(!eligible_mount(
+        home,
         &item,
         "account-a",
         ThreadRolloutState::InterruptedByQuota,
@@ -61,9 +73,77 @@ fn pending_panel_candidate_requires_same_account_and_dispatchable_work() {
     let mut not_ownerless = item.clone();
     not_ownerless.awaiting_owner = false;
     assert!(!eligible_mount(
+        home,
         &not_ownerless,
         "account-a",
         ThreadRolloutState::InterruptedByQuota,
+        0,
+        Some((false, false))
+    ));
+}
+
+#[test]
+fn confirmed_auth_error_can_mount_only_while_its_queue_snapshot_is_current() {
+    let env = TestCodexHome::new("deferred-auth-rotation-mount");
+    let mut item = target("account-b");
+    let sessions = env.path().join("sessions");
+    fs::create_dir(&sessions).unwrap();
+    let rollout = sessions.join(format!("rollout-{}.jsonl", item.id));
+    let started = serde_json::json!({
+        "type": "event_msg",
+        "payload": {"type": "task_started", "turn_id": "turn-a"}
+    })
+    .to_string();
+    let ended = serde_json::json!({
+        "type": "event_msg",
+        "payload": {
+            "type": "task_complete",
+            "turn_id": "turn-a",
+            "error": {"message": "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again."}
+        }
+    })
+    .to_string();
+    fs::write(&rollout, format!("{started}\n{ended}\n")).unwrap();
+    let metadata = rollout.metadata().unwrap();
+    item.offset = Some(metadata.len());
+    item.auth_rotation = Some(AuthRotationRecoveryEvidence {
+        source_account_id: "account-a".into(),
+        target_account_id: "account-b".into(),
+        pre_stop_offset: started.len() as u64 + 1,
+        rollout_dev: metadata.dev(),
+        rollout_ino: metadata.ino(),
+        turn_id: "turn-a".into(),
+        queue_snapshot: AuthRotationQueueSnapshot::read(env.path(), &item.id).unwrap(),
+        confirmed_after_stop: true,
+    });
+    assert!(eligible_mount(
+        env.path(),
+        &item,
+        "account-b",
+        ThreadRolloutState::InterruptedByError,
+        0,
+        Some((false, false))
+    ));
+    assert!(!eligible_mount(
+        env.path(),
+        &item,
+        "account-a",
+        ThreadRolloutState::InterruptedByError,
+        0,
+        Some((false, false))
+    ));
+    let queue = env.path().join("queue_1.sqlite");
+    assert!(Command::new("/usr/bin/sqlite3")
+        .arg(&queue)
+        .arg("CREATE TABLE queued_items (thread_id TEXT); CREATE TABLE queued_thread_revisions (thread_id TEXT, revision INTEGER);")
+        .status()
+        .unwrap()
+        .success());
+    assert!(!eligible_mount(
+        env.path(),
+        &item,
+        "account-b",
+        ThreadRolloutState::InterruptedByError,
         0,
         Some((false, false))
     ));

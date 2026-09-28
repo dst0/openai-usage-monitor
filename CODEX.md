@@ -296,7 +296,9 @@ checked during preparation, after stop, and again before deferred dispatch.
 A bounded streaming scan before
 auth replacement must find the matching terminal error in that interval and
 no Stop, new turn, or user input. The second offset remains the recovery proof
-boundary. The exception still requires the exact relaunched target-account
+boundary. Deferred mounting and dispatch recheck the saved rollout identity,
+length, and exact terminal interval, so replacement after confirmation cannot
+inherit the exception. The exception still requires the exact relaunched target-account
 Desktop session and a mounted IPC owner; `no-client-found` retains its
 target-bound checkpoint without sending a turn. Historical auth errors without
 this operation evidence remain explicit-only.

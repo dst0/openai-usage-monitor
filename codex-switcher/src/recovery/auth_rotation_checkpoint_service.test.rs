@@ -332,3 +332,29 @@ fn queue_change_after_post_stop_checkpoint_keeps_dispatch_marker() {
     );
     assert_eq!(load_manifest().unwrap(), targets);
 }
+
+#[test]
+fn replaced_rollout_after_confirmation_blocks_deferred_dispatch() {
+    let (env, id, rollout) = new_active_rollout("auth-rotation-post-stop-rollout");
+    capture_and_prepare(&env, &id);
+    append(
+        &rollout,
+        &record("task_complete", "turn-a", Some(AUTH_ERROR)),
+    );
+    AuthRotationCheckpointService::finalize_after_stop(env.path(), std::slice::from_ref(&id))
+        .unwrap();
+    let mut targets = load_manifest().unwrap();
+    finalize_target(&mut targets, &id, true, false, Some("B"), false);
+    write_manifest(&targets).unwrap();
+    let evidence = targets[0].auth_rotation.as_ref().unwrap();
+    assert!(evidence.eligible_for(env.path(), &id, "B", targets[0].offset));
+
+    let contents = std::fs::read(&rollout).unwrap();
+    std::fs::rename(&rollout, rollout.with_extension("old")).unwrap();
+    std::fs::write(&rollout, contents).unwrap();
+    assert!(!evidence.eligible_for(env.path(), &id, "B", targets[0].offset));
+    assert!(
+        mark_dispatch_attempt_for_account(&id, Some("B"), RecoveryMode::DeferredCaptured).is_err()
+    );
+    assert_eq!(load_manifest().unwrap(), targets);
+}

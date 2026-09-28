@@ -170,7 +170,7 @@ pub(super) fn mark_dispatch_attempt_with_writer(
     // all other checks, immediately before consuming the durable checkpoint.
     identity.verify()?;
     if let Some(evidence) = guarded_auth {
-        evidence.require_queue_current(&storage::codex_home(), id)?;
+        evidence.require_current(&storage::codex_home(), id, target.offset)?;
     }
     targets.retain(|target| target.id != id);
     if let Err(error) = write_targets(&targets) {

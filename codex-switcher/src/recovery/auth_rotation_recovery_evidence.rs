@@ -1,5 +1,7 @@
+use super::auth_rotation_checkpoint_service::AuthRotationCheckpointService;
 use super::auth_rotation_queue_snapshot::AuthRotationQueueSnapshot;
 use super::dispatch_mark_error::DispatchMarkError;
+use crate::switcher::{self, ThreadRolloutState};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -18,25 +20,51 @@ pub(super) struct AuthRotationRecoveryEvidence {
 }
 
 impl AuthRotationRecoveryEvidence {
-    pub(super) fn eligible_for(&self, home: &Path, id: &str, account_id: &str) -> bool {
+    pub(super) fn eligible_for(
+        &self,
+        home: &Path,
+        id: &str,
+        account_id: &str,
+        final_offset: Option<u64>,
+    ) -> bool {
         self.confirmed_after_stop
             && self.target_account_id == account_id
-            && self.queue_still_current(home, id)
+            && self.still_current(home, id, final_offset)
     }
 
     fn queue_still_current(&self, home: &Path, id: &str) -> bool {
         AuthRotationQueueSnapshot::read(home, id).ok().as_ref() == Some(&self.queue_snapshot)
     }
 
-    pub(super) fn require_queue_current(
+    fn still_current(&self, home: &Path, id: &str, final_offset: Option<u64>) -> bool {
+        self.queue_still_current(home, id)
+            && final_offset.is_some_and(|offset| {
+                AuthRotationCheckpointService::interval_confirmed(
+                    home,
+                    id,
+                    self.pre_stop_offset,
+                    offset,
+                    &self.turn_id,
+                    self.rollout_dev,
+                    self.rollout_ino,
+                )
+            })
+            && switcher::inspect_thread_rollout_state(home, id)
+                == ThreadRolloutState::InterruptedByError
+    }
+
+    pub(super) fn require_current(
         &self,
         home: &Path,
         id: &str,
+        final_offset: Option<u64>,
     ) -> Result<(), DispatchMarkError> {
-        self.queue_still_current(home, id)
+        self.still_current(home, id, final_offset)
             .then_some(())
             .ok_or_else(|| {
-                DispatchMarkError::Other("Recovery queue changed since account switch".into())
+                DispatchMarkError::Other(
+                    "Auth recovery evidence changed since account switch".into(),
+                )
             })
     }
 }

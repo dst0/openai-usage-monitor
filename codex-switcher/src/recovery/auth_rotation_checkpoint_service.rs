@@ -161,7 +161,7 @@ impl AuthRotationCheckpointService {
         active
     }
 
-    fn interval_confirmed(
+    pub(super) fn interval_confirmed(
         home: &Path,
         id: &str,
         start: u64,
