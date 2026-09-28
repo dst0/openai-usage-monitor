@@ -161,6 +161,7 @@ struct CodexWindowTaskProbeCoreTests {
   static let second = "codex://threads/01a00000-0000-4000-8000-000000000002"
 
   static func main() {
+    checksWindowInventoryPermissionsBeforeWindowEnumeration()
     probesEveryWindowOnceAndReportsOnlyTheCount()
     refusesBeforeAnyVisibleChange()
     requiresObservedFocusBeforeEachShortcut()
@@ -169,6 +170,18 @@ struct CodexWindowTaskProbeCoreTests {
     rejectsDuplicateLinksAndChangesAfterACopy()
     restoresTheClipboardOnlyAfterItsOwnLastCopy()
     print("Selected-task probe sequencing passed")
+  }
+
+  static func checksWindowInventoryPermissionsBeforeWindowEnumeration() {
+    precondition(windowInventoryPermissionFailure(
+      accessibilityTrusted: false, screenRecordingAllowed: false
+    ) == .accessibilityPermissionDenied)
+    precondition(windowInventoryPermissionFailure(
+      accessibilityTrusted: true, screenRecordingAllowed: false
+    ) == .screenRecordingPermissionDenied)
+    precondition(windowInventoryPermissionFailure(
+      accessibilityTrusted: true, screenRecordingAllowed: true
+    ) == nil)
   }
 
   static func run(_ system: FakeProbeSystem) -> Result<(windowIDs: [UInt32], taskCount: Int, clipboardRestored: Bool), WindowTaskProbeFailure> {

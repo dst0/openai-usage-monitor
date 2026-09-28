@@ -49,6 +49,7 @@ The switching and monitoring core is written in **Rust**, paired with a native m
    - `cxi window rehearse-task-restore --allow-focus-and-clipboard` rehearses those restore steps without a restart and with the probe's preconditions: it reads each window's task, opens one new window per original with File > New Window at an offset frame, sends it the original's task link, requires its Copy deeplink to return that task, requires every original window to still show its own task (navigating an original back before reporting `ORIGINAL_WINDOW_CHANGED`), then gives each window it opened its opening frame back, closes only those windows, refocuses the original window, and puts the clipboard back. It prints only counts or a fixed failure code (`REHEARSAL_WINDOW_LEFT_OPEN` if a window it opened could not be closed or closure could not be verified). It proves focus-targeted navigation and New Window with tasks that are already loaded; it cannot show how a cold task loads after a relaunch, when New Window appears after a relaunch, or how the relaunched window is reused.
    - `cxi window probe-tasks --allow-focus-and-clipboard` is an explicit diagnostic for the window-to-task mapping; it proves nothing about restart or restoration and has not been run against a live multiwindow Desktop. Before any visible change it requires the flag; a Codex home that resolves to the account's `~/.codex` (from the user database, not `$HOME`; a ChatGPT started with its own `CODEX_HOME` is not detected); the switch/recovery operation lock, held for the whole run (a switch or recovery already running refuses the probe, and one started during it is refused); a ChatGPT keymap (`~/.codex/keybindings.json`) that is absent, blank, or an array of exactly `{command, key}` entries none of which names `copyDeeplink` or puts any key combination on L (ChatGPT's own rules then keep Cmd+Opt+L on Copy deeplink; an unrelated override such as a dictation hotkey is accepted); exactly one ChatGPT process; ChatGPT 26.924.22138 (build 11645), the only build whose Copy deeplink binding, keymap rules, link routing, and New Window command were inspected, with its bundle unchanged since launch; no macOS App Shortcut on Cmd+Opt+L; a keyboard layout on which that key types `l` with Command held (not Dvorak or Colemak); Accessibility and event-posting access; pasteboard access not set to deny (macOS 15.4 and later); and no minimized ChatGPT window. It then focuses each ChatGPT window, sends Cmd+Opt+L only to that ChatGPT process, and reads the copied link. Each copy requires keyboard focus on that window observed through Accessibility, an unchanged process birth, unambiguous AX/WindowServer geometry, a stable window inventory and mapping, exactly one clipboard write that stays unchanged while it is read, no concealed or transient pasteboard marker, and a unique canonical task link. On macOS 15.4 and later, macOS may ask before the helper reads the pasteboard; a prompt that takes focus makes the probe fail closed, after which the app that ran it can be set to always allow pasteboard access in System Settings and the probe rerun. The helper never outputs task IDs, and the CLI prints only a window count or a fixed failure code; a failure that may have followed a focus change says so. ChatGPT itself puts each link on the system clipboard, so other apps, clipboard history, and Universal Clipboard can see it. The helper keeps the previous clipboard items in memory (and the newer ones if another app writes between its copies) and writes them back when the change count still matches its last copy; private (concealed or transient) contents are never read or restored, contents found to exceed 32 MiB are not kept, and a write by another app after the last copy is kept, so the last link may stay. A single competing clipboard write of a valid task link remains indistinguishable, so attribution is unverified. A keymap edit still present when the probe ends voids the result. The probe saves no restart snapshot and does not relax the multiwindow guard. `Task probe failed: COMMAND_REJECTED` means the installed window helper predates the probe; rerun the installer. Missing WindowServer window titles fail closed as `WINDOW_INVENTORY_MISMATCH`.
    - Window inventory cross-checks named WindowServer windows against Accessibility standard-window frames. An unnamed offscreen window is excluded only if its frame is distinct from every standard-window frame; an unexpected or malformed offscreen title blocks shutdown. This preserves the observed single-window Desktop with a detached renderer, but the completeness of Accessibility's window roster is still unproven.
+   - The shutdown inventory checks Accessibility and Screen Recording authorization without prompting. `WINDOW_ACCESSIBILITY_DENIED` and `WINDOW_SCREEN_RECORDING_DENIED` identify missing grants before any Desktop signal. This guard runs for automatic distribution even when window-bound preservation is off. A Terminal grant does not prove that launchd `cxi` has the same access.
    - The Monitor binds the displayed APP account to the exact relaunched process before waiting for task recovery.
    - Keep automatic switching disabled until unattended cold-task mounting and exact selected-task restoration across windows are proven on the installed Desktop.
    - If Desktop has a verified zero-window inventory before a restart, automatic switching can continue without task or geometry restore; a newly opened window then blocks shutdown. If there are recovery targets, owner-routed IPC waits for a visible banner after owner mounting; a missing window then defers the target with its original checkpoint. Accessibility failures, malformed geometry, and process identity mismatches still stop a preservation-enabled switch before credentials change.
@@ -353,6 +354,20 @@ cxi recovery-preflight
 7. **Integrates AI Agent Skills** into `~/.codex/skills`, `~/.claude/skills`, and `~/.agents/skills`; a one-line remote install retains their source under `~/.local/share/codex-monitor/skills` because its temporary clone is removed.
 8. **Builds the optional `Codex Notifier.app`** in `~/Applications`, the `codex-ui-resume`, `codex-recovery-banner`, and `codex-window-restore` helpers in `~/.local/bin`, and bundles the confirmation-gated uninstaller inside the Monitor app.
 9. **Launches the Menu Bar app immediately.**
+
+For stable background `cxi` and `codex-window-restore` identities across rebuilds, an operator who
+already has a valid code-signing identity may set
+`CODEX_MONITOR_SIGNING_IDENTITY_SHA1` to its 40-character fingerprint when
+running the installer. The installer checks that identity, signs the staged CLI
+and window helper with fixed identifiers `com.codex.monitor.cli` and
+`com.codex.monitor.window-restore`, and refuses an invalid selection before
+building. A Developer ID Application identity is recommended for distribution.
+With no selection, both remain ad hoc signed; macOS privacy grants may need
+renewal after an update. Reuse the same identity on every install and verify
+both installed designated requirements and launchd-origin grants afterwards.
+A local self-signed certificate may yield a
+stable requirement on one Mac, but its Accessibility and Screen Recording grant
+behavior is unverified. The installer neither creates nor trusts certificates.
 
 The installer does not install or modify the official Codex Desktop app and
 does not create a second App Server. It only installs the Monitor/Switcher
@@ -699,22 +714,18 @@ The tail reader checks the byte before its seek point. It discards a partial
 first record before strict UTF-8 decoding, retains a full record at an exact
 newline boundary, and reports unknown state for malformed complete records.
 
-`launchd` can deny Accessibility reads to the background switcher even when an
-interactive Terminal invocation of the same helper can inspect the window. The
-default `preserve_window_bounds_on_restart=true` treats that denial as blocking:
-no auth change or Desktop restart occurs. If automatic switching is more
-important than restoring the exact prior window geometry, run
-`cxi config --preserve-window-bounds false`. In this explicit mode the switcher
-still validates the exact Desktop PID and birth identity before shutdown,
-recovers eligible tasks through Desktop IPC, and verifies the relaunched
-singleton PID. It uses the WindowServer's read-only geometry for banner
-placement when a visible window and recovery target exist; this path does not
-require Accessibility. It skips window position/size restore and the
-Accessibility-based visible-window check. Explicit WindowServer visibility or
-geometry failures and panel visibility failures are logged without blocking
-credential rotation; identity and helper protocol failures block it. Restore the setting with
-`cxi config --preserve-window-bounds true` only after verifying that the
-background helper can read the Desktop window.
+`launchd` can deny Accessibility and Screen Recording to the window helper even
+when the helper succeeds from Terminal. The shutdown guard checks both grants
+before any credential change or Desktop signal; disabling window bounds
+preservation does not bypass it. `WINDOW_ACCESSIBILITY_DENIED` and
+`WINDOW_SCREEN_RECORDING_DENIED` name the missing grant without opening a macOS
+permission prompt. In System Settings > Privacy & Security, grant each denied
+service to the client macOS attributes the launchd helper request to (which may
+be `codex-window-restore` or `cxi`), then
+verify a launchd-origin window inventory before relying on an automatic restart.
+The installer never grants either permission. Automatic distribution now
+captures and restores selected tasks in code, but a successful grant does not
+prove that behavior across multiple windows on the installed Desktop.
 
 ### 🚦 Rollout Lifecycle States (`ThreadRolloutState`)
 
