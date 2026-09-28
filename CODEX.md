@@ -306,10 +306,17 @@ Copy deeplink returns the planned task; a later link that moved an earlier
 window is caught by a final pass. When recovery could have sent its own task
 link (a target no restored window showed, or an incomplete restore), even when
 recovery failed, a recheck moves back only a window now showing a recovery
-task instead of its own, with the same link guard and a final pass; it
+task instead of its own, with the same link guard and a final pass after
+every attempted link, including a last attempt whose target never verifies; it
 creates, moves, and closes nothing, cannot tell recovery's link from the
 user's own navigation to a recovery task, and reactivates the app that was
-frontmost before it. The plan reaches the helper on stdin
+frontmost before it. The recheck reports any unmatched frame or unreadable
+Copy deeplink as unverified, without navigating that window. A rehearsal treats an unreadable liveness
+check as an unclosed extra window and reports failure; after a new-window
+inventory error it attempts to close the known focused new window. Its final
+WindowServer/Accessibility inventory must exactly match the pre-rehearsal IDs;
+an extra window or unreadable inventory reports `REHEARSAL_WINDOW_LEFT_OPEN`.
+The plan reaches the helper on stdin
 and the snapshot returns on stdout; each task link is handed to macOS `open`,
 as recovery already does. Every window-task helper run has a deadline and is
 killed with its process group when it passes; the helper also exits once its

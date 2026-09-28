@@ -94,8 +94,8 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
   /// recently focused window. Only a planned window that now shows one of
   /// recovery's tasks instead of its own is navigated back; nothing is
   /// created, moved, or closed. A window without a unique planned frame, or
-  /// whose link cannot be read, is not on a recovery task link recovery sent
-  /// and is left as it is. Afterwards the app that was frontmost before the
+  /// whose link cannot be read is left as it is and reported unverified.
+  /// Afterwards the app that was frontmost before the
   /// recheck is activated again, or ChatGPT's focused window if it was.
   private func recheck(
     _ plan: [PlannedWindowTask], recoveryTasks: Set<String>
@@ -104,9 +104,9 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
     let frames = try frames(of: windows)
     let current = system.focusedWindow()
     let frontmost = system.frontmostApplication()
-    var verified = Array(repeating: true, count: plan.count)
+    var verified = Array(repeating: false, count: plan.count)
     var checked: [(window: System.Window, taskID: String)] = []
-    var movedBack: [Int: System.Window] = [:]
+    var navigationAttempted = false
     reader.beginVisibleChanges()
     defer {
       if let frontmost, !system.isDesktop(frontmost) {
@@ -122,17 +122,19 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
         let window = windows[matches[0]]
         try reader.focus(window)
         let shown = try? reader.copyTaskLink()
-        if let shown, shown != plan[index].taskID, recoveryTasks.contains(shown) {
+        if shown == plan[index].taskID {
+          verified[index] = true
+        } else if let shown, recoveryTasks.contains(shown) {
+          navigationAttempted = true
           verified[index] = try show(
             plan[index].taskID, in: window, alreadyShowingIsPossible: false, unchanged: checked)
-          movedBack[index] = window
         }
-        if verified[index], shown == plan[index].taskID || movedBack[index] != nil {
+        if verified[index] {
           checked.append((window, plan[index].taskID))
         }
       }
-      // A later link must not have moved a window this pass already checked.
-      if !movedBack.isEmpty {
+      // Even a failed last attempt may have changed an earlier window.
+      if navigationAttempted {
         for (window, task) in checked {
           guard let index = plan.firstIndex(where: { $0.taskID == task }) else { continue }
           try reader.focus(window)
@@ -184,9 +186,15 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
       failure = error
     }
     let closed = close(created)
+    // An AX element becoming invalid does not prove the OS window closed.
+    // The exact original WindowServer/Accessibility inventory must return,
+    // including when an opened window could not be observed for cleanup.
+    let originalInventoryRestored = (try? system.windowIDs()) == ids
     refocus(focused.map { windows[$0] })
     let clipboardRestored = reader.finishVisibleChanges()
-    guard closed else { throw WindowTaskProbeFailure.rehearsalWindowLeftOpen }
+    guard closed && originalInventoryRestored else {
+      throw WindowTaskProbeFailure.rehearsalWindowLeftOpen
+    }
     if let failure { throw failure }
     return (ids, verified, clipboardRestored)
   }
@@ -253,9 +261,13 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
       opened = focused
       return system.hasKeyboardFocus(focused)
     }
-    // Every window that appeared is recorded, focused or not, so a rehearsal
-    // can close it again.
-    let fresh = ((try? system.standardWindows()) ?? []).filter { window in
+    // Remember the focused new window before the fallible full inventory read;
+    // then record any other new windows that the inventory exposes.
+    if appeared, let window = opened,
+      !created.contains(where: { system.sameWindow($0.window, window) }) {
+      created.append((window, system.frame(window)))
+    }
+    let fresh = try system.standardWindows().filter { window in
       !before.contains { system.sameWindow($0, window) }
     }
     for window in fresh where !created.contains(where: { system.sameWindow($0.window, window) }) {
@@ -314,13 +326,26 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
   /// window opens.
   private func close(_ windows: [(window: System.Window, frame: CGRect?)]) -> Bool {
     var closed = true
-    for (window, frame) in windows.reversed() where system.isWindowAlive(window) {
-      if let frame, system.processBirthMatches() { _ = system.setFrame(window, frame) }
-      guard system.processBirthMatches(), system.closeWindow(window),
-        reader.waitFor(windowCloseTimeout, { !system.isWindowAlive(window) }) else {
+    for (window, frame) in windows.reversed() {
+      let alive: Bool
+      do { alive = try system.isWindowAlive(window) } catch {
         closed = false
         continue
       }
+      if !alive { continue }
+      if let frame, system.processBirthMatches() { _ = system.setFrame(window, frame) }
+      guard system.processBirthMatches(), system.closeWindow(window) else {
+        closed = false
+        continue
+      }
+      var readFailed = false
+      let disappeared = reader.waitFor(windowCloseTimeout) {
+        do { return try !system.isWindowAlive(window) } catch {
+          readFailed = true
+          return true
+        }
+      }
+      if readFailed || !disappeared { closed = false }
     }
     return closed
   }
