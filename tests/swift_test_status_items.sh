@@ -10,17 +10,19 @@
 # receiver, so an alias of NSStatusBar.system is covered. A removal counts only
 # as NSStatusBar.system.removeStatusItem(item), whose receiver is never nil; any
 # other use of that name (an alias or optional status bar, a declaration or
-# wrapper, a selector, a method reference) and any reference to
-# statusItem(withLength:) fails the check, because such a call may not run or
-# may not remove anything. So does any of them
+# wrapper, a selector, a method reference), any reference to
+# statusItem(withLength:), and a backtick-escaped statusItem or withLength fail
+# the check, because such a call may not run, may not remove anything, or would
+# not be counted. So does any of them
 # inside #if: the check cannot tell which branch is compiled, and a removal in
 # an inactive one never runs. Text in comments and
 # literals does not count: STRIP_SWIFT removes // and nested /* */ comments,
 # plain, multi-line, and raw strings, and extended regex literals (#/.../#)
 # first, and keeps the code of string interpolations. The check reads text:
-# it trusts that NSStatusBar is AppKit's, and it does not follow control flow,
-# so a removal that a condition, an early return, a throw, or an uncalled
-# closure skips still counts. It counts calls and cannot pair them: review
+# it trusts that NSStatusBar is AppKit's, it does not see a call made through a
+# string (a Selector built from text, key-value coding), and it does not
+# follow control flow, so a removal that a condition, an early return, a throw,
+# or an uncalled closure skips still counts. It counts calls and cannot pair them: review
 # checks that each removal runs after its item's last use.
 set -euo pipefail
 
@@ -100,8 +102,9 @@ print code(0);
 
 # COUNT_CALLS: a perl program that reads STRIP_SWIFT output and prints
 # "created removed misused guarded": misused counts each removeStatusItem that
-# is not a NSStatusBar.system.removeStatusItem(item) call and each statusItem(withLength:)
-# reference; guarded counts status-item calls and references inside #if, whose
+# is not a NSStatusBar.system.removeStatusItem(item) call, each
+# statusItem(withLength:) reference, and each backtick-escaped statusItem or
+# withLength, which the creation pattern would miss; guarded counts status-item calls and references inside #if, whose
 # branch may not be compiled.
 COUNT_CALLS='
 use strict; use warnings;
@@ -110,6 +113,7 @@ my $created = () = $c =~ /statusItem\s*\(\s*withLength\b/g;
 my $removed = () = $c =~ /\bNSStatusBar\s*\.system\s*\.removeStatusItem[ \t]*\((?!\s*_\s*:\s*\))/g;
 my $named = () = $c =~ /\bremoveStatusItem\b/g;
 my $references = () = $c =~ /statusItem\s*\(\s*withLength\s*:\s*\)/g;
+$references += () = $c =~ /`(?:statusItem|withLength)`/g;
 my @marks;
 while ($c =~ /^[ \t]*#(if|endif)\b/mg) { push @marks, [$-[0], $1 eq "if" ? 1 : -1]; }
 my $guarded = 0;
@@ -304,9 +308,12 @@ expect_violation unapplied-removal "${T}" '  let remove = NSStatusBar.system.rem
     "${T} has 1 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
 expect_violation referenced-creation "${T}" '  let make = NSStatusBar.system.statusItem(withLength:)' \
     "${T} has 1 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
-# A backtick-escaped name is the same name: an escaped creation counts.
+# A backtick-escaped name is the same name to Swift but not to the patterns, so
+# it fails.
 expect_violation escaped-creation "${T}" '  let other = NSStatusBar.system.`statusItem`(withLength: 7)' \
-    "${T} creates 3 status items and removes 2"
+    "${T} has 1 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
+expect_violation escaped-label "${T}" '  let other = NSStatusBar.system.statusItem(`withLength`: 7)' \
+    "${T} has 1 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
 # Code inside an interpolation is code: a status item made there counts.
 expect_violation interpolated-creation "${T}" \
     '  let width = "\(NSStatusBar.system.statusItem(withLength: 6).length)"' \
