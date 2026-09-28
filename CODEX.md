@@ -556,13 +556,18 @@ open file (`stat 0<&9`; `stat /dev/fd/9` reports devfs's device) with the
 path and locks the file now at the path when they differ. It writes its PID
 through the locked descriptor, never by path, and then hands the lock to a
 perl keeper that is forked with INT, TERM, HUP, and QUIT ignored and exits
-once the installer has exited. The installer closes its own descriptor, so
-no command it runs, such as a compiler cache server started under cargo, can
-inherit the lock and keep it after the installer ends, and an interrupted
-installer keeps the lock through its EXIT cleanup. Before its remote clone,
-CLI staging, bundle staging, and bundle swap, the installer stops if the
-path no longer names its lock file: uninstallers from before this lock
-removed a lock file once more after releasing it. The uninstaller's probe
+within about 0.05 s of the installer's exit. Once the keeper reports that it
+runs, the installer closes its own descriptor, so no command it runs, such
+as a compiler cache server started under cargo, can inherit the lock and
+keep it after the installer ends; if the keeper never reports, the installer
+keeps the descriptor and says so. An interrupted installer keeps the lock
+through its EXIT cleanup (it traps QUIT too, which bash would otherwise let
+end it without that cleanup). Both scripts run perl with `-T`, which ignores
+the caller's `PERL5OPT` and `PERL5LIB`. Before its remote clone, CLI
+staging, bundle staging, and bundle swap, the installer stops if the path
+no longer names its lock file or a fresh probe no longer finds the lock
+held: uninstallers from before this lock removed a lock file once more after
+releasing it, and a keeper can be killed. The uninstaller's probe
 opens each lock file read-only, never creating one, likewise starts over
 when the path no longer names the file it locked, and treats any lock-tool
 status other than taken or held as unknown.

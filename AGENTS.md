@@ -83,13 +83,17 @@
   path. Write the holder's PID through the locked descriptor, never by path.
   The installer then hands the lock to a perl keeper, forked with INT, TERM,
   HUP, and QUIT ignored, that exits once its parent does, and closes its own
-  descriptor: a command it starts that outlives it (a compiler cache server
-  under cargo) must not inherit the lock, and an interrupted installer must
-  keep it through its cleanup. Never add a bare `wait` to the installer.
-  Before the clone, the CLI staging, the bundle staging, and the swap it
-  checks that the path still names its lock file, because uninstallers from
-  before this lock removed a lock file once more after releasing it. Both
-  scripts take the lock with an identical `flock_fd_now`:
+  descriptor only after the keeper reports that it runs: a command it starts
+  that outlives it (a compiler cache server under cargo) must not inherit
+  the lock, and an interrupted installer (QUIT included, which needs its own
+  trap for bash to run EXIT) must keep it through its cleanup. Never add a
+  bare `wait` to the installer. Run perl with `-T` so the caller's
+  `PERL5OPT`/`PERL5LIB` cannot break it. Before the clone, the CLI staging,
+  the bundle staging, and the swap it checks that the path still names its
+  lock file and that a fresh probe finds it held, because uninstallers from
+  before this lock removed a lock file once more after releasing it and a
+  keeper can be killed. Both scripts take the lock with an identical
+  `flock_fd_now`:
   `/usr/bin/lockf`'s descriptor form (macOS 15 and later) with `-t 0` only,
   else perl's `flock` (macOS 13 and 14 ship no `lockf`), else fail closed;
   waiting is a polling loop, because `lockf` waits on a descriptor by

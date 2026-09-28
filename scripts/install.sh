@@ -218,6 +218,8 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+# bash runs no EXIT trap when SIGQUIT (Ctrl-\) ends it; exit through the trap.
+trap 'exit 131' QUIT
 
 # ------------------------------------------------------------------------------
 # Concurrency Lock: Serialize installation runs across terminal sessions & projects
@@ -263,7 +265,8 @@ install_lock_dir() {
 # macOS 13 and 14 have perl's flock, the same lock. A lockf without the
 # descriptor form rejects it as a usage error (64), which falls back too.
 # Callers wait by retrying: lockf's own wait on a descriptor spins a CPU.
-# scripts/uninstall.sh keeps an identical copy of this function.
+# perl runs with -T, which ignores PERL5OPT and PERL5LIB from the caller's
+# environment. scripts/uninstall.sh keeps an identical copy of this function.
 flock_fd_now() {
     local fd="$1"
     local status=69
@@ -272,7 +275,7 @@ flock_fd_now() {
         [ "${status}" -eq 64 ] || return "${status}"
     fi
     [ -x /usr/bin/perl ] || return 69
-    /usr/bin/perl -MErrno -MFcntl=:flock -e '
+    /usr/bin/perl -T -MErrno -MFcntl=:flock -e '
         open(my $lock, "<&=", $ARGV[0]) or exit 71;
         flock($lock, LOCK_EX | LOCK_NB) or exit($!{EWOULDBLOCK} ? 75 : 71);
         exit 0;
@@ -295,38 +298,65 @@ install_lock_identity() {
 # changes); this shell then closes descriptor 9. No command the installer
 # starts, such as a compiler cache server that outlives cargo, can then
 # inherit the lock and keep it after the installer ends, and an interrupted
-# installer keeps the lock until its EXIT cleanup is done. Without perl,
-# this shell keeps descriptor 9. Never add a bare `wait` to the installer:
-# it would wait for the keeper, which waits for the installer to exit.
+# installer keeps the lock until its EXIT cleanup is done. The keeper frees
+# the lock within about 0.05 s of the installer's exit. It reports that it
+# runs, as this shell's child with descriptor 9 open, before this shell
+# closes descriptor 9; otherwise (or without perl) this shell keeps it.
+# Never add a bare `wait` to the installer: it would wait for the keeper,
+# which waits for the installer to exit.
 hand_off_install_lock() {
     [ -x /usr/bin/perl ] || return 0
     local saved_traps
+    local ready=""
     # The keeper inherits these as ignored, so no signal can end it before
-    # perl starts; this shell then restores its own traps.
+    # perl starts; this shell then restores its own traps. A signal that
+    # arrives in between is lost.
     saved_traps="$(trap -p INT TERM HUP QUIT)"
     trap '' INT TERM HUP QUIT
-    /usr/bin/perl -e '
-        $SIG{$_} = "IGNORE" for qw(INT TERM HUP QUIT);
-        my $installer = shift;
-        select(undef, undef, undef, 0.1) while getppid() == $installer;
-    ' "$$" 0</dev/null >/dev/null 2>&1 &
+    if { exec 8< <(exec /usr/bin/perl -T -e '
+            $SIG{$_} = "IGNORE" for qw(INT TERM HUP QUIT);
+            my $installer = shift;
+            open(my $lock, "<&=", 9) or exit 71;
+            exit 72 unless getppid() == $installer;
+            $| = 1;
+            print "ready\n";
+            close(STDOUT);
+            select(undef, undef, undef, 0.05) while getppid() == $installer;
+        ' "$$" 0</dev/null 2>/dev/null); } 2>/dev/null; then
+        IFS= read -r -t 10 ready <&8 || ready=""
+        exec 8<&-
+    fi
     trap - INT TERM HUP QUIT
     eval "${saved_traps}"
-    exec 9<&-
+    if [ "${ready}" = ready ]; then
+        exec 9<&-
+    else
+        echo "⚠️  The install lock keeper did not start; commands this installer runs share its lock."
+    fi
 }
 
-# Fails unless the lock path still names the file this installer locked.
-# Current uninstallers remove a lock file only while holding its lock, but
-# those from before the per-user temporary directory lock removed it once
-# more after releasing it, which could remove a newer installer's file and
-# let another installer run alongside it. Checked before each step that
-# creates a path an uninstaller must not remove while an installer runs.
+# Fails unless the lock path still names the file this installer locked and
+# that lock is still held. Current uninstallers remove a lock file only while
+# holding its lock, but those from before the per-user temporary directory
+# lock removed it once more after releasing it, which could remove a newer
+# installer's file and let another installer run alongside it; and a keeper
+# that ended early (killed, for example) freed the lock. A probe through a
+# new open file finds a held lock busy, whether the keeper or this shell
+# holds it. Checked before each step that creates a path an uninstaller must
+# not remove while an installer runs.
 install_lock_still_named() {
-    if [ -n "${INSTALL_LOCK_IDENTITY}" ] &&
-        [ "$(install_lock_identity "${INSTALL_LOCK_FILE}")" = "${INSTALL_LOCK_IDENTITY}" ]; then
-        return 0
+    local status=0
+    if [ -z "${INSTALL_LOCK_IDENTITY}" ] ||
+        [ "$(install_lock_identity "${INSTALL_LOCK_FILE}")" != "${INSTALL_LOCK_IDENTITY}" ]; then
+        echo "❌ Stopping installation: another program removed or replaced the install lock file: ${INSTALL_LOCK_FILE}"
+        return 1
     fi
-    echo "❌ Stopping installation: another program removed or replaced the install lock file: ${INSTALL_LOCK_FILE}"
+    if { exec 8<"${INSTALL_LOCK_FILE}"; } 2>/dev/null; then
+        flock_fd_now 8 || status=$?
+        exec 8<&-
+        [ "${status}" -ne 75 ] || return 0
+    fi
+    echo "❌ Stopping installation: this installer no longer holds the install lock: ${INSTALL_LOCK_FILE}"
     return 1
 }
 

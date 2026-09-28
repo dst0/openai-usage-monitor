@@ -323,7 +323,8 @@ installer_temps() {
 # macOS 13 and 14 have perl's flock, the same lock. A lockf without the
 # descriptor form rejects it as a usage error (64), which falls back too.
 # Callers wait by retrying: lockf's own wait on a descriptor spins a CPU.
-# scripts/install.sh keeps an identical copy of this function.
+# perl runs with -T, which ignores PERL5OPT and PERL5LIB from the caller's
+# environment. scripts/install.sh keeps an identical copy of this function.
 flock_fd_now() {
     local fd="$1"
     local status=69
@@ -332,7 +333,7 @@ flock_fd_now() {
         [ "${status}" -eq 64 ] || return "${status}"
     fi
     [ -x /usr/bin/perl ] || return 69
-    /usr/bin/perl -MErrno -MFcntl=:flock -e '
+    /usr/bin/perl -T -MErrno -MFcntl=:flock -e '
         open(my $lock, "<&=", $ARGV[0]) or exit 71;
         flock($lock, LOCK_EX | LOCK_NB) or exit($!{EWOULDBLOCK} ? 75 : 71);
         exit 0;

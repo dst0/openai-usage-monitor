@@ -413,7 +413,9 @@ too. The installer takes the lock with `lockf` (macOS 15 and later) or perl's
 `flock` (macOS 13 and 14 ship no `lockf`), and refuses to run when it can take
 neither or cannot find that directory. A program the installer starts that
 keeps running after it (a compiler cache server, for example) does not keep
-the lock.
+the lock. The lock ends within a fraction of a second of the installer's
+exit, so an uninstall started at that very moment may still be refused; run
+it again.
 
 It also removes what a killed installer or uninstaller left behind. The
 installer creates its temporary paths only while it holds its install lock

@@ -99,8 +99,11 @@ case "\$*" in
 esac
 exit "\${status}"
 EOF
+# Keepers that never report ready, and one that reports ready and quits.
+/usr/bin/printf '#!/bin/sh\nexit 1\n' > "${FAKE_BIN}/dead-keeper"
+/usr/bin/printf '#!/bin/sh\necho ready\n' > "${FAKE_BIN}/quitting-keeper"
 /bin/chmod 755 "${FAKE_BIN}/getconf" "${FAKE_BIN}/old-lockf" "${FAKE_BIN}/replacing-lockf" "${FAKE_BIN}/open" \
-    "${FAKE_BIN}/swapping-stat"
+    "${FAKE_BIN}/swapping-stat" "${FAKE_BIN}/dead-keeper" "${FAKE_BIN}/quitting-keeper"
 
 # ------------------------------------------------------------------------------
 # The block under test, exactly as install.sh has it, and variants with one
@@ -136,6 +139,8 @@ BLOCK_LOCKF="${TEMP_ROOT}/block-lockf.sh"
 BLOCK_NONE="${TEMP_ROOT}/block-none.sh"
 BLOCK_REPLACING="${TEMP_ROOT}/block-replacing.sh"
 BLOCK_SWAPPING_STAT="${TEMP_ROOT}/block-swapping-stat.sh"
+BLOCK_DEAD_KEEPER="${TEMP_ROOT}/block-dead-keeper.sh"
+BLOCK_QUITTING_KEEPER="${TEMP_ROOT}/block-quitting-keeper.sh"
 make_block "${BLOCK_HOST}"
 make_block "${BLOCK_PERL}" -e "s|/usr/bin/lockf|${MISSING}/lockf|g"
 make_block "${BLOCK_OLD_LOCKF}" -e "s|/usr/bin/lockf|${FAKE_BIN}/old-lockf|g"
@@ -143,6 +148,12 @@ make_block "${BLOCK_LOCKF}" -e "s|/usr/bin/perl|${MISSING}/perl|g"
 make_block "${BLOCK_NONE}" -e "s|/usr/bin/lockf|${MISSING}/lockf|g" -e "s|/usr/bin/perl|${MISSING}/perl|g"
 make_block "${BLOCK_REPLACING}" -e "s|/usr/bin/lockf|${FAKE_BIN}/replacing-lockf|g"
 make_block "${BLOCK_SWAPPING_STAT}" -e "s|/usr/bin/stat|${FAKE_BIN}/swapping-stat|g"
+make_block "${BLOCK_DEAD_KEEPER}" -e "s|exec /usr/bin/perl -T -e|exec ${FAKE_BIN}/dead-keeper -T -e|"
+make_block "${BLOCK_QUITTING_KEEPER}" -e "s|exec /usr/bin/perl -T -e|exec ${FAKE_BIN}/quitting-keeper -T -e|"
+for copy in "${BLOCK_DEAD_KEEPER}" "${BLOCK_QUITTING_KEEPER}"; do
+    [ "$(/usr/bin/grep -c -F -e "${FAKE_BIN}/dead-keeper" -e "${FAKE_BIN}/quitting-keeper" "${copy}")" = 1 ] ||
+        fail "could not replace the lock keeper in ${copy##*/}"
+done
 for name in lockf perl stat; do
     /usr/bin/grep -F "/usr/bin/${name}" "${BLOCK_HOST}" >/dev/null ||
         fail "the install lock block no longer names /usr/bin/${name}, which this test replaces"
@@ -168,7 +179,8 @@ done
     'open(my $lock, "<&=", $ARGV[0]) or exit 71;' > "${PROBE_LINES}"
 [ -z "$(unfaked_commands "${PROBE_LINES}")" ] || fail 'fake guard rejected a fake or a comment'
 for copy in "${BLOCK_HOST}" "${BLOCK_PERL}" "${BLOCK_OLD_LOCKF}" "${BLOCK_LOCKF}" \
-    "${BLOCK_NONE}" "${BLOCK_REPLACING}" "${BLOCK_SWAPPING_STAT}"; do
+    "${BLOCK_NONE}" "${BLOCK_REPLACING}" "${BLOCK_SWAPPING_STAT}" "${BLOCK_DEAD_KEEPER}" \
+    "${BLOCK_QUITTING_KEEPER}"; do
     unfaked="$(unfaked_commands "${copy}")"
     [ -z "${unfaked}" ] || fail "install lock copy can still reach a real command: ${copy##*/}
 ${unfaked}"
@@ -332,13 +344,37 @@ wait_until 'the lock is free after both installers exited' lock_is free
 # ------------------------------------------------------------------------------
 LINGER="${TEMP_ROOT}/linger.fifo"
 /usr/bin/mkfifo "${LINGER}"
+# Opened read-write, so this returns at once even if H never starts its child.
+exec 4<>"${LINGER}"
 start_lock_process H 5 "${BLOCK_HOST}" "${TEMP_ROOT}/tmp-a" "${LINGER}"
-exec 4>"${LINGER}"
 wait_until 'H holds the lock' acquired H
 lock_is held || fail "H's lock is not held: $(probe "${LOCK}")"
 release_lock_process H 5
 wait_until 'the lock is free while a command the installer started still runs' lock_is free
 exec 4>&-
+
+# The installer closes its own descriptor only after the keeper reports that
+# it runs; perl runs with -T, so the caller's PERL5OPT cannot break it. A
+# keeper that never reports leaves the lock with the installer, and one that
+# quits later is noticed at the next step's check.
+PERL5OPT=-MNoSuchModule start_lock_process H 5 "${BLOCK_PERL}" "${TEMP_ROOT}/tmp-a"
+wait_until 'H holds the lock despite PERL5OPT' acquired H
+lock_is held || fail "H's lock is not held with PERL5OPT set: $(probe "${LOCK}")"
+logged H 'keeper did not start' && fail 'the keeper did not start with PERL5OPT set'
+release_lock_process H 5
+wait_until "the PERL5OPT keeper has let go" lock_released
+start_lock_process H 5 "${BLOCK_DEAD_KEEPER}" "${TEMP_ROOT}/tmp-a"
+wait_until 'H holds the lock without a keeper' acquired H
+lock_is held || fail "an installer without a keeper let go of the lock: $(probe "${LOCK}")"
+logged H 'The install lock keeper did not start' || fail 'the installer did not report its missing keeper'
+release_lock_process H 5
+wait_until 'the lock is free after an installer without a keeper' lock_released
+QUIT_OUTPUT="${TEMP_ROOT}/quitting-keeper.log"
+bounded 60 /bin/bash -c 'set -euo pipefail; source "$1"; acquire_install_lock || exit 1
+    if install_lock_still_named; then exit 4; fi' quitting "${BLOCK_QUITTING_KEEPER}" > "${QUIT_OUTPUT}" 2>&1 ||
+    fail "the lost-lock check did not run: $(/bin/cat "${QUIT_OUTPUT}")"
+/usr/bin/grep -F 'this installer no longer holds the install lock' "${QUIT_OUTPUT}" >/dev/null ||
+    fail "a lost lock went unnoticed: $(/bin/cat "${QUIT_OUTPUT}")"
 
 
 # ------------------------------------------------------------------------------
@@ -457,8 +493,7 @@ wait_until "the perl holder's keeper has let go" lock_released
 start_lock_process H 5 "${BLOCK_OLD_LOCKF}" "${TEMP_ROOT}/tmp-a"
 wait_until 'perl takes the lock after an old lockf' acquired H
 assert_holds_named_lock H
-# Tried on each attempt, always in the descriptor form.
-[ -s "${OLD_LOCKF_CALLS}" ] && ! /usr/bin/grep -v -x -F -e '-s -t 0 9' "${OLD_LOCKF_CALLS}" >/dev/null ||
+[ "$(/bin/cat "${OLD_LOCKF_CALLS}")" = '-s -t 0 9' ] ||
     fail "the old lockf was not tried first: $(/bin/cat "${OLD_LOCKF_CALLS}" 2>/dev/null)"
 release_lock_process H 5
 
@@ -600,7 +635,7 @@ for ending in exit interrupted; do
     /bin/mkdir -p "${CLONE}/.git"
     /usr/bin/touch "${STAGING}" "${STAGING}.cstemp" "${CLONE}/Cargo.toml"
     cleanup_status=0
-    TMPDIR="${TEMP_ROOT}/tmp-a" /usr/bin/perl -e 'setpgrp(0, 0); alarm shift; exec @ARGV or exit 127' 60 \
+    TMPDIR="${TEMP_ROOT}/tmp-a" /usr/bin/perl -e 'setpgrp(0, 0) or exit 126; alarm shift; exec @ARGV or exit 127' 60 \
         /bin/bash "${CLEANUP_PROCESS}" "${BLOCK_HOST}" "${CLEANUP_COPY}" "${CLEANUP_LOG}" "${STAGING}" \
         "${CLONE}" "${ending}" > "${TEMP_ROOT}/cleanup-output.log" 2>&1 || cleanup_status=$?
     expected_status=3
