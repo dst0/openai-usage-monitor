@@ -181,6 +181,7 @@
 - **Logical Constant Placement**: Constants must be located in the files where they logically belong (e.g., limits for a struct in the same file as the struct). Avoid generic `constants.rs` or `types.rs` dump files.
 - **Test Locality**: Tests must be split into separate files in the same or similar meaningful way as the code they verify. Avoid large monolith `tests.rs` or inline `#[cfg(test)]` blocks for complex logic.
 - **No Source Re-inclusion in Integration Tests**: `codex-switcher` is a binary-only crate, so a `tests/*.rs` file that `#[path]`-includes a `src/` module compiles a second, partial copy in which every item used only by the binary is dead code under `-D warnings`. Test such modules with an in-crate `<module>.test.rs` (`#[cfg(test)] #[path = ...] mod tests;`) instead of re-including sources or adding `#[allow(dead_code)]`.
+- **Disappeared Checkout Recovery**: If a managed checkout disappears during validation, stop writes to its path, verify the remote branch head, and recover in a separate clean managed checkout. Do not prune shared Git worktree metadata or claim that a test completed when its executable vanished.
 
 ---
 
