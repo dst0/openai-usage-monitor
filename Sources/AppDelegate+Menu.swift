@@ -197,7 +197,7 @@ extension AppDelegate {
     menu.addItem(NSMenuItem.separator())
 
     // Stack percentages
-    let isStacked = UserDefaults.standard.object(forKey: "stackPercentages") as? Bool ?? true
+    let isStacked = stacksPercentages
     let stackItem = NSMenuItem(title: L10n.stackPercentages, action: #selector(toggleStackPercentages), keyEquivalent: "")
     stackItem.target = self
     stackItem.state = isStacked ? .on : .off

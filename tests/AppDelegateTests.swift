@@ -33,6 +33,9 @@ func waitUntil(
 struct AppDelegateTestRunner {
   static func main() {
     print("🧪 Running AppDelegate Status Bar & Layout Tests...")
+    // Every delegate below reads and writes this run's own preferences, never the standard
+    // store that all concurrent runs of this binary share.
+    let preferences = TestPreferencesSuite(purpose: "app-delegate")
 
     let mockIcon = NSImage(size: NSSize(width: 18, height: 18))
 
@@ -246,17 +249,10 @@ struct AppDelegateTestRunner {
     print("  ✅ Horizontal mode layout verified")
 
     // ====================================================================
-    // Test 4: UserDefaults default & toggle logic
+    // Test 4: Menu preferences use the delegate's own store
     // ====================================================================
-    UserDefaults.standard.removeObject(forKey: "stackPercentages")
-    let defaultPref = UserDefaults.standard.object(forKey: "stackPercentages") as? Bool ?? true
-    assertTrue(defaultPref == true, "Default stackPercentages must be true")
+    runAppDelegatePreferencesTests()
 
-    UserDefaults.standard.set(false, forKey: "stackPercentages")
-    let updatedPref = UserDefaults.standard.bool(forKey: "stackPercentages")
-    assertTrue(updatedPref == false, "stackPercentages must reflect updated value false")
-
-    UserDefaults.standard.set(true, forKey: "stackPercentages")
     // ====================================================================
     // Test 5: Auto-Switch localization and client default
     // ====================================================================
@@ -493,7 +489,7 @@ struct AppDelegateTestRunner {
       },
       desktopAppAccountIdProvider: { nil }
     )
-    let missingAppIdentityDelegate = AppDelegate(client: missingAppIdentityClient)
+    let missingAppIdentityDelegate = makeTestAppDelegate(client: missingAppIdentityClient, preferences: preferences)
     missingAppIdentityDelegate.lastSnapshot = failClosedSnapshot
     missingAppIdentityDelegate.quotaRefreshOverride = { completion in completion(nil) }
     missingAppIdentityDelegate.executeSwitchAccount(id: bizAccount.id, target: .cli)
@@ -526,7 +522,7 @@ struct AppDelegateTestRunner {
       },
       desktopAppAccountIdProvider: { personalAccount.id }
     )
-    let missingCliIdentityDelegate = AppDelegate(client: missingCliIdentityClient)
+    let missingCliIdentityDelegate = makeTestAppDelegate(client: missingCliIdentityClient, preferences: preferences)
     missingCliIdentityDelegate.lastSnapshot = missingCliSnapshot
     missingCliIdentityDelegate.quotaRefreshOverride = { completion in completion(nil) }
     missingCliIdentityDelegate.executeSwitchAccount(id: bizAccount.id, target: .app)
@@ -606,7 +602,7 @@ struct AppDelegateTestRunner {
       invocationLock.unlock()
       return true
     })
-    let refreshDelegate = AppDelegate(client: refreshClient)
+    let refreshDelegate = makeTestAppDelegate(client: refreshClient, preferences: preferences)
     refreshDelegate.quotaRefreshOverride = { completion in completion(refreshSnapshot) }
     refreshDelegate.refreshNow()
     waitUntil("Quota refresh must complete") { !refreshDelegate.isRefreshing }
@@ -907,7 +903,7 @@ struct AppDelegateTestRunner {
       "Pro account weekly countdown should display 6d 7h")
 
     // Test Dynamic Menu Construction: Verify Reserve Accounts have "🗓️ Weekly:" progress bars
-    let appDelegate = AppDelegate()
+    let appDelegate = makeTestAppDelegate(client: CodexClient.shared, preferences: preferences)
     let menu = appDelegate.buildMenu()
     appDelegate.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     appDelegate.statusItem?.menu = menu
@@ -2225,7 +2221,7 @@ struct AppDelegateTestRunner {
       assertEqual(splitSessions.cliSession.fiveHPct, "0%", "CLI must show its separate exhausted quota")
 
       // Subtest 6: updateStatusBar execution with image and tooltip routing
-      let appDelegateTest = AppDelegate()
+      let appDelegateTest = makeTestAppDelegate(client: CodexClient.shared, preferences: preferences)
       appDelegateTest.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
       appDelegateTest.updateStatusBar(with: fullSnapshot)
       assertTrue(appDelegateTest.statusItem?.button?.image != nil, "updateStatusBar must assign composite image to statusItem button")
@@ -2243,7 +2239,7 @@ struct AppDelegateTestRunner {
     try! FileManager.default.createDirectory(at: watcherHome, withIntermediateDirectories: true)
     let previousCodexHome = ProcessInfo.processInfo.environment["CODEX_HOME"]
     setenv("CODEX_HOME", watcherHome.path, 1)
-    let watcher = AppDelegate()
+    let watcher = makeTestAppDelegate(client: CodexClient.shared, preferences: preferences)
     var markerRefreshes = 0
     watcher.desktopSessionSnapshotRefreshOverride = { markerRefreshes += 1 }
     watcher.startDesktopSessionFileWatcher()
@@ -2322,6 +2318,7 @@ struct AppDelegateTestRunner {
     }
     print("  ✅ Swift <= 300 lines architectural invariant verified for all menu components")
 
+    preferences.tearDown()
     print("\n🎉 ALL APP DELEGATE TESTS PASSED!")
   }
 }
