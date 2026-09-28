@@ -1,4 +1,6 @@
-use super::{repository_shell_test_violations, shell_test_gate_violations, shell_tests};
+use super::{
+    repository_shell_test_violations, shell_test_gate_violations, shell_tests, SHELL_TEST_CONDITION,
+};
 use crate::fixtures::{compliant, with};
 use crate::required_checks::required_check_violations;
 use crate::rules::workflow_violations;
@@ -23,7 +25,9 @@ fn violations(text: &str) -> Vec<String> {
 }
 
 fn gate_step_for(script: &str) -> String {
-    format!("      - name: Shell Test\n        run: bash {script}\n")
+    format!(
+        "      - name: Shell Test\n        if: {SHELL_TEST_CONDITION}\n        run: bash {script}\n"
+    )
 }
 
 fn gate_step() -> String {
@@ -54,6 +58,9 @@ fn assert_rejected(text: &str, reason: &str) {
 }
 
 const RUN_REASON: &str = "`run:` is not set once to exactly";
+const IF_REASON: &str = "`if:` is not set once to exactly `${{ !cancelled() }}`";
+/// Advice for a script that no step mentions, which may be a helper.
+const HELPER_HINT: &str = "is a helper or fixture rather than a test, move it out of `tests/`";
 
 #[test]
 fn gate_step_in_a_required_job_complies() {
@@ -182,7 +189,6 @@ fn a_step_key_that_can_move_change_or_skip_the_command_is_rejected() {
         "        working-directory: codex-switcher\n",
         "        shell: sh\n",
         "        env:\n          HOME: /\n",
-        "        if: always()\n",
         "        continue-on-error: true\n",
         "        timeout-minutes: 1\n",
     ] {
@@ -190,6 +196,75 @@ fn a_step_key_that_can_move_change_or_skip_the_command_is_rejected() {
         let name = key.trim().split(':').next().unwrap();
         assert_rejected(&text, &format!("sets `{name}`; the step may set only"));
     }
+}
+
+/// Regression: gates ran under the default `success()`, so the first failing
+/// shell test skipped every later one in its job and a push reported only
+/// that first failure. Each gate must run after an earlier failure too.
+#[test]
+fn a_gate_that_an_earlier_failure_would_skip_is_rejected() {
+    let condition = format!("        if: {SHELL_TEST_CONDITION}\n");
+    let without = gate_with(&condition, "");
+    assert_rejected(&without, IF_REASON);
+    for other in [
+        "success()",
+        "${{ success() }}",
+        // Runs on after a cancellation, until the job times out.
+        "always()",
+        "${{ always() }}",
+        // The same test, but only the documented spelling is a gate.
+        "'!cancelled()'",
+        "cancelled()",
+        "failure()",
+        "${{ !cancelled() && github.event_name == 'push' }}",
+    ] {
+        let text = gate_with(&condition, &format!("        if: {other}\n"));
+        assert_rejected(&text, IF_REASON);
+    }
+    let twice = with_step(&format!("{}{condition}", gate_step()));
+    assert_rejected(&twice, IF_REASON);
+}
+
+/// The condition may sit on the step's marker line or be quoted, and the keys
+/// may come in any order.
+#[test]
+fn the_gate_condition_is_read_wherever_the_step_sets_it() {
+    for step in [
+        format!("      - if: {SHELL_TEST_CONDITION}\n        run: bash {SCRIPT}\n"),
+        format!(
+            "      - run: bash {SCRIPT}\n        name: X\n        if: \"{SHELL_TEST_CONDITION}\"\n"
+        ),
+    ] {
+        let text = with_step(&step);
+        assert_eq!(violations(&text), Vec::<String>::new(), "{step}");
+        assert_eq!(
+            required_check_violations(&text, &contexts(), "main"),
+            Vec::<String>::new(),
+            "{step}"
+        );
+    }
+}
+
+/// A script that no step mentions may be a helper that a test sources. The
+/// violation says to move it rather than gate it, which would run a helper
+/// on its own as if it were a test. A near miss is a test with a broken gate,
+/// so its message leaves the advice out.
+#[test]
+fn only_a_script_no_step_mentions_is_told_it_may_be_a_misplaced_helper() {
+    let absent = violations(&compliant());
+    assert_eq!(absent.len(), 1, "{absent:?}");
+    assert!(absent[0].contains(HELPER_HINT), "{absent:?}");
+    assert!(
+        absent[0].contains("keep its `.sh` suffix so the locked-cargo scan still reads it"),
+        "{absent:?}"
+    );
+    let near_miss = violations(&gate_with(
+        &format!("run: bash {SCRIPT}"),
+        &format!("run: sh {SCRIPT}"),
+    ));
+    assert_eq!(near_miss.len(), 1, "{near_miss:?}");
+    assert!(near_miss[0].contains(RUN_REASON), "{near_miss:?}");
+    assert!(!near_miss[0].contains(HELPER_HINT), "{near_miss:?}");
 }
 
 #[test]
@@ -333,6 +408,17 @@ fn live_workflow_loses_a_gate_when_its_step_is_removed() {
         assert_eq!(v.len(), 1, "{script}: {v:?}");
         assert!(
             v[0].contains(&format!("no required job runs `{script}`")),
+            "{v:?}"
+        );
+        // Each live gate sets its condition on the line before `run:`, and
+        // dropping it is reported for that script alone.
+        let guarded = format!("if: {SHELL_TEST_CONDITION}\n        {run}");
+        assert_eq!(ci.matches(&guarded).count(), 1, "{script}");
+        let unguarded = ci.replacen(&guarded, &run, 1);
+        let v = repository_shell_test_violations(&repo, &unguarded, &live_contexts);
+        assert_eq!(v.len(), 1, "{script}: {v:?}");
+        assert!(
+            v[0].contains(&format!("no required job runs `{script}`")) && v[0].contains(IF_REASON),
             "{v:?}"
         );
     }

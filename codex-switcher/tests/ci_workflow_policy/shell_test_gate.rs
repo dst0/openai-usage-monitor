@@ -6,10 +6,16 @@
 //! required check. Every tracked `*.sh` file under `tests/`, at any depth, is a
 //! shell test, so adding one fails this rule until a required job runs it.
 //! Each gate is a block-style step of a required job whose `run:` is exactly
-//! `bash <script>` from the repository root and which sets no other step key.
-//! The rule reads only the step; `required_checks.rs` keeps its job from being
+//! `bash <script>` from the repository root, whose `if:` is exactly
+//! `SHELL_TEST_CONDITION`, and which sets no other step key but `name`. The
+//! rule reads only the step; `required_checks.rs` keeps its job from being
 //! skipped and `inherited_settings.rs` rejects a default shell or exported
 //! variable that could change the command.
+//!
+//! A helper or fixture script under `tests/` is required as a test too. A line
+//! reader cannot tell it from a test, nor prove that a gated test really
+//! sources or runs it, so a carve-out could hide a test that never runs. The
+//! violation for a script no step mentions says to move such a file instead.
 
 use crate::git_repo::GitRepo;
 use crate::workflow_jobs::{job_steps, jobs};
@@ -19,9 +25,16 @@ use crate::yaml_lines::{entry, nested};
 /// scripts in subdirectories of `tests/` too.
 const SHELL_TEST_PATHSPEC: &str = "tests/*.sh";
 /// Keys a shell-test step may set. A `working-directory` would make the path
-/// name another file, and `shell`, `env`, `if`, or `continue-on-error` could
-/// change or skip the command, so any other key fails closed.
-const SHELL_TEST_STEP_KEYS: [&str; 2] = ["name", "run"];
+/// name another file, and `shell`, `env`, or `continue-on-error` could change
+/// or mask the command, so any other key fails closed.
+const SHELL_TEST_STEP_KEYS: [&str; 3] = ["name", "if", "run"];
+/// The `if:` every gate sets. Under the default `success()`, one failing step
+/// skips every later step of its job, so a failing test would hide the result
+/// of each shell test after it. `!cancelled()` still runs after a failure and,
+/// unlike `always()`, stops once the run is cancelled; a failed gate still
+/// fails its job either way. A leading `!` would start a YAML tag, hence the
+/// `${{ }}` spelling GitHub documents.
+pub const SHELL_TEST_CONDITION: &str = "${{ !cancelled() }}";
 
 /// Tracked shell tests, relative to the repository root. Tracked includes a
 /// staged new test, so the rule fails before that test is committed; an
@@ -96,8 +109,16 @@ fn missing_gate(text: &str, contexts: &[String], script: &str) -> Option<String>
             }
         }
     }
-    let mut message =
-        format!("no required job runs `{script}`, a step with only `name` and `run: {command}`");
+    let mut message = format!(
+        "no required job runs `{script}`, a step with only `name`, \
+         `if: {SHELL_TEST_CONDITION}`, and `run: {command}`"
+    );
+    if near_misses.is_empty() {
+        message.push_str(&format!(
+            "; if `{script}` is a helper or fixture rather than a test, move it out of \
+             `tests/` and keep its `.sh` suffix so the locked-cargo scan still reads it"
+        ));
+    }
     for near_miss in near_misses {
         message.push_str("; ");
         message.push_str(&near_miss);
@@ -106,9 +127,10 @@ fn missing_gate(text: &str, contexts: &[String], script: &str) -> Option<String>
 }
 
 /// Why the step whose direct property lines are `step` is not a gate that
-/// runs exactly `command`.
+/// runs exactly `command` under `SHELL_TEST_CONDITION`.
 fn gate_problem(lines: &[&str], step: &[usize], command: &str) -> Option<String> {
     let mut runs = Vec::new();
+    let mut conditions = Vec::new();
     for &i in step {
         let Some(e) = entry(lines[i]) else {
             return Some(format!(
@@ -123,11 +145,21 @@ fn gate_problem(lines: &[&str], step: &[usize], command: &str) -> Option<String>
                 SHELL_TEST_STEP_KEYS.map(|k| format!("`{k}`")).join(", ")
             ));
         }
-        if e.key == "run" {
-            runs.push(e.value);
+        match e.key {
+            "run" => runs.push(e.value),
+            "if" => conditions.push(e.value),
+            _ => {}
         }
     }
-    (runs != [command]).then(|| format!("`run:` is not set once to exactly `{command}`"))
+    if runs != [command] {
+        return Some(format!("`run:` is not set once to exactly `{command}`"));
+    }
+    (conditions != [SHELL_TEST_CONDITION]).then(|| {
+        format!(
+            "`if:` is not set once to exactly `{SHELL_TEST_CONDITION}`, so an earlier \
+             failure in the job would skip it"
+        )
+    })
 }
 
 /// Whether any line of the step, including nested values, names `script`.
