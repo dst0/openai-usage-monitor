@@ -39,11 +39,6 @@ struct AppDelegateTestRunner {
     // store that all concurrent runs of this binary share.
     let preferences = TestPreferencesSuite(purpose: "app-delegate")
 
-    // ====================================================================
-    // Test 0: Monitor state only in this run's private Codex home
-    // ====================================================================
-    runCodexHomeIsolationTests(preferences: preferences)
-
     let mockIcon = NSImage(size: NSSize(width: 18, height: 18))
 
     // ====================================================================
@@ -254,6 +249,14 @@ struct AppDelegateTestRunner {
       "Horizontal active badge bounds must match")
 
     print("  ✅ Horizontal mode layout verified")
+
+    // ====================================================================
+    // Test 0: Monitor state only in this run's private Codex home
+    // ====================================================================
+    // Tests 1-3 only build and draw attributed strings, so this is still the suite's first read
+    // of Monitor state. Run before them, its menu and status item aborted the binary in
+    // CGSConnectionByID; see docs/leanings/2026-09-28-swift-tests-resolved-the-live-codex-home.md.
+    runCodexHomeIsolationTests(preferences: preferences)
 
     // ====================================================================
     // Test 4: Menu preferences use the delegate's own store
