@@ -423,15 +423,21 @@ Automatic distribution records whether the exact Desktop process has an eligible
 standard window before shutdown. If no such window exists, it skips geometry
 restore; after task owner mounting, recovery requires a visible banner before
 IPC and retains the original checkpoint if no window appears. The shutdown
-window guard always checks Accessibility and Screen Recording for the launchd
-`cxi` client, including when `preserve_window_bounds_on_restart=false`.
+window guard always checks Accessibility and Screen Recording inside the
+`codex-window-restore` process launched by `cxi`, including when
+`preserve_window_bounds_on_restart=false`.
 `WINDOW_ACCESSIBILITY_DENIED` and `WINDOW_SCREEN_RECORDING_DENIED` are fixed,
 non-sensitive pre-signal failures. Neither check prompts for a grant. The
-installer accepts an explicit `CODEX_MONITOR_SIGNING_IDENTITY_SHA1` for a stable
-CLI signing identity; without it, the CLI is ad hoc signed and a TCC grant may
-not survive rebuilding. Verify the installed launchd path rather than an
+installer accepts an explicit `CODEX_MONITOR_SIGNING_IDENTITY_SHA1` and signs
+both the CLI and window helper with fixed identifiers; without it, both are ad
+hoc signed and a TCC grant may not survive rebuilding. Verify the installed
+launchd path and the actual TCC-attributed client rather than an
 interactive Terminal run. Disabling bounds preservation skips geometry
 restoration but cannot authorize a shutdown with unreadable window inventory.
+The legacy LaunchAgent has no `AssociatedBundleIdentifiers` key: Apple requires
+the agent executable and associated app to share a Team Identifier, while the
+installer currently signs the Monitor app ad hoc. Do not add that key as a
+privacy-grant workaround without matching signatures and live verification.
 
 Deferred recovery in an already running ChatGPT never restores window bounds.
 It locates its banner through the read-only WindowServer helper, so a launchd

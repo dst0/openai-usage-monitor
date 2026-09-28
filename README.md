@@ -355,16 +355,17 @@ cxi recovery-preflight
 8. **Builds the optional `Codex Notifier.app`** in `~/Applications`, the `codex-ui-resume`, `codex-recovery-banner`, and `codex-window-restore` helpers in `~/.local/bin`, and bundles the confirmation-gated uninstaller inside the Monitor app.
 9. **Launches the Menu Bar app immediately.**
 
-For a stable background `cxi` code identity across rebuilds, an operator who
+For stable background `cxi` and `codex-window-restore` identities across rebuilds, an operator who
 already has a valid code-signing identity may set
 `CODEX_MONITOR_SIGNING_IDENTITY_SHA1` to its 40-character fingerprint when
 running the installer. The installer checks that identity, signs the staged CLI
-with the fixed identifier `com.codex.monitor.cli`, and refuses an invalid
-selection before building. A Developer ID Application identity is recommended
-for distribution. With no selection, the CLI remains ad hoc signed; macOS
-privacy grants may need renewal after an update. Reuse the same identity on
-every install and verify the installed CLI's designated requirement and
-launchd-origin grants afterwards. A local self-signed certificate may yield a
+and window helper with fixed identifiers `com.codex.monitor.cli` and
+`com.codex.monitor.window-restore`, and refuses an invalid selection before
+building. A Developer ID Application identity is recommended for distribution.
+With no selection, both remain ad hoc signed; macOS privacy grants may need
+renewal after an update. Reuse the same identity on every install and verify
+both installed designated requirements and launchd-origin grants afterwards.
+A local self-signed certificate may yield a
 stable requirement on one Mac, but its Accessibility and Screen Recording grant
 behavior is unverified. The installer neither creates nor trusts certificates.
 
@@ -713,13 +714,14 @@ The tail reader checks the byte before its seek point. It discards a partial
 first record before strict UTF-8 decoding, retains a full record at an exact
 newline boundary, and reports unknown state for malformed complete records.
 
-`launchd` can deny Accessibility and Screen Recording to background `cxi` even
+`launchd` can deny Accessibility and Screen Recording to the window helper even
 when the helper succeeds from Terminal. The shutdown guard checks both grants
 before any credential change or Desktop signal; disabling window bounds
 preservation does not bypass it. `WINDOW_ACCESSIBILITY_DENIED` and
 `WINDOW_SCREEN_RECORDING_DENIED` name the missing grant without opening a macOS
-permission prompt. In System Settings > Privacy & Security, grant the actual
-background `cxi` client Accessibility and Screen & System Audio Recording, then
+permission prompt. In System Settings > Privacy & Security, grant each denied
+service to the client macOS attributes the launchd helper request to (which may
+be `codex-window-restore` or `cxi`), then
 verify a launchd-origin window inventory before relying on an automatic restart.
 The installer never grants either permission. Automatic distribution now
 captures and restores selected tasks in code, but a successful grant does not

@@ -212,6 +212,7 @@ monitor_state_temps() {
 # written as ranges, so no locale's collation can widen the match.
 MKTEMP_CHAR='[0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz]'
 CLI_STAGING_NAME="^\\.codex-mon\\.install\\.${MKTEMP_CHAR}{6}(\\.cstemp)?\$"
+WINDOW_HELPER_STAGING_NAME="^\\.codex-window-restore\\.install\\.${MKTEMP_CHAR}{6}(\\.cstemp)?\$"
 BUNDLE_STAGING_NAME="^\\.codex-monitor-(install|backup)\\.${MKTEMP_CHAR}{6}\$"
 # `mktemp -t` appends eight characters on macOS 13 and ten from macOS 14.
 REMOTE_CLONE_NAME="^codex-mon-install-XXXXXX\\.(${MKTEMP_CHAR}{8}|${MKTEMP_CHAR}{10})\$"
@@ -275,6 +276,8 @@ holds_only_monitor_bundle() {
 # its prefix and appends a dot and ten such characters (eight on macOS 13).
 #   ~/.local/bin/.codex-mon.install.XXXXXX         CLI staging (0600, 0755 after chmod)
 #   ~/.local/bin/.codex-mon.install.XXXXXX.cstemp  codesign's copy while signing (0755 only)
+#   ~/.local/bin/.codex-window-restore.install.XXXXXX[.cstemp]
+#                                                  signed window helper (0600 or 0755; cstemp 0755)
 #   APPLICATION_DIRS/.codex-monitor-install.XXXXXX app staging root (0700)
 #   APPLICATION_DIRS/.codex-monitor-backup.XXXXXX  prior-app backup root (0700)
 #   <per-user temp dir>/codex-mon-install-XXXXXX.XXXXXXXXXX (or .XXXXXXXX)
@@ -284,10 +287,10 @@ holds_only_monitor_bundle() {
 # remove these only when no installer holds the install lock.
 installer_temps() {
     local path name metadata dir temp_dir
-    for path in "${LOCAL_BIN}"/.codex-mon.install.*; do
+    for path in "${LOCAL_BIN}"/.codex-mon.install.* "${LOCAL_BIN}"/.codex-window-restore.install.*; do
         [ ! -L "$path" ] && [ -f "$path" ] || continue
         name="${path##*/}"
-        [[ "$name" =~ $CLI_STAGING_NAME ]] || continue
+        [[ "$name" =~ $CLI_STAGING_NAME || "$name" =~ $WINDOW_HELPER_STAGING_NAME ]] || continue
         # codesign creates its copy with the mode of the file it signs, which
         # install.sh has already made 0755.
         metadata="$(/usr/bin/stat -f '%u:%Lp' "$path" 2>/dev/null || true)"

@@ -204,6 +204,7 @@ ${BLOCKING_LOCKF}"
 # that creates a path an uninstaller must not remove during an install.
 for step in '    TMP_DIR="$(mktemp -d -t codex-mon-install-XXXXXX)"' \
     'CLI_STAGING="$(mktemp "${LOCAL_BIN}/.codex-mon.install.XXXXXX")"' \
+    '    WINDOW_HELPER_STAGING="$(mktemp "${LOCAL_BIN}/.codex-window-restore.install.XXXXXX")"' \
     'prepare_app_bundle_staging "${APP_DIR}" "${INSTALL_DIR}" "${BUNDLE_NAME}"' \
     'activate_app_bundle_staging "${INSTALL_DIR}/${BUNDLE_NAME}"'; do
     /usr/bin/awk -v step="${step}" '
@@ -581,9 +582,10 @@ UNFAKED_CLEANUP="$(unfaked_commands "${CLEANUP_COPY}")"
 ${UNFAKED_CLEANUP}"
 CLEANUP_LOG="${TEMP_ROOT}/cleanup.log"
 STAGING="${TEMP_ROOT}/local-bin/.codex-mon.install.Ab3dE9"
+WINDOW_STAGING="${TEMP_ROOT}/local-bin/.codex-window-restore.install.Wn3dE9"
 CLONE="${DARWIN_TMP}/codex-mon-install-XXXXXX.a1B2c3D4e5"
 /bin/mkdir -p "${TEMP_ROOT}/local-bin" "${CLONE}/.git"
-/usr/bin/touch "${STAGING}" "${STAGING}.cstemp" "${CLONE}/Cargo.toml"
+/usr/bin/touch "${STAGING}" "${STAGING}.cstemp" "${WINDOW_STAGING}" "${WINDOW_STAGING}.cstemp" "${CLONE}/Cargo.toml"
 CLEANUP_PROCESS="${TEMP_ROOT}/cleanup-process.sh"
 /bin/cat > "${CLEANUP_PROCESS}" <<'EOF'
 #!/bin/bash
@@ -593,6 +595,7 @@ source "$2"
 CLEANUP_LOG="$3"
 CLI_STAGING="$4"
 TMP_DIR="$5"
+WINDOW_HELPER_STAGING="$6"
 CLEANUP_TMP=1
 APP_SWAP_ACTIVE=1
 INSTALL_SUCCEEDED=0
@@ -617,7 +620,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 acquire_install_lock || exit 1
-if [ "${6:-}" = interrupted ]; then
+if [ "${7:-}" = interrupted ]; then
     # As a terminal's Ctrl-C or a group SIGTERM would: this process group
     # (the test puts it in its own) holds only this installer and its keeper.
     kill -TERM 0
@@ -625,6 +628,7 @@ fi
 exit 3
 EOF
 EXPECTED_CLEANUP_LOG="rm held -f ${STAGING} ${STAGING}.cstemp
+rm held -f ${WINDOW_STAGING} ${WINDOW_STAGING}.cstemp
 rm held -rf ${CLONE}
 rollback held
 bundle-cleanup held"
@@ -633,11 +637,11 @@ bundle-cleanup held"
 for ending in exit interrupted; do
     /bin/rm -f "${CLEANUP_LOG}"
     /bin/mkdir -p "${CLONE}/.git"
-    /usr/bin/touch "${STAGING}" "${STAGING}.cstemp" "${CLONE}/Cargo.toml"
+    /usr/bin/touch "${STAGING}" "${STAGING}.cstemp" "${WINDOW_STAGING}" "${WINDOW_STAGING}.cstemp" "${CLONE}/Cargo.toml"
     cleanup_status=0
     TMPDIR="${TEMP_ROOT}/tmp-a" /usr/bin/perl -e 'setpgrp(0, 0) or exit 126; alarm shift; exec @ARGV or exit 127' 60 \
         /bin/bash "${CLEANUP_PROCESS}" "${BLOCK_HOST}" "${CLEANUP_COPY}" "${CLEANUP_LOG}" "${STAGING}" \
-        "${CLONE}" "${ending}" > "${TEMP_ROOT}/cleanup-output.log" 2>&1 || cleanup_status=$?
+        "${CLONE}" "${WINDOW_STAGING}" "${ending}" > "${TEMP_ROOT}/cleanup-output.log" 2>&1 || cleanup_status=$?
     expected_status=3
     [ "${ending}" = exit ] || expected_status=143
     [ "${cleanup_status}" -eq "${expected_status}" ] ||
@@ -645,7 +649,7 @@ for ending in exit interrupted; do
     [ "$(/bin/cat "${CLEANUP_LOG}")" = "${EXPECTED_CLEANUP_LOG}" ] ||
         fail "installer cleanup (${ending}) must remove every temporary path before releasing the lock:
 $(/bin/cat "${CLEANUP_LOG}")"
-    for path in "${STAGING}" "${STAGING}.cstemp" "${CLONE}"; do
+    for path in "${STAGING}" "${STAGING}.cstemp" "${WINDOW_STAGING}" "${WINDOW_STAGING}.cstemp" "${CLONE}"; do
         [ ! -e "${path}" ] || fail "installer cleanup (${ending}) left ${path}"
     done
     wait_until "the lock is free after the installer exited (${ending})" lock_is free
