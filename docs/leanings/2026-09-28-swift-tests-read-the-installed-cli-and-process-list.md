@@ -40,6 +40,7 @@
   - **Module-cache scan.** Accepts the diagnostic and rejects it with a compile moved before the cache call.
   - **Workflow policy.** `cargo test --locked --test ci_workflow_policy` passes (144) on a Linux clone with the binary stubbed.
   - **Swift suites.** `./scripts/test_swift.sh` passed on the macOS CI runner (Swift 5.10) in run 36383593989, the pull request's first compile of this change, with the new check and tests.
+  - **Follow-ups on macOS.** They passed in run 36385835614: the bounds test's first save onto a missing `desktop-window.json`, its replacement, and the absence of a staging file; the `--compile-only` build of the diagnostic; and the fake-`swiftc` runs under macOS bash 3.2 and BSD tools.
 - **Prevention/follow-up:**
   - **Guards in place.** The static check, the AGENTS.md rule "Swift tests never check the installed Monitor CLI or read the live process list or window list", and the diagnostic for deliberate live evidence.
   - **Still live, not reached by tests:**
