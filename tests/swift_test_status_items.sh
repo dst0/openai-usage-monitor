@@ -219,6 +219,8 @@ expect_accepted after-closed-conditions \
     '#if DEBUG'$'\n''  let debug = true'$'\n''#endif'$'\n''#if os(macOS)'$'\n''#else'$'\n''#endif'$'\n''  let late = NSStatusBar.system.statusItem(withLength: 9)'$'\n''  NSStatusBar.system.removeStatusItem(late)'
 expect_accepted qualified-removal \
     '  let late = NSStatusBar.system.statusItem(withLength: 9); AppKit.NSStatusBar.system.removeStatusItem(late)'
+# Declaring a helper with the creator's name creates nothing.
+expect_accepted declared-creator '  func statusItem(withLength: Int) {}'$'\n''  static func statusItem(withLength length: CGFloat) -> Int { 0 }'
 expect_accepted similar-names '  cache.removeStatusItemFromCache(id); let words = #/[a-z]+/#; let label = statusItemTitle(id)'
 
 T=tests/AppDelegateTests.swift
