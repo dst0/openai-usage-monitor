@@ -23,6 +23,9 @@ const PROBE_TEST: &str = "codex-switcher/src/distribution/window_task_probe_serv
 const RESTART_SESSION: &str = "codex-switcher/src/distribution/window_task_restart_session.rs";
 const DISTRIBUTION_TASKS: &str =
     "codex-switcher/src/distribution/distribution_window_task_service.rs";
+// Guarded relaunch of the previous account restores its captured windows.
+const DISTRIBUTION_ROLLBACK: &str =
+    "codex-switcher/src/distribution/distribution_desktop_rollback_service.rs";
 const RESTART_TEST: &str = "codex-switcher/src/distribution/window_task_restart_session.test.rs";
 const RESTART_STEPS: &str = "codex-switcher/src/switcher/restart_window_task_service.rs";
 const RESTART_STEPS_TEST: &str = "codex-switcher/src/switcher/restart_window_task_service.test.rs";
@@ -176,6 +179,7 @@ const RULES: [(&str, &[&str]); 32] = [
             "codex-switcher/src/distribution/app_lifecycle.rs",
             "codex-switcher/src/distribution/system_app_lifecycle.rs",
             "codex-switcher/src/distribution/distribution_recovery_audit_service.rs",
+            DISTRIBUTION_ROLLBACK,
             "codex-switcher/src/distribution/mock_app_lifecycle.test.rs",
             "codex-switcher/src/distribution/distribution_desktop_switch_service.test.rs",
             "codex-switcher/src/distribution/distribution_transaction_safety.test.rs",
