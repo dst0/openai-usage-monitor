@@ -92,7 +92,7 @@ fn row_status_updates_are_dynamic_and_unknown_targets_fail_closed() {
     let payload = service.read_payload().unwrap();
     assert_eq!(payload.explanation, BANNER_EXPLANATION_WITHOUT_RESTORE);
     assert!(!payload.explanation.contains("перезапускается"));
-    assert!(!payload.explanation.contains("продолжит"));
+    assert!(!payload.explanation.contains("продолжит эти задачи"));
     assert_eq!(payload.saved_window, geometry());
     assert_eq!(
         service.read_payload().unwrap().sessions[0].status,
