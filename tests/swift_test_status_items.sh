@@ -363,6 +363,9 @@ expect_violation expression-pattern-creation "${T}" \
 expect_violation later-expression-pattern-creation "${T}" \
     '  switch value {'$'\n''  case 1: break'$'\n''  case NSStatusBar.system.statusItem(withLength: 2).length: break'$'\n''  default: break'$'\n''  }' \
     "${T} creates 3 status items and removes 2"
+expect_violation static-expression-pattern-creation "${T}" \
+    '  switch item { case Factory.statusItem(withLength: 1): break; default: break }' \
+    "${T} creates 3 status items and removes 2"
 expect_violation if-case-creation "${T}" \
     '  if case .ready = state, let i = Optional(NSStatusBar.system.statusItem(withLength: 1)) { _ = i }' \
     "${T} creates 3 status items and removes 2"
