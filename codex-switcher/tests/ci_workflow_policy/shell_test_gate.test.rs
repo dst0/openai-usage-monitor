@@ -1,10 +1,11 @@
-use super::{
-    repository_shell_test_violations, shell_test_gate_violations, shell_tests, SHELL_TEST_CONDITION,
-};
+use super::{repository_shell_test_violations, shell_test_gate_violations, shell_tests};
 use crate::fixtures::{compliant, with};
 use crate::required_checks::required_check_violations;
 use crate::rules::workflow_violations;
 use crate::scratch_git_repo::ScratchGitRepo;
+use crate::test_step_condition::TEST_STEP_CONDITION;
+use crate::workflow_jobs::step_properties;
+use crate::yaml_lines::entry;
 
 /// The compliant fixture's only step in the required `Build` job.
 const BUILD_STEP: &str = "      - run: cargo test --locked\n";
@@ -26,7 +27,7 @@ fn violations(text: &str) -> Vec<String> {
 
 fn gate_step_for(script: &str) -> String {
     format!(
-        "      - name: Shell Test\n        if: {SHELL_TEST_CONDITION}\n        run: bash {script}\n"
+        "      - name: Shell Test\n        if: {TEST_STEP_CONDITION}\n        run: bash {script}\n"
     )
 }
 
@@ -181,6 +182,8 @@ fn the_gate_in_a_job_that_is_not_required_is_rejected() {
         gate_step()
     );
     assert_rejected(&text, "job `extra` is not a required check");
+    // A gate in the wrong job is a test, not a misplaced helper.
+    assert!(!violations(&text)[0].contains(HELPER_HINT));
 }
 
 #[test]
@@ -203,7 +206,7 @@ fn a_step_key_that_can_move_change_or_skip_the_command_is_rejected() {
 /// that first failure. Each gate must run after an earlier failure too.
 #[test]
 fn a_gate_that_an_earlier_failure_would_skip_is_rejected() {
-    let condition = format!("        if: {SHELL_TEST_CONDITION}\n");
+    let condition = format!("        if: {TEST_STEP_CONDITION}\n");
     let without = gate_with(&condition, "");
     assert_rejected(&without, IF_REASON);
     for other in [
@@ -230,9 +233,9 @@ fn a_gate_that_an_earlier_failure_would_skip_is_rejected() {
 #[test]
 fn the_gate_condition_is_read_wherever_the_step_sets_it() {
     for step in [
-        format!("      - if: {SHELL_TEST_CONDITION}\n        run: bash {SCRIPT}\n"),
+        format!("      - if: {TEST_STEP_CONDITION}\n        run: bash {SCRIPT}\n"),
         format!(
-            "      - run: bash {SCRIPT}\n        name: X\n        if: \"{SHELL_TEST_CONDITION}\"\n"
+            "      - run: bash {SCRIPT}\n        name: X\n        if: \"{TEST_STEP_CONDITION}\"\n"
         ),
     ] {
         let text = with_step(&step);
@@ -385,6 +388,31 @@ fn repository_rule_fails_closed_on_an_empty_or_failed_listing() {
     assert!(v[0].contains("cannot list the shell tests"), "{v:?}");
 }
 
+/// `text` without the `if:` line of the step that runs `bash <script>`, found
+/// with the policy's own reader rather than by the live file's key order.
+fn without_condition(text: &str, script: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let command = format!("bash {script}");
+    let run = lines
+        .iter()
+        .position(|l| entry(l).is_some_and(|e| e.key == "run" && e.value == command))
+        .expect("gate step");
+    let step = step_properties(&lines, run).expect("gate step properties");
+    let at = *step
+        .iter()
+        .find(|&&i| entry(lines[i]).is_some_and(|e| e.key == "if"))
+        .expect("gate sets `if:`");
+    assert_ne!(
+        at, step[0],
+        "{script}: keep the gate's `if:` off its `- ` line"
+    );
+    let kept: Vec<&str> = (0..lines.len())
+        .filter(|&i| i != at)
+        .map(|i| lines[i])
+        .collect();
+    kept.join("\n") + "\n"
+}
+
 /// Wiring on the live repository: the uninstall test, whose gate this rule
 /// was written for, is listed, and removing the gate of any listed shell test
 /// from the live `ci.yml` is reported for exactly that script.
@@ -410,11 +438,9 @@ fn live_workflow_loses_a_gate_when_its_step_is_removed() {
             v[0].contains(&format!("no required job runs `{script}`")),
             "{v:?}"
         );
-        // Each live gate sets its condition on the line before `run:`, and
-        // dropping it is reported for that script alone.
-        let guarded = format!("if: {SHELL_TEST_CONDITION}\n        {run}");
-        assert_eq!(ci.matches(&guarded).count(), 1, "{script}");
-        let unguarded = ci.replacen(&guarded, &run, 1);
+        // Dropping a live gate's condition, wherever its step sets it, is
+        // reported for that script alone.
+        let unguarded = without_condition(&ci, script);
         let v = repository_shell_test_violations(&repo, &unguarded, &live_contexts);
         assert_eq!(v.len(), 1, "{script}: {v:?}");
         assert!(
