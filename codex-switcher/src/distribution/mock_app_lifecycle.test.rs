@@ -2,6 +2,7 @@ use super::app_lifecycle::AppLifecycle;
 use super::app_stop_error::AppStopError;
 use super::desktop_app_session::DesktopAppSession;
 use super::window_capture_mode::WindowCaptureMode;
+use super::window_task_restore_phase::WindowTaskRestorePhase;
 use crate::models::AuthJson;
 use crate::storage::write_active_auth_json;
 use std::path::PathBuf;
@@ -16,6 +17,14 @@ pub struct MockAppLifecycle {
     pub launch_calls: AtomicUsize,
     pub recovery_calls: AtomicUsize,
     pub capture_calls: AtomicUsize,
+    pub task_capture_calls: AtomicUsize,
+    pub task_window_count: AtomicUsize,
+    pub task_restore_calls: AtomicUsize,
+    pub task_finish_calls: AtomicUsize,
+    pub task_restore_sessions: Mutex<Vec<DesktopAppSession>>,
+    pub task_events: Mutex<Vec<&'static str>>,
+    pub task_capture_error: Mutex<Option<String>>,
+    pub task_finish_error: Mutex<Option<String>>,
     pub restore_calls: AtomicUsize,
     pub rebind_calls: AtomicUsize,
     pub abort_calls: AtomicUsize,
@@ -33,6 +42,7 @@ pub struct MockAppLifecycle {
     pub launch_observer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     pub recovery_observer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     pub launch_error: Mutex<Option<String>>,
+    pub launch_error_on_call: Mutex<Option<(usize, String)>>,
     pub capture_error: Mutex<Option<String>>,
     pub process_inspection_error: Mutex<Option<String>>,
     pub process_inspection_error_after: Mutex<Option<(usize, String)>>,
@@ -61,6 +71,14 @@ impl MockAppLifecycle {
             launch_calls: AtomicUsize::new(0),
             recovery_calls: AtomicUsize::new(0),
             capture_calls: AtomicUsize::new(0),
+            task_capture_calls: AtomicUsize::new(0),
+            task_window_count: AtomicUsize::new(0),
+            task_restore_calls: AtomicUsize::new(0),
+            task_finish_calls: AtomicUsize::new(0),
+            task_restore_sessions: Mutex::new(Vec::new()),
+            task_events: Mutex::new(Vec::new()),
+            task_capture_error: Mutex::new(None),
+            task_finish_error: Mutex::new(None),
             restore_calls: AtomicUsize::new(0),
             rebind_calls: AtomicUsize::new(0),
             abort_calls: AtomicUsize::new(0),
@@ -78,6 +96,7 @@ impl MockAppLifecycle {
             launch_observer: Mutex::new(None),
             recovery_observer: Mutex::new(None),
             launch_error: Mutex::new(None),
+            launch_error_on_call: Mutex::new(None),
             capture_error: Mutex::new(None),
             process_inspection_error: Mutex::new(None),
             process_inspection_error_after: Mutex::new(None),
@@ -140,6 +159,10 @@ impl MockAppLifecycle {
 
     pub fn set_launch_error(&self, err: impl Into<String>) {
         *self.launch_error.lock().unwrap() = Some(err.into());
+    }
+
+    pub fn set_launch_error_on_call(&self, call: usize, err: impl Into<String>) {
+        *self.launch_error_on_call.lock().unwrap() = Some((call, err.into()));
     }
 
     pub fn set_capture_error(&self, err: impl Into<String>) {
@@ -232,7 +255,13 @@ impl AppLifecycle for MockAppLifecycle {
     }
 
     fn launch_app(&self) -> Result<Vec<u32>, String> {
-        self.launch_calls.fetch_add(1, Ordering::SeqCst);
+        let call = self.launch_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        self.task_events.lock().unwrap().push("launch");
+        if let Some((failure_call, error)) = self.launch_error_on_call.lock().unwrap().as_ref() {
+            if call == *failure_call {
+                return Err(error.clone());
+            }
+        }
         if let Some(ref err) = *self.launch_error.lock().unwrap() {
             return Err(err.clone());
         }
@@ -308,6 +337,40 @@ impl AppLifecycle for MockAppLifecycle {
             return Err(error);
         }
         Ok(())
+    }
+
+    fn capture_window_tasks(&self) -> Result<(), String> {
+        self.task_capture_calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(error) = self.task_capture_error.lock().unwrap().clone() {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn captured_window_task_count(&self) -> Result<usize, String> {
+        Ok(self.task_window_count.load(Ordering::SeqCst))
+    }
+
+    fn restore_window_tasks(
+        &self,
+        bound: &super::desktop_app_session::DesktopAppSession,
+        _phase: WindowTaskRestorePhase<'_>,
+    ) {
+        self.task_events.lock().unwrap().push("restore");
+        self.task_restore_sessions
+            .lock()
+            .unwrap()
+            .push(bound.clone());
+        self.task_restore_calls.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn finish_window_tasks(&self) -> Result<(), String> {
+        self.task_events.lock().unwrap().push("finish");
+        self.task_finish_calls.fetch_add(1, Ordering::SeqCst);
+        match self.task_finish_error.lock().unwrap().clone() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     fn rebind_banner(&self, _pid: u32) -> Result<(), String> {

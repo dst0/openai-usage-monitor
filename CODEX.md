@@ -269,17 +269,24 @@ checkpoint cannot be saved, account switching stops before changing
 `auth.json` and relaunches the previous Desktop account; a successful shutdown
 alone is not permission to rotate credentials. `cxi restart` also relaunches
 the previous Desktop state if its post-shutdown checkpoint fails.
-When eligible recovery targets exist, distribution handshakes Desktop IPC after
-the first checkpoint and before stopping ChatGPT. A failed handshake aborts the
+When eligible recovery targets or captured selected-window tasks exist,
+distribution handshakes Desktop IPC after the first checkpoint and before
+stopping ChatGPT. A failed handshake aborts the
 switch, restores the prior recovery checkpoint, and clears the distribution
 journal only after that restoration succeeds. The Desktop stays running.
 
 Every CLI or distribution restart checks the exact ChatGPT PID, birth identity,
-and WindowServer window inventory again immediately before SIGTERM. More than
-one user window, or an unidentified window that could be user-owned, stops the
-restart before credentials change, unless the user passed
-`--restore-window-tasks` to `cxi restart` or `cxi switch` and the window list
-is exactly the one whose tasks were captured. This guard applies even when
+and WindowServer window inventory again immediately before SIGTERM. Direct
+`cxi restart` and `cxi switch` require `--restore-window-tasks` for multiple
+windows. A running-Desktop distribution captures every eligible window's task
+in Rust, then requires exactly those window IDs at both checkpoint preflights
+and immediately before shutdown. A verified zero-window snapshot remains an
+exact empty list: a window opened afterwards blocks shutdown. A final helper
+snapshot compares task, frame, focus, and keymap just before SIGTERM. A small
+interval remains between that read and the signal, when Desktop could change
+the selected task. An
+unidentified, unreadable, changed, or duplicate window/task refuses the
+restart before credentials change. This holds when
 `preserve_window_bounds_on_restart=false`; that setting controls geometry only.
 
 Desktop gives Monitor no window-to-task interface. Inspection of ChatGPT
@@ -290,7 +297,8 @@ focused primary window (focus events update that choice), and opens a
 focused primary window from File > New Window when its multiwindow feature is
 on. Its IPC router has no window, route, or navigation method, and owner
 discovery answers per host connection in the main process, never per window.
-`--restore-window-tasks` builds on exactly those behaviors. Before shutdown
+The explicit CLI flag and distribution's internal session build on exactly
+those behaviors. Before shutdown
 the helper reads each window's task with Copy deeplink and its Accessibility
 frame, refusing the restart for a window without a task, a duplicate task, a
 minimized, full-screen, or ambiguous window, a missing New Window item while
@@ -320,10 +328,24 @@ The plan reaches the helper on stdin
 and the snapshot returns on stdout; each task link is handed to macOS `open`,
 as recovery already does. Every window-task helper run has a deadline and is
 killed with its process group when it passes; the helper also exits once its
-parent is gone. Restore failures, including a relaunch
-that never reached the restore, are reported with the restart result and
-never block recovery. Only a command whose raw `--trigger` is `user` accepts the flag; the
-daemon, the Monitor app, distribution, and auto-switch never pass it
+parent is gone. For both distribution restore passes, task links wait for
+Desktop IPC; target authentication, session marker, PID, and birth are checked
+immediately before the helper and again after it returns. Independent Desktop
+changes can still interleave with a link. Capture and restore foreground
+Desktop windows and briefly use the clipboard. Restore failures, including a
+relaunch that never reached the restore, are reported with the restart result
+and never block recovery.
+When a post-stop distribution failure relaunches the previous account, its
+captured task session remains active until that relaunch returns a verified
+previous-account Desktop session. The same IPC, auth, session-marker, PID,
+and birth checks guard its restore; only then is the session finished. If the
+previous relaunch or restore cannot be verified, the error reports incomplete
+window restoration, while the distribution journal follows the auth rollback
+result.
+Only a command whose raw `--trigger` is `user`
+accepts the flag; the
+daemon, the Monitor app, distribution, and auto-switch never pass that CLI flag;
+distribution owns its task session inside the Rust lifecycle
 (`tests/enforce_task_probe_isolation.rs` pins every caller and the forwarded
 value). None of this has run against a live Desktop yet;
 `cxi window rehearse-task-restore --allow-focus-and-clipboard` exercises

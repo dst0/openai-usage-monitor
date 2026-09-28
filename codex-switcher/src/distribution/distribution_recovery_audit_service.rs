@@ -3,6 +3,7 @@ use super::distribution_audit_logger::DistributionAuditLogger;
 use super::distribution_request::DistributionRequest;
 use super::recovery_audit_context::RecoveryAuditContext;
 use super::window_capture_mode::WindowCaptureMode;
+use super::window_task_restore_phase::WindowTaskRestorePhase;
 
 pub struct DistributionRecoveryAuditService;
 
@@ -42,7 +43,8 @@ impl DistributionRecoveryAuditService {
             lifecycle.abort_recovery();
             return Err(error);
         }
-        Self::recover_and_verify(
+        lifecycle.restore_window_tasks(context.bound, WindowTaskRestorePhase::AfterRelaunch);
+        let recovered = Self::recover_and_verify(
             logger,
             lifecycle,
             context.targets,
@@ -50,7 +52,12 @@ impl DistributionRecoveryAuditService {
             context.capture_mode == WindowCaptureMode::Captured,
             context.operation_id,
             context.request,
-        )
+        );
+        lifecycle.restore_window_tasks(
+            context.bound,
+            WindowTaskRestorePhase::AfterRecovery(context.targets),
+        );
+        recovered
     }
 
     pub fn capture_window_bounds(
@@ -148,7 +155,15 @@ impl DistributionRecoveryAuditService {
         let result = lifecycle
             .recover_threads(targets)
             .and_then(|_| lifecycle.verify_desktop_stable(pids, require_window));
-        if result.is_ok() {
+        if result.is_ok() && targets.is_empty() {
+            logger.log_action(
+                operation_id,
+                "RECOVERY_NOT_REQUESTED",
+                trigger,
+                reason,
+                "No eligible recovery targets were captured; Desktop stability verified",
+            );
+        } else if result.is_ok() {
             logger.log_action(
                 operation_id,
                 "RECOVERY_VERIFIED",

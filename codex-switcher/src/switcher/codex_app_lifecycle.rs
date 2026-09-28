@@ -54,6 +54,14 @@ pub(crate) fn stop_codex_app_gracefully(
     expected: &WindowProcessIdentity,
     captured_windows: Option<&[u32]>,
 ) -> Result<(), AppStopError> {
+    stop_codex_app_gracefully_with(expected, captured_windows, || Ok(()))
+}
+
+pub(crate) fn stop_codex_app_gracefully_with(
+    expected: &WindowProcessIdentity,
+    captured_windows: Option<&[u32]>,
+    verify_tasks: impl FnOnce() -> Result<(), String>,
+) -> Result<(), AppStopError> {
     let writer_gate = DesktopWriterExitGate::capture(expected.pid).map_err(AppStopError::before)?;
     let snapshot = DesktopShutdownWindowGuard::checked_snapshot(expected, captured_windows)
         .map_err(AppStopError::before)?;
@@ -62,16 +70,25 @@ pub(crate) fn stop_codex_app_gracefully(
         expected,
         captured_windows,
         |pid| {
-            let pid = i32::try_from(pid).map_err(|_| "Desktop PID is invalid")?;
-            // Chromium flushes SQLite and WAL on SIGTERM, avoiding the GUI
-            // beforeunload prompt. Signal only the just-validated PID.
-            if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
-                return Err(format!(
-                    "Could not signal the verified ChatGPT process: {}",
-                    std::io::Error::last_os_error()
-                ));
-            }
-            Ok(())
+            verify_then_signal(
+                verify_tasks,
+                || {
+                    DesktopShutdownWindowGuard::checked_snapshot(expected, captured_windows)
+                        .map(|_| ())
+                },
+                || {
+                    let pid = i32::try_from(pid).map_err(|_| "Desktop PID is invalid")?;
+                    // Chromium flushes SQLite and WAL on SIGTERM, avoiding
+                    // the GUI beforeunload prompt.
+                    if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
+                        return Err(format!(
+                            "Could not signal the verified ChatGPT process: {}",
+                            std::io::Error::last_os_error()
+                        ));
+                    }
+                    Ok(())
+                },
+            )
         },
     )
     .map_err(AppStopError::before)?;
@@ -112,6 +129,16 @@ pub(crate) fn stop_codex_app_gracefully(
     sleep(Duration::from_millis(600));
 
     Ok(())
+}
+
+fn verify_then_signal(
+    verify_tasks: impl FnOnce() -> Result<(), String>,
+    verify_windows: impl FnOnce() -> Result<(), String>,
+    signal: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    verify_tasks()?;
+    verify_windows()?;
+    signal()
 }
 
 pub(crate) fn launch_codex_app() -> Result<Vec<u32>, String> {

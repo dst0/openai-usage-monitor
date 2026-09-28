@@ -23,3 +23,38 @@ fn writer_started_after_snapshot_still_blocks_auth_replacement() {
         Ok(false)
     );
 }
+
+#[test]
+fn failed_final_task_check_never_signals_desktop() {
+    let signals = std::cell::Cell::new(0);
+    let window_checks = std::cell::Cell::new(0);
+    let result = verify_then_signal(
+        || Err("selected task changed".into()),
+        || {
+            window_checks.set(window_checks.get() + 1);
+            Ok(())
+        },
+        || {
+            signals.set(signals.get() + 1);
+            Ok(())
+        },
+    );
+    assert_eq!(result.unwrap_err(), "selected task changed");
+    assert_eq!(window_checks.get(), 0);
+    assert_eq!(signals.get(), 0);
+}
+
+#[test]
+fn failed_final_window_check_never_signals_desktop() {
+    let signals = std::cell::Cell::new(0);
+    let result = verify_then_signal(
+        || Ok(()),
+        || Err("window list changed".into()),
+        || {
+            signals.set(signals.get() + 1);
+            Ok(())
+        },
+    );
+    assert_eq!(result.unwrap_err(), "window list changed");
+    assert_eq!(signals.get(), 0);
+}

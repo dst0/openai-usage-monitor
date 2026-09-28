@@ -68,7 +68,7 @@ pub use codex_app_lifecycle::send_macos_notification;
 pub(crate) use codex_app_lifecycle::{
     current_codex_app_pids, current_codex_app_pids_checked, is_codex_app_running_checked,
     is_shared_auth_active_checked, launch_codex_app, preflight_shutdown_windows,
-    stop_codex_app_gracefully,
+    stop_codex_app_gracefully, stop_codex_app_gracefully_with,
 };
 #[cfg(test)]
 pub(crate) use direct_switch_journal::create_direct_switch_intent_for_test;

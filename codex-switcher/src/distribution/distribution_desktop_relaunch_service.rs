@@ -120,6 +120,7 @@ impl<'a> DistributionDesktopRelaunchService<'a> {
             self.lifecycle,
             super::recovery_audit_context::RecoveryAuditContext {
                 pid,
+                bound: &bound,
                 targets: running_threads,
                 capture_mode,
                 operation_id,
