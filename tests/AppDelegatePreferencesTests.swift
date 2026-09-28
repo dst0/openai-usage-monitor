@@ -38,16 +38,10 @@ func makeTestAppDelegate(client: CodexClient, preferences: TestPreferencesSuite)
 /// `UserDefaults.didChangeNotification` cannot do that: AppKit's class initializers call
 /// `register(defaults:)` on the standard store, which posts the same notification.)
 func runAppDelegatePreferencesTests() {
-  // The menu reads Monitor settings from CODEX_HOME. Point it at a path that does not exist so
-  // those reads give defaults instead of the live ~/.codex; nothing here writes there.
-  let codexHome = FileManager.default.temporaryDirectory.appendingPathComponent(
-    "codex-preferences-home-\(UUID().uuidString)")
-  let previousCodexHome = ProcessInfo.processInfo.environment["CODEX_HOME"]
-  setenv("CODEX_HOME", codexHome.path, 1)
-  defer {
-    if let previousCodexHome { setenv("CODEX_HOME", previousCodexHome, 1) } else { unsetenv("CODEX_HOME") }
-    try? FileManager.default.removeItem(at: codexHome)
-  }
+  // The menu reads Monitor settings from CODEX_HOME. Give it a private home that does not exist,
+  // so those reads give defaults and the end of this test can check that nothing wrote there.
+  let codexHome = TestCodexHome.enter("preferences", create: false)
+  defer { TestCodexHome.leave(codexHome) }
   let client = CodexClient(distributionRunner: { _ in false })
   let stackKey = AppDelegate.stackPercentagesKey
   let intervalKey = AppDelegate.refreshIntervalKey

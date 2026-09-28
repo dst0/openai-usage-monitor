@@ -33,6 +33,8 @@ func waitUntil(
 struct AppDelegateTestRunner {
   static func main() {
     print("🧪 Running AppDelegate Status Bar & Layout Tests...")
+    // Monitor state lives in this run's private Codex home, never in the live ~/.codex.
+    TestCodexHome.activate()
     // Every delegate below reads and writes this run's own preferences, never the standard
     // store that all concurrent runs of this binary share.
     let preferences = TestPreferencesSuite(purpose: "app-delegate")
@@ -264,14 +266,11 @@ struct AppDelegateTestRunner {
     runLaunchAtLoginTests()
 
     // ====================================================================
-    // Test 5: Auto-Switch localization and client default
+    // Test 5: Auto-Switch localization (Test 0 checks that the setting comes from CODEX_HOME)
     // ====================================================================
     let ruStr = L10n.autoSwitchOnLimit
     assertTrue(!ruStr.isEmpty, "Auto-switch localization must not be empty")
-    let client = CodexClient.shared
-    let autoSwitch = client.getAutoSwitchEnabled()
-    assertTrue(autoSwitch == true || autoSwitch == false, "Auto-switch enabled must return boolean")
-    print("  ✅ Auto-switch localization & client settings verified (enabled: \(autoSwitch))")
+    print("  ✅ Auto-switch localization verified")
 
     let stopCommands = CodexClient.backgroundAutomationStopCommands(
       daemonPath: "/tmp/com.codex.switcher.plist")
@@ -2244,11 +2243,7 @@ struct AppDelegateTestRunner {
 
     // A marker created after startup, then atomically replaced, must refresh
     // the menu without waiting for the quota-status file to change.
-    let watcherHome = FileManager.default.temporaryDirectory.appendingPathComponent(
-      "codex-desktop-watcher-\(UUID().uuidString)")
-    try! FileManager.default.createDirectory(at: watcherHome, withIntermediateDirectories: true)
-    let previousCodexHome = ProcessInfo.processInfo.environment["CODEX_HOME"]
-    setenv("CODEX_HOME", watcherHome.path, 1)
+    let watcherHome = TestCodexHome.enter("desktop-watcher", create: true)
     let watcher = makeTestAppDelegate(client: CodexClient.shared, preferences: preferences)
     var markerRefreshes = 0
     watcher.desktopSessionSnapshotRefreshOverride = { markerRefreshes += 1 }
@@ -2284,8 +2279,7 @@ struct AppDelegateTestRunner {
     watcher.stopAuthFileWatcher()
     watcher.stopDesktopSessionFileWatcher()
     watcher.desktopSessionSnapshotRefreshOverride = nil
-    if let previousCodexHome { setenv("CODEX_HOME", previousCodexHome, 1) } else { unsetenv("CODEX_HOME") }
-    try! FileManager.default.removeItem(at: watcherHome)
+    TestCodexHome.leave(watcherHome)
     assertTrue(AppDelegate.isOfficialDesktopExecutable(
       "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"), "official Desktop event must refresh")
     assertTrue(!AppDelegate.isOfficialDesktopExecutable(

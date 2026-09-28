@@ -11,6 +11,8 @@ private func require(_ condition: @autoclosure () -> Bool, _ message: String) {
 @main
 struct CodexClientIdentityTests {
   static func main() {
+    // Monitor state lives in this run's private Codex home, never in the live ~/.codex.
+    TestCodexHome.activate()
     let cli = AccountQuota(
       id: "cli-account", email: "cli@example.com", planType: "pro", isCurrentActive: true,
       fiveHourPercentage: 90, weeklyPercentage: 80, resetTime: nil, resetAfterSeconds: 600,
@@ -42,19 +44,8 @@ struct CodexClientIdentityTests {
     require(snapshot.appAccount == nil, "missing App identity must not fall back to CLI")
     require(!snapshot.autoSwitchEnabled, "an unspecified snapshot must leave auto-switch off")
 
-    let previousHome = getenv("CODEX_HOME").map { String(cString: $0) }
-    let testHome = FileManager.default.temporaryDirectory
-      .appendingPathComponent("codex-cli-identity-\(UUID().uuidString)")
-    try! FileManager.default.createDirectory(at: testHome, withIntermediateDirectories: true)
-    defer {
-      if let previousHome {
-        setenv("CODEX_HOME", previousHome, 1)
-      } else {
-        unsetenv("CODEX_HOME")
-      }
-      try? FileManager.default.removeItem(at: testHome)
-    }
-    setenv("CODEX_HOME", testHome.path, 1)
+    let testHome = TestCodexHome.enter("cli-identity", create: true)
+    defer { TestCodexHome.leave(testHome) }
     let staleCliCache: [String: Any] = [
       "active_account_id": "missing-account",
       "five_hour_percentage": 0.0,
@@ -190,17 +181,8 @@ struct CodexClientIdentityTests {
     require(CodexClient.readPrivateSessionMarkerData(at: privateMarkerURL) == nil,
       "a world-readable marker must not be read")
 
-    let temporaryHome = FileManager.default.temporaryDirectory
-      .appendingPathComponent("codex-status-default-\(UUID().uuidString)")
-    try! FileManager.default.createDirectory(
-      at: temporaryHome, withIntermediateDirectories: false)
-    let previousStatusHome = getenv("CODEX_HOME").map { String(cString: $0) }
-    setenv("CODEX_HOME", temporaryHome.path, 1)
-    defer {
-      if let previousStatusHome { setenv("CODEX_HOME", previousStatusHome, 1) }
-      else { unsetenv("CODEX_HOME") }
-      try? FileManager.default.removeItem(at: temporaryHome)
-    }
+    let temporaryHome = TestCodexHome.enter("status-default", create: true)
+    defer { TestCodexHome.leave(temporaryHome) }
 
     func cachedAutoSwitch(_ value: Any?) -> Bool? {
       var payload: [String: Any] = ["timestamp": formatter.string(from: now), "accounts": []]
