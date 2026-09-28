@@ -227,6 +227,10 @@ expect_accepted qualified-removal \
 # An enum case with the creator's name, and a pattern matching it, create nothing.
 expect_accepted enum-case-creator '  enum Kind { case statusItem(withLength: Int) }'
 expect_accepted guarded-enum-case-creator '#if DEBUG'$'\n''  enum Kind { case statusItem(withLength: Int) }'$'\n''#endif'
+expect_accepted compound-enum-case-creator '  enum Kind { case idle, statusItem(withLength: Int) }'
+expect_accepted bound-pattern-creator '  switch kind { case let .statusItem(withLength: n): _ = n; default: break }'
+expect_accepted qualified-pattern-creator '  switch kind { case Kind.statusItem(withLength: let n): _ = n; default: break }'
+expect_accepted attributed-func-creator '  @objc(makeItem:) static func statusItem(withLength length: CGFloat) -> Int { 0 }'
 expect_accepted enum-pattern-creator '  switch kind { case .statusItem(withLength: let n): _ = n }'
 # Declaring a helper with the creator's name creates nothing, inside #if too.
 expect_accepted guarded-declared-creator '#if DEBUG'$'\n''  func statusItem(withLength: Int) {}'$'\n''#endif'
@@ -329,6 +333,19 @@ expect_violation unapplied-removal "${T}" '  let remove = NSStatusBar.system.rem
     "${T} has 1 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
 expect_violation referenced-creation "${T}" '  let make = NSStatusBar.system.statusItem(withLength:)' \
     "${T} has 1 uses of removeStatusItem or statusItem(withLength:) that are not direct calls"
+# A creation after a case label, in a where clause, in a default argument, or
+# after an if-case condition is still a creation.
+expect_violation case-label-creation "${T}" '  switch kind { case .foo: NSStatusBar.system.statusItem(withLength: 1); default: break }' \
+    "${T} creates 3 status items and removes 2"
+expect_violation where-clause-creation "${T}" \
+    '  switch kind { case let x where NSStatusBar.system.statusItem(withLength: 1) != nil: _ = x; default: break }' \
+    "${T} creates 3 status items and removes 2"
+expect_violation default-argument-creation "${T}" \
+    '  func f(x: Int = NSStatusBar.system.statusItem(withLength: 1).hashValue) {}' \
+    "${T} creates 3 status items and removes 2"
+expect_violation if-case-creation "${T}" \
+    '  if case .ready = state, let i = Optional(NSStatusBar.system.statusItem(withLength: 1)) { _ = i }' \
+    "${T} creates 3 status items and removes 2"
 # A creation in the body of a helper declared with the creator's name counts.
 expect_violation declared-creator-body "${T}" \
     '  func statusItem(withLength: Int) { _ = NSStatusBar.system.statusItem(withLength: 3) }' \
