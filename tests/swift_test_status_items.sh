@@ -181,6 +181,26 @@ expect_violation raw-string-removal "${T}" \
 expect_violation interpolated-literal-removal "${T}" \
     "${LEAK}; let s = \"\\(label(\"NSStatusBar.system.removeStatusItem(kept)\"))\"" \
     "${T} creates 3 status items and removes 2"
+# A removal counts only as a direct member call: not a declaration, selector,
+# method reference, or text in an extended regex literal.
+expect_violation declared-removal "${T}" "${LEAK}"$'\n''  func removeStatusItem(_ item: NSStatusItem) {}' \
+    "${T} creates 3 status items and removes 2"
+expect_violation selector-removal "${T}" "${LEAK}; let action = #selector(removeStatusItem(_:))" \
+    "${T} creates 3 status items and removes 2"
+expect_violation referenced-removal "${T}" "${LEAK}; let remove = NSStatusBar.system.removeStatusItem(_:)" \
+    "${T} creates 3 status items and removes 2"
+expect_violation regex-removal "${T}" "${LEAK}; let pattern = #/NSStatusBar.system.removeStatusItem(kept)/#" \
+    "${T} creates 3 status items and removes 2"
+expect_violation escaped-regex-removal "${T}" \
+    "${LEAK}; let pattern = #/a\\/# NSStatusBar.system.removeStatusItem(kept) /#" \
+    "${T} creates 3 status items and removes 2"
+expect_violation multiline-regex-removal "${T}" \
+    "${LEAK}"$'\n''  let pattern = #/'$'\n''  NSStatusBar.system.removeStatusItem(kept)'$'\n''  /#' \
+    "${T} creates 3 status items and removes 2"
+# A quote in a regex literal does not start a string that hides later code.
+expect_violation regex-quote "${T}" \
+    '  let quote = #/"/#; let other = NSStatusBar.system.statusItem(withLength: 7); let q = "x"' \
+    "${T} creates 3 status items and removes 2"
 # Code inside an interpolation is code: a status item made there counts.
 expect_violation interpolated-creation "${T}" \
     '  let width = "\(NSStatusBar.system.statusItem(withLength: 6).length)"' \
