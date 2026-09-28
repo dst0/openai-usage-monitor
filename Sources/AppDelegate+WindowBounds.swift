@@ -27,14 +27,13 @@ extension AppDelegate {
   }
 
   internal func saveDesktopWindowBoundsPassive(for targetPID: pid_t) {
-    let home = CodexClient.codexHome
-    if let data = try? Data(contentsOf: home.appendingPathComponent("accounts.json")),
+    if let data = try? Data(contentsOf: client.accountsFileURL),
       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let settings = json["settings"] as? [String: Any],
       (settings["preserve_window_bounds_on_restart"] as? Bool) == false { return }
 
     // Do NOT overwrite saved bounds while an operation (switch, restart, recovery) is active
-    let lockURL = home.appendingPathComponent("desktop-recovery.lock")
+    let lockURL = client.homeFile("desktop-recovery.lock")
     let fd = open(lockURL.path, O_RDWR | O_CREAT, 0o600)
     if fd >= 0 {
       let isLocked = flock(fd, LOCK_EX | LOCK_NB) != 0
@@ -42,7 +41,7 @@ extension AppDelegate {
       if isLocked { return }
     }
 
-    let cooldownURL = home.appendingPathComponent("desktop-automation-cooldown")
+    let cooldownURL = client.homeFile("desktop-automation-cooldown")
     if let str = try? String(contentsOf: cooldownURL, encoding: .utf8),
       let deadlineMs = Double(str.trimmingCharacters(in: .whitespacesAndNewlines)) {
       let nowMs = Date().timeIntervalSince1970 * 1000.0
@@ -69,7 +68,7 @@ extension AppDelegate {
     }
     guard let frame = best?.frame else { return }
 
-    let targetURL = home.appendingPathComponent("desktop-window.json")
+    let targetURL = client.homeFile("desktop-window.json")
     let payload: [String: Any] = [
       "version": 1, "x": Double(frame.origin.x), "y": Double(frame.origin.y),
       "width": Double(frame.size.width), "height": Double(frame.size.height),

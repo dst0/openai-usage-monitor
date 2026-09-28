@@ -1,0 +1,22 @@
+# 2026-09-28 — Naming a file URL stats the path
+
+- **Status:** Resolved
+- **Task/context:** Making the Swift tests hermetic ([2026-09-28 — Swift tests read the live Codex home and every AppDelegate created it](2026-09-28-swift-tests-read-the-live-codex-home.md)). The production wiring check has to compute the live Codex home (`CodexClient.shared.codexHome`) without touching it, and the sandbox audit kills a test on any access to `~/.codex`.
+- **Unexpected observation or failure:** Building a URL, with no read or write, is enough for the sandbox to kill the process.
+- **Evidence:** A probe run under `sandbox-exec` with `(deny file-read* file-write* (subpath "<dir>/.codex") (with send-signal SIGKILL))`, Swift 6.4 on macOS 27.2:
+  - `URL(fileURLWithPath: "<dir>/.codex")` and `URL(fileURLWithPath: "<dir>").appendingPathComponent(".codex")`: killed (exit 137).
+  - `URL(fileURLWithPath: path, isDirectory: true)`, `appendingPathComponent(".codex", isDirectory: true)` or `isDirectory: false`, and `NSString.appendingPathComponent`: not killed.
+  - `FileManager.default.homeDirectoryForCurrentUser` and `NSHomeDirectory()` returned the account's home even with `HOME=/tmp/fakehome`.
+- **Approaches tried:**
+  - **Attempt:** Build the live home and its files with the one-argument initializers.
+    - **Outcome:** Did not work.
+    - **Why:** Without a directory hint, Foundation stats the path to decide whether it is a directory, so even naming a live file reads its metadata.
+  - **Attempt:** Pass `isDirectory:` everywhere a Codex-home URL is built.
+    - **Outcome:** Worked.
+    - **Why:** With the hint, no file-system call is made, and the wiring check passes under the sandbox.
+- **Root cause:** Confirmed by the probe above: Foundation's file-URL initializers without a directory hint query the file system.
+- **Resolution:** `CodexClient.resolveCodexHome` marks the home a directory, and `CodexClient.homeFile(_:)`, `SingleInstanceGuard`, and the help-page lookup name files with `isDirectory: false`.
+- **Verification:** `./scripts/test_swift.sh` passes under the sandbox profile, including the check that `CodexClient.shared.codexHome == CodexClient.liveCodexHome`.
+- **Prevention/follow-up:** `AGENTS.md` states the rule next to the Swift Codex-home test rules. Other paths the tests still name, such as `~/.local/bin/codex-mon`, are built without a hint and stat those paths.
+- **Reusable learning:** On macOS, `URL(fileURLWithPath:)` and `appendingPathComponent(_:)` without `isDirectory:` stat the path. Pass `isDirectory:` when a path must be named without being touched; `homeDirectoryForCurrentUser` ignores `HOME`.
+- **References:** `Sources/CodexClient.swift`, `Sources/SingleInstanceGuard.swift`, `Sources/QuotaModels.swift`.

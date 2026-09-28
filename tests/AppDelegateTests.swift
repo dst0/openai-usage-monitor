@@ -34,8 +34,10 @@ struct AppDelegateTestRunner {
   static func main() {
     print("🧪 Running AppDelegate Status Bar & Layout Tests...")
     // Every delegate below reads and writes this run's own preferences, never the standard
-    // store that all concurrent runs of this binary share.
+    // store that all concurrent runs of this binary share, and reads Monitor state from a Codex
+    // home of this run, never the live ~/.codex.
     let preferences = TestPreferencesSuite(purpose: "app-delegate")
+    let codexHome = TestCodexHome(purpose: "app-delegate")
 
     let mockIcon = NSImage(size: NSSize(width: 18, height: 18))
 
@@ -264,14 +266,11 @@ struct AppDelegateTestRunner {
     runLaunchAtLoginTests()
 
     // ====================================================================
-    // Test 5: Auto-Switch localization and client default
+    // Test 5: Auto-switch localization; Monitor state comes from the client's Codex home
     // ====================================================================
     let ruStr = L10n.autoSwitchOnLimit
     assertTrue(!ruStr.isEmpty, "Auto-switch localization must not be empty")
-    let client = CodexClient.shared
-    let autoSwitch = client.getAutoSwitchEnabled()
-    assertTrue(autoSwitch == true || autoSwitch == false, "Auto-switch enabled must return boolean")
-    print("  ✅ Auto-switch localization & client settings verified (enabled: \(autoSwitch))")
+    runAppDelegateCodexHomeTests(preferences: preferences)
 
     let stopCommands = CodexClient.backgroundAutomationStopCommands(
       daemonPath: "/tmp/com.codex.switcher.plist")
@@ -426,7 +425,7 @@ struct AppDelegateTestRunner {
       let invocationLock = NSLock()
       var invocations: [[String]] = []
       var completionResult: Bool?
-      let client = CodexClient(distributionRunner: { recorded in
+      let client = codexHome.client(distributionRunner: { recorded in
         invocationLock.lock()
         invocations.append(recorded)
         invocationLock.unlock()
@@ -467,7 +466,7 @@ struct AppDelegateTestRunner {
     let missingIdentityLock = NSLock()
     var missingIdentityInvocations = 0
     var missingIdentityResult: Bool?
-    let missingIdentityClient = CodexClient(distributionRunner: { _ in
+    let missingIdentityClient = codexHome.client(distributionRunner: { _ in
       missingIdentityLock.lock()
       missingIdentityInvocations += 1
       missingIdentityLock.unlock()
@@ -490,7 +489,7 @@ struct AppDelegateTestRunner {
     )
     let delegateIdentityLock = NSLock()
     var delegateIdentityInvocations: [[String]] = []
-    let missingAppIdentityClient = CodexClient(
+    let missingAppIdentityClient = codexHome.client(
       distributionRunner: { arguments in
         delegateIdentityLock.lock()
         delegateIdentityInvocations.append(arguments)
@@ -523,7 +522,7 @@ struct AppDelegateTestRunner {
     assertEqual(
       AppDelegate.resolveStatusBarSessions(from: missingCliSnapshot).cliSession.fiveHPct,
       "—", "Unknown CLI identity must not display another account's quota")
-    let missingCliIdentityClient = CodexClient(
+    let missingCliIdentityClient = codexHome.client(
       distributionRunner: { arguments in
         delegateIdentityLock.lock()
         delegateIdentityInvocations.append(arguments)
@@ -549,7 +548,7 @@ struct AppDelegateTestRunner {
     let failedInvocationLock = NSLock()
     var failedInvocations: [[String]] = []
     var failedCompletion: Bool?
-    let failingClient = CodexClient(distributionRunner: { arguments in
+    let failingClient = codexHome.client(distributionRunner: { arguments in
       failedInvocationLock.lock()
       failedInvocations.append(arguments)
       failedInvocationLock.unlock()
@@ -606,7 +605,7 @@ struct AppDelegateTestRunner {
     let refreshSnapshot = failClosedSnapshot
     let invocationLock = NSLock()
     var refreshInvocations: [[String]] = []
-    let refreshClient = CodexClient(distributionRunner: { arguments in
+    let refreshClient = codexHome.client(distributionRunner: { arguments in
       invocationLock.lock()
       refreshInvocations.append(arguments)
       invocationLock.unlock()
@@ -725,30 +724,35 @@ struct AppDelegateTestRunner {
     defer { try? FileManager.default.removeItem(at: helpFixtureRoot) }
     let helpFixtureExecutable = helpFixtureRoot.appendingPathComponent(
       "Contents/MacOS/CodexMonitor").path
+    // The executable's own Resources copy wins; this home has no copy at all.
+    let helpFixtureHome = TestCodexHome(purpose: "help-fixture", created: false)
+    let helpHome = helpFixtureHome.url
 
     let jaURL = HelpsDocHelper.localizedHelpsHTMLURL(
-      languageCode: "ja", arguments: [helpFixtureExecutable])
+      languageCode: "ja", codexHome: helpHome, arguments: [helpFixtureExecutable])
     assertTrue(
       jaURL?.absoluteString.contains("lang=ja") == true,
       "Helps URL for Japanese must contain lang=ja")
 
     let zhURL = HelpsDocHelper.localizedHelpsHTMLURL(
-      languageCode: "zh-Hans", arguments: [helpFixtureExecutable])
+      languageCode: "zh-Hans", codexHome: helpHome, arguments: [helpFixtureExecutable])
     assertTrue(
       zhURL?.absoluteString.contains("lang=zh-Hans") == true,
       "Helps URL for zh-Hans must contain lang=zh-Hans")
 
     let zhAliasURL = HelpsDocHelper.localizedHelpsHTMLURL(
-      languageCode: "zh", arguments: [helpFixtureExecutable])
+      languageCode: "zh", codexHome: helpHome, arguments: [helpFixtureExecutable])
     assertTrue(
       zhAliasURL?.absoluteString.contains("lang=zh-Hans") == true,
       "Helps URL for zh alias must resolve to lang=zh-Hans")
 
     let viURL = HelpsDocHelper.localizedHelpsHTMLURL(
-      languageCode: "vi", arguments: [helpFixtureExecutable])
+      languageCode: "vi", codexHome: helpHome, arguments: [helpFixtureExecutable])
     assertTrue(
       viURL?.absoluteString.contains("lang=vi") == true,
       "Helps URL for Vietnamese must contain lang=vi")
+    assertTrue(!helpFixtureHome.exists, "Help lookup must not create the Codex home")
+    helpFixtureHome.tearDown()
 
     // Test that all 13 languages have translations in LocalizationManager.translations
     for lang in AppLanguage.allCases {
@@ -913,7 +917,7 @@ struct AppDelegateTestRunner {
       "Pro account weekly countdown should display 6d 7h")
 
     // Test Dynamic Menu Construction: Verify Reserve Accounts have "🗓️ Weekly:" progress bars
-    let appDelegate = makeTestAppDelegate(client: CodexClient.shared, preferences: preferences)
+    let appDelegate = makeTestAppDelegate(client: codexHome.client(), preferences: preferences)
     let menu = appDelegate.buildMenu()
     appDelegate.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     appDelegate.statusItem?.menu = menu
@@ -2231,7 +2235,7 @@ struct AppDelegateTestRunner {
       assertEqual(splitSessions.cliSession.fiveHPct, "0%", "CLI must show its separate exhausted quota")
 
       // Subtest 6: updateStatusBar execution with image and tooltip routing
-      let appDelegateTest = makeTestAppDelegate(client: CodexClient.shared, preferences: preferences)
+      let appDelegateTest = makeTestAppDelegate(client: codexHome.client(), preferences: preferences)
       appDelegateTest.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
       appDelegateTest.updateStatusBar(with: fullSnapshot)
       assertTrue(appDelegateTest.statusItem?.button?.image != nil, "updateStatusBar must assign composite image to statusItem button")
@@ -2244,12 +2248,9 @@ struct AppDelegateTestRunner {
 
     // A marker created after startup, then atomically replaced, must refresh
     // the menu without waiting for the quota-status file to change.
-    let watcherHome = FileManager.default.temporaryDirectory.appendingPathComponent(
-      "codex-desktop-watcher-\(UUID().uuidString)")
-    try! FileManager.default.createDirectory(at: watcherHome, withIntermediateDirectories: true)
-    let previousCodexHome = ProcessInfo.processInfo.environment["CODEX_HOME"]
-    setenv("CODEX_HOME", watcherHome.path, 1)
-    let watcher = makeTestAppDelegate(client: CodexClient.shared, preferences: preferences)
+    let watcherCodexHome = TestCodexHome(purpose: "desktop-watcher")
+    let watcherHome = watcherCodexHome.url
+    let watcher = makeTestAppDelegate(client: watcherCodexHome.client(), preferences: preferences)
     var markerRefreshes = 0
     watcher.desktopSessionSnapshotRefreshOverride = { markerRefreshes += 1 }
     watcher.startDesktopSessionFileWatcher()
@@ -2273,6 +2274,8 @@ struct AppDelegateTestRunner {
     assertTrue(markerRefreshes > firstCount, "replacement marker must refresh the menu")
     let authFile = watcherHome.appendingPathComponent("auth.json")
     try! Data("{}".utf8).write(to: authFile)
+    // The auth handler schedules a quota refresh; keep it off the real codex-mon CLI.
+    watcher.quotaRefreshOverride = { completion in completion(nil) }
     watcher.startAuthFileWatcher()
     let beforeAuthChange = markerRefreshes
     let authTemp = watcherHome.appendingPathComponent("auth.tmp")
@@ -2284,8 +2287,7 @@ struct AppDelegateTestRunner {
     watcher.stopAuthFileWatcher()
     watcher.stopDesktopSessionFileWatcher()
     watcher.desktopSessionSnapshotRefreshOverride = nil
-    if let previousCodexHome { setenv("CODEX_HOME", previousCodexHome, 1) } else { unsetenv("CODEX_HOME") }
-    try! FileManager.default.removeItem(at: watcherHome)
+    watcherCodexHome.tearDown()
     assertTrue(AppDelegate.isOfficialDesktopExecutable(
       "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"), "official Desktop event must refresh")
     assertTrue(!AppDelegate.isOfficialDesktopExecutable(
@@ -2329,6 +2331,7 @@ struct AppDelegateTestRunner {
     }
     print("  ✅ Swift <= 300 lines architectural invariant verified for all menu components")
 
+    codexHome.tearDown()
     preferences.tearDown()
     print("\n🎉 ALL APP DELEGATE TESTS PASSED!")
   }

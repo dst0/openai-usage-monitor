@@ -38,17 +38,11 @@ func makeTestAppDelegate(client: CodexClient, preferences: TestPreferencesSuite)
 /// `UserDefaults.didChangeNotification` cannot do that: AppKit's class initializers call
 /// `register(defaults:)` on the standard store, which posts the same notification.)
 func runAppDelegatePreferencesTests() {
-  // The menu reads Monitor settings from CODEX_HOME. Point it at a path that does not exist so
-  // those reads give defaults instead of the live ~/.codex; nothing here writes there.
-  let codexHome = FileManager.default.temporaryDirectory.appendingPathComponent(
-    "codex-preferences-home-\(UUID().uuidString)")
-  let previousCodexHome = ProcessInfo.processInfo.environment["CODEX_HOME"]
-  setenv("CODEX_HOME", codexHome.path, 1)
-  defer {
-    if let previousCodexHome { setenv("CODEX_HOME", previousCodexHome, 1) } else { unsetenv("CODEX_HOME") }
-    try? FileManager.default.removeItem(at: codexHome)
-  }
-  let client = CodexClient(distributionRunner: { _ in false })
+  // The menu reads Monitor settings from the client's Codex home. This one does not exist, so
+  // those reads give defaults; nothing here may create it.
+  let codexHome = TestCodexHome(purpose: "preferences", created: false)
+  defer { codexHome.tearDown() }
+  let client = codexHome.client()
   let stackKey = AppDelegate.stackPercentagesKey
   let intervalKey = AppDelegate.refreshIntervalKey
 
@@ -148,7 +142,7 @@ func runAppDelegatePreferencesTests() {
   assertEqual(restored.refreshInterval, 900.0, "A new delegate must restore the stored interval")
   actions.tearDown()
   assertTrue(
-    !FileManager.default.fileExists(atPath: codexHome.path),
+    !codexHome.exists,
     "Menu preferences must stay in the defaults store, not in Monitor settings files")
 
   print("  ✅ Menu preferences read and write the delegate's own store")

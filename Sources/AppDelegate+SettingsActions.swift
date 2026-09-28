@@ -79,10 +79,11 @@ extension AppDelegate {
 
   @objc internal func openHelpPage() {
     let langCode = LocalizationManager.shared.currentLanguage.rawValue
-    if let url = HelpsDocHelper.localizedHelpsHTMLURL(languageCode: langCode) {
+    // localizedHelpsHTMLURL is nil only when findHelpsHTMLURL finds no page at all.
+    if let url = HelpsDocHelper.localizedHelpsHTMLURL(
+      languageCode: langCode, codexHome: client.codexHome)
+    {
       NSWorkspace.shared.open(url)
-    } else if let fallbackURL = HelpsDocHelper.findHelpsHTMLURL() {
-      NSWorkspace.shared.open(fallbackURL)
     }
   }
 
