@@ -7,8 +7,9 @@
 # behind. Every tests/*.swift file, at any depth, must therefore remove as many
 # status items as it creates. Every call counts, several on one line too. A
 # creation is statusItem( followed by withLength, even on the next line, on any
-# receiver, so an alias of NSStatusBar.system is covered; a func declaring that
-# name is not one, but calls to it are. A removal counts only
+# receiver, so an alias of NSStatusBar.system is covered; a func or enum case
+# declaring that name, or a case pattern matching it, is not one, but calls to
+# such a func are. A removal counts only
 # as NSStatusBar.system.removeStatusItem(item), whose receiver is never nil; any
 # other use of that name (an alias or optional status bar, a declaration or
 # wrapper, a selector, a method reference), any reference to
@@ -106,21 +107,21 @@ print code(0);
 # is not a NSStatusBar.system.removeStatusItem(item) call, each
 # statusItem(withLength:) reference, and each backtick-escaped statusItem or
 # withLength, which the creation pattern would miss; guarded counts status-item
-# calls and references inside #if, whose branch may not be compiled, but not
-# declarations.
+# calls and references inside #if (a directive anywhere, even after other code
+# on its line), whose branch may not be compiled, but not declarations.
 COUNT_CALLS='
 use strict; use warnings;
 local $/; my $c = <STDIN>; $c = "" unless defined $c;
 my $created = () = $c =~ /statusItem\s*\(\s*withLength\b/g;
-$created -= () = $c =~ /\bfunc\s+statusItem\s*\(\s*withLength\b/g;
+$created -= () = $c =~ /\b(?:func|case)\s+\.?statusItem\s*\(\s*withLength\b/g;
 my $removed = () = $c =~ /\bNSStatusBar\s*\.system\s*\.removeStatusItem[ \t]*\((?!\s*_\s*:\s*\))/g;
 my $named = () = $c =~ /\bremoveStatusItem\b/g;
 my $references = () = $c =~ /statusItem\s*\(\s*withLength\s*:\s*\)/g;
 $references += () = $c =~ /`(?:statusItem|withLength)`/g;
 my @marks;
-while ($c =~ /^[ \t]*#(if|endif)\b/mg) { push @marks, [$-[0], $1 eq "if" ? 1 : -1]; }
+while ($c =~ /#(if|endif)\b/g) { push @marks, [$-[0], $1 eq "if" ? 1 : -1]; }
 my $guarded = 0;
-while ($c =~ /(\bfunc\s+)?(?:\bremoveStatusItem\b|statusItem\s*\(\s*withLength\b)/g) {
+while ($c =~ /(\b(?:func|case)\s+\.?)?(?:\bremoveStatusItem\b|statusItem\s*\(\s*withLength\b)/g) {
   next if defined $1;
   my ($at, $depth) = ($-[0], 0);
   for my $mark (@marks) { last if $mark->[0] >= $at; $depth += $mark->[1]; }
@@ -225,6 +226,7 @@ expect_accepted qualified-removal \
     '  let late = NSStatusBar.system.statusItem(withLength: 9); AppKit.NSStatusBar.system.removeStatusItem(late)'
 # An enum case with the creator's name, and a pattern matching it, create nothing.
 expect_accepted enum-case-creator '  enum Kind { case statusItem(withLength: Int) }'
+expect_accepted guarded-enum-case-creator '#if DEBUG'$'\n''  enum Kind { case statusItem(withLength: Int) }'$'\n''#endif'
 expect_accepted enum-pattern-creator '  switch kind { case .statusItem(withLength: let n): _ = n }'
 # Declaring a helper with the creator's name creates nothing, inside #if too.
 expect_accepted guarded-declared-creator '#if DEBUG'$'\n''  func statusItem(withLength: Int) {}'$'\n''#endif'
