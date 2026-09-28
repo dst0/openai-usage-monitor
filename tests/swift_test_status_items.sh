@@ -223,6 +223,9 @@ expect_accepted after-closed-conditions \
     '#if DEBUG'$'\n''  let debug = true'$'\n''#endif'$'\n''#if os(macOS)'$'\n''#else'$'\n''#endif'$'\n''  let late = NSStatusBar.system.statusItem(withLength: 9)'$'\n''  NSStatusBar.system.removeStatusItem(late)'
 expect_accepted qualified-removal \
     '  let late = NSStatusBar.system.statusItem(withLength: 9); AppKit.NSStatusBar.system.removeStatusItem(late)'
+# An enum case with the creator's name, and a pattern matching it, create nothing.
+expect_accepted enum-case-creator '  enum Kind { case statusItem(withLength: Int) }'
+expect_accepted enum-pattern-creator '  switch kind { case .statusItem(withLength: let n): _ = n }'
 # Declaring a helper with the creator's name creates nothing, inside #if too.
 expect_accepted guarded-declared-creator '#if DEBUG'$'\n''  func statusItem(withLength: Int) {}'$'\n''#endif'
 expect_accepted declared-creator '  func statusItem(withLength: Int) {}'$'\n''  static func statusItem(withLength length: CGFloat) -> Int { 0 }'
@@ -296,6 +299,9 @@ expect_violation guarded-removal "${T}" "${LEAK}"$'\n''#if false'$'\n''  NSStatu
     "${T} has 1 status-item calls inside #if"
 expect_violation nested-guarded-removal "${T}" \
     "${LEAK}"$'\n''#if DEBUG'$'\n''#if os(macOS)'$'\n''#endif'$'\n''  NSStatusBar.system.removeStatusItem(kept)'$'\n''#endif' \
+    "${T} has 1 status-item calls inside #if"
+expect_violation inline-guarded-removal "${T}" \
+    "${LEAK}; let marker = 0; #if false"$'\n''  NSStatusBar.system.removeStatusItem(kept)'$'\n''#endif' \
     "${T} has 1 status-item calls inside #if"
 expect_violation guarded-helper-body "${T}" \
     '#if DEBUG'$'\n''  func f() { _ = NSStatusBar.system.statusItem(withLength: 1) }'$'\n''#endif' \
