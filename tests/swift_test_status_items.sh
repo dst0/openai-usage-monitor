@@ -245,6 +245,7 @@ expect_accepted qualified-pattern-creator '  switch kind { case Kind.statusItem(
 expect_accepted attributed-func-creator '  @objc(makeItem:) static func statusItem(withLength length: CGFloat) -> Int { 0 }'
 expect_accepted listed-pattern-creator '  switch kind { case .a(x: 1), .statusItem(withLength: let n): _ = n; default: break }'
 expect_accepted multiline-enum-creator '  enum Kind {'$'\n''    case idle'$'\n''    case statusItem(withLength: Int)'$'\n''  }'
+expect_accepted enum-with-members-creator '  enum Kind {'$'\n''    case statusItem(withLength: Int)'$'\n''    var x: Int { 0 }'$'\n''  }'
 expect_accepted enum-pattern-creator '  switch kind { case .statusItem(withLength: let n): _ = n }'
 # Declaring a helper with the creator's name creates nothing, inside #if too.
 expect_accepted guarded-declared-creator '#if DEBUG'$'\n''  func statusItem(withLength: Int) {}'$'\n''#endif'
@@ -365,6 +366,15 @@ expect_violation later-expression-pattern-creation "${T}" \
     "${T} creates 3 status items and removes 2"
 expect_violation static-expression-pattern-creation "${T}" \
     '  switch item { case Factory.statusItem(withLength: 1): break; default: break }' \
+    "${T} creates 3 status items and removes 2"
+expect_violation colon-next-line-creation "${T}" \
+    '  switch item {'$'\n''  case Factory.statusItem(withLength: 1)'$'\n''    : break'$'\n''  default: break'$'\n''  }' \
+    "${T} creates 3 status items and removes 2"
+expect_violation capitalized-receiver-creation "${T}" \
+    '  switch length { case Bar.statusItem(withLength: 1).length: break; default: break }' \
+    "${T} creates 3 status items and removes 2"
+expect_violation bare-name-pattern-creation "${T}" \
+    '  switch length { case statusItem(withLength: 1).length: break; default: break }' \
     "${T} creates 3 status items and removes 2"
 expect_violation if-case-creation "${T}" \
     '  if case .ready = state, let i = Optional(NSStatusBar.system.statusItem(withLength: 1)) { _ = i }' \
