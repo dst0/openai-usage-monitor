@@ -140,6 +140,15 @@ impl AutomaticDistributionBackoff {
         (until > now).then(|| until - now)
     }
 
+    /// A held automatic plan waits for the configured daemon interval. The
+    /// lightweight deferred-recovery poll continues during that interval.
+    pub(super) fn has_active_hold(&self, now: Instant) -> bool {
+        self.lock()
+            .as_ref()
+            .and_then(|record| record.until)
+            .is_some_and(|until| until > now)
+    }
+
     /// Returns the failure count and hold when this failure arms a backoff.
     pub(crate) fn record_pre_signal_failure(
         &self,

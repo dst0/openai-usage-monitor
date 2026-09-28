@@ -474,6 +474,9 @@ minutes doubling to 30, in memory only; manual requests never consult or
 change it. It remembers only the latest plan, ends a streak after any other
 attempt result or an hour without a failure, logs `AUTO_BACKOFF_ACTIVE` once
 per hold, and counts awake time (`Instant`).
+The watchdog suppresses its two-second full quota-refresh wake during an
+active hold. Normal interval ticks, auth-file wakeups, and lightweight deferred
+recovery polling continue; a different plan is reconsidered at the next tick.
 
 Deferred recovery in an already running ChatGPT never restores window bounds.
 It locates its banner through the read-only WindowServer helper, so a launchd

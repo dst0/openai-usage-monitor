@@ -13,19 +13,31 @@ use std::time::{Duration, Instant};
 pub struct DaemonLoopService;
 
 impl DaemonLoopService {
-    pub fn watchdog_needs_immediate_check() -> bool {
+    pub fn watchdog_needs_immediate_check(backoff: &AutomaticDistributionBackoff) -> bool {
+        let now = Instant::now();
+        if backoff.has_active_hold(now) {
+            return false;
+        }
         let Ok(accounts_file) = load_accounts() else {
             return false;
         };
-        Self::watchdog_needs_immediate_check_with(&accounts_file, || {
+        Self::watchdog_needs_immediate_check_with(&accounts_file, backoff, now, || {
             !crate::switcher::detect_quota_blocked_user_threads_since(30).is_empty()
         })
     }
 
     fn watchdog_needs_immediate_check_with(
         accounts_file: &AccountsFile,
+        backoff: &AutomaticDistributionBackoff,
+        now: Instant,
         recent_quota_blocked: impl FnOnce() -> bool,
     ) -> bool {
+        // Do not wake the full quota-refresh tick every two seconds while an
+        // unchanged automatic plan is deliberately held. Normal interval and
+        // auth-file wakeups still run; deferred recovery keeps polling.
+        if backoff.has_active_hold(now) {
+            return false;
+        }
         let settings = &accounts_file.settings;
         if !settings.auto_switch_enabled && !settings.auto_reset_weekly_enabled {
             return false;
@@ -116,7 +128,9 @@ impl DaemonLoopService {
                 if current_auth_mtime != last_auth_mtime && current_auth_mtime.is_some() {
                     break;
                 }
-                if watchdog_ticks.is_multiple_of(2) && Self::watchdog_needs_immediate_check() {
+                if watchdog_ticks.is_multiple_of(2)
+                    && Self::watchdog_needs_immediate_check(&automatic_backoff)
+                {
                     crate::logger::log(
                         "INFO",
                         "WATCHDOG",
