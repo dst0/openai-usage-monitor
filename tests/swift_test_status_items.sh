@@ -7,11 +7,13 @@
 # behind. Every tests/*.swift file, at any depth, must therefore remove as many
 # status items as it creates. Every call counts, several on one line too. A
 # creation is statusItem( followed by withLength, even on the next line, on any
-# receiver, so an alias of NSStatusBar.system is covered. A func or enum case
-# declaring that name, or an enum case pattern matching it, is not one: the text
-# before the name must be func, or a case whose earlier items are enum names or
-# patterns. Calls to such a func still count, and so does a case that evaluates
-# an expression, such as case bar.statusItem(withLength: 1).length. A removal counts only
+# receiver, so an alias of NSStatusBar.system is covered. Declarations and
+# binding patterns with that name are not creations: a func directly before
+# the name; a case in an enum body; and, in a switch body, a case pattern that
+# binds (case let .statusItem(...), or an argument let n, var n, or _). The body
+# is the one whose unmatched { encloses the name. Any other case counts, since
+# a switch case can run a call (case Factory.statusItem(withLength: 1):), and
+# so do calls to such a func. A removal counts only
 # as NSStatusBar.system.removeStatusItem(item), whose receiver is never nil; any
 # other use of that name (an alias or optional status bar, a declaration or
 # wrapper, a selector, a method reference), any reference to
@@ -117,12 +119,29 @@ local $/; my $c = <STDIN>; $c = "" unless defined $c;
 my $type_path = qr/[A-Z]\w*(?:\.[A-Z]\w*)*/;
 my $case_item = qr/(?:(?:let|var)\s+)?(?:$type_path)?\.?\w+(?:\([^()]*\))?/;
 my $case_prefix = qr/^\s*(?:\@\w+(?:\([^()]*\))?\s+)*(?:indirect\s+)?case\s+(?:$case_item\s*,\s*)*(?:(?:let|var)\s+)?(?:$type_path)?\.?\z/;
+sub enclosing_header {
+  my ($at) = @_; my $depth = 0;
+  for (my $k = $at - 1; $k >= 0; $k--) {
+    my $ch = substr($c, $k, 1);
+    if ($ch eq "}") { $depth++; next; }
+    next unless $ch eq "{";
+    if ($depth > 0) { $depth--; next; }
+    my $head = substr($c, 0, $k);
+    return substr($head, $head =~ /.*[;{}]/s ? $+[0] : 0);
+  }
+  return "";
+}
 sub declared {
   my ($at) = @_;
   my $before = substr($c, 0, $at);
   return 1 if $before =~ /\bfunc\s+\z/;
-  my $start = $before =~ /.*[;{}\n]/s ? $+[0] : 0;
-  return substr($before, $start) =~ $case_prefix ? 1 : 0;
+  my $segment = substr($before, $before =~ /.*[;{}\n]/s ? $+[0] : 0);
+  return 0 unless $segment =~ $case_prefix;
+  my $header = enclosing_header($at);
+  return 1 if $header =~ /\benum\b/;
+  return 0 unless $header =~ /\bswitch\b/;
+  return 1 if $segment =~ /\b(?:let|var)\s+(?:$type_path)?\.?\z/;
+  return substr($c, $at) =~ /\A\w+\s*\(\s*(?:\w+\s*:\s*)?(?:let|var|_)\b/ ? 1 : 0;
 }
 my $created = 0;
 while ($c =~ /statusItem\s*\(\s*withLength\b/g) { $created++ unless declared($-[0]); }
@@ -246,6 +265,8 @@ expect_accepted attributed-func-creator '  @objc(makeItem:) static func statusIt
 expect_accepted listed-pattern-creator '  switch kind { case .a(x: 1), .statusItem(withLength: let n): _ = n; default: break }'
 expect_accepted multiline-enum-creator '  enum Kind {'$'\n''    case idle'$'\n''    case statusItem(withLength: Int)'$'\n''  }'
 expect_accepted enum-with-members-creator '  enum Kind {'$'\n''    case statusItem(withLength: Int)'$'\n''    var x: Int { 0 }'$'\n''  }'
+expect_accepted nested-block-pattern-creator \
+    '  switch kind { case .a: do { } ; case .statusItem(withLength: let n): _ = n; default: break }'
 expect_accepted enum-pattern-creator '  switch kind { case .statusItem(withLength: let n): _ = n }'
 # Declaring a helper with the creator's name creates nothing, inside #if too.
 expect_accepted guarded-declared-creator '#if DEBUG'$'\n''  func statusItem(withLength: Int) {}'$'\n''#endif'
@@ -375,6 +396,9 @@ expect_violation capitalized-receiver-creation "${T}" \
     "${T} creates 3 status items and removes 2"
 expect_violation bare-name-pattern-creation "${T}" \
     '  switch length { case statusItem(withLength: 1).length: break; default: break }' \
+    "${T} creates 3 status items and removes 2"
+expect_violation unenclosed-case-creation "${T}" \
+    '  func f() {'$'\n''  case .statusItem(withLength: let n)'$'\n''  }' \
     "${T} creates 3 status items and removes 2"
 expect_violation if-case-creation "${T}" \
     '  if case .ready = state, let i = Optional(NSStatusBar.system.statusItem(withLength: 1)) { _ = i }' \
