@@ -32,6 +32,7 @@
 "uninstall_purge_data" = "Also delete stored Monitor accounts (accounts.json)";
 "uninstall_failed_title" = "UNINSTALL FAILED";
 "uninstall_failed_message" = "Could not start the uninstaller. No changes were made.";
+"uninstall_install_in_progress" = "A Codex Monitor installation is in progress. Nothing was changed; uninstall again after it finishes.";
 "launch_at_login" = "Launch at Login";
 "launch_at_login_enable_failed" = "Codex Monitor could not add itself to Login Items, so it will not open at login. You can add it in System Settings > General > Login Items.";
 "launch_at_login_disable_failed" = "Codex Monitor could not remove itself from Login Items, so it will still open at login. You can remove it in System Settings > General > Login Items.";

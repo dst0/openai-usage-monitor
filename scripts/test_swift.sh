@@ -68,6 +68,7 @@ swiftc -parse-as-library \
     Sources/AppDelegate+WindowBounds.swift \
     tests/TestPreferencesSuite.swift \
     tests/AppDelegatePreferencesTests.swift \
+    tests/UninstallLockCheckTests.swift \
     tests/FakeLoginItems.swift \
     tests/LaunchAtLoginTests.swift \
     tests/AppDelegateTests.swift \

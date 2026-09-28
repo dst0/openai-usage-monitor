@@ -31,18 +31,22 @@ NOTIFIER_SERVICE_LABEL_PREFIX="application.${NOTIFIER_BUNDLE_ID}."
 ASSUME_YES=0
 DRY_RUN=0
 PURGE_DATA=0
+CHECK_INSTALL_LOCK=0
 FAILED=0
 CURRENT_UID="$(/usr/bin/id -u 2>/dev/null || true)"
 USER_HOME="${HOME:-}"
 
 usage() {
     cat <<'EOF'
-Usage: scripts/uninstall.sh [--yes] [--dry-run] [--purge-data]
+Usage: scripts/uninstall.sh [--yes] [--dry-run] [--purge-data] [--check-install-lock]
 
 Remove the installed OpenAI Codex Monitor & Switcher components from this
 macOS user account. Without --yes, the command shows the plan and requires
 typing REMOVE. --yes is the explicit non-interactive confirmation.
 Use --dry-run to print the same plan without changing anything.
+Use --check-install-lock to change nothing and only report whether an
+installer holds the install lock: exit 75 if one does, 1 if the lock cannot
+be verified, 0 if it is free. The menu bar app runs it before uninstalling.
 Use --purge-data to additionally remove the Monitor-owned account registry
 under CODEX_HOME; it is intentionally separate because accounts.json contains
 stored account credentials.
@@ -70,6 +74,7 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --yes|-y) ASSUME_YES=1 ;;
         --dry-run) DRY_RUN=1 ;;
+        --check-install-lock) CHECK_INSTALL_LOCK=1 ;;
         --purge-data) PURGE_DATA=1 ;;
         --help|-h)
             usage
@@ -563,6 +568,24 @@ print_plan() {
     note "  ${USER_HOME}/Library/Application Support/ChatGPT and /Applications/ChatGPT.app"
     note "  this repository checkout and its build directories"
 }
+
+# --check-install-lock: report the install lock and change nothing, so the
+# menu bar app can refuse before it quits instead of handing a detached
+# uninstaller a refusal nobody sees.
+if [ "$CHECK_INSTALL_LOCK" -eq 1 ]; then
+    lock_verdict="$(install_lock_blocker)"
+    case "$lock_verdict" in
+        "") exit 0 ;;
+        "$INSTALL_LOCK_HELD")
+            printf '%s\n' "$INSTALL_LOCK_HELD"
+            exit 75
+            ;;
+        *)
+            printf '%s\n' "$lock_verdict"
+            exit 1
+            ;;
+    esac
+fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
     print_plan

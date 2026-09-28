@@ -167,6 +167,7 @@ public final class LocalizationManager: @unchecked Sendable {
       "uninstall_purge_data": "Также удалить сохранённые аккаунты Monitor (accounts.json)",
       "uninstall_failed_title": "UNINSTALL FAILED",
       "uninstall_failed_message": "Не удалось запустить uninstaller. Изменения не внесены.",
+      "uninstall_install_in_progress": "Сейчас идёт установка Codex Monitor. Ничего не изменено; повторите удаление после её завершения.",
       "remove_account": "🗑 Удалить аккаунт...",
       "remove_account_title": "Удалить аккаунт",
       "remove_account_confirm": "Вы уверены, что хотите удалить %@ из Codex Monitor?",
@@ -266,6 +267,7 @@ public final class LocalizationManager: @unchecked Sendable {
       "uninstall_purge_data": "Also delete stored Monitor accounts (accounts.json)",
       "uninstall_failed_title": "UNINSTALL FAILED",
       "uninstall_failed_message": "Could not start the uninstaller. No changes were made.",
+      "uninstall_install_in_progress": "A Codex Monitor installation is in progress. Nothing was changed; uninstall again after it finishes.",
       "remove_account": "🗑 Remove Account...",
       "remove_account_title": "Remove Account",
       "remove_account_confirm": "Are you sure you want to remove %@ from Codex Monitor?",
@@ -1027,6 +1029,7 @@ public enum L10n {
   public static var uninstallPurgeData: String { tr("uninstall_purge_data") }
   public static var uninstallFailedTitle: String { tr("uninstall_failed_title") }
   public static var uninstallFailedMessage: String { tr("uninstall_failed_message") }
+  public static var uninstallInstallInProgress: String { tr("uninstall_install_in_progress") }
   public static var removeAccount: String { tr("remove_account") }
   public static var removeAccountTitle: String { tr("remove_account_title") }
   public static func removeAccountConfirm(email: String) -> String {

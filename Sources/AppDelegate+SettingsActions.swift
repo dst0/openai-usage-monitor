@@ -132,6 +132,16 @@ extension AppDelegate {
         return
       }
 
+      // The detached uninstaller's output is discarded once the app quits, so a
+      // refusal because an installer holds the install lock (exit 75) would be
+      // silent. Ask first and stay open with an explanation instead.
+      if AppDelegate.bundledUninstallerExitStatus(script: script, arguments: ["--check-install-lock"])
+        == AppDelegate.uninstallInstallInProgressStatus
+      {
+        showAlert(title: L10n.uninstallTitle, message: L10n.uninstallInstallInProgress, style: .warning)
+        return
+      }
+
       let input = Pipe()
       let process = Process()
       process.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -148,6 +158,38 @@ extension AppDelegate {
     } catch {
       showAlert(title: L10n.uninstallFailedTitle, message: L10n.uninstallFailedMessage, style: .warning)
     }
+  }
+
+  /// uninstall.sh's EX_TEMPFAIL: an installer holds the install lock.
+  internal static let uninstallInstallInProgressStatus: Int32 = 75
+
+  /// Runs the bundled uninstaller script with `arguments`, feeding the script on
+  /// stdin, and returns its exit status, or nil if it cannot start or does not
+  /// finish within `timeout`. Output is discarded.
+  internal static func bundledUninstallerExitStatus(
+    script: Data, arguments: [String], timeout: TimeInterval = 10
+  ) -> Int32? {
+    let input = Pipe()
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/bash")
+    process.arguments = ["-s", "--"] + arguments
+    process.standardInput = input
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    let finished = DispatchSemaphore(value: 0)
+    process.terminationHandler = { _ in finished.signal() }
+    do {
+      try process.run()
+    } catch {
+      return nil
+    }
+    input.fileHandleForWriting.write(script)
+    input.fileHandleForWriting.closeFile()
+    guard finished.wait(timeout: .now() + timeout) == .success else {
+      process.terminate()
+      return nil
+    }
+    return process.terminationStatus
   }
 
   @objc internal func toggleLaunchAtLogin() {
