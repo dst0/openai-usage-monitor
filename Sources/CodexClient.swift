@@ -34,24 +34,37 @@ public final class CodexClient: @unchecked Sendable {
   /// `CodexClient.shared` uses the live one; tests pass a temporary directory.
   public let codexHome: URL
   private let distributionRunner: DistributionRunner
+  /// The Monitor CLI this client runs. `CodexClient.shared` finds the installed one.
+  private let cliExecutable: () -> URL
+  /// The running official Desktop, or nil. `CodexClient.shared` reads the live process list.
+  private let desktopProcess: () -> CodexDesktopProcessIdentity?
   private let desktopAppAccountIdProvider: () -> String?
 
-  /// The app's composition root: the live Codex home, the Rust coordinator, and the Desktop
-  /// session marker in that home.
+  /// The app's composition root: the live Codex home, the installed CLI and the Rust
+  /// coordinator it runs, the running Desktop, and the Desktop session marker in that home.
+  /// It binds the live lookups without calling them, so building it reads nothing.
   public convenience init() {
     let home = Self.liveCodexHome
+    let cli = Self.installedCLIExecutable
+    let desktop = CodexDesktopProcessIdentity.current
     self.init(
-      codexHome: home, distributionRunner: Self.runDistributionProcess,
-      desktopAppAccountIdProvider: { Self.readDesktopAppSessionAccountId(in: home) })
+      codexHome: home,
+      distributionRunner: { Self.runDistributionProcess(executable: cli(), arguments: $0) },
+      cliExecutable: cli, desktopProcess: desktop,
+      desktopAppAccountIdProvider: { Self.readDesktopAppSessionAccountId(in: home, currentProcess: desktop) })
   }
 
   internal init(
     codexHome: URL,
     distributionRunner: @escaping DistributionRunner,
+    cliExecutable: @escaping () -> URL,
+    desktopProcess: @escaping () -> CodexDesktopProcessIdentity?,
     desktopAppAccountIdProvider: @escaping () -> String? = { nil }
   ) {
     self.codexHome = codexHome
     self.distributionRunner = distributionRunner
+    self.cliExecutable = cliExecutable
+    self.desktopProcess = desktopProcess
     self.desktopAppAccountIdProvider = desktopAppAccountIdProvider
   }
 
@@ -173,14 +186,16 @@ public final class CodexClient: @unchecked Sendable {
     return accountID
   }
 
-  private static func readDesktopAppSessionAccountId(in codexHome: URL) -> String? {
+  private static func readDesktopAppSessionAccountId(
+    in codexHome: URL, currentProcess: () -> CodexDesktopProcessIdentity?
+  ) -> String? {
     let url = codexHome.appendingPathComponent("desktop-app-session.json", isDirectory: false)
-    guard let process = CodexDesktopProcessIdentity.current(),
+    guard let process = currentProcess(),
       let authFileID = Self.currentCliAuthFileID(in: codexHome),
       let data = Self.readPrivateSessionMarkerData(at: url),
       let accountID = Self.validatedDesktopAppSessionAccountId(
         from: data, currentProcess: process, currentAuthFileID: authFileID),
-      CodexDesktopProcessIdentity.current() == process,
+      currentProcess() == process,
       Self.currentCliAuthFileID(in: codexHome) == authFileID
     else { return nil }
     return accountID
@@ -306,7 +321,13 @@ public final class CodexClient: @unchecked Sendable {
 
   public var configTOMLURL: URL { homeFile("config.toml") }
 
-  public static var cliExecutableURL: URL {
+  /// The Monitor CLI this client runs.
+  public var cliExecutableURL: URL { cliExecutable() }
+
+  /// The installed Monitor CLI: `~/.local/bin/codex-mon`, else a development build under
+  /// `~/dev/openai-usage-monitor`, else `/usr/local/bin/codex-mon`. Only `init()` binds it;
+  /// `scripts/swift_live_diagnostics.sh` prints what it finds on this Mac.
+  internal static func installedCLIExecutable() -> URL {
     let localBin = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(".local/bin/codex-mon")
     if FileManager.default.fileExists(atPath: localBin.path) {
@@ -321,7 +342,7 @@ public final class CodexClient: @unchecked Sendable {
   }
 
   public func isCodexAppRunning() -> Bool {
-    CodexDesktopProcessIdentity.current() != nil
+    desktopProcess() != nil
   }
 
   public func getActiveModelName() -> String? {
@@ -489,7 +510,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func refreshQuotas(completion: @escaping (MultiAccountSnapshot?) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["status", "--refresh"]
@@ -571,9 +592,9 @@ public final class CodexClient: @unchecked Sendable {
     runner(arguments)
   }
 
-  internal static func makeDistributionProcess(arguments: [String]) -> Process {
+  internal static func makeDistributionProcess(executable: URL, arguments: [String]) -> Process {
     let process = Process()
-    process.executableURL = cliExecutableURL
+    process.executableURL = executable
     process.arguments = arguments
     let output = Pipe()
     process.standardOutput = output
@@ -597,8 +618,8 @@ public final class CodexClient: @unchecked Sendable {
     }
   }
 
-  private static func runDistributionProcess(arguments: [String]) -> Bool {
-    let process = makeDistributionProcess(arguments: arguments)
+  private static func runDistributionProcess(executable: URL, arguments: [String]) -> Bool {
+    let process = makeDistributionProcess(executable: executable, arguments: arguments)
     guard let result = runCapturedProcess(process) else {
       NSLog("Rust distribution coordinator could not be launched")
       return false
@@ -648,7 +669,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func removeAccount(id: String, completion: @escaping (Bool) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["remove", id]
@@ -673,7 +694,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func addNewAccount(id: String, completion: @escaping (Bool, String?) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["add", id]
@@ -705,7 +726,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func reloginAccount(id: String, completion: @escaping (Bool, String?) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["relogin", id]
@@ -740,7 +761,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func saveCurrentSession(id: String, completion: @escaping (Bool, String?) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["save-current", id]
@@ -775,7 +796,7 @@ public final class CodexClient: @unchecked Sendable {
       // Share detection, restart journaling, and verified recovery with
       // automatic switching instead of terminating the app without a snapshot.
       let proc = Process()
-      proc.executableURL = Self.cliExecutableURL
+      proc.executableURL = self.cliExecutableURL
       proc.arguments = ["restart"]
       let output = Pipe()
       proc.standardOutput = output
@@ -797,7 +818,7 @@ public final class CodexClient: @unchecked Sendable {
     id: String, newName: String?, completion: @escaping (Bool, String?) -> Void
   ) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       if let name = newName, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -832,7 +853,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func setRestartAppOnSwitch(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["config", "--restart-app-on-switch", enabled ? "true" : "false"]
@@ -865,7 +886,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func setAutoSwitchEnabled(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["config", "--auto-switch-enabled", enabled ? "true" : "false"]
@@ -892,7 +913,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func setAutoSwitchBusinessOnly(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["config", "--auto-switch-business-only", enabled ? "true" : "false"]
@@ -917,7 +938,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func setAutoSwitchBusinessPriority(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["config", "--auto-switch-business-priority", enabled ? "true" : "false"]
@@ -950,7 +971,7 @@ public final class CodexClient: @unchecked Sendable {
   ) {
     let safeHours = min(167, max(0, minRemainingHours))
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = [
@@ -985,7 +1006,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func resetAccount(id: String, completion: ((Bool, String?) -> Void)? = nil) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["reset-account", id]

@@ -52,12 +52,17 @@ final class TestCodexHome {
     requireCodexHome(rename(staging.path, file(name).path) == 0, "Cannot replace \(name)")
   }
 
-  /// A client on this home whose coordinator runs never start a process.
+  /// A client on this home that touches nothing live: its coordinator runs never start a
+  /// process, its CLI is a path in this home that does not exist unless a test writes it, and
+  /// it sees no running Desktop.
   func client(
     distributionRunner: @escaping ([String]) -> Bool = { _ in false },
+    cliExecutable: (() -> URL)? = nil,
+    desktopProcess: @escaping () -> CodexDesktopProcessIdentity? = { nil },
     desktopAppAccountIdProvider: @escaping () -> String? = { nil }
   ) -> CodexClient {
-    CodexClient(codexHome: url, distributionRunner: distributionRunner, desktopAppAccountIdProvider: desktopAppAccountIdProvider)
+    let missingCLI = file("codex-mon-not-installed")
+    return CodexClient(codexHome: url, distributionRunner: distributionRunner, cliExecutable: cliExecutable ?? { missingCLI }, desktopProcess: desktopProcess, desktopAppAccountIdProvider: desktopAppAccountIdProvider)
   }
 
   /// Removes the home and its directory. Exit cleanup does the same after a failed assertion.

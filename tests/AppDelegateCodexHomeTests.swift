@@ -203,5 +203,31 @@ private func checkWindowBoundsUseTheClientHome(preferences: TestPreferencesSuite
   assertTrue(
     !FileManager.default.fileExists(atPath: home.file("desktop-window.json").path),
     "A process without a Desktop window must not save bounds")
+
+  // The bounds come from the delegate's window list, never the live one: the Desktop's titled
+  // window is saved, and its small window and another process's window are not.
+  let desktopPID: pid_t = 4242
+  func window(pid: pid_t, name: String, _ frame: CGRect) -> [String: Any] {
+    [
+      kCGWindowOwnerPID as String: NSNumber(value: pid), kCGWindowLayer as String: NSNumber(value: 0),
+      kCGWindowAlpha as String: NSNumber(value: 1.0), kCGWindowName as String: name,
+      kCGWindowBounds as String: frame.dictionaryRepresentation,
+    ]
+  }
+  let windows = [
+    window(pid: desktopPID, name: "Settings", CGRect(x: 0, y: 0, width: 200, height: 150)),
+    window(pid: 99, name: "Other", CGRect(x: 0, y: 0, width: 1600, height: 1000)),
+    window(pid: desktopPID, name: "ChatGPT", CGRect(x: 10, y: 20, width: 800, height: 600)),
+  ]
+  let windowed = makeTestAppDelegate(
+    client: home.client(), preferences: preferences, desktopWindows: { windows })
+  // The saved bounds replace an existing file, as after an earlier save.
+  home.writeJSON("desktop-window.json", ["version": 1])
+  windowed.saveDesktopWindowBoundsPassive(for: desktopPID)
+  let saved = (try? Data(contentsOf: home.file("desktop-window.json")))
+    .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+  assertEqual(
+    [saved["x"], saved["y"], saved["width"], saved["height"]].map { ($0 as? NSNumber)?.doubleValue },
+    [10.0, 20.0, 800.0, 600.0], "The Desktop's own window in the delegate's list must be saved")
   home.tearDown()
 }

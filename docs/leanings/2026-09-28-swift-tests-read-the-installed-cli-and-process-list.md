@@ -1,0 +1,51 @@
+# 2026-09-28 — Swift tests checked the installed CLI and read the live process and window lists
+
+- **Status:** Partial
+- **Task/context:** Follow-up to [2026-09-28 — Swift tests read the live Codex home](2026-09-28-swift-tests-read-the-live-codex-home.md). Its prevention line lists what that fix left: the Swift tests still stat `~/.local/bin/codex-mon` and ask the live process list whether ChatGPT is running. The owner asked for both to be fixed, with any live check kept as a diagnostic that runs only when an agent needs it.
+- **Unexpected observation or failure:** Three live lookups were reached from `./scripts/test_swift.sh`:
+  - **Installed CLI.** The static `CodexClient.cliExecutableURL` checked `~/.local/bin/codex-mon` and a `~/dev` checkout with `fileExists`. Test 7 reached it through `CodexClient.makeDistributionProcess(arguments:)`. Every CLI action (`refreshQuotas`, `set*`, `add`/`remove`/`relogin`, …) ran whatever it found. With no `CODEX_HOME` in the child's environment, that CLI works on the live `~/.codex`.
+  - **Process list.** `isCodexAppRunning()` called `CodexDesktopProcessIdentity.current()`, which reads `NSRunningApplication` and `proc_pidinfo`. Every `loadCachedSnapshot()` in the App/CLI identity tests did so. Their results depended on whether ChatGPT was open on the machine.
+  - **Window list.** The window-bounds test called `saveDesktopWindowBoundsPassive(for: getpid())`, which reads every app's on-screen windows with `CGWindowListCopyWindowInfo`.
+- **Evidence:** `tests/swift_test_live_system_isolation.sh`, run on unmodified `main` at `6de4d94`, fails for these three reasons:
+  - the static `cliExecutableURL` declaration and its 13 `Self.cliExecutableURL` uses;
+  - `CodexDesktopProcessIdentity.current()` at `CodexClient.swift` lines 178, 183, and 324;
+  - no injected window list.
+
+  All its fixtures pass first.
+- **Approaches tried:**
+  - **Attempt:** A compile-time test tripwire (the Swift form of Rust's `test_live_system::forbid`).
+    - **Outcome:** Rejected.
+    - **Why:** #37 chose injection and static guards over `#if` test code in production sources, and this change follows it.
+  - **Attempt:** Optional override properties that tests set, like `quotaRefreshOverride`.
+    - **Outcome:** Rejected.
+    - **Why:** A test that forgets to set one reads the live system silently.
+  - **Attempt:** Required initializer arguments.
+    - **Outcome:** Worked.
+    - **Details:**
+      - `CodexClient(codexHome:distributionRunner:cliExecutable:desktopProcess:…)` and `AppDelegate(client:defaults:autoLaunchManager:desktopWindows:)` take their sources.
+      - Only `CodexClient()` and `AppDelegate()` bind the live ones, as unapplied references. Tests build `CodexClient.shared` and `AppDelegate()` for their wiring checks, so a root that called a lookup would reach the live system with nothing failing. The static check pins the exact binding lines.
+  - **Attempt:** Keep the live checks as a diagnostic.
+    - **Outcome:** Worked.
+    - **Why:** `scripts/swift_live_diagnostics.sh --allow-live-system` prints the installed CLI and the running Desktop. It refuses without the flag, only reads, and passes the module-cache ordering scan. The static check keeps it out of `test_swift.sh`, the workflows, and the tests.
+- **Root cause:** #37 injected the Codex home but left the other lookups static on `CodexClient` and inline in `AppDelegate`, so any client or delegate built in a test used them.
+- **Resolution:**
+  - `CodexClient` runs `cliExecutableURL` (its injected CLI) and asks `desktopProcess()`. `TestCodexHome.client()` defaults to a CLI path in the test home that does not exist, and to no running Desktop.
+  - `AppDelegate` reads `desktopWindows()`; `makeTestAppDelegate` defaults to an empty list.
+  - New tests:
+    - `refreshQuotas` runs a fake CLI in a test home exactly once, with `status --refresh`.
+    - The identity tests check both a running and a closed Desktop.
+    - The bounds test saves the Desktop's titled window from a fake list, and not its small window or another process's window.
+- **Verification:**
+  - **Static check.** Red on `main` as above; green on the branch. It fails when any rule is broken: fixtures for each, run before the repository check.
+  - **Module-cache scan.** Accepts the diagnostic and rejects it with a compile moved before the cache call.
+  - **Workflow policy.** `cargo test --locked --test ci_workflow_policy` passes (144) on a Linux clone with the binary stubbed.
+  - **Swift suites.** `./scripts/test_swift.sh` runs only on the macOS CI runner; see the pull request's checks.
+- **Prevention/follow-up:**
+  - **Guards in place.** The static check, the AGENTS.md rule "Swift tests never check the installed Monitor CLI or read the live process list or window list", and the diagnostic for deliberate live evidence.
+  - **Still live, not reached by tests:**
+    - `AccountRowView.mouseUp` on an app-session row activates ChatGPT, or opens it, through `NSRunningApplication` and `NSWorkspace`. Tests build such a row but never click it.
+    - `SingleInstanceGuard.isAnotherInstanceRunning` and `refreshCLIVersion` run only at launch. The static check bans tests from naming the launch path.
+  - **Unverified.** `saveDesktopWindowBoundsPassive` replaces `desktop-window.json` with `FileManager.replaceItemAt`, which may fail when the file does not exist yet. The new test pre-creates the file, and no Mac was available here to check the first save.
+  - **Why Partial.** The Swift results come from CI only; this entry moves to `Resolved` once the pull request's Swift job passes.
+- **Reusable learning:** Every live lookup a Swift type makes needs a required initializer argument. The composition root binds it without calling it, and the test factory supplies a fake. Keep a flag-gated diagnostic for the live values rather than a test that reads them.
+- **References:** `Sources/CodexClient.swift`, `Sources/AppDelegate.swift`, `Sources/AppDelegate+WindowBounds.swift`, `tests/TestCodexHome.swift`, `tests/AppDelegatePreferencesTests.swift`, `tests/AppDelegateTests.swift` (Test 7), `tests/CodexClientIdentityTests.swift`, `tests/AppDelegateCodexHomeTests.swift`, `tests/swift_test_live_system_isolation.sh`, `scripts/swift_live_diagnostics.sh`, `scripts/codex-live-diagnostics.swift`, AGENTS.md.
