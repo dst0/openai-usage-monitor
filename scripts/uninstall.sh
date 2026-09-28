@@ -272,12 +272,12 @@ holds_only_monitor_bundle() {
 # Leftovers of a killed install. install.sh creates these only while it holds
 # the install lock, and its EXIT cleanup removes them before releasing it.
 # macOS mktemp(1) fills each X from MKTEMP_CHAR; `mktemp -t` keeps the Xs of
-# its prefix and appends a dot and ten such characters.
+# its prefix and appends a dot and ten such characters (eight on macOS 13).
 #   ~/.local/bin/.codex-mon.install.XXXXXX         CLI staging (0600, 0755 after chmod)
 #   ~/.local/bin/.codex-mon.install.XXXXXX.cstemp  codesign's copy while signing (0755 only)
 #   APPLICATION_DIRS/.codex-monitor-install.XXXXXX app staging root (0700)
 #   APPLICATION_DIRS/.codex-monitor-backup.XXXXXX  prior-app backup root (0700)
-#   <per-user temp dir>/codex-mon-install-XXXXXX.XXXXXXXXXX
+#   <per-user temp dir>/codex-mon-install-XXXXXX.XXXXXXXXXX (or .XXXXXXXX)
 #                                                  remote-install clone (0700)
 # A staging or backup root may hold only the Monitor bundle. While an install
 # runs, a backup root can hold the only copy of the previous app, so callers
@@ -347,8 +347,8 @@ flock_fd_now() {
 # locks the new one instead), so the probe starts over, a bounded number of
 # times. Exit status 0: free (and removed with `unlink`); 66: the path does
 # not exist; 74: the free file could not be removed; 75 (EX_TEMPFAIL):
-# another process holds it; anything else, including flock_fd_now's 69 for
-# no lock tool: unknown.
+# another process holds it; 71: unknown. Every lock-tool status other than
+# 0 and 75 becomes 71, so no tool status can pass for 66 or 74.
 try_flock() {
     local path="$1"
     local action="${2:-keep}"
@@ -362,6 +362,10 @@ try_flock() {
         fi
         flock_fd_now 8
         status=$?
+        case "$status" in
+            0|75) ;;
+            *) status=71 ;;
+        esac
         if [ "$status" -eq 0 ]; then
             opened="$(/usr/bin/stat -f '%d:%i' 0<&8 2>/dev/null)"
             if [ -z "$opened" ] || [ "$opened" != "$(/usr/bin/stat -f '%d:%i' "$path" 2>/dev/null)" ]; then
@@ -498,6 +502,30 @@ print_installer_temp_plan() {
         printf '  preserve remote-install clones (%s)\n' "$TEMP_DIR_UNKNOWN"
 }
 
+# How a confirmed run would treat each install lock file that exists.
+print_install_lock_plan() {
+    local path status
+    for path in "${INSTALL_LOCK_FILES[@]}"; do
+        is_present "$path" || continue
+        if [ -L "$path" ] || [ ! -f "$path" ]; then
+            printf '  remove %s\n' "$path"
+            continue
+        fi
+        if [ "$(/usr/bin/stat -f '%u' "$path" 2>/dev/null || true)" != "$CURRENT_UID" ]; then
+            printf '  preserve %s (another user owns it)\n' "$path"
+            continue
+        fi
+        try_flock "$path"
+        status=$?
+        case "$status" in
+            0) printf '  remove %s\n' "$path" ;;
+            66) ;;
+            75) printf '  preserve %s (an installer holds it)\n' "$path" ;;
+            *) printf '  preserve %s (cannot tell whether the lock is held)\n' "$path" ;;
+        esac
+    done
+}
+
 print_plan() {
     local blocker
     blocker="$(install_lock_blocker)"
@@ -509,7 +537,7 @@ print_plan() {
     print_plan_path "$NOTIFIER_PATH"
     print_plan_path "$DAEMON_PLIST"
     print_plan_path "$APP_SERVICE_PLIST"
-    for path in "${INSTALL_LOCK_FILES[@]}"; do print_plan_path "$path"; done
+    print_install_lock_plan
     for path in "${ALWAYS_STATE_PATHS[@]}"; do print_plan_path "$path"; done
     while IFS= read -r path; do print_plan_path "$path"; done < <(monitor_state_temps)
     print_installer_temp_plan "$blocker"
@@ -889,10 +917,13 @@ remove_installer_temps() {
 }
 
 # An installer that holds the install lock may be replacing or rolling back
-# the app right now. Stop before changing anything. The per-leftover check in
-# remove_installer_temps still covers an installer that starts after this.
+# the app right now. Stop before changing anything, with EX_TEMPFAIL (75)
+# rather than the 1 of an uninstall with warnings. This check does not keep
+# an installer from starting during the uninstall; the per-leftover check in
+# remove_installer_temps only keeps such an installer's temporary paths.
 if [ "$(install_lock_blocker)" = "$INSTALL_LOCK_HELD" ]; then
-    die "${INSTALL_LOCK_HELD}; nothing was changed. Rerun the uninstaller after the installation ends."
+    printf 'Error: %s; nothing was changed. Rerun the uninstaller after the installation ends.\n' "$INSTALL_LOCK_HELD"
+    exit 75
 fi
 
 note "Stopping OpenAI Codex Monitor & Switcher..."

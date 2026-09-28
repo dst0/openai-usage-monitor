@@ -71,33 +71,44 @@
   and `tests/log_permissions_and_uninstall.sh` in the same change.
 - The installer takes its install lock before creating any temporary path
   (remote clone, CLI staging and its codesign `.cstemp`, app staging and
-  backup roots in `/Applications` or `~/Applications`) and releases it only as
-  the last step of its EXIT cleanup, which removes them all first. The lock
-  file is `codex_monitor_install_<uid>.lock` in `getconf
-  DARWIN_USER_TEMP_DIR`, never `TMPDIR`, so installers and uninstallers
-  started from a shell, launchd, or the Menu Bar app find the same file;
-  without that directory the installer refuses to run. Lock files are
-  removed only while their lock is held, so a waiter must recheck that the
-  path still names the file it locked (compare `stat 0<&9`, the open file,
-  with the path; `stat /dev/fd/9` reports devfs's device) and otherwise lock
-  the file now at the path. Write the holder's PID through the locked
-  descriptor, never by path. Both scripts take the lock with an identical
-  `flock_fd_now`: `/usr/bin/lockf`'s descriptor form (macOS 15 and later),
+  backup roots in `/Applications` or `~/Applications`), and the lock outlasts
+  its EXIT cleanup, which removes them all first. The lock file is
+  `codex_monitor_install_<uid>.lock` in `getconf DARWIN_USER_TEMP_DIR`,
+  never `TMPDIR`, so installers and uninstallers started from a shell,
+  launchd, or the Menu Bar app find the same file; without that directory
+  the installer refuses to run. Lock files are removed only while their lock
+  is held, so a waiter must recheck that the path still names the file it
+  locked (compare `stat 0<&9`, the open file, with the path; `stat
+  /dev/fd/9` reports devfs's device) and otherwise lock the file now at the
+  path. Write the holder's PID through the locked descriptor, never by path.
+  The installer then hands the lock to a perl keeper, forked with INT, TERM,
+  HUP, and QUIT ignored, that exits once its parent does, and closes its own
+  descriptor: a command it starts that outlives it (a compiler cache server
+  under cargo) must not inherit the lock, and an interrupted installer must
+  keep it through its cleanup. Never add a bare `wait` to the installer.
+  Before the clone, the CLI staging, the bundle staging, and the swap it
+  checks that the path still names its lock file, because uninstallers from
+  before this lock removed a lock file once more after releasing it. Both
+  scripts take the lock with an identical `flock_fd_now`:
+  `/usr/bin/lockf`'s descriptor form (macOS 15 and later) with `-t 0` only,
   else perl's `flock` (macOS 13 and 14 ship no `lockf`), else fail closed;
   waiting is a polling loop, because `lockf` waits on a descriptor by
-  spinning a CPU. A confirmed uninstall stops before changing anything while
-  an installer holds the canonical lock or a legacy `${TMPDIR:-/tmp}` or
-  `/tmp` one. It removes those leftovers by exact mktemp-shaped name (eight
-  or ten characters after a remote clone's `XXXXXX.`), current owner, type,
+  spinning a CPU. A confirmed uninstall stops with exit status 75, before
+  changing anything, while an installer holds the canonical lock or a
+  legacy `${TMPDIR:-/tmp}` or `/tmp` one. It does not keep an installer from
+  starting during its own run, and started from the Menu Bar app the refusal
+  is silent. It removes the leftovers by exact mktemp-shaped name (eight or
+  ten characters after a remote clone's `XXXXXX.`), current owner, type,
   and mode, never following a symlink, and a staging or backup root only
   when it is empty or holds just a real `Codex Monitor.app`. Because a
   backup can hold the only copy of the previous app during an install, it
-  removes them only when every lock is absent or free at once, and preserves
-  them with a warning when one is held or unverifiable (a symlink, not a
-  regular file, another user's, unreadable, no lock tool, or an unknown
-  per-user temporary directory). It also removes its own interrupted
-  `.codex-monitor-uninstall.XXXXXX` copies. A new installer or uninstaller
-  `mktemp` template fails the shell test until the uninstaller covers it.
+  removes them only when every lock is absent or free at once, and
+  preserves them with a warning when one is held or unverifiable (a
+  symlink, not a regular file, another user's, unreadable, any lock-tool
+  status but taken or held, or an unknown per-user temporary directory). It
+  also removes its own interrupted `.codex-monitor-uninstall.XXXXXX`
+  copies. A new installer or uninstaller `mktemp` template fails the shell
+  test until the uninstaller covers it.
 - `scripts/install.sh` and `scripts/test_swift.sh` resolve a set
   `CLANG_MODULE_CACHE_PATH` to its physical path before their first `swiftc`
   (`scripts/swift_module_cache.sh`). They stop on a path that is not a

@@ -390,16 +390,21 @@ skill links that point to this project. The script is idempotent and does not re
 anything merely because it happens to be named `codex` unless it is the exact
 shim installed by this project.
 
-While an installation runs, the uninstaller changes nothing: it reports that
-an installer holds the install lock and exits with an error, so rerun it after
-the installation ends. Started from the menu, it has already closed the app;
-the installer opens it again when it finishes. The lock is `codex_monitor_install_<uid>.lock` in the
-per-user temporary directory (`getconf DARWIN_USER_TEMP_DIR`), whatever
-`TMPDIR` says, so an uninstall started from the menu finds an installer
-started in a terminal. Locks that older installers kept in `$TMPDIR` or
-`/tmp` count too. The installer takes the lock with `lockf` (macOS 15 and
-later) or perl's `flock` (macOS 13 and 14 ship no `lockf`), and refuses to run
-when it can take neither or cannot find that directory.
+While an installation runs, the uninstaller changes nothing: it prints that an
+installer holds the install lock and exits with status 75, so rerun it after
+the installation ends. The Menu Bar app's Uninstall item has already quit the
+app by then and shows nothing, so if the app is still installed afterwards,
+run `scripts/uninstall.sh` from a terminal once the installation is done (a
+successful installation reopens the app). The lock is
+`codex_monitor_install_<uid>.lock` in the per-user temporary directory
+(`getconf DARWIN_USER_TEMP_DIR`), whatever `TMPDIR` says, so an uninstall
+started from the menu finds an installer started in a terminal. A lock that
+an older installer kept in the uninstaller's own `$TMPDIR` or in `/tmp` counts
+too. The installer takes the lock with `lockf` (macOS 15 and later) or perl's
+`flock` (macOS 13 and 14 ship no `lockf`), and refuses to run when it can take
+neither or cannot find that directory. A program the installer starts that
+keeps running after it (a compiler cache server, for example) does not keep
+the lock.
 
 It also removes what a killed installer or uninstaller left behind. The
 installer creates its temporary paths only while it holds its install lock

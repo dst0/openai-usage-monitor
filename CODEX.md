@@ -533,14 +533,27 @@ it holds that lock, so an installer that was waiting for it would then hold
 a file without a name; after every acquisition the installer compares the
 open file (`stat 0<&9`; `stat /dev/fd/9` reports devfs's device) with the
 path and locks the file now at the path when they differ. It writes its PID
-through the locked descriptor, never by path. The uninstaller's probe opens
-each lock file read-only, never creating one, and likewise starts over when
-the path no longer names the file it locked.
+through the locked descriptor, never by path, and then hands the lock to a
+perl keeper that is forked with INT, TERM, HUP, and QUIT ignored and exits
+once the installer has exited. The installer closes its own descriptor, so
+no command it runs, such as a compiler cache server started under cargo, can
+inherit the lock and keep it after the installer ends, and an interrupted
+installer keeps the lock through its EXIT cleanup. Before its remote clone,
+CLI staging, bundle staging, and bundle swap, the installer stops if the
+path no longer names its lock file: uninstallers from before this lock
+removed a lock file once more after releasing it. The uninstaller's probe
+opens each lock file read-only, never creating one, likewise starts over
+when the path no longer names the file it locked, and treats any lock-tool
+status other than taken or held as unknown.
 
-A confirmed uninstall stops before changing anything while an installer
-holds that lock, or a legacy `${TMPDIR:-/tmp}` or `/tmp` one of an older
-installer. The uninstaller matches `~/.local/bin/.codex-mon.install.XXXXXX`
-(regular file, mode `0600` or `0755`) and its codesign `.cstemp` copy
+A confirmed uninstall stops with exit status 75 before changing anything
+while an installer holds that lock, or a legacy `${TMPDIR:-/tmp}` or `/tmp`
+one of an older installer; its dry run says so and marks each held lock
+file. It does not stop an installer that starts during the uninstall, whose
+leftovers the check below still keeps. The Menu Bar app discards the
+uninstaller's output, so a refusal started from the menu is silent. The
+uninstaller matches `~/.local/bin/.codex-mon.install.XXXXXX` (regular file,
+mode `0600` or `0755`) and its codesign `.cstemp` copy
 (regular file, `0755`), `.codex-monitor-install.XXXXXX` and
 `.codex-monitor-backup.XXXXXX` in `/Applications` and `~/Applications` (mode
 `0700` directory that is empty or holds only a real `Codex Monitor.app`

@@ -105,6 +105,28 @@ jobs:
       - name: Run Installer Restart Worker Wait Shell Test
         run: bash tests/install_restart_worker_wait.sh
 
+  # Not a required check. The required jobs run on macOS 14, which ships no
+  # /usr/bin/lockf, so the installer lock there always falls back to perl;
+  # this job runs the same test where lockf's descriptor form, the path
+  # macOS 15 and later take, exists.
+  install-lock-macos-15:
+    name: 🔐 Installer Lock with lockf (macOS 15)
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Require lockf
+        run: test -x /usr/bin/lockf
+
+      # /bin/bash is the bash 3.2 the installer runs under. The required
+      # job's `bash tests/install_lock.sh` step stays the one gate for it.
+      - name: Run Installer Lock Shell Test with lockf
+        run: /bin/bash tests/install_lock.sh
+
   test-swift:
     name: 🍏 Swift Menu Bar App Tests
     runs-on: macos-14

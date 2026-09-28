@@ -296,10 +296,12 @@ STAGING_SYMLINK_TARGET="${TEMP_ROOT}/staging-symlink-target"
     "${FAKE_HOME}/.codex/state_5.sqlite" \
     "${FAKE_HOME}/.codex/state_5.sqlite-wal" \
     "${FAKE_HOME}/.codex/state_5.sqlite-shm"
-/usr/bin/printf '#!/bin/sh\nexit 0\n' > "${FAKE_BIN}/launchctl"
-/usr/bin/printf '#!/bin/sh\nexit 0\n' > "${FAKE_BIN}/osascript"
-/usr/bin/printf '#!/bin/sh\nexit 0\n' > "${FAKE_BIN}/defaults"
-/usr/bin/printf '#!/bin/sh\nexit 0\n' > "${FAKE_BIN}/lsregister"
+# The launchd, login-item, preference, and LaunchServices fakes log each call.
+SYSTEM_CALLS="${TEMP_ROOT}/system-calls.log"
+for name in launchctl osascript defaults lsregister; do
+    /usr/bin/printf '#!/bin/sh\n/usr/bin/printf "%%s %%s\\n" %s "$*" >> %s\nexit 0\n' \
+        "${name}" "'${SYSTEM_CALLS}'" > "${FAKE_BIN}/${name}"
+done
 # `getconf DARWIN_USER_TEMP_DIR` names the per-user temporary directory that
 # `mktemp -t` uses. The fake prints GETCONF_OUTPUT, or fails when it is absent.
 GETCONF_OUTPUT="${TEMP_ROOT}/getconf-output"
@@ -823,7 +825,8 @@ SCRIPTED_PROBE_UNINSTALLER="${TEMP_ROOT}/uninstall-scripted-probe.sh"
 # install lock's path, as an uninstaller's removal and a new installer would.
 # Every later call reports a held lock, except that replace-always replaces
 # the file and reports it free on every call. remove-once removes the file
-# instead, as another uninstaller that held it would.
+# instead, as another uninstaller that held it would. status-66 always
+# answers 66, which no lock tool means as "absent".
 SCRIPTED_LOCKF_MODE="${TEMP_ROOT}/scripted-lockf-mode"
 SCRIPTED_LOCKF_CALLS="${TEMP_ROOT}/scripted-lockf-calls"
 /bin/cat > "${FAKE_BIN}/scripted-lockf" <<EOF
@@ -832,6 +835,7 @@ SCRIPTED_LOCKF_CALLS="${TEMP_ROOT}/scripted-lockf-calls"
 count=\$(( \$(/bin/cat '${SCRIPTED_LOCKF_CALLS}' 2>/dev/null || echo 0) + 1 ))
 /usr/bin/printf '%s\n' "\${count}" > '${SCRIPTED_LOCKF_CALLS}'
 mode="\$(/bin/cat '${SCRIPTED_LOCKF_MODE}')"
+[ "\${mode}" != status-66 ] || exit 66
 [ "\${count}" -eq 1 ] || [ "\${mode}" = replace-always ] || exit 75
 case "\${mode}" in
     free-once) exit 0 ;;
@@ -878,6 +882,22 @@ assert_locked_temps_preserved_in_plan() {
     return 0
 }
 
+# An independent probe of the lock of the file at a path: held, free, or absent.
+lock_state_of() {
+    local status=0
+    /usr/bin/perl -MErrno -MFcntl=:flock -e '
+        open(my $lock, "<", $ARGV[0]) or exit($!{ENOENT} ? 69 : 71);
+        flock($lock, LOCK_EX | LOCK_NB) or exit($!{EWOULDBLOCK} ? 75 : 71);
+        exit 0;
+    ' "$1" || status=$?
+    case "${status}" in
+        0) echo free ;;
+        69) echo absent ;;
+        75) echo held ;;
+        *) echo "unknown (${status})" ;;
+    esac
+}
+
 # Everything a confirmed run could change, to prove it changed nothing.
 locked_state() {
     /usr/bin/find "${LOCKED_HOME}" "${SYSTEM_APPS}" "${FAKE_DARWIN_TMP}" "${TEMP_ROOT}/tmp" \
@@ -888,14 +908,20 @@ locked_state() {
 # and the confirmed run fails before changing anything.
 assert_uninstall_refused() {
     local holder="$1"
-    local before
+    local held_lock="$2"
+    local before calls_before status=0
     assert_locked_temps_preserved_in_plan "${HELD_REASON}"
+    /usr/bin/grep -F -x "  preserve ${held_lock} (an installer holds it)" "${TEMP_ROOT}/locked-dry-run.txt" >/dev/null ||
+        fail "dry-run did not keep the held lock file ${held_lock}"
     before="$(locked_state)"
-    if run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1; then
-        fail "uninstall reported success while ${holder} held the install lock"
-    fi
+    calls_before="$(/bin/cat "${SYSTEM_CALLS}" 2>/dev/null || true)"
+    run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1 || status=$?
+    [ "${status}" -eq 75 ] ||
+        fail "uninstall exited ${status}, not 75, while ${holder} held the install lock: $(/bin/cat "${LOCKED_OUTPUT}")"
     /usr/bin/grep -F -x "${HELD_ERROR}" "${LOCKED_OUTPUT}" >/dev/null ||
         fail "uninstall did not stop for ${holder}: $(/bin/cat "${LOCKED_OUTPUT}"); $(describe_install_lock)"
+    [ "$(/bin/cat "${SYSTEM_CALLS}" 2>/dev/null || true)" = "${calls_before}" ] ||
+        fail "uninstall called launchctl, osascript, defaults, or lsregister while ${holder} held the install lock"
     [ "$(locked_state)" = "${before}" ] ||
         fail "uninstall changed files while ${holder} held the install lock: $(/usr/bin/diff <(/usr/bin/printf '%s\n' "${before}") <(locked_state) || true)"
 }
@@ -915,9 +941,12 @@ INSTALL_LOCK_BLOCK="${TEMP_ROOT}/install-lock-block.sh"
     fail 'could not extract the install lock block of install.sh'
 /usr/bin/grep -F 'acquire_install_lock() {' "${INSTALL_LOCK_BLOCK}" >/dev/null ||
     fail 'the install lock block defines no acquire_install_lock'
-/usr/bin/grep -E '(^|[^[:alnum:]_./-])getconf([^[:alnum:]_.-]|$)|/usr/bin/getconf' "${INSTALL_LOCK_BLOCK}" |
-    /usr/bin/grep -v -E '^[[:space:]]*#' | /usr/bin/grep -v -F "${FAKE_BIN}/getconf" >/dev/null &&
-    fail 'the install lock block copy can still reach the real getconf'
+# The copy may reach the per-user temporary directory only through the fake
+# getconf, and must not read or signal processes or source a file.
+UNFAKED_BLOCK="$(/usr/bin/sed -e "s|${FAKE_BIN}/[A-Za-z0-9_-]*||g" "${INSTALL_LOCK_BLOCK}" |
+    /usr/bin/grep -n -E -e "${SYSTEM_COMMAND}" -e "${SOURCE_COMMAND}" | /usr/bin/grep -v -E '^[0-9]+:[[:space:]]*#' || true)"
+[ -z "${UNFAKED_BLOCK}" ] || fail "the install lock block copy can still reach a real command:
+${UNFAKED_BLOCK}"
 LOCK_HOLDER_SCRIPT="${TEMP_ROOT}/installer-lock-holder.sh"
 /bin/cat > "${LOCK_HOLDER_SCRIPT}" <<'EOF'
 #!/bin/bash
@@ -949,10 +978,18 @@ start_lock_holder() {
         /bin/sleep 0.025
     done
 }
+# release_lock_holder LOCK: ends the holder and waits until LOCK is free; the
+# installer's lock keeper exits right after the installer.
 release_lock_holder() {
     exec 7>&-
     wait "${LOCK_HOLDER}" || fail "lock holder failed: $(/bin/cat "${TEMP_ROOT}/lock-holder.log")"
     LOCK_HOLDER=""
+    local attempt=0
+    until [ "$(lock_state_of "$1")" = free ]; do
+        attempt=$((attempt + 1))
+        [ "${attempt}" -lt 400 ] || fail "the lock stayed held after its holder exited: $1"
+        /bin/sleep 0.025
+    done
 }
 
 # The installer of this change, started with another TMPDIR: once through the
@@ -961,17 +998,17 @@ start_lock_holder installer "${INSTALL_LOCK_BLOCK}"
 [ -f "${INSTALL_LOCK}" ] || fail "the installer did not lock ${INSTALL_LOCK}; $(describe_install_lock)"
 [ ! -e "${INSTALLER_TMPDIR}/${LOCK_NAME}" ] || fail 'the installer locked a file in its TMPDIR'
 for LOCKED_UNINSTALLER in "${PERL_PROBE_UNINSTALLER}" "${UNINSTALL_COPY}"; do
-    assert_uninstall_refused 'an installer'
+    assert_uninstall_refused 'an installer' "${INSTALL_LOCK}"
 done
 LOCKED_UNINSTALLER="${UNINSTALL_COPY}"
-release_lock_holder
+release_lock_holder "${INSTALL_LOCK}"
 
 # Installers from before this change locked ${TMPDIR:-/tmp}'s file: here the
 # uninstaller's TMPDIR, and /tmp for an installer run without TMPDIR.
 for legacy_lock in "${TMPDIR_LOCK}" "${SHARED_TMP_LOCK}"; do
     start_lock_holder legacy "${legacy_lock}"
-    assert_uninstall_refused "a legacy installer (${legacy_lock})"
-    release_lock_holder
+    assert_uninstall_refused "a legacy installer (${legacy_lock})" "${legacy_lock}"
+    release_lock_holder "${legacy_lock}"
     /bin/rm -f "${legacy_lock}"
 done
 
@@ -1003,9 +1040,14 @@ make_file 600 "${LOCKED_UNINSTALL_TEMP}"
 use_scripted_lockf replace-once
 assert_locked_temps_preserved_in_plan "${HELD_REASON}"
 [ "$(/bin/cat "${INSTALL_LOCK}")" = replacement ] || fail 'the scripted lockf did not replace the lock file'
-# A lock file that keeps changing under the probe cannot be verified.
+# A lock file that keeps changing under the probe cannot be verified, nor one
+# whose lock tool reports anything but taken or held.
 use_scripted_lockf replace-always
 assert_locked_temps_preserved_in_plan "${UNVERIFIED_REASON}"
+use_scripted_lockf status-66
+assert_locked_temps_preserved_in_plan "${UNVERIFIED_REASON}"
+/usr/bin/grep -F -x "  preserve ${INSTALL_LOCK} (cannot tell whether the lock is held)" \
+    "${TEMP_ROOT}/locked-dry-run.txt" >/dev/null || fail 'dry-run did not keep an unverifiable lock file'
 # One that another uninstaller removed while the probe opened it was free.
 use_scripted_lockf remove-once
 run_locked_uninstall --dry-run > "${TEMP_ROOT}/removed-lock-dry-run.txt"
@@ -1047,6 +1089,8 @@ assert_locked_temps_preserved_in_plan "${UNVERIFIED_REASON}"
 /bin/chmod 000 "${INSTALL_LOCK}"
 [ ! -r "${INSTALL_LOCK}" ] || fail 'this test cannot make an unreadable file; do not run it as root'
 assert_locked_temps_preserved_in_plan "${UNVERIFIED_REASON}"
+/usr/bin/grep -F -x "  preserve ${INSTALL_LOCK} (cannot tell whether the lock is held)" \
+    "${TEMP_ROOT}/locked-dry-run.txt" >/dev/null || fail 'dry-run did not keep an unreadable lock file'
 install_fake_helper "${LOCKED_HOME}"
 if run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1; then
     fail 'uninstall reported success behind an unreadable install lock'
@@ -1090,13 +1134,36 @@ for LOCKED_UNINSTALLER in "${PERL_PROBE_UNINSTALLER}" "${UNINSTALL_COPY}"; do
     done
     [ "$(free_lock_state)" = "${FREE_LOCK_STATE}" ] || fail 'a dry run changed a free lock file'
 done
-LOCKED_UNINSTALLER="${PERL_PROBE_UNINSTALLER}"
+# The uninstaller removes a free lock file while it still holds its lock, so
+# an installer waiting for that file sees that the path no longer names it.
+# In this copy, try_flock's removal records the lock's state first.
+RM_RECORD="${TEMP_ROOT}/lock-rm.log"
+/bin/cat > "${FAKE_BIN}/recording-rm" <<EOF
+#!/bin/bash
+path="\${!#}"
+status=0
+/usr/bin/perl -MErrno -MFcntl=:flock -e 'open(my \$lock, "<", \$ARGV[0]) or exit 71;
+    flock(\$lock, LOCK_EX | LOCK_NB) or exit(\$!{EWOULDBLOCK} ? 75 : 71); exit 0;' "\${path}" || status=\$?
+/usr/bin/printf '%s %s\n' "\${status}" "\${path}" >> '${RM_RECORD}'
+/bin/rm "\$@"
+EOF
+/bin/chmod 755 "${FAKE_BIN}/recording-rm"
+RECORDING_UNINSTALLER="${TEMP_ROOT}/uninstall-recording-rm.sh"
+/usr/bin/sed -e "s#/bin/rm -f -- \"\$path\" 2>/dev/null || status=74#${FAKE_BIN}/recording-rm -f -- \"\$path\" 2>/dev/null || status=74#" \
+    "${PERL_PROBE_UNINSTALLER}" > "${RECORDING_UNINSTALLER}"
+[ "$(/usr/bin/grep -c -F "${FAKE_BIN}/recording-rm" "${RECORDING_UNINSTALLER}")" = 1 ] ||
+    fail "could not find try_flock's lock-file removal to record it"
+LOCKED_UNINSTALLER="${RECORDING_UNINSTALLER}"
 install_fake_helper "${LOCKED_HOME}"
 run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1 ||
     fail "uninstall failed behind free locks: $(/bin/cat "${LOCKED_OUTPUT}")"
 for path in "${LOCKED_TEMPS[@]}" "${FREE_LOCKS[@]}" "${LOCKED_UNINSTALL_TEMP}"; do
     assert_absent "${path}"
 done
+[ "$(/bin/cat "${RM_RECORD}")" = "75 ${INSTALL_LOCK}
+75 ${TMPDIR_LOCK}
+75 ${SHARED_TMP_LOCK}" ] || fail "the uninstaller removed a lock file without holding its lock:
+$(/bin/cat "${RM_RECORD}")"
 /usr/bin/touch "${INSTALL_LOCK}"
 LOCKED_UNINSTALLER="${UNINSTALL_COPY}"
 install_fake_helper "${LOCKED_HOME}"

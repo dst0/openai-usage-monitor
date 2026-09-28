@@ -210,9 +210,10 @@ cleanup() {
             /usr/bin/open "${INSTALL_DIR}/${BUNDLE_NAME}" >/dev/null 2>&1 || true
         fi
     fi
-    # Release the install lock last, once the temporary paths above are gone:
-    # the uninstaller treats a free lock as proof that no installer owns them.
-    exec 9>&-
+    # The install lock outlives this cleanup: its keeper (or, without perl,
+    # this shell's descriptor 9) is released only when the installer exits,
+    # after the temporary paths above are gone. The uninstaller treats a free
+    # lock as proof that no installer owns them.
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -230,6 +231,8 @@ trap 'exit 143' TERM
 # >>> install lock
 INSTALL_UID="$(/usr/bin/id -u)"
 INSTALL_LOCK_FILE=""
+# "<owner uid> <device>:<inode> <type>" of the lock file this installer holds.
+INSTALL_LOCK_IDENTITY=""
 # Seconds between attempts while another installer holds the lock.
 INSTALL_LOCK_POLL_SECONDS=1
 # How often the lock file may turn out to have been replaced before giving up.
@@ -287,14 +290,56 @@ install_lock_identity() {
     fi
 }
 
+# Moves the lock off this shell: a keeper process inherits descriptor 9,
+# ignores interrupts, and exits once this shell has exited (its parent
+# changes); this shell then closes descriptor 9. No command the installer
+# starts, such as a compiler cache server that outlives cargo, can then
+# inherit the lock and keep it after the installer ends, and an interrupted
+# installer keeps the lock until its EXIT cleanup is done. Without perl,
+# this shell keeps descriptor 9. Never add a bare `wait` to the installer:
+# it would wait for the keeper, which waits for the installer to exit.
+hand_off_install_lock() {
+    [ -x /usr/bin/perl ] || return 0
+    local saved_traps
+    # The keeper inherits these as ignored, so no signal can end it before
+    # perl starts; this shell then restores its own traps.
+    saved_traps="$(trap -p INT TERM HUP QUIT)"
+    trap '' INT TERM HUP QUIT
+    /usr/bin/perl -e '
+        $SIG{$_} = "IGNORE" for qw(INT TERM HUP QUIT);
+        my $installer = shift;
+        select(undef, undef, undef, 0.1) while getppid() == $installer;
+    ' "$$" 0</dev/null >/dev/null 2>&1 &
+    trap - INT TERM HUP QUIT
+    eval "${saved_traps}"
+    exec 9<&-
+}
+
+# Fails unless the lock path still names the file this installer locked.
+# Current uninstallers remove a lock file only while holding its lock, but
+# those from before the per-user temporary directory lock removed it once
+# more after releasing it, which could remove a newer installer's file and
+# let another installer run alongside it. Checked before each step that
+# creates a path an uninstaller must not remove while an installer runs.
+install_lock_still_named() {
+    if [ -n "${INSTALL_LOCK_IDENTITY}" ] &&
+        [ "$(install_lock_identity "${INSTALL_LOCK_FILE}")" = "${INSTALL_LOCK_IDENTITY}" ]; then
+        return 0
+    fi
+    echo "❌ Stopping installation: another program removed or replaced the install lock file: ${INSTALL_LOCK_FILE}"
+    return 1
+}
+
 # Opens INSTALL_LOCK_FILE as descriptor 9 and takes its lock, waiting while
 # another installer holds it. The uninstaller removes a lock file while it
 # holds the lock, so a waiter can acquire a file that no longer has a name,
 # which nobody else can see or lock. Once locked, the path must therefore
 # still name the locked file; otherwise the file now at the path is opened
-# and locked instead. Fails closed when the lock cannot be taken.
+# and locked instead. Fails closed when the lock cannot be taken. A new lock
+# file is private to this user whatever the umask, and an existing one that
+# is only readable is still locked (flock needs no write access).
 acquire_install_lock() {
-    local dir locked holder_pid
+    local dir locked holder_pid saved_umask
     local opens=0
     local announced=0
     local status=0
@@ -313,10 +358,14 @@ acquire_install_lock() {
             echo "❌ Refusing installation: the install lock is not a regular file: ${INSTALL_LOCK_FILE}"
             return 1
         fi
-        if ! { exec 9<>"${INSTALL_LOCK_FILE}"; } 2>/dev/null; then
-            echo "❌ Refusing installation: cannot open the install lock: ${INSTALL_LOCK_FILE}"
+        saved_umask="$(umask)"
+        umask 077
+        if ! { exec 9<>"${INSTALL_LOCK_FILE}"; } 2>/dev/null && ! { exec 9<"${INSTALL_LOCK_FILE}"; } 2>/dev/null; then
+            umask "${saved_umask}"
+            echo "❌ Refusing installation: the install lock cannot be opened: ${INSTALL_LOCK_FILE}"
             return 1
         fi
+        umask "${saved_umask}"
         while true; do
             if flock_fd_now 9; then
                 break
@@ -325,7 +374,11 @@ acquire_install_lock() {
             fi
             if [ "${status}" -ne 75 ]; then
                 exec 9<&-
-                echo "❌ Refusing installation: the install lock cannot be taken (status ${status}); it needs /usr/bin/lockf or /usr/bin/perl."
+                if [ "${status}" -eq 69 ]; then
+                    echo "❌ Refusing installation: the install lock needs /usr/bin/lockf or /usr/bin/perl."
+                else
+                    echo "❌ Refusing installation: the install lock cannot be taken (status ${status}): ${INSTALL_LOCK_FILE}"
+                fi
                 return 1
             fi
             if [ "${announced}" -eq 0 ]; then
@@ -351,11 +404,13 @@ acquire_install_lock() {
         echo "🔁 The install lock file was replaced while waiting; locking the current one..."
     done
     [ "${announced}" -eq 0 ] || echo "🔒 Acquired installation lock. Continuing..."
+    INSTALL_LOCK_IDENTITY="${locked}"
     # Tell the next waiter who holds the lock. Written through the locked
     # descriptor: writing by path would create an unlocked file if the path
     # changed. A longer earlier line may remain after it; only the first line
     # is read.
     /usr/bin/printf '%s\n' "$$" >&9 2>/dev/null || true
+    hand_off_install_lock
 }
 # <<< install lock
 
@@ -363,6 +418,7 @@ acquire_install_lock || exit 1
 
 if [ -z "${PROJECT_DIR}" ]; then
     echo "🌐 Remote installation detected. Preparing temporary build environment..."
+    install_lock_still_named || exit 1
     TMP_DIR="$(mktemp -d -t codex-mon-install-XXXXXX)"
     CLEANUP_TMP=1
 
@@ -481,6 +537,7 @@ echo "📦 Installing CLI to ${LOCAL_BIN}..."
 # place invalidates its mapped code signature and can make subsequent settings
 # commands die with SIGKILL. Prepare, freshly sign, and verify a fresh inode,
 # then atomically replace the pathname so the old daemon can finish safely.
+install_lock_still_named || exit 1
 CLI_STAGING="$(mktemp "${LOCAL_BIN}/.codex-mon.install.XXXXXX")"
 cp "target/release/codex-mon" "${CLI_STAGING}"
 chmod 755 "${CLI_STAGING}"
@@ -656,6 +713,7 @@ echo "📂 [3/4] Installing to ${INSTALL_DIR}..."
 
 # Finish every fallible bundle copy/signature check while the installed app is
 # still untouched and its writers remain available.
+install_lock_still_named || exit 1
 prepare_app_bundle_staging "${APP_DIR}" "${INSTALL_DIR}" "${BUNDLE_NAME}"
 codesign --verify --deep --strict "${APP_STAGING_PATH}"
 
@@ -664,6 +722,7 @@ codesign --verify --deep --strict "${APP_STAGING_PATH}"
 # succeeded, then migrate before replacing or relaunching the application.
 stop_monitor_log_writers
 ensure_private_monitor_logs
+install_lock_still_named || exit 1
 activate_app_bundle_staging "${INSTALL_DIR}/${BUNDLE_NAME}"
 
 # If installing into /Applications, ensure ~/Applications has symlink

@@ -15,8 +15,9 @@ RAW_TEMP_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/codex-install-lock-test.XXX
 TEMP_ROOT="$(cd "${RAW_TEMP_ROOT}" && /bin/pwd -P)"
 LOCK_PROCESS_PIDS=()
 cleanup() {
-    # Closing the write ends of their pipes releases every lock process.
-    exec 5>&- 6>&- 7>&-
+    # Closing the write ends of their pipes releases every lock process and
+    # the lingering child.
+    exec 4>&- 5>&- 6>&- 7>&-
     local pid
     for pid in ${LOCK_PROCESS_PIDS[@]+"${LOCK_PROCESS_PIDS[@]}"}; do
         wait "${pid}" 2>/dev/null || true
@@ -150,7 +151,7 @@ done
 # The copies may reach the per-user temporary directory only through the fake
 # getconf, and must not read or signal processes or source a file; otherwise
 # this test would lock, or leave a file in, the real temporary directory.
-SYSTEM_COMMAND='(^|[^[:alnum:]_.])(getconf|kill|pkill|killall|ps|pgrep|launchctl|osascript)([^[:alnum:]_.-]|$)'
+SYSTEM_COMMAND='(^|[^[:alnum:]_.])(getconf|kill|pkill|killall|ps|pgrep|launchctl|osascript)([^[:alnum:]_.-]|$)|(^|[^[:alnum:]_.-])open[[:space:]]'
 SOURCE_COMMAND='(^|[;&|({[:space:]])(source|[.])[[:space:]]'
 unfaked_commands() {
     /usr/bin/sed -e "s|${FAKE_BIN}/[A-Za-z0-9_-]*||g" "$1" |
@@ -159,7 +160,7 @@ unfaked_commands() {
 }
 PROBE_LINES="${TEMP_ROOT}/guard-probe.sh"
 for line in 'dir="$(/usr/bin/getconf DARWIN_USER_TEMP_DIR)"' 'getconf DARWIN_USER_TEMP_DIR' \
-    'kill -0 "${holder_pid}"' '/bin/ps -p 1' 'source "${x}"' '    . ./x.sh'; do
+    'kill -0 "${holder_pid}"' '/bin/ps -p 1' '/usr/bin/open "${app}"' 'source "${x}"' '    . ./x.sh'; do
     /usr/bin/printf '%s\n' "${line}" > "${PROBE_LINES}"
     [ -n "$(unfaked_commands "${PROBE_LINES}")" ] || fail "fake guard missed: ${line}"
 done
@@ -180,6 +181,25 @@ flock_function() {
 [ -n "$(flock_function "${INSTALL_SCRIPT}")" ] &&
     [ "$(flock_function "${INSTALL_SCRIPT}")" = "$(flock_function "${UNINSTALL_SCRIPT}")" ] ||
     fail 'install.sh and uninstall.sh must keep identical flock_fd_now functions'
+# lockf waits on a descriptor by spinning a CPU, so neither script may run it
+# without `-t 0`.
+BLOCKING_LOCKF="$(/usr/bin/grep -n -E '/usr/bin/lockf[[:space:]]+-' "${INSTALL_SCRIPT}" "${UNINSTALL_SCRIPT}" |
+    /usr/bin/grep -v -E ':[[:space:]]*#' | /usr/bin/grep -v -F -e '/usr/bin/lockf -s -t 0 ' || true)"
+[ -z "${BLOCKING_LOCKF}" ] || fail "a script can run lockf without -t 0:
+${BLOCKING_LOCKF}"
+
+# install.sh checks that it still holds its lock file right before each step
+# that creates a path an uninstaller must not remove during an install.
+for step in '    TMP_DIR="$(mktemp -d -t codex-mon-install-XXXXXX)"' \
+    'CLI_STAGING="$(mktemp "${LOCAL_BIN}/.codex-mon.install.XXXXXX")"' \
+    'prepare_app_bundle_staging "${APP_DIR}" "${INSTALL_DIR}" "${BUNDLE_NAME}"' \
+    'activate_app_bundle_staging "${INSTALL_DIR}/${BUNDLE_NAME}"'; do
+    /usr/bin/awk -v step="${step}" '
+        $0 == step { steps++; if (previous ~ /^[[:space:]]*install_lock_still_named \|\| exit 1$/) checked++ }
+        { previous = $0 }
+        END { exit (steps == 1 && checked == 1) ? 0 : 1 }
+    ' "${INSTALL_SCRIPT}" || fail "install.sh must run install_lock_still_named || exit 1 right before: ${step}"
+done
 
 # ------------------------------------------------------------------------------
 # Lock processes. Each runs one block copy in /bin/bash like install.sh:
@@ -195,19 +215,24 @@ set -euo pipefail
 source "$1"
 INSTALL_LOCK_POLL_SECONDS=0.05
 acquire_install_lock || exit 1
-install_lock_identity > "$2.identity"
+/usr/bin/printf '%s\n' "${INSTALL_LOCK_IDENTITY}" > "$2.identity"
+if [ -n "${3:-}" ]; then
+    # A command the installer starts that outlives it, such as a compiler
+    # cache server: it ends only when this test closes its pipe.
+    /bin/bash -c 'read -r _ || true' < "$3" &
+fi
 /usr/bin/touch "$2.acquired"
 read -r _ || true
 EOF
 
-# start_lock_process NAME FD BLOCK TMPDIR
+# start_lock_process NAME FD BLOCK TMPDIR [LINGER_FIFO]
 start_lock_process() {
-    local name="$1" fd="$2" block="$3" tmpdir="$4"
+    local name="$1" fd="$2" block="$3" tmpdir="$4" linger="${5:-}"
     local base="${TEMP_ROOT}/${name}"
     /bin/rm -f "${base}.fifo" "${base}.identity" "${base}.acquired" "${base}.log"
     /usr/bin/mkfifo "${base}.fifo"
-    TMPDIR="${tmpdir}" /bin/bash "${LOCK_PROCESS}" "${block}" "${base}" \
-        < "${base}.fifo" > "${base}.log" 2>&1 5>&- 6>&- 7>&- &
+    TMPDIR="${tmpdir}" /bin/bash "${LOCK_PROCESS}" "${block}" "${base}" "${linger}" \
+        < "${base}.fifo" > "${base}.log" 2>&1 4>&- 5>&- 6>&- 7>&- &
     LOCK_PROCESS_PIDS+=("$!")
     eval "${name}_PID=\$!"
     eval "exec ${fd}>\"\${base}.fifo\""
@@ -219,6 +244,15 @@ release_lock_process() {
     eval "exec ${fd}>&-"
     eval "pid=\${${name}_PID}"
     wait "${pid}" || fail "lock process ${name} failed: $(/bin/cat "${TEMP_ROOT}/${name}.log")"
+}
+
+# bounded SECONDS COMMAND...: runs COMMAND, killed by SIGALRM (status 142) if
+# it is still running after SECONDS, so a regression that loops fails
+# instead of hanging the test.
+bounded() {
+    local seconds="$1"
+    shift
+    /usr/bin/perl -e 'alarm shift; exec @ARGV or exit 127' "${seconds}" "$@"
 }
 
 # wait_until WHAT COMMAND...: polls COMMAND for up to 10 seconds.
@@ -233,6 +267,7 @@ wait_until() {
     done
 }
 acquired() { [ -e "${TEMP_ROOT}/$1.acquired" ]; }
+lock_is() { [ "$(probe "${LOCK}")" = "$1" ]; }
 logged() { /usr/bin/grep -F -- "$2" "${TEMP_ROOT}/$1.log" >/dev/null 2>&1; }
 identity_of() { /bin/cat "${TEMP_ROOT}/$1.identity"; }
 path_identity() { /usr/bin/stat -f '%u %d:%i %HT' "$1" 2>/dev/null || echo absent; }
@@ -285,7 +320,23 @@ assert_holds_named_lock W
 logged W 'Acquired installation lock' || fail 'W did not report taking the lock'
 logged W 'replaced' && fail 'W reported a replaced lock file although none was'
 release_lock_process W 6
-[ "$(probe "${LOCK}")" = free ] || fail 'the lock stayed held after both installers exited'
+# Each installer's lock keeper exits right after its installer.
+wait_until 'the lock is free after both installers exited' lock_is free
+
+# ------------------------------------------------------------------------------
+# A command the installer started that outlives it, such as a compiler cache
+# server, must not keep the lock: the installer hands the lock to a keeper
+# that exits with it, so no command it runs inherits the lock.
+# ------------------------------------------------------------------------------
+LINGER="${TEMP_ROOT}/linger.fifo"
+/usr/bin/mkfifo "${LINGER}"
+start_lock_process H 5 "${BLOCK_HOST}" "${TEMP_ROOT}/tmp-a" "${LINGER}"
+exec 4>"${LINGER}"
+wait_until 'H holds the lock' acquired H
+lock_is held || fail "H's lock is not held: $(probe "${LOCK}")"
+release_lock_process H 5
+wait_until 'the lock is free while a command the installer started still runs' lock_is free
+exec 4>&-
 
 
 # ------------------------------------------------------------------------------
@@ -326,6 +377,53 @@ release_lock_process W2 7
 wait_until 'W takes the lock after W2' acquired W
 assert_holds_named_lock W
 release_lock_process W 6
+
+# ------------------------------------------------------------------------------
+# Taking the lock leaves the installer's own signal traps as they were: the
+# keeper is forked with the signals ignored, and the traps restored after.
+# ------------------------------------------------------------------------------
+TRAPS="$(bounded 60 /bin/bash -c 'set -euo pipefail; trap "exit 130" INT; trap "exit 143" TERM
+    source "$1"; acquire_install_lock >/dev/null || exit 1; trap -p INT TERM HUP QUIT' traps "${BLOCK_HOST}")" ||
+    fail 'the trap check could not take the lock'
+[ "${TRAPS}" = "trap -- 'exit 130' SIGINT
+trap -- 'exit 143' SIGTERM" ] || fail "taking the lock changed the installer's traps:
+${TRAPS}"
+wait_until 'the lock is free after the trap check' lock_is free
+
+# ------------------------------------------------------------------------------
+# An installer stops before creating a path once another program has removed
+# or replaced its lock file (uninstallers from before this lock removed it
+# again after releasing it).
+# ------------------------------------------------------------------------------
+NAMED_OUTPUT="${TEMP_ROOT}/named.log"
+bounded 60 /bin/bash -c 'set -euo pipefail; source "$1"; acquire_install_lock || exit 1
+    install_lock_still_named || exit 3
+    /usr/bin/printf "replacement\n" > "${INSTALL_LOCK_FILE}.next"
+    /bin/mv -f "${INSTALL_LOCK_FILE}.next" "${INSTALL_LOCK_FILE}"
+    if install_lock_still_named; then exit 4; fi
+    /bin/rm -f "${INSTALL_LOCK_FILE}"
+    if install_lock_still_named; then exit 5; fi' named "${BLOCK_HOST}" > "${NAMED_OUTPUT}" 2>&1 ||
+    fail "install_lock_still_named did not track the lock file: $(/bin/cat "${NAMED_OUTPUT}")"
+[ "$(/usr/bin/grep -c -F 'another program removed or replaced the install lock file' "${NAMED_OUTPUT}")" = 2 ] ||
+    fail "install_lock_still_named did not report the lost lock file: $(/bin/cat "${NAMED_OUTPUT}")"
+
+# ------------------------------------------------------------------------------
+# A new lock file is private whatever the umask, and a lock file this user
+# can only read is still locked (flock needs no write access).
+# ------------------------------------------------------------------------------
+/bin/rm -f "${LOCK}"
+bounded 60 /bin/bash -c 'set -euo pipefail; umask 0277; source "$1"; acquire_install_lock || exit 1' umask \
+    "${BLOCK_HOST}" > "${TEMP_ROOT}/umask.log" 2>&1 ||
+    fail "the installer failed under umask 0277: $(/bin/cat "${TEMP_ROOT}/umask.log")"
+[ "$(/usr/bin/stat -f '%Lp' "${LOCK}")" = 600 ] ||
+    fail "a new lock file is not private: $(/usr/bin/stat -f '%Lp' "${LOCK}")"
+wait_until 'the lock is free after the umask run' lock_is free
+/bin/chmod 400 "${LOCK}"
+start_lock_process H 5 "${BLOCK_HOST}" "${TEMP_ROOT}/tmp-a"
+wait_until 'H holds a read-only lock file' acquired H
+assert_holds_named_lock H
+release_lock_process H 5
+/bin/rm -f "${LOCK}"
 
 # ------------------------------------------------------------------------------
 # The PID goes through the locked descriptor. Written by path, it would land
@@ -381,18 +479,19 @@ fi
 # run_refused WHAT BLOCK MESSAGE: acquire_install_lock must fail with MESSAGE.
 run_refused() {
     local what="$1" block="$2" message="$3" output="${TEMP_ROOT}/refused.log"
-    if TMPDIR="${TEMP_ROOT}/tmp-a" /bin/bash -c 'set -euo pipefail; source "$1"
+    local status=0
+    TMPDIR="${TEMP_ROOT}/tmp-a" bounded 60 /bin/bash -c 'set -euo pipefail; source "$1"
         INSTALL_LOCK_POLL_SECONDS=0.05; acquire_install_lock || exit 1; echo LOCKED' \
-        refused "${block}" > "${output}" 2>&1; then
-        fail "installer continued ${what}: $(/bin/cat "${output}")"
-    fi
+        refused "${block}" > "${output}" 2>&1 || status=$?
+    [ "${status}" -ne 0 ] || fail "installer continued ${what}: $(/bin/cat "${output}")"
+    [ "${status}" -ne 142 ] || fail "installer never gave up ${what}"
     /usr/bin/grep -F -- "${message}" "${output}" >/dev/null ||
         fail "installer refused ${what} without saying why: $(/bin/cat "${output}")"
     /usr/bin/grep -F -x LOCKED "${output}" >/dev/null && fail "installer locked ${what}"
     [ ! -e "${TEMP_ROOT}/tmp-a/${LOCK_NAME}" ] || fail "installer fell back to TMPDIR ${what}"
     return 0
 }
-run_refused 'without lockf or perl' "${BLOCK_NONE}" 'the install lock cannot be taken (status 69)'
+run_refused 'without lockf or perl' "${BLOCK_NONE}" 'Refusing installation: the install lock needs '
 run_refused 'while the lock file kept being replaced' "${BLOCK_REPLACING}" 'the install lock file kept changing'
 /bin/rm -f "${LOCK}"
 /bin/rm -f "${GETCONF_OUTPUT}"
@@ -419,7 +518,7 @@ run_refused 'with a directory as its lock file' "${BLOCK_HOST}" 'the install loc
 /usr/bin/touch "${LOCK}"
 /bin/chmod 000 "${LOCK}"
 [ ! -r "${LOCK}" ] || fail 'this test cannot make an unreadable file; do not run it as root'
-run_refused 'with an unreadable lock file' "${BLOCK_HOST}" 'cannot open the install lock'
+run_refused 'with an unreadable lock file' "${BLOCK_HOST}" 'the install lock cannot be opened'
 /bin/rm -f "${LOCK}"
 
 # ------------------------------------------------------------------------------
@@ -434,8 +533,9 @@ CLEANUP_RAW="${TEMP_ROOT}/cleanup-function.sh"
     fail 'install.sh must define cleanup() exactly once'
 CLEANUP_COPY="${TEMP_ROOT}/cleanup-copy.sh"
 /usr/bin/sed -e "s|/usr/bin/open|${FAKE_BIN}/open|g" "${CLEANUP_RAW}" > "${CLEANUP_COPY}"
-/usr/bin/grep -E '(^|[^[:alnum:]_./-])open[[:space:]]|/usr/bin/open' "${CLEANUP_COPY}" | /usr/bin/grep -v -E '^[[:space:]]*#' &&
-    fail 'the cleanup copy can still open the installed app'
+UNFAKED_CLEANUP="$(unfaked_commands "${CLEANUP_COPY}")"
+[ -z "${UNFAKED_CLEANUP}" ] || fail "the cleanup copy can still reach a real command:
+${UNFAKED_CLEANUP}"
 CLEANUP_LOG="${TEMP_ROOT}/cleanup.log"
 STAGING="${TEMP_ROOT}/local-bin/.codex-mon.install.Ab3dE9"
 CLONE="${DARWIN_TMP}/codex-mon-install-XXXXXX.a1B2c3D4e5"
@@ -469,25 +569,44 @@ rm() {
 }
 rollback_app_bundle_swap() { /usr/bin/printf 'rollback %s\n' "$(lock_state)" >> "${CLEANUP_LOG}"; }
 cleanup_app_bundle_swap_paths() { /usr/bin/printf 'bundle-cleanup %s\n' "$(lock_state)" >> "${CLEANUP_LOG}"; }
-acquire_install_lock || exit 1
+# install.sh sets its traps before it takes the lock; taking it must keep them.
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+acquire_install_lock || exit 1
+if [ "${6:-}" = interrupted ]; then
+    # As a terminal's Ctrl-C or a group SIGTERM would: this process group
+    # (the test puts it in its own) holds only this installer and its keeper.
+    kill -TERM 0
+fi
 exit 3
 EOF
-cleanup_status=0
-TMPDIR="${TEMP_ROOT}/tmp-a" /bin/bash "${CLEANUP_PROCESS}" "${BLOCK_HOST}" "${CLEANUP_COPY}" \
-    "${CLEANUP_LOG}" "${STAGING}" "${CLONE}" > "${TEMP_ROOT}/cleanup-output.log" 2>&1 || cleanup_status=$?
-[ "${cleanup_status}" -eq 3 ] || fail "cleanup test exited ${cleanup_status}: $(/bin/cat "${TEMP_ROOT}/cleanup-output.log")"
 EXPECTED_CLEANUP_LOG="rm held -f ${STAGING} ${STAGING}.cstemp
 rm held -rf ${CLONE}
 rollback held
 bundle-cleanup held"
-[ "$(/bin/cat "${CLEANUP_LOG}")" = "${EXPECTED_CLEANUP_LOG}" ] ||
-    fail "installer cleanup must remove every temporary path before releasing the lock:
+# Once as the installer ends, and once as a signal to its whole process group
+# ends it: the lock keeper ignores the signal and outlasts the cleanup.
+for ending in exit interrupted; do
+    /bin/rm -f "${CLEANUP_LOG}"
+    /bin/mkdir -p "${CLONE}/.git"
+    /usr/bin/touch "${STAGING}" "${STAGING}.cstemp" "${CLONE}/Cargo.toml"
+    cleanup_status=0
+    TMPDIR="${TEMP_ROOT}/tmp-a" /usr/bin/perl -e 'setpgrp(0, 0); alarm shift; exec @ARGV or exit 127' 60 \
+        /bin/bash "${CLEANUP_PROCESS}" "${BLOCK_HOST}" "${CLEANUP_COPY}" "${CLEANUP_LOG}" "${STAGING}" \
+        "${CLONE}" "${ending}" > "${TEMP_ROOT}/cleanup-output.log" 2>&1 || cleanup_status=$?
+    expected_status=3
+    [ "${ending}" = exit ] || expected_status=143
+    [ "${cleanup_status}" -eq "${expected_status}" ] ||
+        fail "cleanup test (${ending}) exited ${cleanup_status}: $(/bin/cat "${TEMP_ROOT}/cleanup-output.log")"
+    [ "$(/bin/cat "${CLEANUP_LOG}")" = "${EXPECTED_CLEANUP_LOG}" ] ||
+        fail "installer cleanup (${ending}) must remove every temporary path before releasing the lock:
 $(/bin/cat "${CLEANUP_LOG}")"
-for path in "${STAGING}" "${STAGING}.cstemp" "${CLONE}"; do
-    [ ! -e "${path}" ] || fail "installer cleanup left ${path}"
+    for path in "${STAGING}" "${STAGING}.cstemp" "${CLONE}"; do
+        [ ! -e "${path}" ] || fail "installer cleanup (${ending}) left ${path}"
+    done
+    wait_until "the lock is free after the installer exited (${ending})" lock_is free
 done
-[ "$(probe "${LOCK}")" = free ] || fail 'the lock stayed held after the installer exited'
 [ ! -e "${OPEN_CALLS}" ] || fail 'the cleanup test opened an app'
 
 printf 'installer install lock: ok\n'
