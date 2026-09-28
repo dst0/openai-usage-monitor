@@ -17,7 +17,7 @@ trap 'rm -rf "${TMP_BIN_DIR}"' EXIT
 cd "${REPO_DIR}"
 
 echo "👉 Running Swift module-cache path tests..."
-bash tests/swift_module_cache_path.sh
+/bin/bash tests/swift_module_cache_path.sh
 
 echo "👉 Checking that Swift tests keep their own defaults store..."
 bash tests/swift_test_defaults_isolation.sh

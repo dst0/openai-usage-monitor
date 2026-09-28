@@ -84,19 +84,26 @@
   `flock` otherwise. It also removes its own interrupted
   `.codex-monitor-uninstall.XXXXXX` copies. A new installer `mktemp` template
   fails the shell test until the uninstaller covers it.
-- `scripts/install.sh` and `scripts/test_swift.sh` resolve a set
-  `CLANG_MODULE_CACHE_PATH` to its physical path before their first `swiftc`
-  (`scripts/swift_module_cache.sh`). They stop on a path that is not a
-  directory or is an empty one they cannot write. Reusing a module cache
-  through another spelling of its directory, such as `/tmp` for
-  `/private/tmp`, fails the build; Swift 6.4 also crashes. Give
-  ad hoc Swift or Clang runs that share a cache the physical path too. Where a
-  sandbox denies the default module cache, a writable `CLANG_MODULE_CACHE_PATH`
-  is enough. The compiler/SDK build difference recorded in `CODEX.md` does not
-  need an `SDKROOT` override.
+- Before their first `swiftc`, `scripts/install.sh` and `scripts/test_swift.sh`
+  point a set `CLANG_MODULE_CACHE_PATH` at their own subdirectory of its
+  physical path, `codex-monitor-swift-<cksum of that path>`
+  (`scripts/swift_module_cache.sh`). A module cache works only at the exact
+  path that built it: reuse through another spelling of its directory, such as
+  `/tmp` for `/private/tmp`, or after copying or moving it, fails the build
+  (the error depends on the toolchain). Every spelling reaches the same
+  subdirectory, which nothing else writes, and a moved cache gets a new one.
+  They stop on a path that is not a directory, contains a newline, starts with
+  an unexpanded `~`, or whose subdirectory is not a plain directory that the
+  user owns and can write and that group and others cannot write. A value that
+  already is the subdirectory for its parent is used as is. Ad hoc Swift or Clang runs that share a cache among themselves must
+  use one spelling. Where a sandbox denies the default module cache, a
+  writable `CLANG_MODULE_CACHE_PATH` is enough. The compiler/SDK build
+  difference recorded in `CODEX.md` does not need an `SDKROOT` override.
 - “No traces” means no persistent Monitor-owned installation artifacts. Shell
   history, unified logs, LaunchServices/TCC records, APFS snapshots, and
-  backups are outside the app's ownership and are not forensic-erased.
+  backups are outside the app's ownership and are not forensic-erased. So are
+  compiler build caches: the default module cache and the `codex-monitor-swift-*`
+  subdirectory of a user-set `CLANG_MODULE_CACHE_PATH`.
 
 ## Invariants
 - POSIX `0600` permissions on all credential and token files (`auth.json`, `accounts.json`).
