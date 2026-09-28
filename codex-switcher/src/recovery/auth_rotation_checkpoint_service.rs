@@ -1,7 +1,7 @@
 use super::{
+    auth_rotation_queue_snapshot::AuthRotationQueueSnapshot,
     auth_rotation_recovery_evidence::AuthRotationRecoveryEvidence,
     manifest_store::{load_manifest, write_manifest},
-    queue_snapshot::queue_revision,
     restart_checkpoint_service::save_pending,
 };
 use crate::switcher::{self, ThreadRolloutState};
@@ -24,12 +24,12 @@ pub(crate) struct AuthRotationCheckpointService;
 impl AuthRotationCheckpointService {
     /// Capture queue state before the first rollout offset is journaled, so
     /// input arriving during checkpoint preparation cannot become the baseline.
-    pub(crate) fn queue_revisions(
+    pub(crate) fn queue_snapshots(
         home: &Path,
         ids: &[String],
-    ) -> Result<HashMap<String, u64>, String> {
+    ) -> Result<HashMap<String, AuthRotationQueueSnapshot>, String> {
         ids.iter()
-            .map(|id| queue_revision(home, id).map(|revision| (id.clone(), revision)))
+            .map(|id| AuthRotationQueueSnapshot::read(home, id).map(|state| (id.clone(), state)))
             .collect()
     }
 
@@ -40,7 +40,7 @@ impl AuthRotationCheckpointService {
         ids: &[String],
         source_account_id: &str,
         target_account_id: &str,
-        initial_revisions: &HashMap<String, u64>,
+        initial_snapshots: &HashMap<String, AuthRotationQueueSnapshot>,
     ) -> Result<(), String> {
         if source_account_id.is_empty()
             || target_account_id.is_empty()
@@ -84,10 +84,10 @@ impl AuthRotationCheckpointService {
             if !Self::same_snapshot(&before, &after) {
                 continue;
             }
-            let Some(&initial_revision) = initial_revisions.get(&target.id) else {
+            let Some(initial_snapshot) = initial_snapshots.get(&target.id) else {
                 continue;
             };
-            if queue_revision(home, &target.id)? != initial_revision {
+            if AuthRotationQueueSnapshot::read(home, &target.id)? != *initial_snapshot {
                 continue;
             }
             target.auth_rotation = Some(AuthRotationRecoveryEvidence {
@@ -97,7 +97,7 @@ impl AuthRotationCheckpointService {
                 rollout_dev: before.dev(),
                 rollout_ino: before.ino(),
                 turn_id,
-                queue_revision: initial_revision,
+                queue_snapshot: initial_snapshot.clone(),
                 confirmed_after_stop: false,
             });
         }
@@ -130,7 +130,7 @@ impl AuthRotationCheckpointService {
                 &evidence.turn_id,
                 evidence.rollout_dev,
                 evidence.rollout_ino,
-            ) && queue_revision(home, &target.id)? == evidence.queue_revision
+            ) && AuthRotationQueueSnapshot::read(home, &target.id)? == evidence.queue_snapshot
                 && switcher::inspect_thread_rollout_state(home, &target.id)
                     == ThreadRolloutState::InterruptedByError
             {

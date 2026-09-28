@@ -1,4 +1,5 @@
 use super::{CheckpointScanRegistry, ManifestPruneService, OwnerlessProbeRotation, PendingTarget};
+use crate::recovery::auth_rotation_queue_snapshot::AuthRotationQueueSnapshot;
 use crate::recovery::auth_rotation_recovery_evidence::AuthRotationRecoveryEvidence;
 use crate::recovery::test_thread_index::indexed_before_the_pass;
 use chrono::{TimeZone, Utc};
@@ -104,7 +105,11 @@ fn only_confirmed_target_bound_auth_error_survives_ownerless_prune() {
             rollout_dev: 0,
             rollout_ino: 0,
             turn_id: "turn-a".into(),
-            queue_revision: 0,
+            queue_snapshot: AuthRotationQueueSnapshot {
+                database_identity: None,
+                revision: 0,
+                pending: 0,
+            },
             confirmed_after_stop: confirmed,
         });
         let mut pending = vec![target];

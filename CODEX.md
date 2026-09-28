@@ -290,8 +290,10 @@ the previous Desktop state if its post-shutdown checkpoint fails.
 Only a Monitor-owned A-to-B switch may mark the exact token-refresh failure
 of an active pre-stop turn as automatically recoverable. Its private recovery
 record carries the verified source and target account IDs, old turn ID,
-first-checkpoint offset, rollout file identity, and a queue revision captured
-before that offset. A bounded streaming scan before
+first-checkpoint offset, rollout file identity, and the queue database identity,
+revision, and pending count captured before that offset. The queue snapshot is
+checked during preparation, after stop, and again before deferred dispatch.
+A bounded streaming scan before
 auth replacement must find the matching terminal error in that interval and
 no Stop, new turn, or user input. The second offset remains the recovery proof
 boundary. The exception still requires the exact relaunched target-account

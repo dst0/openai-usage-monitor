@@ -57,7 +57,7 @@ fn stop_new_turn_or_wrong_turn_cannot_authorize_resume() {
         format!(
             "{}{}",
             serde_json::json!({"type":"response_item","payload":{"type":"message","role":"user"}}),
-            format!("\n{terminal}")
+            format_args!("\n{terminal}")
         ),
     ] {
         assert!(!AuthRotationCheckpointService::interval_matches(
@@ -112,9 +112,9 @@ fn append(path: &PathBuf, text: &str) {
 
 fn capture_and_prepare(env: &TestCodexHome, id: &String) {
     let ids = std::slice::from_ref(id);
-    let revisions = AuthRotationCheckpointService::queue_revisions(env.path(), ids).unwrap();
+    let snapshots = AuthRotationCheckpointService::queue_snapshots(env.path(), ids).unwrap();
     save_pending(ids).unwrap();
-    AuthRotationCheckpointService::prepare(env.path(), ids, "A", "B", &revisions).unwrap();
+    AuthRotationCheckpointService::prepare(env.path(), ids, "A", "B", &snapshots).unwrap();
 }
 
 #[test]
@@ -246,7 +246,8 @@ fn queue_input_between_first_snapshot_and_checkpoint_blocks_auth_exception() {
     let (env, id, _) = new_active_rollout("auth-rotation-queued-during-capture");
     let queue = env.path().join("queue_1.sqlite");
     let setup = format!(
-        "CREATE TABLE queued_thread_revisions (thread_id TEXT, revision INTEGER); \
+        "CREATE TABLE queued_items (thread_id TEXT); \
+         CREATE TABLE queued_thread_revisions (thread_id TEXT, revision INTEGER); \
          INSERT INTO queued_thread_revisions VALUES ('{id}', 1);"
     );
     assert!(Command::new("/usr/bin/sqlite3")
@@ -256,7 +257,7 @@ fn queue_input_between_first_snapshot_and_checkpoint_blocks_auth_exception() {
         .unwrap()
         .success());
     let ids = std::slice::from_ref(&id);
-    let revisions = AuthRotationCheckpointService::queue_revisions(env.path(), ids).unwrap();
+    let snapshots = AuthRotationCheckpointService::queue_snapshots(env.path(), ids).unwrap();
     save_pending(ids).unwrap();
     assert!(Command::new("/usr/bin/sqlite3")
         .arg(&queue)
@@ -266,6 +267,68 @@ fn queue_input_between_first_snapshot_and_checkpoint_blocks_auth_exception() {
         .status()
         .unwrap()
         .success());
-    AuthRotationCheckpointService::prepare(env.path(), ids, "A", "B", &revisions).unwrap();
+    AuthRotationCheckpointService::prepare(env.path(), ids, "A", "B", &snapshots).unwrap();
     assert!(load_manifest().unwrap()[0].auth_rotation.is_none());
+}
+
+#[test]
+fn queue_snapshot_rejects_invalid_id_before_a_database_query() {
+    let env = TestCodexHome::new("auth-rotation-invalid-queue-id");
+    assert!(
+        super::auth_rotation_queue_snapshot::AuthRotationQueueSnapshot::read(
+            env.path(),
+            "invalid' OR 1=1 --"
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn newly_created_queue_database_with_zero_revision_blocks_auth_exception() {
+    let (env, id, _) = new_active_rollout("auth-rotation-new-zero-queue");
+    let ids = std::slice::from_ref(&id);
+    let snapshots = AuthRotationCheckpointService::queue_snapshots(env.path(), ids).unwrap();
+    save_pending(ids).unwrap();
+    let queue = env.path().join("queue_1.sqlite");
+    assert!(Command::new("/usr/bin/sqlite3")
+        .arg(&queue)
+        .arg("CREATE TABLE queued_items (thread_id TEXT); CREATE TABLE queued_thread_revisions (thread_id TEXT, revision INTEGER);")
+        .status()
+        .unwrap()
+        .success());
+    AuthRotationCheckpointService::prepare(env.path(), ids, "A", "B", &snapshots).unwrap();
+    assert!(load_manifest().unwrap()[0].auth_rotation.is_none());
+}
+
+#[test]
+fn queue_change_after_post_stop_checkpoint_keeps_dispatch_marker() {
+    let (env, id, rollout) = new_active_rollout("auth-rotation-post-stop-queue");
+    capture_and_prepare(&env, &id);
+    append(
+        &rollout,
+        &record("task_complete", "turn-a", Some(AUTH_ERROR)),
+    );
+    AuthRotationCheckpointService::finalize_after_stop(env.path(), std::slice::from_ref(&id))
+        .unwrap();
+    let mut targets = load_manifest().unwrap();
+    assert!(
+        targets[0]
+            .auth_rotation
+            .as_ref()
+            .unwrap()
+            .confirmed_after_stop
+    );
+    finalize_target(&mut targets, &id, true, false, Some("B"), false);
+    write_manifest(&targets).unwrap();
+    let queue = env.path().join("queue_1.sqlite");
+    assert!(Command::new("/usr/bin/sqlite3")
+        .arg(&queue)
+        .arg("CREATE TABLE queued_items (thread_id TEXT); CREATE TABLE queued_thread_revisions (thread_id TEXT, revision INTEGER);")
+        .status()
+        .unwrap()
+        .success());
+    assert!(
+        mark_dispatch_attempt_for_account(&id, Some("B"), RecoveryMode::DeferredCaptured).is_err()
+    );
+    assert_eq!(load_manifest().unwrap(), targets);
 }

@@ -147,18 +147,17 @@ pub(super) fn mark_dispatch_attempt_with_writer(
             "Recovery checkpoint disappeared before IPC dispatch".into(),
         ));
     };
-    if let Some(evidence) = target
+    let guarded_auth = target
         .auth_rotation
         .as_ref()
-        .filter(|evidence| evidence.confirmed_after_stop && mode != RecoveryMode::ExplicitTarget)
-    {
+        .filter(|evidence| evidence.confirmed_after_stop && mode != RecoveryMode::ExplicitTarget);
+    if let Some(evidence) = guarded_auth {
         if identity.deferred_binding().as_deref() != Some(evidence.target_account_id.as_str()) {
             return Err(DispatchMarkError::AccountChanged);
         }
     }
-    // Only unattended retries stay bound to the Desktop account that deferred
-    // them; an explicit request claimed the target (see recovery_checkpoint).
-    // Resolving the binding inspects the live Desktop, so skip it otherwise.
+    // Unattended retries retain the verified Desktop binding even when an
+    // explicit request claimed the target in memory.
     if target.awaiting_owner && mode != RecoveryMode::ExplicitTarget {
         let binding = identity.deferred_binding();
         if binding.is_none() || target.owner_account_id != binding {
@@ -170,6 +169,9 @@ pub(super) fn mark_dispatch_attempt_with_writer(
     // switch. Verify the operation's starting auth and Desktop process after
     // all other checks, immediately before consuming the durable checkpoint.
     identity.verify()?;
+    if let Some(evidence) = guarded_auth {
+        evidence.require_queue_current(&storage::codex_home(), id)?;
+    }
     targets.retain(|target| target.id != id);
     if let Err(error) = write_targets(&targets) {
         // Directory sync can fail after the rename consumed the marker. No IPC

@@ -19,8 +19,8 @@ impl DistributionCheckpointService {
         if let Err(error) = lifecycle.preflight_shutdown_windows() {
             return Err(Self::clear_unmodified_journal(home, error));
         }
-        let queue_revisions =
-            recovery::AuthRotationCheckpointService::queue_revisions(home, targets)
+        let queue_snapshots =
+            recovery::AuthRotationCheckpointService::queue_snapshots(home, targets)
                 .map_err(|error| Self::clear_unmodified_journal(home, error))?;
         let snapshot = RecoveryManifestSnapshot::capture()?;
         recovery::save_pending(targets)
@@ -30,7 +30,7 @@ impl DistributionCheckpointService {
             targets,
             source_account_id,
             target_account_id,
-            &queue_revisions,
+            &queue_snapshots,
         )
         .map_err(|error| Self::rollback_and_clear(home, &snapshot, error))?;
         lifecycle

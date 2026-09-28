@@ -2,6 +2,7 @@
 //! IPC dispatch, task_started, or a queue acknowledgement is not proof.
 mod active_auth_binding_service;
 mod auth_rotation_checkpoint_service;
+mod auth_rotation_queue_snapshot;
 mod auth_rotation_recovery_evidence;
 mod automation_guard;
 mod checkpoint_confirmation;

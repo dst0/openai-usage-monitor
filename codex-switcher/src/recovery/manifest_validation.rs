@@ -18,6 +18,12 @@ pub(super) fn valid_unique_targets(targets: &[PendingTarget]) -> bool {
                     && evidence.turn_id.len() <= 128
                     && evidence.rollout_dev != 0
                     && evidence.rollout_ino != 0
+                    && (evidence.queue_snapshot.database_identity.is_none()
+                        || evidence
+                            .queue_snapshot
+                            .database_identity
+                            .is_some_and(|(dev, ino)| dev != 0 && ino != 0))
+                    && evidence.queue_snapshot.pending <= 1_000_000
                     && target.captured_restart
                     && target.offset.is_some()
             })
