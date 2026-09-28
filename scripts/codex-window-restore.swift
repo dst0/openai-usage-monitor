@@ -195,6 +195,13 @@ func standardWindowFrames(_ pid: pid_t) throws -> [CGRect] {
 /// Space. An unidentified visible layer-0 window is ambiguous; it must not be
 /// treated as proof that the user had only one window open.
 func countStandardWindows(_ process: (pid: pid_t, birth: String)) throws -> WindowInventoryRecord {
+  // This command guards every Desktop shutdown, including automatic switches.
+  // Check the launchd process's own grants without raising a permission prompt.
+  let accessibilityTrusted = AXIsProcessTrusted()
+  let screenRecordingAllowed = accessibilityTrusted && CGPreflightScreenCaptureAccess()
+  if let denied = windowInventoryPermissionFailure(
+    accessibilityTrusted: accessibilityTrusted, screenRecordingAllowed: screenRecordingAllowed
+  ) { throw denied }
   let axFrames = try standardWindowFrames(process.pid)
   guard let windows = CGWindowListCopyWindowInfo(
     [.optionAll, .excludeDesktopElements], kCGNullWindowID

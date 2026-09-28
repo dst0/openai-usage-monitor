@@ -446,6 +446,27 @@ acquire_install_lock() {
 
 acquire_install_lock || exit 1
 
+# A stable certificate identity lets macOS recognize a rebuilt launchd cxi as
+# the same TCC client. An ad-hoc signature changes its designated requirement
+# with the bytes. Select only an explicitly supplied, valid code-signing
+# identity; never create a certificate or modify privacy grants here.
+MONITOR_SIGNING_IDENTITY="-"
+if [ -n "${CODEX_MONITOR_SIGNING_IDENTITY_SHA1:-}" ]; then
+    if [[ ! "${CODEX_MONITOR_SIGNING_IDENTITY_SHA1}" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+        echo "❌ Refusing installation: signing identity must be a 40-character certificate fingerprint."
+        exit 1
+    fi
+    if ! /usr/bin/security find-identity -v -p codesigning 2>/dev/null |
+        /usr/bin/awk -v expected="${CODEX_MONITOR_SIGNING_IDENTITY_SHA1}" \
+            'toupper($2) == toupper(expected) { found = 1 } END { exit !found }'; then
+        echo "❌ Refusing installation: requested code-signing identity is unavailable."
+        exit 1
+    fi
+    MONITOR_SIGNING_IDENTITY="${CODEX_MONITOR_SIGNING_IDENTITY_SHA1}"
+else
+    echo "⚠️  cxi will be signed ad hoc; macOS privacy grants may not survive a rebuild."
+fi
+
 if [ -z "${PROJECT_DIR}" ]; then
     echo "🌐 Remote installation detected. Preparing temporary build environment..."
     install_lock_still_named || exit 1
@@ -573,7 +594,7 @@ CLI_STAGING="$(mktemp "${LOCAL_BIN}/.codex-mon.install.XXXXXX")"
 cp "target/release/codex-mon" "${CLI_STAGING}"
 chmod 755 "${CLI_STAGING}"
 xattr -c "${CLI_STAGING}" 2>/dev/null || true
-codesign --sign - --force "${CLI_STAGING}"
+codesign --sign "${MONITOR_SIGNING_IDENTITY}" --identifier com.codex.monitor.cli --force "${CLI_STAGING}"
 codesign --verify --strict "${CLI_STAGING}"
 "${CLI_STAGING}" --version >/dev/null
 mv -f "${CLI_STAGING}" "${LOCAL_BIN}/codex-mon"

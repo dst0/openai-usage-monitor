@@ -14,6 +14,8 @@ enum WindowTaskProbeFailure: String, Error {
   case windowNotFound = "WINDOW_NOT_FOUND"
   case windowLimitExceeded = "WINDOW_LIMIT_EXCEEDED"
   case windowAccessFailed = "WINDOW_ACCESS_FAILED"
+  case accessibilityPermissionDenied = "WINDOW_ACCESSIBILITY_DENIED"
+  case screenRecordingPermissionDenied = "WINDOW_SCREEN_RECORDING_DENIED"
   case windowGeometryFailed = "WINDOW_GEOMETRY_FAILED"
   case windowInventoryMismatch = "WINDOW_INVENTORY_MISMATCH"
   case windowMinimized = "WINDOW_MINIMIZED"
@@ -45,6 +47,16 @@ enum WindowTaskProbeFailure: String, Error {
   case windowFullScreen = "WINDOW_FULL_SCREEN"
   /// Any error that is not one of the cases above; none is expected.
   case probeFailed = "PROBE_FAILED"
+}
+
+/// Read-only authorization gate for the shutdown window inventory. The
+/// caller checks Accessibility first, then Screen Recording, without prompting.
+func windowInventoryPermissionFailure(
+  accessibilityTrusted: Bool, screenRecordingAllowed: Bool
+) -> WindowTaskProbeFailure? {
+  if !accessibilityTrusted { return .accessibilityPermissionDenied }
+  if !screenRecordingAllowed { return .screenRecordingPermissionDenied }
+  return nil
 }
 
 /// Same limit the Rust side enforces on the response.

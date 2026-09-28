@@ -35,16 +35,22 @@ signal_int_trap_line="$(line_number "trap 'exit 130' INT")"
 signal_term_trap_line="$(line_number "trap 'exit 143' TERM")"
 signal_quit_trap_line="$(line_number "trap 'exit 131' QUIT")"
 mktemp_line="$(line_number 'CLI_STAGING="$(mktemp "${LOCAL_BIN}/.codex-mon.install.XXXXXX")"')"
+fingerprint_guard_line="$(line_number '    if [[ ! "${CODEX_MONITOR_SIGNING_IDENTITY_SHA1}" =~ ^[0-9A-Fa-f]{40}$ ]]; then')"
+identity_lookup_line="$(line_number '    if ! /usr/bin/security find-identity -v -p codesigning 2>/dev/null |')"
+identity_selection_line="$(line_number '    MONITOR_SIGNING_IDENTITY="${CODEX_MONITOR_SIGNING_IDENTITY_SHA1}"')"
 copy_line="$(line_number 'cp "target/release/codex-mon" "${CLI_STAGING}"')"
 chmod_line="$(line_number 'chmod 755 "${CLI_STAGING}"')"
 xattr_line="$(line_number 'xattr -c "${CLI_STAGING}" 2>/dev/null || true')"
-sign_line="$(line_number 'codesign --sign - --force "${CLI_STAGING}"')"
+sign_line="$(line_number 'codesign --sign "${MONITOR_SIGNING_IDENTITY}" --identifier com.codex.monitor.cli --force "${CLI_STAGING}"')"
 verify_line="$(line_number 'codesign --verify --strict "${CLI_STAGING}"')"
 smoke_line="$(line_number '"${CLI_STAGING}" --version >/dev/null')"
 move_line="$(line_number 'mv -f "${CLI_STAGING}" "${LOCAL_BIN}/codex-mon"')"
 clear_line="$(line_number_after 'CLI_STAGING=""' "${move_line}")"
 
 if ! {
+    [ "${fingerprint_guard_line}" -lt "${identity_lookup_line}" ] &&
+        [ "${identity_lookup_line}" -lt "${identity_selection_line}" ] &&
+        [ "${identity_selection_line}" -lt "${mktemp_line}" ] &&
     [ "${cleanup_function_line}" -lt "${cleanup_guard_line}" ] &&
         [ "${cleanup_guard_line}" -lt "${cleanup_remove_line}" ] &&
         [ "${cleanup_remove_line}" -lt "${cleanup_trap_line}" ] &&
@@ -82,7 +88,7 @@ actual_lines=(
 
 for index in "${!expected_lines[@]}"; do
     if [ "${actual_lines[${index}]}" -ne "${expected_lines[${index}]}" ]; then
-        echo "CLI staging commands must remain contiguous and ordered: fresh inode, copy, chmod, xattr cleanup, unconditional ad-hoc sign, strict verify, launch smoke, atomic move, cleanup reset" >&2
+        echo "CLI staging commands must remain contiguous and ordered: fresh inode, copy, chmod, xattr cleanup, selected-identity sign, strict verify, launch smoke, atomic move, cleanup reset" >&2
         exit 1
     fi
 done

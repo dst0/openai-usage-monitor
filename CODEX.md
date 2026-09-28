@@ -422,18 +422,16 @@ window-roster completeness unproven.
 Automatic distribution records whether the exact Desktop process has an eligible
 standard window before shutdown. If no such window exists, it skips geometry
 restore; after task owner mounting, recovery requires a visible banner before
-IPC and retains the original checkpoint if no window appears. A launchd daemon may be denied Accessibility access even
-when the same helper succeeds from Terminal. If that happens, set
-`cxi config --preserve-window-bounds false` to explicitly disable geometry
-preservation. Distribution validates the exact Desktop process without an
-Accessibility window read, uses read-only WindowServer geometry to place the
-banner when a visible window and recovery target exist, and still performs IPC
-recovery and singleton-process verification. Explicit WindowServer visibility/geometry
-failures and panel visibility failures are logged without blocking the account
-switch. Helper protocol and unknown capture failures block the switch. Window access, geometry, and process-identity failures remain
-blocking while preservation is enabled; process-identity failures remain
-blocking in either mode. With preservation disabled, the prior window position
-and size are not restored or verified by the Monitor.
+IPC and retains the original checkpoint if no window appears. The shutdown
+window guard always checks Accessibility and Screen Recording for the launchd
+`cxi` client, including when `preserve_window_bounds_on_restart=false`.
+`WINDOW_ACCESSIBILITY_DENIED` and `WINDOW_SCREEN_RECORDING_DENIED` are fixed,
+non-sensitive pre-signal failures. Neither check prompts for a grant. The
+installer accepts an explicit `CODEX_MONITOR_SIGNING_IDENTITY_SHA1` for a stable
+CLI signing identity; without it, the CLI is ad hoc signed and a TCC grant may
+not survive rebuilding. Verify the installed launchd path rather than an
+interactive Terminal run. Disabling bounds preservation skips geometry
+restoration but cannot authorize a shutdown with unreadable window inventory.
 
 Deferred recovery in an already running ChatGPT never restores window bounds.
 It locates its banner through the read-only WindowServer helper, so a launchd
