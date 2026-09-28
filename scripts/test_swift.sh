@@ -71,6 +71,13 @@ swiftc -parse-as-library \
     -o "${TMP_BIN_DIR}/app_delegate_test"
 "${TMP_BIN_DIR}/app_delegate_test"
 
+echo "👉 Running test defaults suite guard and cleanup tests..."
+swiftc -parse-as-library \
+    tests/TestPreferencesSuite.swift \
+    tests/TestPreferencesSuiteTests.swift \
+    -o "${TMP_BIN_DIR}/test-preferences-suite_test"
+"${TMP_BIN_DIR}/test-preferences-suite_test"
+
 echo "👉 Running recovery payload security tests..."
 swiftc -parse-as-library \
     -target "$(uname -m)-apple-macosx13.0" \

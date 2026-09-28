@@ -5,12 +5,7 @@ import ServiceManagement
 /// Login-item script runner that always fails, so launch-at-login state falls back to the
 /// injected store and no test asks System Events through `osascript`.
 final class FailingLoginItemScripts: ScriptExecuting {
-  private(set) var scripts: [String] = []
-
-  func executeAppleScript(_ script: String) -> (exitCode: Int32, output: String) {
-    scripts.append(script)
-    return (1, "")
-  }
+  func executeAppleScript(_ script: String) -> (exitCode: Int32, output: String) { (1, "") }
 }
 
 /// The main-app login service of a binary without a bundle: never available.
@@ -23,14 +18,20 @@ final class UnavailableMainAppService: SMAppServiceManaging {
 
 /// Builds a delegate that reads and writes preferences only in `preferences`.
 func makeTestAppDelegate(client: CodexClient, preferences: TestPreferencesSuite) -> AppDelegate {
-  let loginItems = AutoLaunchManager(scriptExecutor: FailingLoginItemScripts(), smService: UnavailableMainAppService(), userDefaults: preferences.defaults)
-  return AppDelegate(client: client, defaults: preferences.defaults, autoLaunchManager: loginItems)
+  let store = preferences.defaults
+  let scripts = FailingLoginItemScripts(), service = UnavailableMainAppService()
+  let loginItems = AutoLaunchManager(scriptExecutor: scripts, smService: service, userDefaults: store)
+  return AppDelegate(client: client, defaults: store, autoLaunchManager: loginItems)
 }
 
 /// Test 4: the delegate's menu preferences come from the store it was given.
 ///
 /// The delegate used to read the test binary's standard store, which every concurrent run of
-/// the suite shares, so another run's write could change what this run read.
+/// the suite shares, so another run's write could change what this run read. This test proves
+/// the delegate reads and writes the given store; tests/swift_test_defaults_isolation.sh
+/// proves no source or test names another one. (A runtime spy on
+/// `UserDefaults.didChangeNotification` cannot do that: AppKit's class initializers call
+/// `register(defaults:)` on the standard store, which posts the same notification.)
 func runAppDelegatePreferencesTests() {
   // The menu reads Monitor settings from CODEX_HOME. Point it at a path that does not exist so
   // those reads give defaults instead of the live ~/.codex; nothing here writes there.
@@ -56,7 +57,18 @@ func runAppDelegatePreferencesTests() {
   assertEqual(freshDelegate.refreshInterval, 60.0, "An unset refresh interval must be one minute")
   assertEqual(freshDelegate.launchAtLoginItem?.state, .off, "Unset launch-at-login must be off")
   assertTrue(fresh.defaults.object(forKey: stackKey) == nil, "Reading a default must not store it")
+  for unusable in [0.0, -5.0] {
+    fresh.defaults.set(unusable, forKey: intervalKey)
+    assertEqual(
+      makeTestAppDelegate(client: client, preferences: fresh).refreshInterval, 60.0,
+      "A stored interval of \(unusable) must fall back to one minute")
+  }
   fresh.tearDown()
+
+  // The app's own delegate keeps the user's saved preferences and login item. These two lines
+  // are the only ones tests/swift_test_defaults_isolation.sh lets a test spell this way.
+  assertTrue(AppDelegate().defaults === UserDefaults.standard, "AppDelegate() must use the standard store")
+  assertTrue(AppDelegate().autoLaunchManager === AutoLaunchManager.shared, "AppDelegate() must use the shared login items")
 
   // Both values of every preference must reach the delegate. No other store holds true and
   // false at once, so a delegate that reads any store but its own fails one of the two.
@@ -108,6 +120,16 @@ func runAppDelegatePreferencesTests() {
   assertEqual(actions.defaults.object(forKey: stackKey) as? Bool, true, "Second toggle must store true")
   assertEqual(acting.stackPercentagesItem?.state, .on, "Second toggle must restore the menu check")
 
+  // With a snapshot on screen, a toggle redraws the status item in the new layout.
+  let actingItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+  acting.statusItem = actingItem
+  acting.lastSnapshot = snapshot
+  acting.toggleStackPercentages()
+  assertEqual(acting.statusItem?.button?.image?.size.width, horizontalWidth, "Toggle must redraw horizontally")
+  acting.toggleStackPercentages()
+  assertEqual(acting.statusItem?.button?.image?.size.width, stackedWidth, "Toggle must redraw stacked")
+  NSStatusBar.system.removeStatusItem(actingItem)
+
   let intervalMenu = NSMenu()
   let oneMinute = NSMenuItem(title: "1m", action: nil, keyEquivalent: "")
   oneMinute.tag = 60
@@ -128,7 +150,7 @@ func runAppDelegatePreferencesTests() {
     !FileManager.default.fileExists(atPath: codexHome.path),
     "Menu preferences must stay in the defaults store, not in Monitor settings files")
 
-  print("  ✅ Menu preferences read and write only the delegate's own store")
+  print("  ✅ Menu preferences read and write the delegate's own store")
 }
 
 private func preferencesSnapshot() -> MultiAccountSnapshot {

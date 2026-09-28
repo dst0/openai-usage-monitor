@@ -1,0 +1,22 @@
+# 2026-09-28 — A test binary beside `Resources/Info.plist` runs as the Monitor
+
+- **Status:** Resolved
+- **Task/context:** Isolating the Swift tests' defaults store ([2026-09-28 — Concurrent Swift suite runs isolated by an injected defaults store](2026-09-28-concurrent-swift-suites-isolated-by-injected-defaults.md)). `tests/TestPreferencesSuite.swift` refuses to run when the test binary's bundle identifier is the Monitor's. An adversarial review asked when that could ever be true for a bare `swiftc` executable.
+- **Unexpected observation or failure:** A bare executable takes the bundle identifier of a `Resources/Info.plist` in its own directory; the name match is case-insensitive on the default macOS file system, so `resources/Info.plist` counts. The repository root has `resources/Info.plist` with `CFBundleIdentifier` `com.codex.monitor`. A test binary built into the repository root, or into any directory holding a copy of `resources/`, therefore runs as the Monitor, and its standard defaults store is the user's live Monitor preferences.
+- **Evidence:**
+  - The reviewer placed a bare executable next to `resources/Info.plist` and saw `Bundle.main.bundleIdentifier` return that plist's identifier.
+  - While checking mutants of the suite's own tests, a test binary was built into a scratch directory that also held a copy of `resources/` (to satisfy the suite's path lookup). It stopped at the guard, `The test binary must not run as the Monitor (com.codex.monitor)`. The Monitor's preferences file kept its modification time; nothing in that binary writes the standard store.
+  - `tests/TestPreferencesSuiteTests.swift` lays out a copy of itself next to `Resources/Info.plist` declaring the Monitor's identifier, and first checks that the copy reports that identifier. The plist's `CFBundleExecutable` does not have to match: the repository plist names `CodexMonitor`, and the scratch binary was named `t`.
+- **Approaches tried:**
+  - **Attempt:** Guard only on the process name, since test binaries have no bundle.
+    - **Outcome:** Did not work.
+    - **Why:** The bundle identifier comes from the directory layout, not from how the binary was built.
+  - **Attempt:** Guard on both `Bundle.main.bundleIdentifier` and the process name, before the suite creates anything, and test the guard with copies of the test binary in both layouts.
+    - **Outcome:** Worked.
+    - **Why:** Both ways of taking the Monitor's domain are refused, and a test proves each one.
+- **Root cause:** Foundation treats a directory with an executable and a `Resources/Info.plist` as an old-style bundle for that executable.
+- **Resolution:** `TestPreferencesSuite.requireNotRunningAsMonitor()` runs first in every suite and exits with a message naming the Monitor's identifier. `tests/TestPreferencesSuiteTests.swift`, run by `scripts/test_swift.sh`, checks that a copy bundled as the Monitor and a copy named after it both stop before making a suite, and that a plain copy does make one.
+- **Verification:** `tests/TestPreferencesSuiteTests.swift` passes, and fails if the guard call is removed (checked with a mutant). The copies in the refused layouts only construct a suite, which never touches the standard store.
+- **Prevention/follow-up:** `scripts/test_swift.sh` builds every test binary in a `mktemp` directory. Do the same for ad hoc builds.
+- **Reusable learning:** Never build or run a test binary in a directory that has `Resources/Info.plist` (any case), such as this repository's root: it runs as that bundle and uses that bundle's preferences.
+- **References:** `tests/TestPreferencesSuite.swift`, `tests/TestPreferencesSuiteTests.swift`, `resources/Info.plist`.

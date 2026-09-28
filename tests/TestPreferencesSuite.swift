@@ -11,7 +11,8 @@ import Foundation
 /// The suite does not live in `~/Library/Preferences`: `removePersistentDomain(forName:)`
 /// empties a domain there but leaves its plist file behind, one per run. Here the store is
 /// removed with `removePersistentDomain(forName:)` and then its directory is deleted.
-/// `tests/swift_test_defaults_isolation.sh` rejects Swift tests that use the standard store.
+/// `tests/swift_test_defaults_isolation.sh` rejects Swift tests and sources that use the
+/// standard store.
 final class TestPreferencesSuite {
   let name: String
   let defaults: UserDefaults
@@ -20,12 +21,7 @@ final class TestPreferencesSuite {
   init(purpose: String) {
     preconditionIsolated(
       !purpose.isEmpty && !purpose.contains("/"), "Suite purpose must be one path component")
-    let monitorDomain = TestPreferencesSuite.monitorBundleIdentifier()
-    // A binary named or bundled as the Monitor would make its standard store the user's.
-    preconditionIsolated(
-      Bundle.main.bundleIdentifier != monitorDomain
-        && ProcessInfo.processInfo.processName != monitorDomain,
-      "The test binary must not run as the Monitor (\(monitorDomain))")
+    TestPreferencesSuite.requireNotRunningAsMonitor()
 
     var template = Array(
       FileManager.default.temporaryDirectory
@@ -33,16 +29,14 @@ final class TestPreferencesSuite {
     let created = template.withUnsafeMutableBufferPointer { mkdtemp($0.baseAddress!) }
     preconditionIsolated(created != nil, "mkdtemp failed for a test defaults directory")
     directory = URL(fileURLWithPath: String(cString: template), isDirectory: true)
+    TestPreferencesSuite.pendingDirectories.append(directory.path)
+    TestPreferencesSuite.registerExitCleanupOnce()
     name = directory.appendingPathComponent(purpose).path
-    preconditionIsolated(
-      name.hasPrefix(directory.path + "/"), "Test defaults suite \(name) must be in its own directory")
     guard let suite = UserDefaults(suiteName: name) else {
       preconditionIsolated(false, "UserDefaults refused the suite \(name)")
       fatalError("unreachable")
     }
     defaults = suite
-    TestPreferencesSuite.pendingDirectories.append(directory.path)
-    TestPreferencesSuite.registerExitCleanupOnce()
 
     // Prove the store is the file in this directory, not a domain in ~/Library/Preferences.
     let probeKey = "codexMonitorTestDefaultsProbe"
@@ -64,7 +58,22 @@ final class TestPreferencesSuite {
       "Test defaults directory \(directory.path) must be removed")
   }
 
-  /// The installed Monitor's preferences domain, read from the bundle's own Info.plist.
+  /// Stops the run if this binary's standard store would be the Monitor's own preferences.
+  /// That happens when the binary is named after the Monitor's bundle identifier, or when it
+  /// sits next to a `Resources/Info.plist` (matched case-insensitively) that declares it: a
+  /// bare executable in such a directory takes that plist's identifier. For example, a test
+  /// binary built into the repository root would.
+  static func requireNotRunningAsMonitor() {
+    let monitorDomain = monitorBundleIdentifier()
+    preconditionIsolated(
+      Bundle.main.bundleIdentifier != monitorDomain
+        && ProcessInfo.processInfo.processName != monitorDomain,
+      "The test binary must not run as the Monitor (\(monitorDomain))")
+  }
+
+  /// The Monitor's preferences domain, from this repository's `resources/Info.plist`. The file
+  /// is found from this source file's compile-time path, which `scripts/test_swift.sh` passes
+  /// relative to the repository root, so run the binary from there.
   static func monitorBundleIdentifier() -> String {
     let infoPlist = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent().deletingLastPathComponent()
