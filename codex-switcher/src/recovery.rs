@@ -1,6 +1,9 @@
 //! Recovery is successful only when the target rollout records new agent work.
 //! IPC dispatch, task_started, or a queue acknowledgement is not proof.
 mod active_auth_binding_service;
+mod auth_rotation_checkpoint_service;
+mod auth_rotation_queue_snapshot;
+mod auth_rotation_recovery_evidence;
 mod automation_guard;
 mod checkpoint_confirmation;
 mod checkpoint_scan_cache;
@@ -19,7 +22,9 @@ mod ipc_read_error;
 mod ipc_response_reader;
 mod ipc_socket;
 mod manifest_prune_service;
+mod manifest_reader;
 mod manifest_store;
+mod manifest_validation;
 mod observer;
 mod owner_info;
 mod owner_link_retry_schedule;
@@ -51,6 +56,7 @@ mod thread_index_service;
 mod window_capture;
 mod window_restore;
 
+pub(crate) use auth_rotation_checkpoint_service::AuthRotationCheckpointService;
 pub(crate) use automation_guard::{
     arm_automation_cooldown, automation_cooldown_remaining, clear_restart_cancellation,
     operation_id_for_banner, restart_cancellation_requested,
@@ -87,6 +93,9 @@ pub(crate) fn wait_for_desktop_ipc() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "recovery/auth_rotation_checkpoint_service.test.rs"]
+mod auth_rotation_checkpoint_service_tests;
 #[cfg(test)]
 #[path = "recovery/automation_guard.test.rs"]
 mod automation_guard_tests;

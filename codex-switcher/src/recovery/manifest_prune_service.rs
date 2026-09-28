@@ -112,9 +112,17 @@ impl<'a> ManifestPruneService<'a> {
                 }
                 if stable_state == Some(ThreadRolloutState::InterruptedByError) {
                     // Unattended recovery cannot continue a non-quota error,
-                    // including one with queued work. Inspect only this pass's
-                    // selected ownerless target and require a stable file.
-                    continue;
+                    // except an exact auth-rotation failure proven during a
+                    // captured switch and still bound to its target account.
+                    let eligible = target.auth_rotation.as_ref().is_some_and(|evidence| {
+                        evidence.confirmed_after_stop
+                            && target.captured_restart
+                            && target.owner_account_id.as_deref()
+                                == Some(evidence.target_account_id.as_str())
+                    });
+                    if !eligible {
+                        continue;
+                    }
                 }
                 if self
                     .scans

@@ -43,6 +43,7 @@ fn mark(mode: RecoveryMode, awaiting_owner: bool, desktop_account: Option<&str>)
         awaiting_owner,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     };
     write_manifest(std::slice::from_ref(&original)).unwrap();
     let (binding_reads, identity_checks) = (Cell::new(0), Cell::new(0));
@@ -109,6 +110,7 @@ fn a_changed_operation_identity_keeps_the_checkpoint_in_every_mode() {
             awaiting_owner: true,
             captured_restart: true,
             owner_account_id: Some("account-a".into()),
+            auth_rotation: None,
         };
         write_manifest(std::slice::from_ref(&original)).unwrap();
         let mut identity = DispatchIdentityChecks::new(

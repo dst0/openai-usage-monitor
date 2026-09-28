@@ -91,6 +91,7 @@ pub use thread_identity::{
 pub(crate) use thread_identity::{
     retry_thread_link_in_background, retry_thread_link_natively_in_background,
 };
+pub(crate) use thread_rollout_inspector::read_rollout_tail_lines;
 pub use thread_rollout_inspector::{
     find_thread_rollout_path, inspect_thread_rollout_state, RECENT_QUOTA_WINDOW_SECS,
 };
