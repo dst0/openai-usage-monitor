@@ -219,8 +219,9 @@ Queued follow-ups require the same owner and turn-mode revalidation as an
 unqueued turn. An already-unpaused queue still receives one owner-routed
 `thread-follower-set-queued-follow-ups-state` wake after the durable dispatch
 marker; owner discovery alone sends no work. Non-quota interrupted errors are
-explicit-target only, and historical user Stop turns are not discovery-only
-recovery candidates, including when a queue exists.
+explicit-target only except for the operation-bound auth-refresh exception
+described below; historical user Stop turns are not discovery-only recovery
+candidates, including when a queue exists.
 Tail classification reads only through a captured file length, checks whether
 the seek begins on a record boundary, discards a partial first record as bytes
 before strict UTF-8 decoding, and requires a final newline. A malformed newer
@@ -241,8 +242,8 @@ selects one ownerless task with a valid ID and a SQLite row, rotating per
 entry never takes that turn, and a single-target pass (the deferred worker's
 re-prune before recovery) leaves the cursor alone so the next full pass
 continues the rotation. A selected target with a stable terminal non-quota error is dropped
-because unattended recovery cannot dispatch it; malformed or changed tails
-keep the retry. Older deferred intervals are scanned in chunks of at most 16 MiB
+unless its saved, confirmed auth-rotation evidence is bound to the target
+Desktop account; malformed or changed tails keep the retry. Older deferred intervals are scanned in chunks of at most 16 MiB
 per probe and yield no lifecycle result until the snapshot end is reached. Foreground
 recovery scans at most 16 MiB of rollout payload per pass across its targets,
 plus small boundary samples, and waits for a complete newline-terminated
@@ -286,6 +287,20 @@ checkpoint cannot be saved, account switching stops before changing
 `auth.json` and relaunches the previous Desktop account; a successful shutdown
 alone is not permission to rotate credentials. `cxi restart` also relaunches
 the previous Desktop state if its post-shutdown checkpoint fails.
+Only a Monitor-owned A-to-B switch may mark the exact token-refresh failure
+of an active pre-stop turn as automatically recoverable. Its private recovery
+record carries the verified source and target account IDs, old turn ID,
+first-checkpoint offset, rollout file identity, and a queue revision captured
+before that offset. A bounded streaming scan before
+auth replacement must find the matching terminal error in that interval and
+no Stop, new turn, or user input. The second offset remains the recovery proof
+boundary. The exception still requires the exact relaunched target-account
+Desktop session and a mounted IPC owner; `no-client-found` retains its
+target-bound checkpoint without sending a turn. Historical auth errors without
+this operation evidence remain explicit-only.
+The recovery manifest reader rejects symlinks, changing files, and files over
+1 MiB; serialized auth-rotation evidence must have bounded nonempty account
+and turn IDs and a valid captured-rollout identity.
 When eligible recovery targets or captured selected-window tasks exist,
 distribution handshakes Desktop IPC after the first checkpoint and before
 stopping ChatGPT. A failed handshake aborts the

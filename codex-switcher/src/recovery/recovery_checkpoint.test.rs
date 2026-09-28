@@ -24,6 +24,7 @@ fn deferred(id: &str, owner: &str) -> PendingTarget {
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some(owner.into()),
+        auth_rotation: None,
     }
 }
 
@@ -181,6 +182,7 @@ fn explicit_resume_refreshes_an_unbound_checkpoint() {
     let mut manifest = vec![PendingTarget {
         awaiting_owner: false,
         owner_account_id: None,
+        auth_rotation: None,
         ..deferred(STALE, OWNER)
     }];
     let (view, claimed) =

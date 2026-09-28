@@ -135,6 +135,7 @@ pub fn save_pending(ids: &[String]) -> Result<(), String> {
             awaiting_owner: false,
             captured_restart: true,
             owner_account_id: None,
+            auth_rotation: None,
         });
     }
     write_manifest(&targets)

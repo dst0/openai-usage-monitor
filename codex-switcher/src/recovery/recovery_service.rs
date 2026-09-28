@@ -70,6 +70,12 @@ pub(crate) fn recover_threads_with_banner(
             id,
             previous.and_then(|target| target.offset),
             per_target_budget,
+            previous
+                .and_then(|target| target.auth_rotation.as_ref())
+                .is_some_and(|evidence| {
+                    evidence.confirmed_after_stop
+                        && evidence.target_account_id == identity.account_id()
+                }),
         ) {
             Ok(Some(target)) => targets.push(target),
             Ok(None) => {

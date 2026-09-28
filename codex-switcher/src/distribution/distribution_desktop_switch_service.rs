@@ -107,15 +107,20 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 None => format!("Could not capture Desktop window tasks before shutdown: {error}"),
             });
         }
-        let checkpoint =
-            match DistributionCheckpointService::prepare(home, self.lifecycle, &running_threads) {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
-                    self.lifecycle.abort_recovery();
-                    let _ = self.lifecycle.finish_window_tasks();
-                    return Err(error);
-                }
-            };
+        let checkpoint = match DistributionCheckpointService::prepare(
+            home,
+            self.lifecycle,
+            &running_threads,
+            previous_id,
+            target_id,
+        ) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                self.lifecycle.abort_recovery();
+                let _ = self.lifecycle.finish_window_tasks();
+                return Err(error);
+            }
+        };
         if let Err(error) =
             self.recovery_preflight
                 .run(home, &checkpoint, &running_threads, operation_id, request)
@@ -146,7 +151,9 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 _ => message,
             });
         }
-        if let Err(error) = DistributionCheckpointService::finalize_after_stop(&running_threads) {
+        if let Err(error) =
+            DistributionCheckpointService::finalize_after_stop(home, &running_threads)
+        {
             return Err(rollback.before_auth_commit(home, accounts, plan, error, false));
         }
         let handoff = DistributionSharedAuthGuard::require_desktop_stopped(self.lifecycle)

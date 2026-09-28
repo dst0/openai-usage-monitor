@@ -13,13 +13,26 @@ impl DistributionCheckpointService {
         home: &Path,
         lifecycle: &dyn AppLifecycle,
         targets: &[String],
+        source_account_id: &str,
+        target_account_id: &str,
     ) -> Result<RecoveryManifestSnapshot, String> {
         if let Err(error) = lifecycle.preflight_shutdown_windows() {
             return Err(Self::clear_unmodified_journal(home, error));
         }
+        let queue_revisions =
+            recovery::AuthRotationCheckpointService::queue_revisions(home, targets)
+                .map_err(|error| Self::clear_unmodified_journal(home, error))?;
         let snapshot = RecoveryManifestSnapshot::capture()?;
         recovery::save_pending(targets)
             .map_err(|error| Self::rollback_and_clear(home, &snapshot, error))?;
+        recovery::AuthRotationCheckpointService::prepare(
+            home,
+            targets,
+            source_account_id,
+            target_account_id,
+            &queue_revisions,
+        )
+        .map_err(|error| Self::rollback_and_clear(home, &snapshot, error))?;
         lifecycle
             .preflight_shutdown_windows()
             .map_err(|error| Self::rollback_and_clear(home, &snapshot, error))?;
@@ -46,8 +59,8 @@ impl DistributionCheckpointService {
 
     /// The shutdown flushes the old Desktop's final rollout state. The caller
     /// owns the guarded relaunch if this checkpoint fails.
-    pub(crate) fn finalize_after_stop(targets: &[String]) -> Result<(), String> {
-        recovery::save_pending(targets)
+    pub(crate) fn finalize_after_stop(home: &Path, targets: &[String]) -> Result<(), String> {
+        recovery::AuthRotationCheckpointService::finalize_after_stop(home, targets)
             .map_err(|error| format!("Post-shutdown recovery checkpoint failed: {error}"))
     }
 }

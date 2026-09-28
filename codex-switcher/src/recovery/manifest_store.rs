@@ -1,12 +1,17 @@
 use super::{
-    dispatch_identity_checks::DispatchIdentityChecks, dispatch_mark_error::DispatchMarkError,
-    manifest_prune_service::ManifestPruneService, pending_manifest::PendingManifest,
-    pending_target::PendingTarget, recovery_mode::RecoveryMode, stored_manifest::StoredManifest,
-    thread_identity::valid_id, thread_index_service::recent_thread_updates,
+    dispatch_identity_checks::DispatchIdentityChecks,
+    dispatch_mark_error::DispatchMarkError,
+    manifest_prune_service::ManifestPruneService,
+    manifest_reader::{read_manifest_bytes, MAX_RECOVERY_MANIFEST_BYTES},
+    manifest_validation::valid_unique_targets,
+    pending_manifest::PendingManifest,
+    pending_target::PendingTarget,
+    recovery_mode::RecoveryMode,
+    stored_manifest::StoredManifest,
+    thread_index_service::recent_thread_updates,
 };
 use crate::storage;
 use std::{
-    collections::HashSet,
     fs::{File, OpenOptions},
     io::Write,
     os::unix::fs::OpenOptionsExt,
@@ -15,8 +20,8 @@ use std::{
 
 pub(super) fn load_manifest() -> Result<Vec<PendingTarget>, String> {
     let path = storage::codex_home().join("desktop-recovery.json");
-    match std::fs::read(path) {
-        Ok(bytes) => {
+    match read_manifest_bytes(&path)? {
+        Some(bytes) => {
             let stored: StoredManifest =
                 serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
             let targets = match stored {
@@ -32,6 +37,7 @@ pub(super) fn load_manifest() -> Result<Vec<PendingTarget>, String> {
                         awaiting_owner: false,
                         captured_restart: false,
                         owner_account_id: None,
+                        auth_rotation: None,
                     })
                     .collect(),
             };
@@ -41,8 +47,7 @@ pub(super) fn load_manifest() -> Result<Vec<PendingTarget>, String> {
                 Err("Invalid recovery manifest".into())
             }
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
-        Err(e) => Err(e.to_string()),
+        None => Ok(vec![]),
     }
 }
 
@@ -97,6 +102,17 @@ pub(super) fn validate_target_account_binding(
     current_account: Option<&str>,
 ) -> Result<(), String> {
     for id in ids {
+        if let Some(evidence) = targets
+            .iter()
+            .find(|target| target.id == *id)
+            .and_then(|target| target.auth_rotation.as_ref())
+        {
+            if evidence.confirmed_after_stop
+                && current_account != Some(evidence.target_account_id.as_str())
+            {
+                return Err("Auth-rotation recovery belongs to a different Desktop account".into());
+            }
+        }
         if let Some(target) = targets
             .iter()
             .find(|target| target.id == *id && target.awaiting_owner)
@@ -131,6 +147,15 @@ pub(super) fn mark_dispatch_attempt_with_writer(
             "Recovery checkpoint disappeared before IPC dispatch".into(),
         ));
     };
+    if let Some(evidence) = target
+        .auth_rotation
+        .as_ref()
+        .filter(|evidence| evidence.confirmed_after_stop && mode != RecoveryMode::ExplicitTarget)
+    {
+        if identity.deferred_binding().as_deref() != Some(evidence.target_account_id.as_str()) {
+            return Err(DispatchMarkError::AccountChanged);
+        }
+    }
     // Only unattended retries stay bound to the Desktop account that deferred
     // them; an explicit request claimed the target (see recovery_checkpoint).
     // Resolving the binding inspects the live Desktop, so skip it otherwise.
@@ -255,8 +280,11 @@ pub(super) fn write_manifest(targets: &[PendingTarget]) -> Result<(), String> {
         targets: targets.to_vec(),
     };
     let result = (|| {
-        file.write_all(&serde_json::to_vec(&manifest).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
+        let bytes = serde_json::to_vec(&manifest).map_err(|e| e.to_string())?;
+        if bytes.len() as u64 > MAX_RECOVERY_MANIFEST_BYTES {
+            return Err("Recovery manifest exceeds its size limit".into());
+        }
+        file.write_all(&bytes).map_err(|e| e.to_string())?;
         file.sync_all().map_err(|e| e.to_string())?;
         std::fs::rename(&tmp, &manifest_path).map_err(|e| e.to_string())?;
         File::open(&home)
@@ -267,11 +295,4 @@ pub(super) fn write_manifest(targets: &[PendingTarget]) -> Result<(), String> {
         let _ = std::fs::remove_file(&tmp);
     }
     result
-}
-
-fn valid_unique_targets(targets: &[PendingTarget]) -> bool {
-    let mut ids = HashSet::with_capacity(targets.len());
-    targets
-        .iter()
-        .all(|target| valid_id(&target.id) && ids.insert(target.id.as_str()))
 }
