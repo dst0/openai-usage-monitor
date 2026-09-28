@@ -216,23 +216,23 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 operation_id,
                 request,
             );
-        let window_error = self.lifecycle.finish_window_tasks().err();
-        let recovery_error = match (recovery_error, window_error) {
-            (Some(recovery), Some(windows)) => Some(format!("{recovery}; {windows}")),
-            (None, Some(windows)) => Some(windows),
-            (recovery, None) => recovery,
-        };
         if !restarted_desktop {
             let reason = recovery_error.unwrap_or_else(|| "Desktop did not relaunch".into());
-            return match DistributionAccountCommitService::rollback_and_relaunch_previous(
+            let previous = DistributionAccountCommitService::rollback_and_relaunch_previous(
                 self.lifecycle,
                 home,
                 accounts,
                 previous_id,
                 &previous_auth,
                 &committed_auth,
-            ) {
-                Ok(()) => {
+            );
+            let window_error = rollback.finish_after_relaunch(previous.as_ref().ok());
+            let reason = match window_error {
+                Some(windows) => format!("{reason}; {windows}"),
+                None => reason,
+            };
+            return match previous {
+                Ok(_) => {
                     self.lifecycle.abort_recovery();
                     DistributionJournal::clear(home)?;
                     Err(format!(
@@ -248,6 +248,12 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 }),
             };
         }
+        let window_error = self.lifecycle.finish_window_tasks().err();
+        let recovery_error = match (recovery_error, window_error) {
+            (Some(recovery), Some(windows)) => Some(format!("{recovery}; {windows}")),
+            (None, Some(windows)) => Some(windows),
+            (recovery, None) => recovery,
+        };
 
         let registry_result = DistributionAccountCommitService::commit_latest_desktop_auth(
             self.lifecycle,

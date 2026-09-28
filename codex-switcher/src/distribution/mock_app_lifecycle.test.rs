@@ -21,6 +21,8 @@ pub struct MockAppLifecycle {
     pub task_window_count: AtomicUsize,
     pub task_restore_calls: AtomicUsize,
     pub task_finish_calls: AtomicUsize,
+    pub task_restore_sessions: Mutex<Vec<DesktopAppSession>>,
+    pub task_events: Mutex<Vec<&'static str>>,
     pub task_capture_error: Mutex<Option<String>>,
     pub task_finish_error: Mutex<Option<String>>,
     pub restore_calls: AtomicUsize,
@@ -40,6 +42,7 @@ pub struct MockAppLifecycle {
     pub launch_observer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     pub recovery_observer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     pub launch_error: Mutex<Option<String>>,
+    pub launch_error_on_call: Mutex<Option<(usize, String)>>,
     pub capture_error: Mutex<Option<String>>,
     pub process_inspection_error: Mutex<Option<String>>,
     pub process_inspection_error_after: Mutex<Option<(usize, String)>>,
@@ -72,6 +75,8 @@ impl MockAppLifecycle {
             task_window_count: AtomicUsize::new(0),
             task_restore_calls: AtomicUsize::new(0),
             task_finish_calls: AtomicUsize::new(0),
+            task_restore_sessions: Mutex::new(Vec::new()),
+            task_events: Mutex::new(Vec::new()),
             task_capture_error: Mutex::new(None),
             task_finish_error: Mutex::new(None),
             restore_calls: AtomicUsize::new(0),
@@ -91,6 +96,7 @@ impl MockAppLifecycle {
             launch_observer: Mutex::new(None),
             recovery_observer: Mutex::new(None),
             launch_error: Mutex::new(None),
+            launch_error_on_call: Mutex::new(None),
             capture_error: Mutex::new(None),
             process_inspection_error: Mutex::new(None),
             process_inspection_error_after: Mutex::new(None),
@@ -153,6 +159,10 @@ impl MockAppLifecycle {
 
     pub fn set_launch_error(&self, err: impl Into<String>) {
         *self.launch_error.lock().unwrap() = Some(err.into());
+    }
+
+    pub fn set_launch_error_on_call(&self, call: usize, err: impl Into<String>) {
+        *self.launch_error_on_call.lock().unwrap() = Some((call, err.into()));
     }
 
     pub fn set_capture_error(&self, err: impl Into<String>) {
@@ -245,7 +255,13 @@ impl AppLifecycle for MockAppLifecycle {
     }
 
     fn launch_app(&self) -> Result<Vec<u32>, String> {
-        self.launch_calls.fetch_add(1, Ordering::SeqCst);
+        let call = self.launch_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        self.task_events.lock().unwrap().push("launch");
+        if let Some((failure_call, error)) = self.launch_error_on_call.lock().unwrap().as_ref() {
+            if call == *failure_call {
+                return Err(error.clone());
+            }
+        }
         if let Some(ref err) = *self.launch_error.lock().unwrap() {
             return Err(err.clone());
         }
@@ -337,13 +353,19 @@ impl AppLifecycle for MockAppLifecycle {
 
     fn restore_window_tasks(
         &self,
-        _bound: &super::desktop_app_session::DesktopAppSession,
+        bound: &super::desktop_app_session::DesktopAppSession,
         _phase: WindowTaskRestorePhase<'_>,
     ) {
+        self.task_events.lock().unwrap().push("restore");
+        self.task_restore_sessions
+            .lock()
+            .unwrap()
+            .push(bound.clone());
         self.task_restore_calls.fetch_add(1, Ordering::SeqCst);
     }
 
     fn finish_window_tasks(&self) -> Result<(), String> {
+        self.task_events.lock().unwrap().push("finish");
         self.task_finish_calls.fetch_add(1, Ordering::SeqCst);
         match self.task_finish_error.lock().unwrap().clone() {
             Some(error) => Err(error),

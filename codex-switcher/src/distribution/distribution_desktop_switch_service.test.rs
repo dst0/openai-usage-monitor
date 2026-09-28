@@ -1,5 +1,7 @@
 use super::app_lifecycle::AppLifecycle;
+use super::distribution_account_commit_service::DistributionAccountCommitService;
 use super::distribution_audit_logger::DistributionAuditLogger;
+use super::distribution_desktop_rollback_service::DistributionDesktopRollbackService;
 use super::distribution_desktop_switch_service::DistributionDesktopSwitchService;
 use super::distribution_journal::DistributionJournal;
 use super::distribution_plan::DistributionPlan;
@@ -247,6 +249,127 @@ fn rollback_failure_fixture(
     .unwrap();
     let before_auth = read_active_auth_json().unwrap();
     (env, accounts, plan, journal, before_auth, checkpoint_path)
+}
+
+fn assert_previous_window_restore(
+    lifecycle: &MockAppLifecycle,
+    home: &Path,
+    previous_id: &str,
+    expected_events: &[&str],
+) {
+    assert_eq!(*lifecycle.task_events.lock().unwrap(), expected_events);
+    let restored = lifecycle.task_restore_sessions.lock().unwrap();
+    assert_eq!(restored.len(), 1);
+    let bound = super::desktop_app_session::DesktopAppSession::load_checked(
+        &home.join("desktop-app-session.json"),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(restored[0], bound);
+    assert_eq!(bound.account_id, previous_id);
+    assert_eq!(bound.cli_account_id.as_deref(), Some(previous_id));
+    assert_eq!(
+        bound.process.unwrap(),
+        lifecycle.inspect_process(9999).unwrap()
+    );
+}
+
+#[test]
+fn post_stop_checkpoint_failure_restores_previous_window_tasks_after_relaunch() {
+    let (env, mut accounts, plan, mut journal, before_auth, checkpoint_path) =
+        rollback_failure_fixture("post_stop_window_restore");
+    let previous_id = plan.current_app_id.as_deref().unwrap();
+    let lifecycle = MockAppLifecycle::new(true);
+    lifecycle.task_window_count.store(2, Ordering::SeqCst);
+    *lifecycle.corrupt_manifest_after_stop.lock().unwrap() = Some(checkpoint_path);
+    let logger = DistributionAuditLogger::default();
+    let error = DistributionDesktopSwitchService::with_preflight(
+        &lifecycle,
+        &logger,
+        available_recovery_channel,
+    )
+    .run(
+        env.home(),
+        &mut journal,
+        &plan,
+        &DistributionRequest::user("synthetic quota interruption"),
+        &mut accounts,
+        "op_post_stop_window_restore",
+    )
+    .err()
+    .expect("post-stop checkpoint failure must roll back");
+    assert!(error.contains("previous Desktop relaunched"), "{error}");
+    assert_eq!(read_active_auth_json().unwrap(), before_auth);
+    assert_previous_window_restore(
+        &lifecycle,
+        env.home(),
+        previous_id,
+        &["launch", "restore", "finish"],
+    );
+}
+
+#[test]
+fn post_auth_commit_rollback_restores_previous_window_tasks_after_relaunch() {
+    let (env, accounts, plan, _, previous_auth, _) =
+        rollback_failure_fixture("post_commit_window_restore");
+    let previous_id = plan.current_app_id.as_deref().unwrap();
+    let target_id = plan.target_app_id.as_deref().unwrap();
+    let lifecycle = MockAppLifecycle::new(false);
+    let target = DistributionAccountCommitService::find_account(&accounts, target_id).unwrap();
+    let (_, committed) =
+        DistributionAccountCommitService::apply_auth_tokens(&lifecycle, &target).unwrap();
+    let error = DistributionDesktopRollbackService::new(&lifecycle).after_auth_commit(
+        env.home(),
+        &accounts,
+        previous_id,
+        &previous_auth,
+        &committed,
+        "synthetic post-commit failure".into(),
+    );
+    assert!(error.contains("Desktop switch rolled back"), "{error}");
+    assert_eq!(read_active_auth_json().unwrap(), previous_auth);
+    assert_previous_window_restore(
+        &lifecycle,
+        env.home(),
+        previous_id,
+        &["launch", "restore", "finish"],
+    );
+}
+
+#[test]
+fn target_launch_failure_restores_previous_windows_and_reports_partial_restore() {
+    let (env, mut accounts, plan, mut journal, before_auth, _) =
+        rollback_failure_fixture("target_launch_window_restore");
+    let previous_id = plan.current_app_id.as_deref().unwrap();
+    let lifecycle = MockAppLifecycle::new(true);
+    lifecycle.task_window_count.store(2, Ordering::SeqCst);
+    lifecycle.set_launch_error_on_call(1, "synthetic target launch failure");
+    *lifecycle.task_finish_error.lock().unwrap() = Some("WINDOW_TASKS_PARTIAL".into());
+    let logger = DistributionAuditLogger::default();
+    let error = DistributionDesktopSwitchService::with_preflight(
+        &lifecycle,
+        &logger,
+        available_recovery_channel,
+    )
+    .run(
+        env.home(),
+        &mut journal,
+        &plan,
+        &DistributionRequest::user("synthetic quota interruption"),
+        &mut accounts,
+        "op_target_launch_window_restore",
+    )
+    .err()
+    .expect("target launch failure must roll back");
+    assert!(error.contains("synthetic target launch failure"), "{error}");
+    assert!(error.contains("WINDOW_TASKS_PARTIAL"), "{error}");
+    assert_eq!(read_active_auth_json().unwrap(), before_auth);
+    assert_previous_window_restore(
+        &lifecycle,
+        env.home(),
+        previous_id,
+        &["launch", "launch", "restore", "finish"],
+    );
 }
 
 #[test]

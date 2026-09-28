@@ -334,7 +334,15 @@ immediately before the helper and again after it returns. Independent Desktop
 changes can still interleave with a link. Capture and restore foreground
 Desktop windows and briefly use the clipboard. Restore failures, including a
 relaunch that never reached the restore, are reported with the restart result
-and never block recovery. Only a command whose raw `--trigger` is `user`
+and never block recovery.
+When a post-stop distribution failure relaunches the previous account, its
+captured task session remains active until that relaunch returns a verified
+previous-account Desktop session. The same IPC, auth, session-marker, PID,
+and birth checks guard its restore; only then is the session finished. If the
+previous relaunch or restore cannot be verified, the error reports incomplete
+window restoration, while the distribution journal follows the auth rollback
+result.
+Only a command whose raw `--trigger` is `user`
 accepts the flag; the
 daemon, the Monitor app, distribution, and auto-switch never pass that CLI flag;
 distribution owns its task session inside the Rust lifecycle
