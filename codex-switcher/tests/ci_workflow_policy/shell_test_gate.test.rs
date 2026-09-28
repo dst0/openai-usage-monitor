@@ -167,11 +167,6 @@ fn a_plain_name_with_digits_dashes_and_directories_is_accepted() {
 
 #[test]
 fn no_shell_tests_need_no_gate() {
-    // CI probe: clippy::clone_on_copy fails the Clippy gate only.
-    // (inside `assert_eq!` the lint did not fire; outside a macro it does)
-    let probe = 1u8;
-    let copy = probe.clone();
-    assert_eq!(copy, 1);
     assert_eq!(
         shell_test_gate_violations(&compliant(), &contexts(), &[]),
         Vec::<String>::new()
