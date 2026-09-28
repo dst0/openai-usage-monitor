@@ -13,10 +13,10 @@
   - The matrix harness, per-run logs, and results were archived outside the repository with Brotli quality 6. They are not reproduced here.
 - **Approaches tried:**
   - **Attempt:** Leave the pointer to the PR.
-    - **Outcome:** Rejected.
+    - **Outcome:** Did not work.
     - **Why:** A PR description can be edited and is not part of a checkout. The records would not stand on their own.
   - **Attempt:** Rewrite the two records in place.
-    - **Outcome:** Rejected.
+    - **Outcome:** Did not work.
     - **Why:** The pointer is incomplete, not false, so the `Corrected` exception does not apply. Records are append-only.
 - **Root cause:** Evidence was written once, into the PR description, and the records pointed there instead of repeating the decisive numbers.
 - **Resolution:** This record holds that evidence. [2026-09-28 — Resolving the module cache path broke caches warmed through an alias; the scripts now own a path-keyed subdirectory](2026-09-28-swift-cache-helper-owns-a-path-keyed-subdirectory.md) records its own results in full and adds the per-toolchain failure signatures.

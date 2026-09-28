@@ -242,6 +242,19 @@ if [ -d "/System/Volumes/Data${REAL}" ]; then
         "$(accepted "${REAL}/new/cache")"
 fi
 
+# The subdirectory itself, such as a value the helper exported to a nested
+# script, is used as is through any spelling; a look-alike name is not.
+own="$(scripts_cache "${REAL}/idem")"
+expect "idem" "$(run_helper "CLANG_MODULE_CACHE_PATH=${REAL}/idem")" "0|${own}|set"
+expect "the helper's own subdirectory is used as is" \
+    "$(run_helper "CLANG_MODULE_CACHE_PATH=${own}")" "0|${own}|set"
+expect "the helper's own subdirectory through an alias" \
+    "$(run_helper "CLANG_MODULE_CACHE_PATH=${ALIAS}/idem/${own##*/}/")" "0|${own}|set"
+/bin/mkdir -p "${REAL}/idem/codex-monitor-swift-123"
+expect "a look-alike name gets its own subdirectory" \
+    "$(run_helper "CLANG_MODULE_CACHE_PATH=${REAL}/idem/codex-monitor-swift-123")" \
+    "$(accepted "${REAL}/idem/codex-monitor-swift-123")"
+
 # A copied or moved cache records its old path, so it gets a new subdirectory.
 /bin/mkdir -p "${REAL}/movable"
 expect "movable" "$(run_helper "CLANG_MODULE_CACHE_PATH=${REAL}/movable")" "$(accepted "${REAL}/movable")"
@@ -309,6 +322,24 @@ expect "a failing checksum is rejected" "${actual}" "1|${REAL}|set"
 /bin/mkdir -p "${REAL}/linked" "${REAL}/elsewhere-cache"
 /bin/ln -s ../elsewhere-cache "$(scripts_cache "${REAL}/linked")"
 expect_rejected "a symlinked scripts' subdirectory" "${REAL}/linked" 'is not a plain directory'
+# Another account must not be able to plant modules in it. The helper creates
+# its subdirectory closed to other writers whatever the caller's umask.
+expect "a group-writable umask" \
+    "$(umask 002 && run_helper "CLANG_MODULE_CACHE_PATH=${REAL}/umask-002")" "$(accepted "${REAL}/umask-002")"
+for mode in 777 775 757; do
+    /bin/mkdir -p "$(scripts_cache "${REAL}/shared-${mode}")"
+    /bin/chmod "${mode}" "$(scripts_cache "${REAL}/shared-${mode}")"
+    expect_rejected "a mode-${mode} scripts' subdirectory" "${REAL}/shared-${mode}" 'must be owned by you and not writable by group or others'
+done
+/bin/cp "${HELPER}" "${TEMP_ROOT}/helper-foreign-owner.sh"
+/usr/bin/printf '#!/bin/sh\necho "%s 755"\n' "$((EUID + 1))" > "${TEMP_ROOT}/fake-stat"
+/bin/chmod 755 "${TEMP_ROOT}/fake-stat"
+/usr/bin/sed -i '' "s#/usr/bin/stat#${TEMP_ROOT}/fake-stat#g" "${TEMP_ROOT}/helper-foreign-owner.sh"
+! /usr/bin/grep -q '/usr/bin/stat' "${TEMP_ROOT}/helper-foreign-owner.sh" \
+    || fail "the foreign-owner copy still runs the real stat"
+actual="$(HELPER="${TEMP_ROOT}/helper-foreign-owner.sh" run_helper "CLANG_MODULE_CACHE_PATH=${REAL}")"
+expect "a subdirectory owned by another account is rejected" "${actual}" "1|${REAL}|set"
+/usr/bin/grep -qF 'must be owned by you' "${TEMP_ROOT}/helper.err" || fail "the foreign owner is not explained"
 if [ "$(/usr/bin/id -u)" != 0 ]; then
     # Root can write anyway, so these cases need an ordinary user.
     /bin/mkdir -p "${REAL}/ro-parent" "${REAL}/ro-subdir" "${REAL}/ro-parent-ok" "${REAL}/unsearchable"
@@ -316,7 +347,7 @@ if [ "$(/usr/bin/id -u)" != 0 ]; then
         "$(scripts_cache "${REAL}/unsearchable")"
     /bin/chmod 555 "${REAL}/ro-parent" "$(scripts_cache "${REAL}/ro-subdir")" "${REAL}/ro-parent-ok"
     /bin/chmod 600 "$(scripts_cache "${REAL}/unsearchable")"
-    expect_rejected "a read-only directory" "${REAL}/ro-parent" 'cannot be written'
+    expect_rejected "a read-only directory" "${REAL}/ro-parent" 'cannot be created'
     expect_rejected "a warm read-only scripts' subdirectory" "${ALIAS}/ro-subdir" 'cannot be written'
     expect_rejected "a writable but unsearchable scripts' subdirectory" "${REAL}/unsearchable" 'cannot be written'
     expect "a read-only parent of a writable scripts' subdirectory" \
@@ -372,27 +403,35 @@ names_compiler() {
     return "${status}"
 }
 plain_echo() {
-    [[ $1 =~ ^[[:space:]]*echo[[:space:]] ]] && [[ $1 != *'$('* ]] && [[ $1 != *'`'* ]]
+    # An echo with nothing chained to it: no list, pipe, background job, or
+    # substitution, only redirections of its own output.
+    local rest="${1%;}"
+    [[ ${rest} =~ ^[[:space:]]*echo[[:space:]] ]] || return 1
+    rest="${rest//>&/}"
+    rest="${rest//&>/}"
+    [[ ${rest} != *'$('* && ${rest} != *'`'* && ${rest} != *'<('* && ${rest} != *'>('* && ${rest} != *[\;\|\&]* ]]
 }
-repo_script_sourced() {
-    # repo_script_sourced LINE -> the scripts/ file name a source line loads
-    /usr/bin/sed -nE \
-        -e 's#^[[:space:]]*(source|\.) "\$\{(PROJECT_DIR|REPO_DIR)\}/scripts/([A-Za-z0-9_.-]+\.sh)";?$#\3#p' \
-        -e 's#^[[:space:]]*(source|\.) "\$\{SCRIPT_DIR\}/([A-Za-z0-9_.-]+\.sh)";?$#\2#p' <<< "$1"
+repo_scripts_named() {
+    # repo_scripts_named LINE -> repository-relative paths of the scripts it names
+    /usr/bin/grep -oE '"\$\{(PROJECT_DIR|REPO_DIR|SCRIPT_DIR)\}/[A-Za-z0-9_./-]+\.sh"' <<< "$1" |
+        /usr/bin/sed -E -e 's#^"\$\{(PROJECT_DIR|REPO_DIR)\}/##' -e 's#^"\$\{SCRIPT_DIR\}/#scripts/#' -e 's#"$##' || true
 }
-check_sourced_script() {
-    # check_sourced_script LABEL FILE: must not compile or touch the cache.
+check_named_script() {
+    # check_named_script LABEL FILE BEFORE_CALL(0|1): never touches the cache
+    # or the helper, and, when reached before the call, never compiles.
     local text line
     text="$(canonical "$2")" || fail "$1: bash could not parse it"
     while IFS= read -r line; do
-        plain_echo "${line}" && continue
-        ! names_compiler "${line}" || fail "$1 can reach a compiler: ${line}"
         [[ ${line} != *CLANG_MODULE_CACHE_PATH* && ${line} != *canonicalize_clang_module_cache_path* ]] \
             || fail "$1 touches the module cache variable or the helper: ${line}"
+        [ "$3" = 1 ] || continue
+        plain_echo "${line}" && continue
+        ! names_compiler "${line}" || fail "$1 can reach a compiler before the cache path is resolved: ${line}"
     done <<< "${text}"
 }
 check_script() {
-    local script="$1" text call_index="" source_index="" source_count=0 call_count=0 index=0 line sourced
+    local script="$1" text call_index="" source_index="" source_count=0 call_count=0 index=0 line named
+    local checked_before=" " checked_after=" "
     text="$(canonical "${PROJECT_DIR}/${script}")" || fail "${script}: bash could not parse it"
     while IFS= read -r line; do
         index=$((index + 1))
@@ -415,16 +454,26 @@ check_script() {
     index=0
     while IFS= read -r line; do
         index=$((index + 1))
-        sourced="$(repo_script_sourced "${line}")"
-        if [ -n "${sourced}" ] && [ "${sourced}" != swift_module_cache.sh ]; then
-            [ -f "${PROJECT_DIR}/scripts/${sourced}" ] || fail "${script}: sources missing scripts/${sourced}"
-            check_sourced_script "scripts/${sourced} (sourced by ${script})" "${PROJECT_DIR}/scripts/${sourced}"
-        fi
+        # Every repository script it names, sourced or run, must leave the
+        # cache alone, and must not compile if named before the call.
+        while IFS= read -r named; do
+            [ -n "${named}" ] && [ "${named}" != scripts/swift_module_cache.sh ] || continue
+            [ -f "${PROJECT_DIR}/${named}" ] || fail "${script}: names missing ${named}"
+            if [ "${index}" -lt "${call_index}" ]; then
+                [[ ${checked_before} != *" ${named} "* ]] || continue
+                check_named_script "${named} (named by ${script} before the call)" "${PROJECT_DIR}/${named}" 1
+                checked_before="${checked_before}${named} "
+            else
+                [[ ${checked_after} != *" ${named} "* && ${checked_before} != *" ${named} "* ]] || continue
+                check_named_script "${named} (named by ${script})" "${PROJECT_DIR}/${named}" 0
+                checked_after="${checked_after}${named} "
+            fi
+        done <<< "$(repo_scripts_named "${line}")"
         if [ "${index}" -lt "${call_index}" ]; then
             # Before the call: no compile, no cd, only the swiftc presence check.
             [[ ! ${line} =~ ^[[:space:]]*(cd|pushd)([[:space:]]|\;|$) ]] \
                 || fail "${script}: changes directory before resolving a relative cache path: ${line}"
-            if [[ ${line} =~ ^[[:space:]]*(source|\.)[[:space:]] ]] && [ -z "${sourced}" ]; then
+            if [[ ${line} =~ ^[[:space:]]*(source|\.)[[:space:]] ]] && [ -z "$(repo_scripts_named "${line}")" ]; then
                 fail "${script}: sources an unchecked file before resolving the cache path: ${line}"
             fi
             plain_echo "${line}" && continue
@@ -451,7 +500,11 @@ sample() {
 scan_accepts() {
     (PROJECT_DIR="${bad_dir}"; check_script "scripts/$1.sh") 2>/dev/null
 }
-sample good 'source "${PROJECT_DIR}/scripts/quiet_lib.sh"' 'FOO="a b" swiftc -o x y.swift'
+/usr/bin/printf 'unset CLANG_MODULE_CACHE_PATH\n' > "${bad_dir}/scripts/unsetting_lib.sh"
+sample good 'source "${PROJECT_DIR}/scripts/quiet_lib.sh"
+"${PROJECT_DIR}/scripts/quiet_lib.sh"
+echo "Swift is ready" >&2' 'FOO="a b" swiftc -o x y.swift
+"${PROJECT_DIR}/scripts/compiling_lib.sh"'
 scan_accepts good || fail "the ordering scan rejected a correct script: $( (PROJECT_DIR="${bad_dir}"; check_script scripts/good.sh) 2>&1 )"
 bad_case() {
     sample "$@"
@@ -468,6 +521,12 @@ bad_case compile-in-function 'build() { swiftc -o x y.swift; }' ':'
 bad_case cd-first 'cd /' ':'
 bad_case unchecked-source '. "${HOME}/env.sh"' ':'
 bad_case compiling-source 'source "${PROJECT_DIR}/scripts/compiling_lib.sh"' ':'
+bad_case compiling-run '"${PROJECT_DIR}/scripts/compiling_lib.sh"' ':'
+bad_case compiling-bash 'bash "${PROJECT_DIR}/scripts/compiling_lib.sh"' ':'
+bad_case echo-and 'echo "building" && swiftc -o x y.swift' ':'
+bad_case echo-pipe 'echo y.swift | xargs swiftc -o x' ':'
+bad_case unsetting-run-after ':' '"${PROJECT_DIR}/scripts/unsetting_lib.sh"'
+bad_case echo-and-after ':' 'echo "building" && /usr/bin/swiftc -o x y.swift'
 bad_case unset-after ':' 'unset CLANG_MODULE_CACHE_PATH'
 bad_case reassign-after ':' 'export CLANG_MODULE_CACHE_PATH=/tmp/x'
 bad_case redefine-after ':' 'canonicalize_clang_module_cache_path() { :; }'

@@ -123,7 +123,8 @@ The installation script checks and guides you through the prerequisites automati
    other tools. Delete old `codex-monitor-swift-*` directories to reclaim
    space. The scripts stop if the path is not a directory, contains a newline,
    or starts with an unexpanded `~`, or if the subdirectory is not a plain
-   directory they can write. Other Swift or Clang runs that share a cache among
+   directory that you own, that they can write, and that group and others
+   cannot write. Other Swift or Clang runs that share a cache among
    themselves must use one spelling of it, and a new directory after a copy or
    move.
 3. **Rust & Cargo** (for building the ultra-lightweight CLI core):
@@ -439,7 +440,9 @@ This removes the persistent Monitor installation footprint. A normal macOS
 user-space uninstall cannot promise forensic erasure of shell history,
 unified/system logs, notification history, LaunchServices caches, or TCC
 permission records; those are outside the app's owned data and are intentionally
-not purged by default.
+not purged by default. Compiler build caches are not removed either: the default
+Clang module cache, and the `codex-monitor-swift-*` subdirectory created in a
+`CLANG_MODULE_CACHE_PATH` you set before installing.
 
 ---
 

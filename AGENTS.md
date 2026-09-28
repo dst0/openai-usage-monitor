@@ -93,14 +93,17 @@
   (the error depends on the toolchain). Every spelling reaches the same
   subdirectory, which nothing else writes, and a moved cache gets a new one.
   They stop on a path that is not a directory, contains a newline, starts with
-  an unexpanded `~`, or whose subdirectory is not a plain directory they can
-  write. Ad hoc Swift or Clang runs that share a cache among themselves must
+  an unexpanded `~`, or whose subdirectory is not a plain directory that the
+  user owns and can write and that group and others cannot write. A value that
+  already is the subdirectory for its parent is used as is. Ad hoc Swift or Clang runs that share a cache among themselves must
   use one spelling. Where a sandbox denies the default module cache, a
   writable `CLANG_MODULE_CACHE_PATH` is enough. The compiler/SDK build
   difference recorded in `CODEX.md` does not need an `SDKROOT` override.
 - “No traces” means no persistent Monitor-owned installation artifacts. Shell
   history, unified logs, LaunchServices/TCC records, APFS snapshots, and
-  backups are outside the app's ownership and are not forensic-erased.
+  backups are outside the app's ownership and are not forensic-erased. So are
+  compiler build caches: the default module cache and the `codex-monitor-swift-*`
+  subdirectory of a user-set `CLANG_MODULE_CACHE_PATH`.
 
 ## Invariants
 - POSIX `0600` permissions on all credential and token files (`auth.json`, `accounts.json`).

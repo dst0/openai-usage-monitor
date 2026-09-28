@@ -480,11 +480,15 @@ spelling), and use its subdirectory
 `codex-monitor-swift-<cksum of the physical path>`. Every spelling reaches the
 same subdirectory, nothing else writes it, a cache another tool warmed through
 an alias is left alone, and a copied or moved cache gets a new subdirectory;
-delete old `codex-monitor-swift-*` directories to reclaim space. A relative path
-resolves once against the caller's directory. The scripts stop if the path is
+delete old `codex-monitor-swift-*` directories to reclaim space. A value that
+already is that subdirectory for its parent, such as the value the helper
+exports to a nested script, is used as is. A relative path resolves once
+against the caller's directory. The scripts stop if the path is
 not a directory, contains a newline, or starts with an unexpanded `~`, or if
-the subdirectory is a symlink, is not a directory, or is not writable and
-searchable (`[ -w ]`, `[ -x ]`, which also apply ACLs and sandbox rules). A
+the subdirectory is a symlink, is not a directory, is not owned by the user
+or is writable by group or others (another account could plant modules that
+get compiled into the app), or is not writable and searchable (`[ -w ]`,
+`[ -x ]`, which also apply ACLs and sandbox rules). A
 read-only cache compiles only what it already holds for the same flags, and
 these scripts compile with several. Other `swiftc`, `swift`, or
 `clang -fmodules` runs that share a cache among themselves must use one
@@ -592,3 +596,6 @@ state—`ChatGPT.app`, its bundled app-server, `~/.codex/auth.json`,
 and source checkouts. It cannot erase shell history, macOS unified logs,
 notification history, LaunchServices caches, or TCC records; “no traces” means
 no persistent Monitor installation artifacts, not forensic erasure of the OS.
+Compiler build caches are outside its scope too: the default Clang module cache,
+and the `codex-monitor-swift-*` subdirectory that the install and test scripts
+create in a `CLANG_MODULE_CACHE_PATH` you set. Delete those by hand if wanted.

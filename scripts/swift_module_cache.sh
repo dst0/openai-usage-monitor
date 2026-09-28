@@ -7,16 +7,20 @@
 # they were built. Reusing a warm cache through any other path fails: another
 # spelling of the same directory (/tmp/x for /private/tmp/x, since /tmp is a
 # symlink on macOS), or a copied or moved cache directory. The error depends
-# on the toolchain: Swift 6.4 reports "module '_DarwinFoundation1' is defined
-# in both ...", and crashed on one installer source; Swift 5.10 and a moved
-# cache report "precompiled file ... was compiled with module cache path ...".
+# on the toolchain and the source: for another spelling, Swift 6.4 reports
+# "module '_DarwinFoundation1' is defined in both ..." (and crashed on some
+# sources) and Swift 5.10 "PCH was compiled with module cache path ..."; for a
+# copied or moved cache, Swift 6.4 reports "precompiled file ... was compiled
+# with module cache path ...".
 #
 # So these scripts never build into CLANG_MODULE_CACHE_PATH itself, which
 # other tools may already have filled through another spelling. They use a
 # subdirectory of its physical path, named after a checksum of that physical
 # path. Every spelling of the directory resolves to the same physical path and
 # so to the same subdirectory, which only this function ever hands to the
-# compiler. A copied or moved cache gets a new, empty subdirectory. Resolving
+# compiler. A copied or moved cache gets a new, empty subdirectory. A value
+# that already is that subdirectory for its parent, such as one this function
+# exported to a nested script, is used as is. Resolving
 # once also pins a relative path to the caller's directory, so the installer's
 # later `cd` calls cannot move the cache between compile steps. An unset or
 # empty variable is left alone, as before.
@@ -26,7 +30,9 @@
 # several), and Swift may then report "this SDK is not supported by the
 # compiler". The subdirectory must therefore be writable and searchable.
 # `[ -w ]` asks the kernel (access(2)), which also applies ACLs, read-only
-# mounts, and sandbox rules, so no probe file is left in the user's cache. See
+# mounts, and sandbox rules, so no probe file is left in the user's cache. It
+# must also be ours and closed to other writers, who could otherwise plant
+# modules that get compiled into the installed app. See
 # docs/leanings/2026-09-28-swift-cache-spelling-mismatch-isolated.md,
 # docs/leanings/2026-09-28-swift-sdk-not-supported-was-unwritable-module-cache.md,
 # and docs/leanings/2026-09-28-swift-cache-helper-owns-a-path-keyed-subdirectory.md.
@@ -35,9 +41,20 @@
 # path of CLANG_MODULE_CACHE_PATH.
 SWIFT_MODULE_CACHE_SUBDIR_PREFIX="codex-monitor-swift-"
 
+# swift_module_cache_subdir_name PHYSICAL_DIR -> prints the subdirectory name.
+swift_module_cache_subdir_name() {
+    local checksum
+    checksum="$(/usr/bin/printf '%s' "$1" | /usr/bin/cksum)" || return 1
+    checksum="${checksum%% *}"
+    case "${checksum}" in
+        '' | *[!0-9]*) return 1 ;;
+    esac
+    /usr/bin/printf '%s%s' "${SWIFT_MODULE_CACHE_SUBDIR_PREFIX}" "${checksum}"
+}
+
 canonicalize_clang_module_cache_path() {
     local requested="${CLANG_MODULE_CACHE_PATH:-}"
-    local target="" physical="" checksum="" cache=""
+    local target="" physical="" parent="" own_name="" name="" cache="" owner_mode=""
     [ -n "${requested}" ] || return 0
     case "${requested}" in
         *$'\n'*)
@@ -72,28 +89,45 @@ canonicalize_clang_module_cache_path() {
             ;;
     esac
 
-    checksum="$(/usr/bin/printf '%s' "${physical}" | /usr/bin/cksum)" || checksum=""
-    checksum="${checksum%% *}"
-    case "${checksum}" in
-        '' | *[!0-9]*)
-            echo "❌ Could not name the Swift module cache for ${physical}" >&2
-            return 1
-            ;;
-    esac
-    cache="${physical%/}/${SWIFT_MODULE_CACHE_SUBDIR_PREFIX}${checksum}"
+    parent="${physical%/*}"
+    if ! own_name="$(swift_module_cache_subdir_name "${parent:-/}")" ||
+        ! name="$(swift_module_cache_subdir_name "${physical}")"; then
+        echo "❌ Could not name the Swift module cache for ${physical}" >&2
+        return 1
+    fi
+    if [ "${physical##*/}" = "${own_name}" ]; then
+        cache="${physical}"
+    else
+        cache="${physical%/}/${name}"
+    fi
     # A symlink here would let the subdirectory be reached through a second
     # spelling again.
     if [ -L "${cache}" ] || { [ -e "${cache}" ] && [ ! -d "${cache}" ]; }; then
         echo "❌ ${cache} is not a plain directory; remove it or choose another CLANG_MODULE_CACHE_PATH." >&2
         return 1
     fi
-    if ! { [ -d "${cache}" ] || /bin/mkdir -- "${cache}" 2>/dev/null; } ||
-        [ ! -w "${cache}" ] || [ ! -x "${cache}" ]; then
+    if [ ! -d "${cache}" ] && ! /bin/mkdir -m 755 -- "${cache}" 2>/dev/null; then
+        echo "❌ The Swift module cache ${cache} cannot be created (CLANG_MODULE_CACHE_PATH=${requested})." >&2
+        echo "   Choose a directory you can write." >&2
+        return 1
+    fi
+    # Owner uid and permission bits; group or other write bits are refused.
+    owner_mode="$(/usr/bin/stat -f '%u %Lp' "${cache}" 2>/dev/null)" || owner_mode="unknown"
+    case "${owner_mode}" in
+        "${EUID} "[0-7][0-7][0-7] | "${EUID} "[0-7][0-7][0-7][0-7])
+            [ $((8#${owner_mode##* } & 8#022)) -eq 0 ]
+            ;;
+        *) false ;;
+    esac || {
+        echo "❌ ${cache} must be owned by you and not writable by group or others (owner and mode: ${owner_mode})." >&2
+        return 1
+    }
+    if [ ! -w "${cache}" ] || [ ! -x "${cache}" ]; then
         echo "❌ The Swift module cache ${cache} cannot be written (CLANG_MODULE_CACHE_PATH=${requested})." >&2
         echo "   Swift would fail on the first module it has to build, possibly reported as \"this SDK is not supported by the compiler\"." >&2
         echo "   Choose a directory you can write." >&2
         return 1
     fi
-    echo "ℹ️  Swift module cache: ${cache} (a subdirectory of CLANG_MODULE_CACHE_PATH=${requested} that only these scripts use)." >&2
+    echo "ℹ️  Swift module cache: ${cache}, used only by these scripts (CLANG_MODULE_CACHE_PATH=${requested})." >&2
     export CLANG_MODULE_CACHE_PATH="${cache}"
 }
