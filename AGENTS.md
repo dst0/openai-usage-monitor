@@ -136,6 +136,7 @@
   subdirectory of a user-set `CLANG_MODULE_CACHE_PATH`.
 
 ## Invariants
+- The Monitor is for accounts owned and authorized for use by its operator. Account switching and task-link restoration never imply that another signed-in account can read a task; preserve server authorization failures as failures.
 - POSIX `0600` permissions on all credential and token files (`auth.json`, `accounts.json`).
 - Never print or log tokens/secrets to stdout/stderr.
 - Always use atomic file operations (`fs2` flock) when writing `auth.json` or `accounts.json`.

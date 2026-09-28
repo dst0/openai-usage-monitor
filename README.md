@@ -2,6 +2,8 @@
 
 Ultra-lightweight, high-performance automatic quota monitoring and account rotation system for **OpenAI Codex** (supporting both console **Codex CLI** and desktop **Codex / ChatGPT.app**).
 
+**Condition of use:** Register and switch only accounts that you own and are authorized to use. Recovery may reopen a selected task under another of your accounts; ChatGPT still controls whether that signed-in account can access the task.
+
 The switching and monitoring core is written in **Rust**, paired with a native macOS Menu Bar application in **Swift** (`Codex Monitor.app`). Cold-task mounting and exact multiwindow task restoration remain subject to the Desktop limitations described below.
 
 > [!IMPORTANT]
