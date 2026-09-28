@@ -13,8 +13,8 @@ public final class SingleInstanceGuard {
     let home =
       (ProcessInfo.processInfo.environment["HOME"]).flatMap { $0.isEmpty ? nil : $0 }
       ?? FileManager.default.homeDirectoryForCurrentUser.path
+    // Naming the path creates nothing; `tryAcquire()` makes the directory.
     let codexDir = (home as NSString).appendingPathComponent(".codex")
-    try? FileManager.default.createDirectory(atPath: codexDir, withIntermediateDirectories: true)
     return (codexDir as NSString).appendingPathComponent("monitor.lock")
   }
 

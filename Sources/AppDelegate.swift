@@ -43,7 +43,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
   internal var quotaRefreshOverride: ((@escaping (MultiAccountSnapshot?) -> Void) -> Void)?
   /// Receives alerts instead of a modal NSAlert; tests set it, the app leaves it nil.
   internal var alertOverride: ((_ title: String, _ message: String, _ style: NSAlert.Style) -> Void)?
-  internal let singleGuard = SingleInstanceGuard()
+  /// Built on first use in `applicationDidFinishLaunching`, not with the delegate, because its
+  /// default path is the live `~/.codex/monitor.lock`: a delegate a test builds never resolves it.
+  internal lazy var singleGuard = SingleInstanceGuard()
   internal let autoLaunchManager: AutoLaunchManager
   /// Shows the login-item state read back from macOS in the Launch at Login item. A failed toggle
   /// closes the menu if it was reopened and shows its warning once the run loop is back in the

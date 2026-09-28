@@ -12,7 +12,8 @@ echo "🚀 Building and running Swift Test Suites for OpenAI Usage Monitor..."
 canonicalize_clang_module_cache_path || exit 1
 
 # Every Swift test build defines CODEX_MONITOR_TESTS, which compiles the Codex home tripwires
-# into Sources/; see tests/TestCodexHome.swift.
+# into Sources/; see tests/TestCodexHome.swift. Compile only through this wrapper:
+# tests/swift_test_codex_home_isolation.sh rejects any other swiftc call here.
 swiftc_test() { swiftc -D CODEX_MONITOR_TESTS "$@"; }
 
 TMP_BIN_DIR=$(mktemp -d /tmp/openai_swift_tests_XXXXXX)
@@ -25,6 +26,9 @@ echo "👉 Running Swift module-cache path tests..."
 
 echo "👉 Checking that Swift tests keep their own defaults store..."
 bash tests/swift_test_defaults_isolation.sh
+
+echo "👉 Checking that every Swift test build compiles the Codex home tripwires..."
+bash tests/swift_test_codex_home_isolation.sh
 
 echo "👉 [1/2] Running Screen Contrast, Vector Icons & Stacked Percentage Tests..."
 swiftc_test -parse-as-library \

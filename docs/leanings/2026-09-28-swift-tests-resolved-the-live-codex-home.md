@@ -1,0 +1,59 @@
+# 2026-09-28 — Swift tests resolved the live `~/.codex`
+
+- **Status:** Resolved
+- **Task/context:** Follow-up to the remaining shared state listed in [2026-09-28 — Concurrent Swift suite runs isolated by an injected defaults store](2026-09-28-concurrent-swift-suites-isolated-by-injected-defaults.md). The Swift AppDelegate suite (`app_delegate_test`, built by `scripts/test_swift.sh`) builds delegates and menus with `CodexClient.shared`, and the App/CLI identity suite loads cached snapshots through `CodexClient`.
+- **Unexpected observation or failure:**
+  - **Settings read from the live home.** `CodexClient.codexHome` is `CODEX_HOME`, or `~/.codex` when that variable is unset. The menu's settings getters, and Test 5's `getAutoSwitchEnabled()`, therefore read the user's live `~/.codex/accounts.json`.
+  - **Scoped overrides made it worse.** The tests that set a temporary `CODEX_HOME` saved the previous value and restored it on the way out. The previous value was "unset", so every later test in the binary read the live home again.
+  - **Every delegate reached the live lock.** `AppDelegate` built `SingleInstanceGuard()` when constructed. Its default `defaultLockPath` names `$HOME/.codex/monitor.lock` whatever `CODEX_HOME` says, and it also created that directory. So every delegate a test built created the live `~/.codex` on a machine that had none.
+  - **Status items leaked.** Two tests left their status items in the real menu bar until the binary exited.
+- **Evidence:**
+  - **Red step 1** ([run 36378848281](https://github.com/dst0/openai-usage-monitor/actions/runs/36378848281), head `7c54fbe`, macos-14, Swift 5.10). Test builds get tripwires and a regression test, but no private home yet. `app_delegate_test` stopped at the suite's first settings read, before anything was read: `❌ Codex home isolation failed: CodexClient.codexHome with CODEX_HOME unset names the live ~/.codex; tests must not reach it`.
+  - **Red step 2** ([run 36379050595](https://github.com/dst0/openai-usage-monitor/actions/runs/36379050595), head `18b6f91`). The binaries now take a private home first. The suite then stopped at the first delegate it built, before the directory was created: `❌ Codex home isolation failed: SingleInstanceGuard.defaultLockPath names the live ~/.codex; tests must not reach it`.
+  - In both runs the guard's own tests (`test-codex-home_test`) passed first. That shows each tripwire stops a child probe before its call returns.
+  - The red steps were pushed one at a time, each after the previous run had finished, because `ci.yml` cancels an in-progress run for the same pull request.
+- **Approaches tried:**
+  - **Attempt:** Build the URL as before, then check it in a tripwire.
+    - **Outcome:** Rejected before implementation, from Apple's documentation (an adversarial design review found it; not reproduced here).
+    - **Why:** Without `isDirectory:`, `URL(fileURLWithPath:)` and `appendingPathComponent(_:)` consult the file system to decide whether the path is a directory. A check placed after them runs after a metadata read of the live path. The tripwires therefore check the raw `CODEX_HOME` string, or stop in the unset branch, before any URL exists.
+  - **Attempt:** Compare paths with `standardizedFileURL`.
+    - **Outcome:** Rejected.
+    - **Why:** It follows `NSString` path standardization, which may consult the file system (symlinks, `/private`). The check is purely lexical instead. It accepts only an absolute path that has no empty, `.`, or `..` component and lies strictly inside the run directory, so a sibling such as `<run>-evil` is refused.
+  - **Attempt:** A runtime observer hook in production (`nil` in the app) that tests install.
+    - **Outcome:** Rejected.
+    - **Why:** A binary that forgot to install it would have no guard, and production would carry a test seam.
+  - **Attempt:** Isolate with environment variables alone (`CFFIXED_USER_HOME` or `HOME` for the test process).
+    - **Outcome:** Rejected.
+    - **Why:** It relies on undocumented CoreFoundation behavior, and a binary run directly would have no guard.
+  - **Attempt:** Inject the lock into `AppDelegate.init`.
+    - **Outcome:** Rejected.
+    - **Why:** Test 4 builds `AppDelegate()` to check its production wiring, and that initializer would then resolve the live default path.
+  - **Attempt:** Compile-time tripwires. Test builds define `CODEX_MONITOR_TESTS`, which `#if` blocks in `Sources/` turn into calls to `tests/TestCodexHome.swift`. Each binary takes a private home. `AppDelegate` builds its lock lazily.
+    - **Outcome:** Worked.
+    - **Why:** The app build (`scripts/install.sh`) never defines the flag, so the app's code paths are unchanged. A test build that defines it cannot compile without the guard file, and that file refuses to compile without the flag.
+- **Root cause:**
+  - **No test home.** Nothing gave a Swift test binary a Codex home of its own, and restoring a saved, unset `CODEX_HOME` pointed later tests back at the live one.
+  - **A lock that ignored `CODEX_HOME`.** `AppDelegate` eagerly built a lock whose default path ignores `CODEX_HOME` and whose getter created the directory.
+- **Resolution:**
+  - **One compile wrapper.** `scripts/test_swift.sh` compiles every test binary through `swiftc_test`, which adds `-D CODEX_MONITOR_TESTS`. `tests/swift_test_codex_home_isolation.sh` rejects any other `swiftc` there, and a required CI step runs it.
+  - **Tripwires.** `CodexClient.codexHome` requires `CODEX_HOME` to name a path inside the run directory. The paths that name the live home (the fallback when `CODEX_HOME` is unset, `SingleInstanceGuard.defaultLockPath`, the help page's home fallback) always stop the run.
+  - **Private homes.** `TestCodexHome.activate()` gives each binary a `mkdtemp` directory, removed at exit. `enter(_:create:)` and `leave(_:)` replace every raw `setenv`/`unsetenv` of `CODEX_HOME` in the tests.
+  - **Lazy lock.** `AppDelegate.singleGuard` is built on first use in `applicationDidFinishLaunching`. `defaultLockPath` no longer creates the directory, because `tryAcquire()` already does.
+  - **Tests.** Test 0 (`tests/AppDelegateCodexHomeTests.swift`) runs the suite's own calls first, then checks that each menu setting comes from `CODEX_HOME` in both of its values. Test 5's vacuous "returns a Bool" check is gone. Both leftover status items are removed after their last use.
+- **Verification:**
+  - **Red steps.** The two failing runs above.
+  - **Green.** `./scripts/test_swift.sh` passes on the macos-14 CI runner at the fix commit (see the pull request's checks).
+  - **Guard tests.** `test-codex-home_test` checks the lexical decision in process (relative, empty, trailing-slash, doubled-slash, `.` and `..`, sibling-prefix, and run-directory cases). It also checks each tripwire's stop in a child probe, and one passing child proves the harness can pass.
+  - **Static check.** `tests/swift_test_codex_home_isolation.sh` rejects a bare `swiftc` and a wrapper without the define, checked by mutating the real `scripts/test_swift.sh`.
+  - **Workflow policy.** `cargo test --locked --test ci_workflow_policy` passes, and fails with the new CI step removed. This was run on a Linux clone with the binary stubbed, since the crate builds only on macOS; the required Rust job runs it for real.
+- **Prevention/follow-up:**
+  - **Tripwires and rules.** The tripwires, the compile wrapper and its check, and the AGENTS.md "Swift tests never resolve the live `~/.codex`" rule.
+  - **Other live state still reached by the Swift tests (follow-ups):**
+    - Test 7's `CodexClient.makeDistributionProcess` resolves `cliExecutableURL`, which checks `~/.local/bin/codex-mon`.
+    - `CodexClient().loadCachedSnapshot()` and `CodexClient.shared` read the live process table through `CodexDesktopProcessIdentity.current()`.
+  - **Two differences found in passing (follow-ups):**
+    - `SingleInstanceGuard` writes `$HOME/.codex/monitor.lock` while `scripts/uninstall.sh` removes `${CODEX_HOME}/monitor.lock`. The two differ when `CODEX_HOME` is set.
+    - `getAutoSwitchEnabled()` returns `true` when `accounts.json` lacks the key, while the Rust `Settings::default()` disables auto-switch.
+  - **Local verification.** A Linux container cannot build these tests: no Swift toolchain is available, and `download.swift.org` was blocked. The macOS CI runner was the only compiler here, so each step was pushed and read from CI.
+- **Reusable learning:** A Swift test binary has no test-only compilation mode unless the build gives it one. Define a test flag in exactly one compile wrapper, check that every test build uses the wrapper, and put tripwires in `Sources/` that reject the raw path string before any `URL` is built. Never restore a saved "unset" `CODEX_HOME`: hand out scoped homes that restore the run's private one.
+- **References:** `tests/TestCodexHome.swift`, `tests/TestCodexHomeTests.swift`, `tests/AppDelegateCodexHomeTests.swift`, `tests/swift_test_codex_home_isolation.sh`, `scripts/test_swift.sh`, `Sources/CodexClient.swift`, `Sources/SingleInstanceGuard.swift`, `Sources/QuotaModels.swift`, `Sources/AppDelegate.swift`, AGENTS.md.

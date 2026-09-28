@@ -1295,6 +1295,8 @@ struct AppDelegateTestRunner {
       $0.title.contains(L10n.reloginToAccount) && $0.action == #selector(AppDelegate.handleActiveAccountRelogin(_:))
     })
     assertTrue(activeReloginItem != nil, "Menu must display active account relogin item when active account needs relogin")
+    // The delegate's last use: take its status item out of the menu bar.
+    NSStatusBar.system.removeStatusItem(appDelegate.statusItem)
 
     // Regression Test 14: Active AccountRowView clicking & context menu routing when needsRelogin is true
     var activeRowRelogined = false
@@ -2237,6 +2239,7 @@ struct AppDelegateTestRunner {
       let toolTip = appDelegateTest.statusItem?.button?.toolTip ?? ""
       assertTrue(toolTip.contains("cli@openai.com"), "Tooltip must contain resolved CLI email: \(toolTip)")
       assertTrue(toolTip.contains("app@openai.com"), "Tooltip must contain APP email when running: \(toolTip)")
+      NSStatusBar.system.removeStatusItem(appDelegateTest.statusItem)
 
       print("  ✅ Status Bar CLI Account Resolution & Quota Decoupling verified")
     }
