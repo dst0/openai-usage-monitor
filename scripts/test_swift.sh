@@ -22,6 +22,9 @@ echo "👉 Running Swift module-cache path tests..."
 echo "👉 Checking that Swift tests keep their own defaults store..."
 bash tests/swift_test_defaults_isolation.sh
 
+echo "👉 Checking that Swift tests keep off the live Codex home..."
+bash tests/swift_test_codex_home_isolation.sh
+
 echo "👉 [1/2] Running Screen Contrast, Vector Icons & Stacked Percentage Tests..."
 swiftc -parse-as-library \
     Sources/StatusBarStyle.swift \
@@ -67,7 +70,9 @@ swiftc -parse-as-library \
     Sources/AppDelegate+SettingsActions.swift \
     Sources/AppDelegate+WindowBounds.swift \
     tests/TestPreferencesSuite.swift \
+    tests/TestCodexHome.swift \
     tests/AppDelegatePreferencesTests.swift \
+    tests/AppDelegateCodexHomeTests.swift \
     tests/FakeLoginItems.swift \
     tests/LaunchAtLoginTests.swift \
     tests/AppDelegateTests.swift \
@@ -111,6 +116,7 @@ swiftc -parse-as-library \
     Sources/CodexClient.swift \
     Sources/CodexDesktopProcessIdentity.swift \
     Sources/CodexRecoveryProcessIdentity.swift \
+    tests/TestCodexHome.swift \
     tests/CodexClientIdentityTests.swift \
     -o "${TMP_BIN_DIR}/codex-client-identity_test"
 "${TMP_BIN_DIR}/codex-client-identity_test"

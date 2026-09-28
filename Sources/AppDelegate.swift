@@ -37,13 +37,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
   internal var refreshInterval: TimeInterval
 
+  /// Monitor state is read and watched only in `client.codexHome`. The app passes the shared
+  /// client on the live home; tests pass a client on a temporary one.
   internal let client: CodexClient
   /// Menu preferences. The app passes the standard store; tests pass a suite of their own.
   internal let defaults: UserDefaults
   internal var quotaRefreshOverride: ((@escaping (MultiAccountSnapshot?) -> Void) -> Void)?
   /// Receives alerts instead of a modal NSAlert; tests set it, the app leaves it nil.
   internal var alertOverride: ((_ title: String, _ message: String, _ style: NSAlert.Style) -> Void)?
-  internal let singleGuard = SingleInstanceGuard()
+  internal let singleGuard: SingleInstanceGuard
   internal let autoLaunchManager: AutoLaunchManager
   /// Shows the login-item state read back from macOS in the Launch at Login item. A failed toggle
   /// closes the menu if it was reopened and shows its warning once the run loop is back in the
@@ -89,6 +91,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     self.client = client
     self.defaults = defaults
     self.autoLaunchManager = autoLaunchManager
+    self.singleGuard = SingleInstanceGuard(codexHome: client.codexHome)
     let saved = defaults.double(forKey: AppDelegate.refreshIntervalKey)
     self.refreshInterval = saved > 0 ? saved : 60.0  // 1 minute default
     super.init()

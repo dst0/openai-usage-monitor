@@ -526,21 +526,15 @@ private func checkMenuController(_ fixture: InstalledBundleFixture) {
 }
 
 private func checkDelegateMenu(_ fixture: InstalledBundleFixture) {
-  // The menu reads Monitor settings from CODEX_HOME; point it at a path that does not exist.
-  let codexHome = FileManager.default.temporaryDirectory.appendingPathComponent(
-    "codex-launch-at-login-home-\(UUID().uuidString)")
-  let previousCodexHome = ProcessInfo.processInfo.environment["CODEX_HOME"]
-  setenv("CODEX_HOME", codexHome.path, 1)
-  defer {
-    if let previousCodexHome { setenv("CODEX_HOME", previousCodexHome, 1) } else { unsetenv("CODEX_HOME") }
-    try? FileManager.default.removeItem(at: codexHome)
-  }
+  // The menu reads Monitor settings from the client's Codex home; this one does not exist.
+  let codexHome = TestCodexHome(purpose: "launch-at-login", created: false)
+  defer { codexHome.tearDown() }
   let preferences = TestPreferencesSuite(purpose: "launch-at-login")
   defer { preferences.tearDown() }
   // Earlier versions showed this stored preference when System Events could not be read.
   preferences.defaults.set(true, forKey: "CodexMonitorLaunchAtLogin")
   let (scripts, service, manager) = fixture.fakes()
-  let client = CodexClient(distributionRunner: { _ in false })
+  let client = codexHome.client()
   let delegate = AppDelegate(client: client, defaults: preferences.defaults, autoLaunchManager: manager)
   var alerts: [String] = []
   delegate.alertOverride = { title, message, style in

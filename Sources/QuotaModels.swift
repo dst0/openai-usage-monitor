@@ -386,7 +386,10 @@ public enum VersionHelper {
 
 // MARK: - Help Documentation Path Resolution Helper
 public enum HelpsDocHelper {
+  /// The help page: the app bundle's, then the one beside the executable, then the copy the
+  /// installer puts in the Codex home, then an installed or development checkout's.
   public static func findHelpsHTMLURL(
+    codexHome: URL,
     fileManager: FileManager = .default,
     bundle: Bundle = .main,
     arguments: [String] = ProcessInfo.processInfo.arguments
@@ -407,9 +410,7 @@ public enum HelpsDocHelper {
       }
     }
 
-    let home = fileManager.homeDirectoryForCurrentUser
-
-    let codexHelpURL = home.appendingPathComponent(".codex/helps.html")
+    let codexHelpURL = codexHome.appendingPathComponent("helps.html", isDirectory: false)
     if fileManager.fileExists(atPath: codexHelpURL.path) {
       return codexHelpURL
     }
@@ -420,7 +421,8 @@ public enum HelpsDocHelper {
       return systemAppURL
     }
 
-    let devURL = home.appendingPathComponent("dev/openai-usage-monitor/resources/helps.html")
+    let devURL = fileManager.homeDirectoryForCurrentUser
+      .appendingPathComponent("dev/openai-usage-monitor/resources/helps.html")
     if fileManager.fileExists(atPath: devURL.path) {
       return devURL
     }
@@ -430,11 +432,14 @@ public enum HelpsDocHelper {
 
   public static func localizedHelpsHTMLURL(
     languageCode: String,
+    codexHome: URL,
     fileManager: FileManager = .default,
     bundle: Bundle = .main,
     arguments: [String] = ProcessInfo.processInfo.arguments
   ) -> URL? {
-    guard let url = findHelpsHTMLURL(fileManager: fileManager, bundle: bundle, arguments: arguments)
+    guard
+      let url = findHelpsHTMLURL(
+        codexHome: codexHome, fileManager: fileManager, bundle: bundle, arguments: arguments)
     else {
       return nil
     }

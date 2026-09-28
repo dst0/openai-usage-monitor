@@ -4,6 +4,7 @@ import Darwin
 public final class CodexClient: @unchecked Sendable {
   internal typealias DistributionRunner = ([String]) -> Bool
 
+  /// The app's client, on the live Codex home. Tests build their own on a temporary home.
   public static let shared = CodexClient()
   private static let daemonLabel = "com.codex.switcher"
   private static let restartWorkerLabel = "com.codex.switcher.restart-worker"
@@ -29,35 +30,60 @@ public final class CodexClient: @unchecked Sendable {
     return Self.parseDate(str)
   }
 
+  /// The Codex data directory this client reads, watches, and writes Monitor markers in.
+  /// `CodexClient.shared` uses the live one; tests pass a temporary directory.
+  public let codexHome: URL
   private let distributionRunner: DistributionRunner
   private let desktopAppAccountIdProvider: () -> String?
 
-  public init() {
-    self.distributionRunner = Self.runDistributionProcess
-    self.desktopAppAccountIdProvider = Self.readDesktopAppSessionAccountId
+  /// The app's composition root: the live Codex home, the Rust coordinator, and the Desktop
+  /// session marker in that home.
+  public convenience init() {
+    let home = Self.liveCodexHome
+    self.init(
+      codexHome: home, distributionRunner: Self.runDistributionProcess,
+      desktopAppAccountIdProvider: { Self.readDesktopAppSessionAccountId(in: home) })
   }
 
   internal init(
+    codexHome: URL,
     distributionRunner: @escaping DistributionRunner,
     desktopAppAccountIdProvider: @escaping () -> String? = { nil }
   ) {
+    self.codexHome = codexHome
     self.distributionRunner = distributionRunner
     self.desktopAppAccountIdProvider = desktopAppAccountIdProvider
   }
 
-  public static var codexHome: URL {
-    if let env = ProcessInfo.processInfo.environment["CODEX_HOME"], !env.isEmpty {
-      return URL(fileURLWithPath: env)
+  /// The live Codex home: `CODEX_HOME` when set, otherwise `~/.codex`, shared with ChatGPT.app
+  /// and owned by the Rust core. Only `init()` uses it.
+  internal static var liveCodexHome: URL {
+    resolveCodexHome(
+      environment: ProcessInfo.processInfo.environment,
+      userHome: FileManager.default.homeDirectoryForCurrentUser)
+  }
+
+  /// An unset or empty `CODEX_HOME` selects `.codex` in the user's home. The URL is marked a
+  /// directory: `appendingPathComponent(_:)` and `URL(fileURLWithPath:)` without one stat the
+  /// path to find out, which touches the home before anything reads it.
+  internal static func resolveCodexHome(environment: [String: String], userHome: URL) -> URL {
+    if let configured = environment["CODEX_HOME"], !configured.isEmpty {
+      return URL(fileURLWithPath: configured, isDirectory: true)
     }
-    return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
+    return userHome.appendingPathComponent(".codex", isDirectory: true)
   }
 
-  public static var statusFileURL: URL {
-    return codexHome.appendingPathComponent("usage-status.json")
+  /// A file in this client's Codex home, named without asking the file system what it is.
+  internal func homeFile(_ name: String) -> URL {
+    codexHome.appendingPathComponent(name, isDirectory: false)
   }
 
-  private static func currentCliAuthFileID() -> String? {
-    let path = codexHome.appendingPathComponent("auth.json").path
+  public var statusFileURL: URL { homeFile("usage-status.json") }
+  public var authFileURL: URL { homeFile("auth.json") }
+  public var accountsFileURL: URL { homeFile("accounts.json") }
+
+  private static func currentCliAuthFileID(in codexHome: URL) -> String? {
+    let path = codexHome.appendingPathComponent("auth.json", isDirectory: false).path
     var info = stat()
     guard path.withCString({ lstat($0, &info) == 0 }),
       info.st_mode & S_IFMT == S_IFREG,
@@ -67,9 +93,7 @@ public final class CodexClient: @unchecked Sendable {
     return "\(info.st_dev):\(info.st_ino):\(info.st_mtimespec.tv_sec):\(info.st_mtimespec.tv_nsec):\(info.st_size)"
   }
 
-  public static var desktopAppSessionURL: URL {
-    return codexHome.appendingPathComponent("desktop-app-session.json")
-  }
+  public var desktopAppSessionURL: URL { homeFile("desktop-app-session.json") }
 
   internal static func readPrivateSessionMarkerData(at url: URL) -> Data? {
     let fd = url.path.withCString { open($0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC) }
@@ -149,15 +173,15 @@ public final class CodexClient: @unchecked Sendable {
     return accountID
   }
 
-  private static func readDesktopAppSessionAccountId() -> String? {
-    let url = Self.desktopAppSessionURL
+  private static func readDesktopAppSessionAccountId(in codexHome: URL) -> String? {
+    let url = codexHome.appendingPathComponent("desktop-app-session.json", isDirectory: false)
     guard let process = CodexDesktopProcessIdentity.current(),
-      let authFileID = Self.currentCliAuthFileID(),
+      let authFileID = Self.currentCliAuthFileID(in: codexHome),
       let data = Self.readPrivateSessionMarkerData(at: url),
       let accountID = Self.validatedDesktopAppSessionAccountId(
         from: data, currentProcess: process, currentAuthFileID: authFileID),
       CodexDesktopProcessIdentity.current() == process,
-      Self.currentCliAuthFileID() == authFileID
+      Self.currentCliAuthFileID(in: codexHome) == authFileID
     else { return nil }
     return accountID
   }
@@ -187,9 +211,7 @@ public final class CodexClient: @unchecked Sendable {
       .appendingPathComponent("Library/LaunchAgents/com.codex.switcher.plist")
   }
 
-  private static var restartCancellationURL: URL {
-    codexHome.appendingPathComponent("recovery-runs/cancel-restart")
-  }
+  private var restartCancellationURL: URL { homeFile("recovery-runs/cancel-restart") }
 
   internal static func backgroundAutomationStopCommands(daemonPath: String) -> [[String]] {
     // Stop the producer first. An in-flight one-shot worker is cancelled by a
@@ -199,7 +221,7 @@ public final class CodexClient: @unchecked Sendable {
   }
 
   private func setRestartCancellation(_ requested: Bool) -> Bool {
-    let url = Self.restartCancellationURL
+    let url = restartCancellationURL
     do {
       if requested {
         try FileManager.default.createDirectory(
@@ -282,9 +304,7 @@ public final class CodexClient: @unchecked Sendable {
     return false
   }
 
-  public static var configTOMLURL: URL {
-    return codexHome.appendingPathComponent("config.toml")
-  }
+  public var configTOMLURL: URL { homeFile("config.toml") }
 
   public static var cliExecutableURL: URL {
     let localBin = FileManager.default.homeDirectoryForCurrentUser
@@ -305,7 +325,7 @@ public final class CodexClient: @unchecked Sendable {
   }
 
   public func getActiveModelName() -> String? {
-    guard let content = try? String(contentsOf: Self.configTOMLURL, encoding: .utf8) else {
+    guard let content = try? String(contentsOf: configTOMLURL, encoding: .utf8) else {
       return "GPT-5.5"
     }
     for line in content.components(separatedBy: .newlines) {
@@ -321,14 +341,14 @@ public final class CodexClient: @unchecked Sendable {
   }
 
   public func setActiveModelName(_ model: String) {
-    let profileScript = Self.codexHome.appendingPathComponent("bin/codex-profile").path
+    let profileScript = homeFile("bin/codex-profile").path
     if FileManager.default.isExecutableFile(atPath: profileScript) {
       let proc = Process()
-      proc.executableURL = URL(fileURLWithPath: profileScript)
+      proc.executableURL = URL(fileURLWithPath: profileScript, isDirectory: false)
       proc.arguments = ["switch", model]
       try? proc.run()
       proc.waitUntilExit()
-    } else if let content = try? String(contentsOf: Self.configTOMLURL, encoding: .utf8) {
+    } else if let content = try? String(contentsOf: configTOMLURL, encoding: .utf8) {
       var lines = content.components(separatedBy: .newlines)
       for (idx, line) in lines.enumerated() {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -338,12 +358,12 @@ public final class CodexClient: @unchecked Sendable {
         }
       }
       let updated = lines.joined(separator: "\n")
-      try? updated.write(to: Self.configTOMLURL, atomically: true, encoding: .utf8)
+      try? updated.write(to: configTOMLURL, atomically: true, encoding: .utf8)
     }
   }
 
   public func loadCachedSnapshot() -> MultiAccountSnapshot? {
-    let url = Self.statusFileURL
+    let url = statusFileURL
     guard let data = try? Data(contentsOf: url),
       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else {
@@ -354,7 +374,8 @@ public final class CodexClient: @unchecked Sendable {
     let timestamp = Self.parseDate(tsStr) ?? Date()
 
     let cachedCliAuthFileID = json["cli_auth_file_id"] as? String
-    let activeId = cachedCliAuthFileID != nil && cachedCliAuthFileID == Self.currentCliAuthFileID()
+    let activeId = cachedCliAuthFileID != nil
+      && cachedCliAuthFileID == Self.currentCliAuthFileID(in: codexHome)
       ? json["active_account_id"] as? String : nil
     let activeEmail = activeId == nil ? nil : json["active_email"] as? String
     let activePlan = activeId == nil ? nil : json["active_plan"] as? String
@@ -830,16 +851,16 @@ public final class CodexClient: @unchecked Sendable {
     }
   }
 
+  /// The `settings` object of the account registry in this client's Codex home.
+  private func registrySettings() -> [String: Any]? {
+    guard let data = try? Data(contentsOf: accountsFileURL),
+      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return nil }
+    return json["settings"] as? [String: Any]
+  }
+
   public func getRestartAppOnSwitch() -> Bool {
-    let accountsPath = Self.codexHome.appendingPathComponent("accounts.json").path
-    guard let data = try? Data(contentsOf: URL(fileURLWithPath: accountsPath)),
-      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let settings = json["settings"] as? [String: Any],
-      let restart = settings["restart_app_on_switch"] as? Bool
-    else {
-      return false  // Default is false
-    }
-    return restart
+    registrySettings()?["restart_app_on_switch"] as? Bool ?? false
   }
 
   public func setAutoSwitchEnabled(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
@@ -863,16 +884,10 @@ public final class CodexClient: @unchecked Sendable {
     }
   }
 
+  /// Off unless the registry turns it on, like the Rust core's `Settings` default: the menu
+  /// must not show automatic switching on while the daemon treats it as off.
   public func getAutoSwitchEnabled() -> Bool {
-    let accountsPath = Self.codexHome.appendingPathComponent("accounts.json").path
-    guard let data = try? Data(contentsOf: URL(fileURLWithPath: accountsPath)),
-      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let settings = json["settings"] as? [String: Any],
-      let enabled = settings["auto_switch_enabled"] as? Bool
-    else {
-      return true  // Default is true
-    }
-    return enabled
+    registrySettings()?["auto_switch_enabled"] as? Bool ?? false
   }
 
   public func setAutoSwitchBusinessOnly(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
@@ -897,15 +912,7 @@ public final class CodexClient: @unchecked Sendable {
   }
 
   public func getAutoSwitchBusinessOnly() -> Bool {
-    let accountsPath = Self.codexHome.appendingPathComponent("accounts.json").path
-    guard let data = try? Data(contentsOf: URL(fileURLWithPath: accountsPath)),
-      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let settings = json["settings"] as? [String: Any],
-      let enabled = settings["auto_switch_business_only"] as? Bool
-    else {
-      return false  // Default is false
-    }
-    return enabled
+    registrySettings()?["auto_switch_business_only"] as? Bool ?? false
   }
 
   public func setAutoSwitchBusinessPriority(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
@@ -930,15 +937,7 @@ public final class CodexClient: @unchecked Sendable {
   }
 
   public func getAutoSwitchBusinessPriority() -> Bool {
-    let accountsPath = Self.codexHome.appendingPathComponent("accounts.json").path
-    guard let data = try? Data(contentsOf: URL(fileURLWithPath: accountsPath)),
-      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let settings = json["settings"] as? [String: Any],
-      let enabled = settings["auto_switch_business_priority"] as? Bool
-    else {
-      return false  // Default is false
-    }
-    return enabled
+    registrySettings()?["auto_switch_business_priority"] as? Bool ?? false
   }
 
   /// Configures the weekly reset-credit policy in one CLI invocation so the
@@ -975,11 +974,7 @@ public final class CodexClient: @unchecked Sendable {
   }
 
   public func getAutoResetWeeklyConfiguration() -> (enabled: Bool, minRemainingHours: Int) {
-    let accountsPath = Self.codexHome.appendingPathComponent("accounts.json").path
-    guard let data = try? Data(contentsOf: URL(fileURLWithPath: accountsPath)),
-      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let settings = json["settings"] as? [String: Any]
-    else {
+    guard let settings = registrySettings() else {
       return (false, 0)
     }
     let enabled = settings["auto_reset_weekly_enabled"] as? Bool ?? false
