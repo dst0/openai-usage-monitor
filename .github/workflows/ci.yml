@@ -183,6 +183,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash tests/swift_test_codex_home_isolation.sh
 
+      # Only reads Sources/*.swift, tests/*.swift, scripts/test_swift.sh, and
+      # the workflows, plus fixtures it writes to a temporary directory.
+      # test_swift.sh also runs it before compiling; this step is the run the
+      # policy enforces.
+      - name: Run Swift Test Live System Isolation Shell Test
+        if: ${{ !cancelled() }}
+        run: bash tests/swift_test_live_system_isolation.sh
+
   security-scan:
     name: 🔒 Security & Privacy Scan
     runs-on: macos-14

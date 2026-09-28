@@ -25,6 +25,9 @@ bash tests/swift_test_defaults_isolation.sh
 echo "👉 Checking that Swift tests keep off the live Codex home..."
 bash tests/swift_test_codex_home_isolation.sh
 
+echo "👉 Checking that Swift tests keep off the live CLI, process list, and window list..."
+bash tests/swift_test_live_system_isolation.sh
+
 echo "👉 [1/2] Running Screen Contrast, Vector Icons & Stacked Percentage Tests..."
 swiftc -parse-as-library \
     Sources/StatusBarStyle.swift \
