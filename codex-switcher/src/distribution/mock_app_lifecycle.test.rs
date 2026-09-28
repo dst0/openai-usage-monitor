@@ -40,6 +40,7 @@ pub struct MockAppLifecycle {
     pub recovery_marker_seen: Mutex<Option<DesktopAppSession>>,
     pub stop_observer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     pub launch_observer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    pub restore_observer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     pub recovery_observer: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     pub launch_error: Mutex<Option<String>>,
     pub launch_error_on_call: Mutex<Option<(usize, String)>>,
@@ -94,6 +95,7 @@ impl MockAppLifecycle {
             recovery_marker_seen: Mutex::new(None),
             stop_observer: Mutex::new(None),
             launch_observer: Mutex::new(None),
+            restore_observer: Mutex::new(None),
             recovery_observer: Mutex::new(None),
             launch_error: Mutex::new(None),
             launch_error_on_call: Mutex::new(None),
@@ -155,6 +157,10 @@ impl MockAppLifecycle {
 
     pub fn observe_launch(&self, observer: impl FnOnce() + Send + 'static) {
         *self.launch_observer.lock().unwrap() = Some(Box::new(observer));
+    }
+
+    pub fn observe_restore(&self, observer: impl FnOnce() + Send + 'static) {
+        *self.restore_observer.lock().unwrap() = Some(Box::new(observer));
     }
 
     pub fn set_launch_error(&self, err: impl Into<String>) {
@@ -333,6 +339,9 @@ impl AppLifecycle for MockAppLifecycle {
         _reason: &str,
     ) -> Result<(), String> {
         self.restore_calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(observer) = self.restore_observer.lock().unwrap().take() {
+            observer();
+        }
         if let Some(error) = self.restore_error.lock().unwrap().clone() {
             return Err(error);
         }

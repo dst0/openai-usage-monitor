@@ -113,21 +113,13 @@ impl AppLifecycle for SystemAppLifecycle {
         let mut backend = SystemWindowRestoreBackend::new()?;
         if !preserve_window_bounds {
             let process = WindowProcessValidationService::inspect(&mut backend, pids[0])?;
-            let banner = if targets.is_empty() {
-                RecoveryBanner::without_window(process)
-            } else {
-                match backend.capture_banner_window(process.clone()) {
-                    Ok(placement) => {
-                        if placement.process != process {
-                            return Err("Banner window process identity changed".into());
-                        }
-                        WindowProcessValidationService::confirm(&mut backend, &process)?;
-                        RecoveryBanner::start_without_restore(
-                            operation_id,
-                            targets,
-                            reason,
-                            placement,
-                        )
+            let banner = match backend.capture_banner_window(process.clone()) {
+                Ok(placement) => {
+                    if placement.process != process {
+                        return Err("Banner window process identity changed".into());
+                    }
+                    WindowProcessValidationService::confirm(&mut backend, &process)?;
+                    RecoveryBanner::start_without_restore(operation_id, targets, reason, placement)
                         .unwrap_or_else(|_| {
                             crate::logger::log(
                                 "WARN",
@@ -136,19 +128,18 @@ impl AppLifecycle for SystemAppLifecycle {
                             );
                             RecoveryBanner::without_window(process)
                         })
-                    }
-                    Err(error) if optional_banner_capture_failure(&error) => {
-                        if error != "WINDOW_NOT_FOUND" {
-                            crate::logger::log(
-                                "WARN",
-                                "RECOVERY",
-                                "RECOVERY_BANNER_UNAVAILABLE: WindowServer capture failed",
-                            );
-                        }
-                        RecoveryBanner::without_window(process)
-                    }
-                    Err(error) => return Err(format!("Banner capture failed: {error}")),
                 }
+                Err(error) if optional_banner_capture_failure(&error) => {
+                    if error != "WINDOW_NOT_FOUND" {
+                        crate::logger::log(
+                            "WARN",
+                            "RECOVERY",
+                            "RECOVERY_BANNER_UNAVAILABLE: WindowServer capture failed",
+                        );
+                    }
+                    RecoveryBanner::without_window(process)
+                }
+                Err(error) => return Err(format!("Banner capture failed: {error}")),
             };
             let mut current = self
                 .recovery_banner

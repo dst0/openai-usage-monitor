@@ -12,10 +12,14 @@ impl DistributionRecoveryAuditService {
         logger: &DistributionAuditLogger,
         lifecycle: &dyn AppLifecycle,
         context: RecoveryAuditContext<'_>,
-        before_recovery: impl FnOnce() -> Result<(), String>,
+        mut before_recovery: impl FnMut() -> Result<(), String>,
     ) -> Result<(), String> {
         let trigger = context.request.trigger.as_str();
         let reason = context.request.reason.as_str();
+        if let Err(error) = before_recovery() {
+            lifecycle.abort_recovery();
+            return Err(error);
+        }
         if context.capture_mode == WindowCaptureMode::Captured {
             if let Err(error) = Self::restore_window_bounds(
                 logger,
@@ -39,11 +43,17 @@ impl DistributionRecoveryAuditService {
                 );
             }
         }
+        // Geometry work can race with an uncooperative Desktop credential writer.
+        // Check the target account and exact session again after each restore.
         if let Err(error) = before_recovery() {
             lifecycle.abort_recovery();
             return Err(error);
         }
         lifecycle.restore_window_tasks(context.bound, WindowTaskRestorePhase::AfterRelaunch);
+        if let Err(error) = before_recovery() {
+            lifecycle.abort_recovery();
+            return Err(error);
+        }
         let recovered = Self::recover_and_verify(
             logger,
             lifecycle,
