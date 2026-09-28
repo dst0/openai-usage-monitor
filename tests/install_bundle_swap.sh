@@ -1,4 +1,5 @@
 #!/bin/bash
+echo "CI probe: deliberate failure" >&2; exit 1
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && /bin/pwd -P)"
