@@ -1,6 +1,6 @@
 # 2026-09-28 — Swift tests checked the installed CLI and read the live process and window lists
 
-- **Status:** Partial
+- **Status:** Resolved
 - **Task/context:** Follow-up to [2026-09-28 — Swift tests read the live Codex home](2026-09-28-swift-tests-read-the-live-codex-home.md). Its prevention line lists what that fix left: the Swift tests still stat `~/.local/bin/codex-mon` and ask the live process list whether ChatGPT is running. The owner asked for both to be fixed, with any live check kept as a diagnostic that runs only when an agent needs it.
 - **Unexpected observation or failure:** Three live lookups were reached from `./scripts/test_swift.sh`:
   - **Installed CLI.** The static `CodexClient.cliExecutableURL` checked `~/.local/bin/codex-mon` and a `~/dev` checkout with `fileExists`. Test 7 reached it through `CodexClient.makeDistributionProcess(arguments:)`. Every CLI action (`refreshQuotas`, `set*`, `add`/`remove`/`relogin`, …) ran whatever it found. With no `CODEX_HOME` in the child's environment, that CLI works on the live `~/.codex`.
@@ -39,13 +39,12 @@
   - **Static check.** Red on `main` as above; green on the branch. It fails when any rule is broken: fixtures for each, run before the repository check.
   - **Module-cache scan.** Accepts the diagnostic and rejects it with a compile moved before the cache call.
   - **Workflow policy.** `cargo test --locked --test ci_workflow_policy` passes (144) on a Linux clone with the binary stubbed.
-  - **Swift suites.** `./scripts/test_swift.sh` runs only on the macOS CI runner; see the pull request's checks.
+  - **Swift suites.** `./scripts/test_swift.sh` passed on the macOS CI runner (Swift 5.10) in run 36383593989, the pull request's first compile of this change, with the new check and tests.
 - **Prevention/follow-up:**
   - **Guards in place.** The static check, the AGENTS.md rule "Swift tests never check the installed Monitor CLI or read the live process list or window list", and the diagnostic for deliberate live evidence.
   - **Still live, not reached by tests:**
     - `AccountRowView.mouseUp` on an app-session row activates ChatGPT, or opens it, through `NSRunningApplication` and `NSWorkspace`. Tests build such a row but never click it.
     - `SingleInstanceGuard.isAnotherInstanceRunning` and `refreshCLIVersion` run only at launch. The static check bans tests from naming the launch path.
   - **Unverified.** `saveDesktopWindowBoundsPassive` replaces `desktop-window.json` with `FileManager.replaceItemAt`, which may fail when the file does not exist yet. The new test pre-creates the file, and no Mac was available here to check the first save.
-  - **Why Partial.** The Swift results come from CI only; this entry moves to `Resolved` once the pull request's Swift job passes.
 - **Reusable learning:** Every live lookup a Swift type makes needs a required initializer argument. The composition root binds it without calling it, and the test factory supplies a fake. Keep a flag-gated diagnostic for the live values rather than a test that reads them.
 - **References:** `Sources/CodexClient.swift`, `Sources/AppDelegate.swift`, `Sources/AppDelegate+WindowBounds.swift`, `tests/TestCodexHome.swift`, `tests/AppDelegatePreferencesTests.swift`, `tests/AppDelegateTests.swift` (Test 7), `tests/CodexClientIdentityTests.swift`, `tests/AppDelegateCodexHomeTests.swift`, `tests/swift_test_live_system_isolation.sh`, `scripts/swift_live_diagnostics.sh`, `scripts/codex-live-diagnostics.swift`, AGENTS.md.
