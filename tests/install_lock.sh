@@ -268,6 +268,8 @@ wait_until() {
 }
 acquired() { [ -e "${TEMP_ROOT}/$1.acquired" ]; }
 lock_is() { [ "$(probe "${LOCK}")" = "$1" ]; }
+# A released installer's keeper keeps its lock for up to 0.1 s more.
+lock_released() { case "$(probe "${LOCK}")" in free|absent) return 0 ;; esac; return 1; }
 logged() { /usr/bin/grep -F -- "$2" "${TEMP_ROOT}/$1.log" >/dev/null 2>&1; }
 identity_of() { /bin/cat "${TEMP_ROOT}/$1.identity"; }
 path_identity() { /usr/bin/stat -f '%u %d:%i %HT' "$1" 2>/dev/null || echo absent; }
@@ -382,11 +384,14 @@ release_lock_process W 6
 # Taking the lock leaves the installer's own signal traps as they were: the
 # keeper is forked with the signals ignored, and the traps restored after.
 # ------------------------------------------------------------------------------
+# Compared within one process: a shell started in the background ignores
+# INT from the start, and bash then cannot trap it.
 TRAPS="$(bounded 60 /bin/bash -c 'set -euo pipefail; trap "exit 130" INT; trap "exit 143" TERM
-    source "$1"; acquire_install_lock >/dev/null || exit 1; trap -p INT TERM HUP QUIT' traps "${BLOCK_HOST}")" ||
-    fail 'the trap check could not take the lock'
-[ "${TRAPS}" = "trap -- 'exit 130' SIGINT
-trap -- 'exit 143' SIGTERM" ] || fail "taking the lock changed the installer's traps:
+    before="$(trap -p INT TERM HUP QUIT)"; source "$1"; acquire_install_lock >/dev/null || exit 1
+    after="$(trap -p INT TERM HUP QUIT)"
+    /usr/bin/printf "before:\n%s\nafter:\n%s\n" "${before}" "${after}"
+    [ "${after}" = "${before}" ] && [ -n "${after}" ]' traps "${BLOCK_HOST}")" ||
+    fail "taking the lock changed the installer's traps:
 ${TRAPS}"
 wait_until 'the lock is free after the trap check' lock_is free
 
@@ -448,10 +453,13 @@ wait_until 'perl takes the lock' acquired H
 assert_holds_named_lock H
 release_lock_process H 5
 
+wait_until "the perl holder's keeper has let go" lock_released
 start_lock_process H 5 "${BLOCK_OLD_LOCKF}" "${TEMP_ROOT}/tmp-a"
 wait_until 'perl takes the lock after an old lockf' acquired H
 assert_holds_named_lock H
-[ "$(/bin/cat "${OLD_LOCKF_CALLS}")" = '-s -t 0 9' ] || fail 'the old lockf was not tried first'
+# Tried on each attempt, always in the descriptor form.
+[ -s "${OLD_LOCKF_CALLS}" ] && ! /usr/bin/grep -v -x -F -e '-s -t 0 9' "${OLD_LOCKF_CALLS}" >/dev/null ||
+    fail "the old lockf was not tried first: $(/bin/cat "${OLD_LOCKF_CALLS}" 2>/dev/null)"
 release_lock_process H 5
 
 if [ -x /usr/bin/lockf ]; then

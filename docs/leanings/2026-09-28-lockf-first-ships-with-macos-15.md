@@ -9,7 +9,7 @@
   - Apple's `distribution-macOS` submodules pin `shell_cmds-278` (macOS 13.0), `279.120.2` (13.5), `302.0.1` (14.0), `309.120.3` (14.6), `319.0.1` (15.0), and `326` (15.6).
   - In `shell_cmds.xcodeproj/project.pbxproj`, a native `lockf` target exists from `278`, but before `319.0.1` no aggregate target depends on it. The file has no `remoteInfo = lockf;` proxy in `278`, `279.120.2`, `302.60.2`, or `309.120.3`, and three in `319.0.1`, like `mktemp`, which has three in every version. So `lockf` is built into the project but not installed before macOS 15, and it arrives already with the descriptor form.
   - In `lockf.c` at `319.0.1`, `acquire_lock` always passes `LOCK_EX | LOCK_NB` for a descriptor. The blocking loop `while (lockfd == -1 && ...) lockfd = acquire_lock(...)` therefore retries without sleeping.
-  - The PR #30 CI run printed `lockf on PATH: none` on macOS 14.8.9. `tests/install_lock.sh` now prints the lock tools of every host it runs on (`install lock tools: /usr/bin/lockf ...; /usr/bin/perl ...; macOS ...`), so each CI log shows the runner's state.
+  - The PR #30 CI run printed `lockf on PATH: none` on macOS 14.8.9. `tests/install_lock.sh` now prints the lock tools of every host it runs on. PR #35's first CI run printed `install lock tools: /usr/bin/lockf missing; /usr/bin/perl present; macOS 14.8.9` on the required `macos-14` runner, and `install lock tools: /usr/bin/lockf present; /usr/bin/perl present; macOS 15.7.9` on the `macos-15` runner.
 - **Approaches tried:**
   - **Attempt:** Keep `lockf 9` as the installer's wait.
     - **Outcome:** Rejected.
