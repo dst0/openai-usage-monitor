@@ -34,9 +34,14 @@ struct CodexWindowTaskSessionCoreTests {
     aTaskThatNeverMountsIsReportedUnverified()
     aLaterLinkThatMovedAnEarlierWindowIsCaught()
     recheckMovesBackOnlyWindowsThatRecoveryMoved()
+    recheckDoesNotClaimUnreadableWindowsVerified()
     recheckGivesTheUserTheirAppBackAndGuardsItsLinks()
     rehearsalOpensChecksAndClosesOnlyItsOwnWindows()
     rehearsalCleansUpAfterEveryFailure()
+    rehearsalDoesNotClaimUnreadableOpenWindowClosed()
+    rehearsalDoesNotTrustStaleAXElementAsProofOfClosure()
+    rehearsalClosesFocusedNewWindowWhenItsInventoryReadFails()
+    rehearsalReportsUntrackedNewWindowAfterInventoryFailure()
     rehearsalFramesStayDistinctAndUsable()
     print("Window task session sequencing passed")
   }
@@ -375,7 +380,7 @@ struct CodexWindowTaskSessionCoreTests {
     guard case .success(let result) = restore(
       desktop, [(a, f0), (b, f1), (c, f2), (d, f3)], focus: 0,
       mode: .recheck(recoveryTaskIDs: [r])) else { fatalError("recheck failed") }
-    precondition(result.verified == [true, true, true, true])
+    precondition(result.verified == [true, true, false, false])
     precondition(desktop.tasks[1] == b && desktop.tasks[2] == x && desktop.tasks[3] == nil)
     precondition(desktop.linksSent.count == 1 && desktop.linksSent[0].focused == 1)
     precondition(!desktop.log.contains { $0.hasPrefix("new") || $0.hasPrefix("frame") })
@@ -388,6 +393,19 @@ struct CodexWindowTaskSessionCoreTests {
     guard case .success(let failed) = restore(
       stuck, [(a, f0)], mode: .recheck(recoveryTaskIDs: [r])) else { fatalError("recheck threw") }
     precondition(failed.verified == [false])
+  }
+
+  static func recheckDoesNotClaimUnreadableWindowsVerified() {
+    let desktop = FakeDesktop()
+    desktop.addWindow(f0, task: a)
+    desktop.addWindow(f1, task: r)
+    desktop.unreadableTaskLinks = [0]
+    guard case .success(let result) = restore(
+      desktop, [(a, f0), (b, f1)], mode: .recheck(recoveryTaskIDs: [r])) else {
+      fatalError("recheck threw")
+    }
+    precondition(result.verified == [false, true])
+    precondition(desktop.tasks[1] == b)
   }
 
   static func recheckGivesTheUserTheirAppBackAndGuardsItsLinks() {
@@ -465,6 +483,40 @@ struct CodexWindowTaskSessionCoreTests {
     background.newWindowsAreKeyed = false
     precondition(failure(rehearse(background)) == .newWindowFailed)
     precondition(background.alive == [0] && background.linksSent.isEmpty)
+  }
+
+  static func rehearsalDoesNotClaimUnreadableOpenWindowClosed() {
+    let desktop = FakeDesktop()
+    desktop.addWindow(f0, task: a)
+    desktop.unreadableLiveness = [1]
+    precondition(failure(rehearse(desktop)) == .rehearsalWindowLeftOpen)
+    precondition(desktop.alive == [0, 1])
+  }
+
+  static func rehearsalDoesNotTrustStaleAXElementAsProofOfClosure() {
+    let desktop = FakeDesktop()
+    desktop.addWindow(f0, task: a)
+    desktop.staleLiveness = [1]
+    precondition(failure(rehearse(desktop)) == .rehearsalWindowLeftOpen)
+    precondition(desktop.alive == [0, 1])
+  }
+
+  static func rehearsalClosesFocusedNewWindowWhenItsInventoryReadFails() {
+    let desktop = FakeDesktop()
+    desktop.addWindow(f0, task: a)
+    desktop.standardWindowsFailsAtCount = 2
+    precondition(failure(rehearse(desktop)) == .windowAccessFailed)
+    precondition(desktop.alive == [0])
+    precondition(desktop.log.contains("close 1"))
+  }
+
+  static func rehearsalReportsUntrackedNewWindowAfterInventoryFailure() {
+    let desktop = FakeDesktop()
+    desktop.addWindow(f0, task: a)
+    desktop.newWindowsAreKeyed = false
+    desktop.standardWindowsFailsAtCount = 2
+    precondition(failure(rehearse(desktop)) == .rehearsalWindowLeftOpen)
+    precondition(desktop.alive == [0, 1])
   }
 
   static func rehearsalFramesStayDistinctAndUsable() {

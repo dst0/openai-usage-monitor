@@ -23,6 +23,12 @@ final class FakeDesktop: WindowTaskSessionSystem {
   var newWindowItemFrom: TimeInterval = 0
   var newWindowsAreKeyed = true
   var closeSucceeds = true
+  /// Simulates an Accessibility liveness read failing for an open window.
+  var unreadableLiveness: Set<Int> = []
+  /// AX says its element is invalid while WindowServer still lists the window.
+  var staleLiveness: Set<Int> = []
+  /// A newly opened window becomes temporarily unavailable in AXWindows.
+  var standardWindowsFailsAtCount: Int?
   var setFrameSucceeds = true
   /// Accepts a frame change without moving the window.
   var setFrameIgnored = false
@@ -56,6 +62,8 @@ final class FakeDesktop: WindowTaskSessionSystem {
   /// Moves keyboard focus after the given copy shortcut, as a click would.
   var focusMove: (afterCopy: Int, to: Int)?
   var copyPosts = 0
+  /// A Copy deeplink action in these windows never produces readable text.
+  var unreadableTaskLinks: Set<Int> = []
   /// New Window opens a second, unexpected window as well.
   var newWindowOpensTwo = false
   var pending: [(at: TimeInterval, window: Int, task: String)] = []
@@ -117,7 +125,7 @@ final class FakeDesktop: WindowTaskSessionSystem {
   func hasKeyboardFocus(_ window: Int) -> Bool { focused == window }
   func copyShortcutKeyIsExpected() -> Bool { true }
   func postCopyShortcut() -> Bool {
-    if let focused, let task = tasks[focused] {
+    if let focused, !unreadableTaskLinks.contains(focused), let task = tasks[focused] {
       if lateCopies > 0 {
         lateCopies -= 1
         lateWrites.append((clock + lateCopyDelay, "codex://threads/\(task)"))
@@ -176,7 +184,12 @@ final class FakeDesktop: WindowTaskSessionSystem {
     return true
   }
   func focusedWindow() -> Int? { axOnlyFocus ?? focused }
-  func standardWindows() throws -> [Int] { alive }
+  func standardWindows() throws -> [Int] {
+    if let count = standardWindowsFailsAtCount, alive.count >= count {
+      throw WindowTaskProbeFailure.windowAccessFailed
+    }
+    return alive
+  }
   func openTaskLink(_ taskID: String) -> Bool {
     guard !openTaskLinkFails else { return false }
     linksSent.append((focused, taskID))
@@ -192,7 +205,11 @@ final class FakeDesktop: WindowTaskSessionSystem {
     if focused == window { focused = alive.last }
     return true
   }
-  func isWindowAlive(_ window: Int) -> Bool { alive.contains(window) }
+  func isWindowAlive(_ window: Int) throws -> Bool {
+    if unreadableLiveness.contains(window) { throw WindowTaskProbeFailure.windowAccessFailed }
+    if staleLiveness.contains(window) { return false }
+    return alive.contains(window)
+  }
 
   /// Desktop shows and focuses the window it navigates.
   private func deliverLinks() {
