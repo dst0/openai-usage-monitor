@@ -199,21 +199,16 @@ pub(super) fn switch_to_account_with(
                         &target_account.id,
                         launched_pids[0],
                         |bound_process| {
-                            // Verify the target session and live auth before
-                            // rebinding the visible panel to the new process.
-                            DesktopSessionBindingService::verify_target_before_recovery(
+                            DesktopSessionBindingService::restore_banner_under_target(
                                 &crate::storage::codex_home(),
                                 &target_account.id,
                                 bound_process,
+                                recovery_banner
+                                    .as_ref()
+                                    .expect("running app must have a recovery banner"),
+                                launched_pids[0],
+                                recovery_operation_id.as_deref().unwrap_or("account_switch"),
                             )?;
-                            recovery_banner
-                                .as_ref()
-                                .expect("running app must have a recovery banner")
-                                .restore_after_relaunch(
-                                    launched_pids[0],
-                                    recovery_operation_id.as_deref().unwrap_or("account_switch"),
-                                    "account_switch",
-                                )?;
                             RestartWindowTaskService::around_recovery(
                                 &mut window_tasks,
                                 bound_process,

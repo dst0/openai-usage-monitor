@@ -57,3 +57,28 @@ fn changing_process_identity_never_writes_a_new_marker() {
     assert!(!home.join("desktop-app-session.json").exists());
     std::fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn changed_target_during_window_restore_stops_before_recovery() {
+    let target_valid = Cell::new(true);
+    let checks = Cell::new(0);
+    let restores = Cell::new(0);
+    let result = DesktopSessionBindingService::verify_around_window_restore(
+        || {
+            checks.set(checks.get() + 1);
+            if target_valid.get() {
+                Ok(())
+            } else {
+                Err("Target account changed during window restore".into())
+            }
+        },
+        || {
+            restores.set(restores.get() + 1);
+            target_valid.set(false);
+            Ok(())
+        },
+    );
+    assert!(result.unwrap_err().contains("Target account changed"));
+    assert_eq!(checks.get(), 2);
+    assert_eq!(restores.get(), 1);
+}

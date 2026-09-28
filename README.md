@@ -689,6 +689,12 @@ Detection runs through a two-phase analysis pipeline before terminating or resta
 | Desktop stabilization | `3 s` | Requires the same singleton main PID throughout; verifies the visible window only when one was captured before restart. |
 | Banner minimum visibility | `5 s` | Keeps the semi-transparent recovery banner visible when an eligible window was captured, including the zero-target window-only panel. |
 
+An ownerless deferred mount shows a pending banner while ChatGPT opens the task.
+The banner describes verification in progress; it does not promise a restart or
+continued work before a Desktop owner and recovery are confirmed. Distribution
+and direct switching check the target Desktop account and session both before
+and after window restoration, immediately before recovery IPC.
+
 The tail reader checks the byte before its seek point. It discards a partial
 first record before strict UTF-8 decoding, retains a full record at an exact
 newline boundary, and reports unknown state for malformed complete records.

@@ -43,6 +43,8 @@ impl DistributionRecoveryAuditService {
                 );
             }
         }
+        // Geometry work can race with an uncooperative Desktop credential writer.
+        // Check the target account and exact session again after each restore.
         if let Err(error) = before_recovery() {
             lifecycle.abort_recovery();
             return Err(error);

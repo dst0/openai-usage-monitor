@@ -207,7 +207,9 @@ the exact saved Desktop account holds a new `Pending` banner through a bounded
 owner-mount wait and hands that same panel to recovery after owner proof. If no
 Desktop window is visible initially, panel creation is retried after navigation;
 no IPC is sent unless a live panel appears. Timeout, identity change, or panel
-failure retains the original checkpoint.
+failure retains the original checkpoint. While ownership is pending, the panel
+says that tasks are being opened and checked; it does not claim a restart or
+successful continuation before either is verified.
 An older ownerless checkpoint stays eligible across another switch until a
 new post-checkpoint turn has substantive, error-free agent work and no queued
 follow-up. Only then does a later restart record a fresh offset and clear the
@@ -272,7 +274,8 @@ When a restart captures one selected window but has zero running recovery
 targets, the banner shows a generic one-window pending message and no task rows.
 The captured window and exact PID/birth identity still gate the panel. On
 relaunch, target auth and the saved Desktop session are checked before the
-panel is rebound or window geometry restored. The panel does not claim that a
+panel is rebound or window geometry restored, then checked again immediately
+before recovery IPC. The panel does not claim that a
 task resumed; missing-window and optional-capture cases retain the prior
 fail-closed or best-effort behavior for their configured capture mode.
 

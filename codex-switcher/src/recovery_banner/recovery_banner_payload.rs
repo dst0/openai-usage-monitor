@@ -8,7 +8,7 @@ pub const BANNER_TITLE: &str = "Codex Monitor • Восстановление �
 pub const BANNER_EXPLANATION: &str =
     "Codex перезапускается, вернёт окно на прежнее место и продолжит эти задачи:";
 pub const BANNER_EXPLANATION_WITHOUT_RESTORE: &str =
-    "Codex перезапускается и продолжит эти задачи:";
+    "Открываем задачи и проверяем, можно ли продолжить работу:";
 pub const WINDOW_ONLY_TITLE: &str = "Codex Monitor • Перезапуск 1 окна";
 pub const WINDOW_ONLY_EXPLANATION: &str =
     "Проверяется восстановление выбранного окна; запуск задач не подтверждён.";
