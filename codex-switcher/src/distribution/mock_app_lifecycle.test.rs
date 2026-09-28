@@ -2,6 +2,7 @@ use super::app_lifecycle::AppLifecycle;
 use super::app_stop_error::AppStopError;
 use super::desktop_app_session::DesktopAppSession;
 use super::window_capture_mode::WindowCaptureMode;
+use super::window_task_restore_phase::WindowTaskRestorePhase;
 use crate::models::AuthJson;
 use crate::storage::write_active_auth_json;
 use std::path::PathBuf;
@@ -16,6 +17,12 @@ pub struct MockAppLifecycle {
     pub launch_calls: AtomicUsize,
     pub recovery_calls: AtomicUsize,
     pub capture_calls: AtomicUsize,
+    pub task_capture_calls: AtomicUsize,
+    pub task_window_count: AtomicUsize,
+    pub task_restore_calls: AtomicUsize,
+    pub task_finish_calls: AtomicUsize,
+    pub task_capture_error: Mutex<Option<String>>,
+    pub task_finish_error: Mutex<Option<String>>,
     pub restore_calls: AtomicUsize,
     pub rebind_calls: AtomicUsize,
     pub abort_calls: AtomicUsize,
@@ -61,6 +68,12 @@ impl MockAppLifecycle {
             launch_calls: AtomicUsize::new(0),
             recovery_calls: AtomicUsize::new(0),
             capture_calls: AtomicUsize::new(0),
+            task_capture_calls: AtomicUsize::new(0),
+            task_window_count: AtomicUsize::new(0),
+            task_restore_calls: AtomicUsize::new(0),
+            task_finish_calls: AtomicUsize::new(0),
+            task_capture_error: Mutex::new(None),
+            task_finish_error: Mutex::new(None),
             restore_calls: AtomicUsize::new(0),
             rebind_calls: AtomicUsize::new(0),
             abort_calls: AtomicUsize::new(0),
@@ -308,6 +321,34 @@ impl AppLifecycle for MockAppLifecycle {
             return Err(error);
         }
         Ok(())
+    }
+
+    fn capture_window_tasks(&self) -> Result<(), String> {
+        self.task_capture_calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(error) = self.task_capture_error.lock().unwrap().clone() {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn captured_window_task_count(&self) -> Result<usize, String> {
+        Ok(self.task_window_count.load(Ordering::SeqCst))
+    }
+
+    fn restore_window_tasks(
+        &self,
+        _bound: &super::desktop_app_session::DesktopAppSession,
+        _phase: WindowTaskRestorePhase<'_>,
+    ) {
+        self.task_restore_calls.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn finish_window_tasks(&self) -> Result<(), String> {
+        self.task_finish_calls.fetch_add(1, Ordering::SeqCst);
+        match self.task_finish_error.lock().unwrap().clone() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     fn rebind_banner(&self, _pid: u32) -> Result<(), String> {

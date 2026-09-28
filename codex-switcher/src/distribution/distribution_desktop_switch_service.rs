@@ -97,16 +97,32 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 ));
             }
         };
+        if let Err(error) = self.lifecycle.capture_window_tasks() {
+            self.lifecycle.abort_recovery();
+            let cleanup = DistributionJournal::clear(home).err();
+            return Err(match cleanup {
+                Some(cleanup) => format!(
+                    "Could not capture Desktop window tasks before shutdown: {error}; journal cleanup failed: {cleanup}"
+                ),
+                None => format!("Could not capture Desktop window tasks before shutdown: {error}"),
+            });
+        }
         let checkpoint =
             match DistributionCheckpointService::prepare(home, self.lifecycle, &running_threads) {
                 Ok(snapshot) => snapshot,
                 Err(error) => {
                     self.lifecycle.abort_recovery();
+                    let _ = self.lifecycle.finish_window_tasks();
                     return Err(error);
                 }
             };
-        self.recovery_preflight
-            .run(home, &checkpoint, &running_threads, operation_id, request)?;
+        if let Err(error) =
+            self.recovery_preflight
+                .run(home, &checkpoint, &running_threads, operation_id, request)
+        {
+            let _ = self.lifecycle.finish_window_tasks();
+            return Err(error);
+        }
         let _ = recovery::arm_automation_cooldown();
 
         if let Err(error) = self.lifecycle.stop_app() {
@@ -119,10 +135,15 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 "Desktop shutdown failed",
             );
             let message = format!("Could not stop ChatGPT Desktop gracefully: {error}");
-            return Err(if error.before_signal {
+            let message = if error.before_signal {
                 DistributionCheckpointService::rollback_and_clear(home, &checkpoint, message)
             } else {
                 message
+            };
+            let windows = self.lifecycle.finish_window_tasks().err();
+            return Err(match (error.before_signal, windows) {
+                (false, Some(windows)) => format!("{message}; {windows}"),
+                _ => message,
             });
         }
         if let Err(error) = DistributionCheckpointService::finalize_after_stop(&running_threads) {
@@ -195,6 +216,12 @@ impl<'a> DistributionDesktopSwitchService<'a> {
                 operation_id,
                 request,
             );
+        let window_error = self.lifecycle.finish_window_tasks().err();
+        let recovery_error = match (recovery_error, window_error) {
+            (Some(recovery), Some(windows)) => Some(format!("{recovery}; {windows}")),
+            (None, Some(windows)) => Some(windows),
+            (recovery, None) => recovery,
+        };
         if !restarted_desktop {
             let reason = recovery_error.unwrap_or_else(|| "Desktop did not relaunch".into());
             return match DistributionAccountCommitService::rollback_and_relaunch_previous(

@@ -188,6 +188,26 @@ impl AppLifecycle for HookedLifecycle {
         self.inner.restore_window_bounds(pid, operation_id, reason)
     }
 
+    fn capture_window_tasks(&self) -> Result<(), String> {
+        self.inner.capture_window_tasks()
+    }
+
+    fn captured_window_task_count(&self) -> Result<usize, String> {
+        self.inner.captured_window_task_count()
+    }
+
+    fn restore_window_tasks(
+        &self,
+        bound: &super::DesktopAppSession,
+        phase: super::WindowTaskRestorePhase<'_>,
+    ) {
+        self.inner.restore_window_tasks(bound, phase);
+    }
+
+    fn finish_window_tasks(&self) -> Result<(), String> {
+        self.inner.finish_window_tasks()
+    }
+
     fn rebind_banner(&self, pid: u32) -> Result<(), String> {
         self.inner.rebind_banner(pid)
     }

@@ -130,6 +130,22 @@ impl AppLifecycle for CheckpointObservingLifecycle {
     ) -> Result<(), String> {
         self.inner.restore_window_bounds(pid, operation_id, reason)
     }
+    fn capture_window_tasks(&self) -> Result<(), String> {
+        self.inner.capture_window_tasks()
+    }
+    fn captured_window_task_count(&self) -> Result<usize, String> {
+        self.inner.captured_window_task_count()
+    }
+    fn restore_window_tasks(
+        &self,
+        bound: &super::DesktopAppSession,
+        phase: super::WindowTaskRestorePhase<'_>,
+    ) {
+        self.inner.restore_window_tasks(bound, phase);
+    }
+    fn finish_window_tasks(&self) -> Result<(), String> {
+        self.inner.finish_window_tasks()
+    }
     fn rebind_banner(&self, pid: u32) -> Result<(), String> {
         self.inner.rebind_banner(pid)
     }
@@ -374,6 +390,69 @@ fn before_signal_stop_rejection_clears_journal_after_checkpoint_restore() {
     assert_eq!(restored, before_checkpoint);
     assert_eq!(lifecycle.inner.stop_calls.load(Ordering::SeqCst), 1);
     assert!(lifecycle.inner.running.load(Ordering::SeqCst));
+    assert_eq!(read_active_auth_json().unwrap(), before_auth);
+}
+
+#[test]
+fn selected_window_without_recovery_targets_still_requires_ipc_preflight() {
+    let (env, mut accounts, plan, mut journal, before_auth, checkpoint_path) =
+        rollback_failure_fixture("window_only_ipc_preflight");
+    assert!(crate::switcher::detect_in_progress_threads().is_empty());
+    let old_checkpoint: Value =
+        serde_json::from_slice(&std::fs::read(&checkpoint_path).unwrap()).unwrap();
+    let lifecycle = MockAppLifecycle::new(true);
+    lifecycle.task_window_count.store(1, Ordering::SeqCst);
+    let logger = DistributionAuditLogger::default();
+    let error = DistributionDesktopSwitchService::with_preflight(
+        &lifecycle,
+        &logger,
+        unavailable_recovery_channel,
+    )
+    .run(
+        env.home(),
+        &mut journal,
+        &plan,
+        &DistributionRequest::user("synthetic quota interruption"),
+        &mut accounts,
+        "op_rollback_failure",
+    )
+    .err()
+    .expect("IPC preflight must reject the selected-window restart");
+    assert!(error.contains("preflight"), "{error}");
+    assert_eq!(lifecycle.stop_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(lifecycle.launch_calls.load(Ordering::SeqCst), 0);
+    assert!(lifecycle.running.load(Ordering::SeqCst));
+    assert!(!DistributionJournal::journal_path(env.home()).exists());
+    let restored: Value = serde_json::from_slice(&std::fs::read(checkpoint_path).unwrap()).unwrap();
+    assert_eq!(restored, old_checkpoint);
+    assert_eq!(read_active_auth_json().unwrap(), before_auth);
+}
+
+#[test]
+fn zero_windows_without_recovery_targets_skip_ipc_preflight() {
+    let (env, mut accounts, plan, mut journal, before_auth, _checkpoint_path) =
+        rollback_failure_fixture("zero_window_ipc_fast_path");
+    assert!(crate::switcher::detect_in_progress_threads().is_empty());
+    let lifecycle = MockAppLifecycle::new(true);
+    lifecycle.set_stop_error("synthetic pre-signal stop refusal");
+    let logger = DistributionAuditLogger::default();
+    let error = DistributionDesktopSwitchService::with_preflight(
+        &lifecycle,
+        &logger,
+        unavailable_recovery_channel,
+    )
+    .run(
+        env.home(),
+        &mut journal,
+        &plan,
+        &DistributionRequest::user("synthetic quota interruption"),
+        &mut accounts,
+        "op_rollback_failure",
+    )
+    .err()
+    .expect("synthetic stop refusal must be reported");
+    assert!(error.contains("stop"), "{error}");
+    assert_eq!(lifecycle.stop_calls.load(Ordering::SeqCst), 1);
     assert_eq!(read_active_auth_json().unwrap(), before_auth);
 }
 

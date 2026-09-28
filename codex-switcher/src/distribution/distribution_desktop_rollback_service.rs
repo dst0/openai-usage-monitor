@@ -23,6 +23,7 @@ impl<'a> DistributionDesktopRollbackService<'a> {
         retain_journal: bool,
     ) -> String {
         self.lifecycle.abort_recovery();
+        let window_error = self.lifecycle.finish_window_tasks().err();
         let relaunch = plan
             .current_app_id
             .as_deref()
@@ -35,7 +36,7 @@ impl<'a> DistributionDesktopRollbackService<'a> {
                     id,
                 )
             });
-        match relaunch {
+        let result = match relaunch {
             Ok(()) if retain_journal => format!(
                 "Desktop switch aborted: {error}; previous Desktop relaunched; registry handoff remains pending"
             ),
@@ -48,7 +49,8 @@ impl<'a> DistributionDesktopRollbackService<'a> {
             Err(relaunch) => format!(
                 "Desktop switch aborted: {error}; previous Desktop relaunch unverified: {relaunch}"
             ),
-        }
+        };
+        Self::with_window_error(result, window_error)
     }
 
     pub(super) fn after_auth_commit(
@@ -61,6 +63,7 @@ impl<'a> DistributionDesktopRollbackService<'a> {
         error: String,
     ) -> String {
         self.lifecycle.abort_recovery();
+        let window_error = self.lifecycle.finish_window_tasks().err();
         let rollback = DistributionAccountCommitService::rollback_and_relaunch_previous(
             self.lifecycle,
             home,
@@ -69,7 +72,7 @@ impl<'a> DistributionDesktopRollbackService<'a> {
             previous,
             committed,
         );
-        match rollback {
+        let result = match rollback {
             Ok(()) => match DistributionJournal::clear(home) {
                 Ok(()) => format!("Desktop switch rolled back: {error}"),
                 Err(clear) => {
@@ -79,6 +82,14 @@ impl<'a> DistributionDesktopRollbackService<'a> {
             Err(rollback) => {
                 format!("Desktop switch incomplete: {error}; rollback unverified: {rollback}")
             }
+        };
+        Self::with_window_error(result, window_error)
+    }
+
+    fn with_window_error(error: String, windows: Option<String>) -> String {
+        match windows {
+            Some(windows) => format!("{error}; {windows}"),
+            None => error,
         }
     }
 }
