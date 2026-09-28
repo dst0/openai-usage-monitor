@@ -284,6 +284,12 @@ expect_violation nested-guarded-removal "${T}" \
 expect_violation else-guarded-removal "${T}" \
     "${LEAK}"$'\n''#if DEBUG'$'\n''  let debug = true'$'\n''#elseif os(macOS)'$'\n''#else'$'\n''  NSStatusBar.system.removeStatusItem(kept)'$'\n''#endif' \
     "${T} has 1 status-item calls inside #if"
+# A removal counts only on NSStatusBar.system, which is never nil: an optional
+# or aliased status bar may not be the system bar or may skip the call.
+expect_violation optional-removal "${T}" "${LEAK}; let maybeBar: NSStatusBar? = nil; maybeBar?.removeStatusItem(kept)" \
+    "${T} creates 3 status items and removes 2"
+expect_violation aliased-removal "${T}" "${LEAK}; let bar = NSStatusBar.system; bar.removeStatusItem(kept)" \
+    "${T} creates 3 status items and removes 2"
 # Any other use of removeStatusItem fails, even when the counts balance: a wrapper
 # called through self need not remove anything.
 expect_violation wrapper-removal "${T}" \
