@@ -6,19 +6,25 @@ use super::account_target_resolver::resolve_account_with_sync;
 use super::codex_availability_service::CodexAvailabilityService;
 use super::desktop_session_binding_service::DesktopSessionBindingService;
 use super::direct_switch_journal::{reconcile_pending_direct_switch, DirectSwitchJournal};
+use super::restart_window_task_service::RestartWindowTaskService;
+use super::switch_restart_target_service::SwitchRestartTargetService;
 use super::*;
 use crate::distribution::LogRedactionService;
 use crate::storage::load_accounts;
 
+/// `restore_window_tasks` is the user's explicit request to capture each
+/// window's selected task and reopen it after the restart.
 pub fn switch_to_account(
     account_id: &str,
     restart_app: bool,
     notify: bool,
     trigger: SwitchTrigger,
+    restore_window_tasks: bool,
 ) -> Result<SwitchOutcome, String> {
     switch_to_account_with(
         account_id,
         restart_app,
+        restore_window_tasks,
         notify,
         trigger,
         is_codex_app_running_checked,
@@ -31,6 +37,7 @@ pub fn switch_to_account(
 pub(super) fn switch_to_account_with(
     account_id: &str,
     restart_app: bool,
+    restore_window_tasks: bool,
     notify: bool,
     trigger: SwitchTrigger,
     desktop_running: impl FnOnce() -> Result<bool, String>,
@@ -78,25 +85,7 @@ pub(super) fn switch_to_account_with(
 
     // Detect in-progress threads before gracefully terminating the app
     let running_threads = if app_was_running {
-        let mut threads = detect_in_progress_threads();
-        if let Ok(primary) =
-            std::env::var("CODEX_PRIMARY_THREAD").or_else(|_| std::env::var("CODEX_THREAD_ID"))
-        {
-            let primary = clean_thread_id(&primary);
-            let _ = prioritize_primary_if_user(
-                &crate::storage::codex_home(),
-                &mut threads,
-                Some(&primary),
-            );
-        }
-        if !threads.is_empty() {
-            crate::runtime_print!(
-                "📋 Detected {} active in-progress thread(s) before restart: {:?}",
-                threads.len(),
-                threads
-            );
-        }
-        threads
+        SwitchRestartTargetService::detect()
     } else {
         Vec::new()
     };
@@ -139,18 +128,23 @@ pub(super) fn switch_to_account_with(
     // 2. Stop the desktop app before replacing credentials. A graceful exit is
     // the persistence boundary for active thread history and SQLite WAL state.
     // Never force-kill it: if it cannot flush and exit, leave auth untouched.
+    let mut window_tasks = None;
     if app_was_running {
         let expected = recovery_banner
             .as_ref()
             .expect("running app must have a banner")
             .expected_process()
             .clone();
-        preflight_shutdown_windows(&expected)?;
+        window_tasks =
+            RestartWindowTaskService::capture_if_requested(restore_window_tasks, &expected)?;
+        let captured = RestartWindowTaskService::captured_windows(&window_tasks);
+        preflight_shutdown_windows(&expected, captured.as_deref())?;
         let checkpoint = crate::recovery::RecoveryManifestSnapshot::capture()?;
         crate::recovery::save_pending(&running_threads)
             .map_err(|error| checkpoint.rollback_error(error))?;
-        preflight_shutdown_windows(&expected).map_err(|error| checkpoint.rollback_error(error))?;
-        if let Err(error) = stop_codex_app_gracefully(&expected) {
+        preflight_shutdown_windows(&expected, captured.as_deref())
+            .map_err(|error| checkpoint.rollback_error(error))?;
+        if let Err(error) = stop_codex_app_gracefully(&expected, captured.as_deref()) {
             return Err(if error.before_signal {
                 checkpoint.rollback_error(error.to_string())
             } else {
@@ -161,7 +155,8 @@ pub(super) fn switch_to_account_with(
         // second checkpoint is the verification boundary: it excludes work and
         // abort records flushed by the old Desktop from post-restart proof.
         if let Err(error) = crate::recovery::save_pending(&running_threads) {
-            return Err(CodexAvailabilityService::relaunch_previous_state(error));
+            let error = CodexAvailabilityService::relaunch_previous_state(error);
+            return Err(RestartWindowTaskService::with_windows(error, window_tasks));
         }
     }
 
@@ -224,10 +219,17 @@ pub(super) fn switch_to_account_with(
                                 );
                             restored?;
                             verified?;
-                            crate::recovery::recover_threads_with_banner(
+                            RestartWindowTaskService::around_recovery(
+                                &mut window_tasks,
+                                bound_process,
                                 &running_threads,
-                                crate::recovery::RecoveryMode::CapturedRestart,
-                                recovery_banner.as_mut().unwrap(),
+                                || {
+                                    crate::recovery::recover_threads_with_banner(
+                                        &running_threads,
+                                        crate::recovery::RecoveryMode::CapturedRestart,
+                                        recovery_banner.as_mut().unwrap(),
+                                    )
+                                },
                             )?;
                             DesktopSessionBindingService::confirm_after_recovery(bound_process)
                         },
@@ -235,19 +237,25 @@ pub(super) fn switch_to_account_with(
                 };
                 drop(recovery_banner.take());
                 let stability_result = crate::recovery::verify_desktop_stable(&launched_pids, true);
-                match (recovery_result, stability_result) {
+                let restart_error = match (recovery_result, stability_result) {
                     (Ok(()), Ok(())) => None,
                     (Err(recovery), Ok(())) => Some(recovery),
                     (Ok(()), Err(stability)) => Some(stability),
                     (Err(recovery), Err(stability)) => Some(format!(
                         "{recovery}; desktop stability also failed: {stability}"
                     )),
-                }
-                .map(CodexAvailabilityService::keep_after_failure)
+                };
+                let windows = RestartWindowTaskService::finish(window_tasks.take());
+                RestartWindowTaskService::append_failure(restart_error, windows)
+                    .map(CodexAvailabilityService::keep_after_failure)
             }
             Err(error) => {
                 drop(recovery_banner.take());
-                Some(CodexAvailabilityService::keep_after_failure(error))
+                let error = CodexAvailabilityService::keep_after_failure(error);
+                Some(RestartWindowTaskService::with_windows(
+                    error,
+                    window_tasks.take(),
+                ))
             }
         }
     } else {

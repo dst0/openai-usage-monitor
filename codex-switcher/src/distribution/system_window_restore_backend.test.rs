@@ -37,13 +37,14 @@ fn inventory_requires_exact_process_and_unique_window_ids() {
     let expected = ProcessIdentity::new(4242, "1726789012:000007").unwrap();
     let response = json!({
         "process": {"pid": 4242, "birth_id": "1726789012:000007"},
-        "window_ids": [31, 32],
+        "window_ids": [32, 31],
         "ax_standard_count": 2,
         "ambiguous_count": 0
     });
+    // Sorted, so the guard can compare it with a captured window list.
     assert_eq!(
         SystemWindowRestoreBackend::parse_window_inventory(&response, &expected).unwrap(),
-        2
+        vec![31, 32]
     );
     let mut wrong = response.clone();
     wrong["process"]["birth_id"] = json!("1726789012:000008");
@@ -74,7 +75,7 @@ fn inventory_fails_closed_on_unnamed_visible_window_or_malformed_response() {
     });
     assert_eq!(
         SystemWindowRestoreBackend::parse_window_inventory(&response, &expected).unwrap(),
-        0
+        Vec::<u32>::new()
     );
     let mut malformed = response;
     malformed.as_object_mut().unwrap().remove("ambiguous_count");

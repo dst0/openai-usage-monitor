@@ -1,0 +1,23 @@
+# 2026-09-28 — macOS bash 3.2 here-documents ignore TMPDIR, so a write sandbox kills them
+
+- **Status:** Resolved
+- **Task/context:** Before adding the local-only `tests/*.sh` scripts to CI on branch `ci/run-shell-tests`, each one was run on macOS 27.2 with `/bin/bash` 3.2.57, a scratch `TMPDIR`, and a `sandbox-exec` profile. The profile denied every file write outside that `TMPDIR` and the Clang module cache with `(with send-signal SIGKILL)`, so any write elsewhere would stop the test visibly.
+- **Unexpected observation or failure:** `tests/install_monitor_process_guard.sh` and `tests/install_restart_worker_wait.sh` were killed at their first `cat > file <<'EOF'`, although the target file was inside the scratch `TMPDIR`. The same happened for `read x <<EOF` with no file at all.
+- **Evidence:**
+  - Without the sandbox, and with `TMPDIR` pointing at the scratch directory, `lsof` on a here-document's standard input showed `/private/var/tmp/sh-thd-<number>`, not a file in `TMPDIR`.
+  - Allowing only `(subpath "/private/tmp")` made the here-document work, and `lsof` then showed `/private/tmp/sh-thd-<number>`.
+  - Allowing only the file pattern `^/private/var/tmp/sh-thd-[0-9]+$` was not enough; adding `(literal "/private/var/tmp")` made it work. So bash first checks that the directory itself is writable, and the sandbox treats that check as a write. This matches bash 3.2's `get_sys_tmpdir`, which tries `P_tmpdir` (`/var/tmp/`), then `/tmp`, and uses `TMPDIR` only for callers that request it. Here-documents do not request it.
+  - Separately, `(deny signal (target others) (with send-signal SIGKILL))` did not stop `kill -CONT` from the sandbox to a same-user process started outside it. So this sandbox cannot prove that a test sends no signal.
+- **Approaches tried:**
+  - **Attempt:** Allow `sh-thd` files by anchored patterns under `/private/tmp` or `/private/var/tmp`.
+    - **Outcome:** Did not work.
+    - **Why:** The directory's own writability check was denied first, and the kill stopped bash before it could fall back.
+  - **Attempt:** Allow `(literal "/private/var/tmp")` and `(regex #"^/private/var/tmp/sh-thd-[0-9]+$")` in addition to the scratch `TMPDIR`.
+    - **Outcome:** Worked.
+    - **Why:** It admits only bash's own temporary here-document files. Bash unlinks each one right after opening it, so no state persists.
+- **Root cause:** On macOS, `/bin/bash` 3.2 writes here-documents to `/var/tmp` (or `/tmp`) regardless of `TMPDIR`. A sandbox that treats every write outside `TMPDIR` as a leak reports this internal file as one. Bash 5 on other systems uses pipes or `TMPDIR` for here-documents; that was not checked here.
+- **Resolution:** The audit profile allows exactly those here-document files. In the tests that fake `kill`, signals are covered by static guards in the tests themselves (see the linked learning), not by the sandbox.
+- **Verification:** With the adjusted profile, all six scripts passed and left the scratch `TMPDIR` empty. A test that wrote to the home directory was still killed.
+- **Prevention/follow-up:** None needed in the repository. Profiles for future hermeticity audits should start from this allowance.
+- **Reusable learning:** A kill-on-write sandbox for macOS shell scripts must allow bash 3.2's `/var/tmp/sh-thd-*` here-document files and the `/private/var/tmp` directory check. Do not rely on a `signal` filter to prove that no real process is signalled; check that statically.
+- **References:** `tests/install_monitor_process_guard.sh`, `tests/install_restart_worker_wait.sh`, [2026-09-28 — A shell test's rewritten fakes fall through to the real command when the script changes spelling](2026-09-28-rewritten-test-fakes-fall-through-to-real-commands.md), [2026-09-27 — Unit tests ran the installed window helper and read the live process table](2026-09-27-tests-ran-installed-helper-and-read-process-table.md).

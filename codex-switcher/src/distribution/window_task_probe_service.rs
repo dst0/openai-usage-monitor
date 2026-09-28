@@ -1,6 +1,12 @@
 use super::copy_deeplink_keymap_service::CopyDeeplinkKeymapService;
 use super::system_window_restore_backend::SystemWindowRestoreBackend;
 use super::window_process_validation_service::WindowProcessValidationService;
+use super::window_restore_process_identity::ProcessIdentity;
+use super::window_task_command::WindowTaskCommand;
+use super::window_task_helper_client::WindowTaskHelperClient;
+use super::window_task_probe_validation_service::WindowTaskProbeValidationService;
+use super::window_task_report::WindowTaskReport;
+use super::window_task_session_validation_service::WindowTaskSessionValidationService;
 use std::ffi::{CStr, OsStr};
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
@@ -8,51 +14,103 @@ use std::path::PathBuf;
 const OPT_IN_REQUIRED: &str = "Explicit --allow-focus-and-clipboard is required";
 const NOT_DESKTOP_HOME: &str =
     "The task probe needs the Codex home ChatGPT uses (~/.codex); unset CODEX_HOME and retry";
-const KEYMAP_CHANGED: &str = "ChatGPT keybindings changed during the task probe; its result is void, and a synthesized Cmd+Opt+L may have run another command";
+const KEYMAP_CHANGED: &str = "ChatGPT keybindings changed during the window-task command; its result is void, and a synthesized Cmd+Opt+L may have run another command";
 /// Added to any failure the helper did not name: it may have happened after
 /// the helper began focusing windows.
 const POSSIBLE_VISIBLE_CHANGE: &str =
     "ChatGPT windows may have been focused and the clipboard may hold a copied task link";
-/// Named failures come from the helper's fixed codes; see the validation service.
-const NAMED_FAILURE: &str = "Task probe failed: ";
 
-/// Explicit, opt-in window-task diagnostic. The native helper focuses each
-/// ChatGPT window and copies its task link; this service reports only how
-/// many distinct links it saw. It never restarts Desktop, changes
-/// credentials, saves a snapshot, or prints, stores, or logs a task ID, and
-/// nothing in restart, distribution, or recovery calls it.
+/// Explicit, opt-in window-task diagnostics. The probe focuses each ChatGPT
+/// window and copies its task link, reporting only how many distinct links
+/// it saw. The rehearsal additionally opens one new window per original,
+/// sends it the original's task link, checks it, and closes it again. Both
+/// put the clipboard back when nothing else wrote to it. Neither restarts
+/// Desktop, changes credentials, saves a snapshot, or prints, stores, or logs
+/// a task ID, and nothing in restart, distribution, or recovery calls them.
 pub struct WindowTaskProbeService;
 
 impl WindowTaskProbeService {
-    /// Each check runs before the next, more intrusive one. The helper is the
-    /// only step that changes focus or the clipboard, and it runs last, while
-    /// the switch/recovery operation lock keeps any restart or recovery
-    /// dispatch from interleaving with the synthesized shortcut.
     pub fn run<Operation>(
         allow_focus_and_clipboard: bool,
         desktop_codex_home: impl FnOnce() -> Result<PathBuf, String>,
         operation_lock: impl FnOnce() -> Result<Operation, String>,
         desktop_pids: impl FnOnce() -> Result<Vec<u32>, String>,
         backend: impl FnOnce() -> Result<SystemWindowRestoreBackend, String>,
-    ) -> Result<usize, String> {
+    ) -> Result<WindowTaskReport, String> {
+        Self::guarded(
+            allow_focus_and_clipboard,
+            desktop_codex_home,
+            operation_lock,
+            desktop_pids,
+            backend,
+            |backend, process, windows| {
+                let response = WindowTaskHelperClient::new(backend).run(
+                    WindowTaskCommand::Probe,
+                    &process,
+                    None,
+                    WindowTaskCommand::Probe.timeout(windows),
+                )?;
+                WindowTaskProbeValidationService::parse(&response, &process)
+            },
+        )
+    }
+
+    pub fn rehearse<Operation>(
+        allow_focus_and_clipboard: bool,
+        desktop_codex_home: impl FnOnce() -> Result<PathBuf, String>,
+        operation_lock: impl FnOnce() -> Result<Operation, String>,
+        desktop_pids: impl FnOnce() -> Result<Vec<u32>, String>,
+        backend: impl FnOnce() -> Result<SystemWindowRestoreBackend, String>,
+    ) -> Result<WindowTaskReport, String> {
+        Self::guarded(
+            allow_focus_and_clipboard,
+            desktop_codex_home,
+            operation_lock,
+            desktop_pids,
+            backend,
+            |backend, process, windows| {
+                let response = WindowTaskHelperClient::new(backend).run(
+                    WindowTaskCommand::Rehearse,
+                    &process,
+                    None,
+                    WindowTaskCommand::Rehearse.timeout(windows),
+                )?;
+                WindowTaskSessionValidationService::rehearsal(&response, &process)
+            },
+        )
+    }
+
+    /// Each check runs before the next, more intrusive one. The helper is the
+    /// only step that changes focus or the clipboard, and it runs last, while
+    /// the switch/recovery operation lock keeps any restart or recovery
+    /// dispatch from interleaving with the synthesized shortcut.
+    fn guarded<Operation, T>(
+        allow_focus_and_clipboard: bool,
+        desktop_codex_home: impl FnOnce() -> Result<PathBuf, String>,
+        operation_lock: impl FnOnce() -> Result<Operation, String>,
+        desktop_pids: impl FnOnce() -> Result<Vec<u32>, String>,
+        backend: impl FnOnce() -> Result<SystemWindowRestoreBackend, String>,
+        command: impl FnOnce(&SystemWindowRestoreBackend, ProcessIdentity, usize) -> Result<T, String>,
+    ) -> Result<T, String> {
         if !allow_focus_and_clipboard {
             return Err(OPT_IN_REQUIRED.into());
         }
         let home = desktop_codex_home()?;
         let _operation = operation_lock()?;
-        let keymap = CopyDeeplinkKeymapService::verify_default(&home)?;
+        let keymap = CopyDeeplinkKeymapService::verify_copy_binding(&home)?;
         let pids = desktop_pids()?;
         let [pid] = pids[..] else {
-            return Err("Task probe requires exactly one ChatGPT main process".into());
+            return Err("Window-task commands require exactly one ChatGPT main process".into());
         };
         let mut backend = backend()?;
         let process = WindowProcessValidationService::inspect(&mut backend, pid)?;
-        let result = backend
-            .probe_selected_tasks(process)
+        // The read-only inventory sizes the helper's deadline.
+        let windows = backend.capture_window_inventory(process.clone())?.len();
+        let result = command(&backend, process, windows)
             .map_err(|error| Self::with_visible_change_caveat(&error));
         // ChatGPT re-reads its keymap whenever one of its windows gains
         // focus, which the probe itself causes; an edit meanwhile voids it.
-        if CopyDeeplinkKeymapService::verify_default(&home) != Ok(keymap) {
+        if CopyDeeplinkKeymapService::verify_copy_binding(&home) != Ok(keymap) {
             return Err(KEYMAP_CHANGED.into());
         }
         result
@@ -60,8 +118,8 @@ impl WindowTaskProbeService {
 
     /// A named failure already says whether it followed a focus change; any
     /// other failure after the helper started might have, so it says so.
-    fn with_visible_change_caveat(error: &str) -> String {
-        if error.starts_with(NAMED_FAILURE) {
+    pub(super) fn with_visible_change_caveat(error: &str) -> String {
+        if WindowTaskCommand::is_named_failure(error) {
             error.to_string()
         } else {
             format!("{error}; {POSSIBLE_VISIBLE_CHANGE}")
@@ -117,14 +175,36 @@ impl WindowTaskProbeService {
         }
     }
 
-    /// The command's only output. Task IDs never reach Rust.
-    pub fn summary(count: usize) -> String {
+    /// The probe command's only output. Task IDs never reach Rust.
+    pub fn summary(report: WindowTaskReport) -> String {
         format!(
-            "Task probe: {count} ChatGPT window(s) each copied a distinct task link; task IDs are not shown. \
-             Attribution of each clipboard write to its window is unverified. \
-             The clipboard now holds the last copied link, which clipboard history or Universal Clipboard may keep. \
-             No restart, credential change, or snapshot was made."
+            "Task probe: {} ChatGPT window(s) each copied a distinct task link; task IDs are not shown. \
+             Attribution of each clipboard write to its window is unverified. {} \
+             No restart, credential change, or snapshot was made.",
+            report.windows,
+            Self::clipboard_note(report.clipboard_restored)
         )
+    }
+
+    /// The rehearsal command's only output. Task IDs never reach Rust.
+    pub fn rehearsal_summary(report: WindowTaskReport) -> String {
+        format!(
+            "Task restore rehearsal: {} of {} ChatGPT window(s) had their task reopened in a new window \
+             by New Window plus a task link, verified by Copy deeplink; the originals kept their tasks \
+             and the extra windows were closed. Task IDs are not shown. {} \
+             No restart, credential change, or snapshot was made.",
+            report.verified,
+            report.windows,
+            Self::clipboard_note(report.clipboard_restored)
+        )
+    }
+
+    fn clipboard_note(restored: bool) -> &'static str {
+        if restored {
+            "The previous clipboard contents were put back; clipboard history or Universal Clipboard may still have seen the copied links."
+        } else {
+            "The clipboard was not put back (it was private, too large, or changed by another app), so it may hold the last copied link."
+        }
     }
 }
 

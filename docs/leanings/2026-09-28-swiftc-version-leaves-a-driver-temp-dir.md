@@ -1,0 +1,21 @@
+# 2026-09-28 — `swiftc --version` leaves a swift-driver temporary directory in TMPDIR
+
+- **Status:** Resolved
+- **Task/context:** Branch `ci/run-shell-tests` checked that every shell test leaves its scratch `TMPDIR` empty before the tests were added to the required CI jobs. See [2026-09-28 — A shell test's rewritten fakes fall through to the real command when the script changes spelling](2026-09-28-rewritten-test-fakes-fall-through-to-real-commands.md).
+- **Unexpected observation or failure:** After two separate runs, `tests/swift_module_cache_path.sh` had left an empty `TemporaryDirectory.XXXXXX/.keep-directory` in `TMPDIR`. The other seven shell tests left `TMPDIR` empty.
+- **Evidence:** In fresh empty scratch directories with Swift 6.4 (`swift-driver` 1.168.6):
+  - The test's warm compile, its reuse compile, and its deliberately failing raw-alias control compile each left the directory empty.
+  - `TMPDIR=<scratch>/ swiftc --version` alone left `TemporaryDirectory.KRJeGi`.
+- **Approaches tried:**
+  - **Attempt:** Blame the control compile, which crashes `swift-frontend` on Swift 6.4. The review of the branch suggested the same.
+    - **Outcome:** Did not work.
+    - **Why:** Run alone, that compile left nothing.
+  - **Attempt:** Run the test's informational `swiftc --version` with `TMPDIR` set to the test's own temporary root, which its EXIT trap removes.
+    - **Outcome:** Worked.
+    - **Why:** The driver's directory now lands inside a tree the test deletes.
+- **Root cause:** The Swift 6.4 driver creates a `TemporaryDirectory.*` for `--version` and does not remove it. Whether Swift 5.10 on the `macos-14` runner does the same was not checked.
+- **Resolution:** `tests/swift_module_cache_path.sh` passes `TMPDIR="${TEMP_ROOT}/"` to `swiftc --version`.
+- **Verification:** A full run with an empty scratch `TMPDIR` passed and left it empty.
+- **Prevention/follow-up:** No committed check: a test cannot tell its own leftovers from other processes' files in a shared `TMPDIR`. Audit with an empty scratch `TMPDIR` instead.
+- **Reusable learning:** Test an assumed source of a leftover by running each suspect alone in an empty directory before fixing it. Give even informational compiler calls the test's own `TMPDIR`.
+- **References:** `tests/swift_module_cache_path.sh`.

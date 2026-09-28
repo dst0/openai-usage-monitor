@@ -209,10 +209,54 @@ cleanup() {
             /usr/bin/open "${INSTALL_DIR}/${BUNDLE_NAME}" >/dev/null 2>&1 || true
         fi
     fi
+    # Release the install lock last, once the temporary paths above are gone:
+    # the uninstaller treats a free lock as proof that no installer owns them.
+    exec 9>&-
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+# ------------------------------------------------------------------------------
+# Concurrency Lock: Serialize installation runs across terminal sessions & projects
+# ------------------------------------------------------------------------------
+# Take the lock before creating any temporary path (remote clone, CLI and app
+# staging, app backup); cleanup() releases it only after removing them. The
+# uninstaller removes such leftovers only while no installer holds this lock.
+INSTALL_LOCK_FILE="${TMPDIR:-/tmp}/codex_monitor_install_${UID:-$(id -u)}.lock"
+touch "${INSTALL_LOCK_FILE}"
+exec 9>>"${INSTALL_LOCK_FILE}"
+
+acquire_install_lock() {
+    if command -v lockf >/dev/null 2>&1; then
+        if ! lockf -s -t 0 9 2>/dev/null; then
+            local holder_pid
+            holder_pid="$(head -n 1 "${INSTALL_LOCK_FILE}" 2>/dev/null || true)"
+            if [ -n "${holder_pid}" ] && kill -0 "${holder_pid}" 2>/dev/null; then
+                echo "⏳ Another installation (PID ${holder_pid}) is currently in progress. Waiting for it to finish..."
+            else
+                echo "⏳ Another installation is currently in progress. Waiting for it to finish..."
+            fi
+            lockf 9
+            echo "🔒 Acquired installation lock. Continuing..."
+        fi
+    elif command -v python3 >/dev/null 2>&1; then
+        if ! python3 -c "import fcntl; fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)" 2>/dev/null; then
+            local holder_pid
+            holder_pid="$(head -n 1 "${INSTALL_LOCK_FILE}" 2>/dev/null || true)"
+            if [ -n "${holder_pid}" ] && kill -0 "${holder_pid}" 2>/dev/null; then
+                echo "⏳ Another installation (PID ${holder_pid}) is currently in progress. Waiting for it to finish..."
+            else
+                echo "⏳ Another installation is currently in progress. Waiting for it to finish..."
+            fi
+            python3 -c "import fcntl; fcntl.flock(9, fcntl.LOCK_EX)"
+            echo "🔒 Acquired installation lock. Continuing..."
+        fi
+    fi
+    echo "$$" > "${INSTALL_LOCK_FILE}"
+}
+
+acquire_install_lock
 
 if [ -z "${PROJECT_DIR}" ]; then
     echo "🌐 Remote installation detected. Preparing temporary build environment..."
@@ -248,44 +292,6 @@ else
     INSTALL_DIR="${HOME}/Applications"
 fi
 mkdir -p "${INSTALL_DIR}"
-
-# ------------------------------------------------------------------------------
-# Concurrency Lock: Serialize installation runs across terminal sessions & projects
-# ------------------------------------------------------------------------------
-INSTALL_LOCK_FILE="${TMPDIR:-/tmp}/codex_monitor_install_${UID:-$(id -u)}.lock"
-touch "${INSTALL_LOCK_FILE}"
-exec 9>>"${INSTALL_LOCK_FILE}"
-
-acquire_install_lock() {
-    if command -v lockf >/dev/null 2>&1; then
-        if ! lockf -s -t 0 9 2>/dev/null; then
-            local holder_pid
-            holder_pid="$(head -n 1 "${INSTALL_LOCK_FILE}" 2>/dev/null || true)"
-            if [ -n "${holder_pid}" ] && kill -0 "${holder_pid}" 2>/dev/null; then
-                echo "⏳ Another installation (PID ${holder_pid}) is currently in progress. Waiting for it to finish..."
-            else
-                echo "⏳ Another installation is currently in progress. Waiting for it to finish..."
-            fi
-            lockf 9
-            echo "🔒 Acquired installation lock. Continuing..."
-        fi
-    elif command -v python3 >/dev/null 2>&1; then
-        if ! python3 -c "import fcntl; fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)" 2>/dev/null; then
-            local holder_pid
-            holder_pid="$(head -n 1 "${INSTALL_LOCK_FILE}" 2>/dev/null || true)"
-            if [ -n "${holder_pid}" ] && kill -0 "${holder_pid}" 2>/dev/null; then
-                echo "⏳ Another installation (PID ${holder_pid}) is currently in progress. Waiting for it to finish..."
-            else
-                echo "⏳ Another installation is currently in progress. Waiting for it to finish..."
-            fi
-            python3 -c "import fcntl; fcntl.flock(9, fcntl.LOCK_EX)"
-            echo "🔒 Acquired installation lock. Continuing..."
-        fi
-    fi
-    echo "$$" > "${INSTALL_LOCK_FILE}"
-}
-
-acquire_install_lock
 
 # ------------------------------------------------------------------------------
 # Check Prerequisites: Swift & Rust
@@ -423,7 +429,12 @@ if [ -f "${PROJECT_DIR}/scripts/codex-window-restore.swift" ]; then
         "${PROJECT_DIR}/scripts/CodexWindowTaskProbeValidation.swift" \
         "${PROJECT_DIR}/scripts/CodexWindowTaskProbeKeyboard.swift" \
         "${PROJECT_DIR}/scripts/CodexWindowTaskProbeCore.swift" \
+        "${PROJECT_DIR}/scripts/CodexWindowTaskSessionSystem.swift" \
+        "${PROJECT_DIR}/scripts/CodexWindowTaskSessionCore.swift" \
+        "${PROJECT_DIR}/scripts/CodexPreservedClipboard.swift" \
+        "${PROJECT_DIR}/scripts/CodexWindowTaskRecords.swift" \
         "${PROJECT_DIR}/scripts/CodexWindowTaskProbe.swift" \
+        "${PROJECT_DIR}/scripts/CodexWindowTaskSession.swift" \
         "${PROJECT_DIR}/scripts/codex-window-restore.swift"
     chmod +x "${LOCAL_BIN}/codex-window-restore"
 fi
@@ -630,9 +641,6 @@ echo "🚀 Launching ${APP_NAME}..."
 open "${INSTALL_DIR}/${BUNDLE_NAME}"
 INSTALL_SUCCEEDED=1
 WRITERS_QUIESCED=0
-
-# Release concurrency lock explicitly
-exec 9>&- 2>/dev/null || true
 
 echo ""
 echo "🎉 Installation complete!"
