@@ -106,7 +106,7 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
     let frontmost = system.frontmostApplication()
     var verified = Array(repeating: false, count: plan.count)
     var checked: [(window: System.Window, taskID: String)] = []
-    var movedBack: [Int: System.Window] = [:]
+    var navigationAttempted = false
     reader.beginVisibleChanges()
     defer {
       if let frontmost, !system.isDesktop(frontmost) {
@@ -125,16 +125,16 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
         if shown == plan[index].taskID {
           verified[index] = true
         } else if let shown, recoveryTasks.contains(shown) {
+          navigationAttempted = true
           verified[index] = try show(
             plan[index].taskID, in: window, alreadyShowingIsPossible: false, unchanged: checked)
-          if verified[index] { movedBack[index] = window }
         }
         if verified[index] {
           checked.append((window, plan[index].taskID))
         }
       }
-      // A later link must not have moved a window this pass already checked.
-      if !movedBack.isEmpty {
+      // Even a failed last attempt may have changed an earlier window.
+      if navigationAttempted {
         for (window, task) in checked {
           guard let index = plan.firstIndex(where: { $0.taskID == task }) else { continue }
           try reader.focus(window)

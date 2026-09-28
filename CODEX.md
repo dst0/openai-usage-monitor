@@ -306,7 +306,8 @@ Copy deeplink returns the planned task; a later link that moved an earlier
 window is caught by a final pass. When recovery could have sent its own task
 link (a target no restored window showed, or an incomplete restore), even when
 recovery failed, a recheck moves back only a window now showing a recovery
-task instead of its own, with the same link guard and a final pass; it
+task instead of its own, with the same link guard and a final pass after
+every attempted link, including a last attempt whose target never verifies; it
 creates, moves, and closes nothing, cannot tell recovery's link from the
 user's own navigation to a recovery task, and reactivates the app that was
 frontmost before it. The recheck reports any unmatched frame or unreadable

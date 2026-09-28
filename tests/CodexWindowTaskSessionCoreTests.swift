@@ -36,6 +36,7 @@ struct CodexWindowTaskSessionCoreTests {
     recheckMovesBackOnlyWindowsThatRecoveryMoved()
     recheckDoesNotClaimUnreadableWindowsVerified()
     recheckGivesTheUserTheirAppBackAndGuardsItsLinks()
+    recheckCatchesLastAttemptMisroute()
     rehearsalOpensChecksAndClosesOnlyItsOwnWindows()
     rehearsalCleansUpAfterEveryFailure()
     rehearsalDoesNotClaimUnreadableOpenWindowClosed()
@@ -440,6 +441,23 @@ struct CodexWindowTaskSessionCoreTests {
     guard case .success(let result) = restore(
       crossed, [(a, f0), (b, f1)], mode: .recheck(recoveryTaskIDs: [r])) else { fatalError("recheck threw") }
     precondition(result.verified == [false, true])
+  }
+
+  static func recheckCatchesLastAttemptMisroute() {
+    let desktop = FakeDesktop()
+    desktop.addWindow(f0, task: a)
+    desktop.addWindow(f1, task: r)
+    desktop.linksGoTo = 0
+    desktop.navigationKeepsFocus = true
+    // The first link lands after retry two has checked the earlier window.
+    // The target never verifies, but that last link changed the earlier task.
+    desktop.navigationDelay = taskNavigationTimeout + 1
+    guard case .success(let result) = restore(
+      desktop, [(a, f0), (b, f1)], mode: .recheck(recoveryTaskIDs: [r])) else {
+      fatalError("recheck threw")
+    }
+    precondition(desktop.tasks[0] == b)
+    precondition(result.verified == [false, false])
   }
 
   static func rehearsalOpensChecksAndClosesOnlyItsOwnWindows() {
