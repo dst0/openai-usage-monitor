@@ -932,7 +932,8 @@ struct AppDelegateTestRunner {
     // Test Dynamic Menu Construction: Verify Reserve Accounts have "🗓️ Weekly:" progress bars
     let appDelegate = makeTestAppDelegate(client: codexHome.client(), preferences: preferences)
     let menu = appDelegate.buildMenu()
-    appDelegate.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    let reserveStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    appDelegate.statusItem = reserveStatusItem
     appDelegate.statusItem?.menu = menu
 
     let autoResetMenu = menu.items.first(where: { $0.title == L10n.autoResetWeekly })
@@ -1313,6 +1314,8 @@ struct AppDelegateTestRunner {
       $0.title.contains(L10n.reloginToAccount) && $0.action == #selector(AppDelegate.handleActiveAccountRelogin(_:))
     })
     assertTrue(activeReloginItem != nil, "Menu must display active account relogin item when active account needs relogin")
+    // The delegate's last use: take its status item out of the menu bar.
+    NSStatusBar.system.removeStatusItem(reserveStatusItem)
 
     // Regression Test 14: Active AccountRowView clicking & context menu routing when needsRelogin is true
     var activeRowRelogined = false
@@ -2249,12 +2252,14 @@ struct AppDelegateTestRunner {
 
       // Subtest 6: updateStatusBar execution with image and tooltip routing
       let appDelegateTest = makeTestAppDelegate(client: codexHome.client(), preferences: preferences)
-      appDelegateTest.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+      let routingStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+      appDelegateTest.statusItem = routingStatusItem
       appDelegateTest.updateStatusBar(with: fullSnapshot)
       assertTrue(appDelegateTest.statusItem?.button?.image != nil, "updateStatusBar must assign composite image to statusItem button")
       let toolTip = appDelegateTest.statusItem?.button?.toolTip ?? ""
       assertTrue(toolTip.contains("cli@openai.com"), "Tooltip must contain resolved CLI email: \(toolTip)")
       assertTrue(toolTip.contains("app@openai.com"), "Tooltip must contain APP email when running: \(toolTip)")
+      NSStatusBar.system.removeStatusItem(routingStatusItem)
 
       print("  ✅ Status Bar CLI Account Resolution & Quota Decoupling verified")
     }
