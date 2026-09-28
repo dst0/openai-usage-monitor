@@ -483,7 +483,8 @@ an alias is left alone, and a copied or moved cache gets a new subdirectory;
 delete old `codex-monitor-swift-*` directories to reclaim space. A relative path
 resolves once against the caller's directory. The scripts stop if the path is
 not a directory, contains a newline, or starts with an unexpanded `~`, or if
-the subdirectory is a symlink, is not a directory, or fails a write probe. A
+the subdirectory is a symlink, is not a directory, or is not writable and
+searchable (`[ -w ]`, `[ -x ]`, which also apply ACLs and sandbox rules). A
 read-only cache compiles only what it already holds for the same flags, and
 these scripts compile with several. Other `swiftc`, `swift`, or
 `clang -fmodules` runs that share a cache among themselves must use one

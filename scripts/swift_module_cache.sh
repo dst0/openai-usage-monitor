@@ -24,7 +24,9 @@
 # A cache the compiler cannot write fails as soon as a module is missing, which
 # a warm cache hits on the first compile with other flags (these scripts use
 # several), and Swift may then report "this SDK is not supported by the
-# compiler". The subdirectory must therefore pass a real write probe. See
+# compiler". The subdirectory must therefore be writable and searchable.
+# `[ -w ]` asks the kernel (access(2)), which also applies ACLs, read-only
+# mounts, and sandbox rules, so no probe file is left in the user's cache. See
 # docs/leanings/2026-09-28-swift-cache-spelling-mismatch-isolated.md,
 # docs/leanings/2026-09-28-swift-sdk-not-supported-was-unwritable-module-cache.md,
 # and docs/leanings/2026-09-28-swift-cache-helper-owns-a-path-keyed-subdirectory.md.
@@ -35,7 +37,7 @@ SWIFT_MODULE_CACHE_SUBDIR_PREFIX="codex-monitor-swift-"
 
 canonicalize_clang_module_cache_path() {
     local requested="${CLANG_MODULE_CACHE_PATH:-}"
-    local target="" physical="" checksum="" cache="" probe=""
+    local target="" physical="" checksum="" cache=""
     [ -n "${requested}" ] || return 0
     case "${requested}" in
         *$'\n'*)
@@ -85,11 +87,8 @@ canonicalize_clang_module_cache_path() {
         echo "❌ ${cache} is not a plain directory; remove it or choose another CLANG_MODULE_CACHE_PATH." >&2
         return 1
     fi
-    if { [ -d "${cache}" ] || /bin/mkdir -- "${cache}" 2>/dev/null; } &&
-        probe="$(/usr/bin/mktemp "${cache}/.write-probe.XXXXXX" 2>/dev/null)" &&
-        /bin/rm -f -- "${probe}"; then
-        :
-    else
+    if ! { [ -d "${cache}" ] || /bin/mkdir -- "${cache}" 2>/dev/null; } ||
+        [ ! -w "${cache}" ] || [ ! -x "${cache}" ]; then
         echo "❌ The Swift module cache ${cache} cannot be written (CLANG_MODULE_CACHE_PATH=${requested})." >&2
         echo "   Swift would fail on the first module it has to build, possibly reported as \"this SDK is not supported by the compiler\"." >&2
         echo "   Choose a directory you can write." >&2

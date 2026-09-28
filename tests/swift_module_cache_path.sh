@@ -222,6 +222,7 @@ expect "physical path" "$(run_helper "CLANG_MODULE_CACHE_PATH=${REAL}")" "$(acce
 /usr/bin/grep -q 'Swift module cache:' "${TEMP_ROOT}/helper.err" \
     || fail "the helper did not report the cache it chose on stderr"
 [ -d "$(scripts_cache "${REAL}")" ] || fail "the helper did not create its subdirectory"
+expect "the helper writes nothing into the cache itself" "$(/bin/ls -A "$(scripts_cache "${REAL}")")" ""
 expect "alias" "$(run_helper "CLANG_MODULE_CACHE_PATH=${ALIAS}")" "$(accepted "${REAL}")"
 expect "missing directory behind an alias is created" \
     "$(run_helper "CLANG_MODULE_CACHE_PATH=${ALIAS}/new/cache")" "$(accepted "${REAL}/new/cache")"
@@ -310,15 +311,32 @@ expect "a failing checksum is rejected" "${actual}" "1|${REAL}|set"
 expect_rejected "a symlinked scripts' subdirectory" "${REAL}/linked" 'is not a plain directory'
 if [ "$(/usr/bin/id -u)" != 0 ]; then
     # Root can write anyway, so these cases need an ordinary user.
-    /bin/mkdir -p "${REAL}/ro-parent" "${REAL}/ro-subdir" "${REAL}/ro-parent-ok"
-    /bin/mkdir -p "$(scripts_cache "${REAL}/ro-subdir")/HASH" "$(scripts_cache "${REAL}/ro-parent-ok")"
+    /bin/mkdir -p "${REAL}/ro-parent" "${REAL}/ro-subdir" "${REAL}/ro-parent-ok" "${REAL}/unsearchable"
+    /bin/mkdir -p "$(scripts_cache "${REAL}/ro-subdir")/HASH" "$(scripts_cache "${REAL}/ro-parent-ok")" \
+        "$(scripts_cache "${REAL}/unsearchable")"
     /bin/chmod 555 "${REAL}/ro-parent" "$(scripts_cache "${REAL}/ro-subdir")" "${REAL}/ro-parent-ok"
+    /bin/chmod 600 "$(scripts_cache "${REAL}/unsearchable")"
     expect_rejected "a read-only directory" "${REAL}/ro-parent" 'cannot be written'
     expect_rejected "a warm read-only scripts' subdirectory" "${ALIAS}/ro-subdir" 'cannot be written'
+    expect_rejected "a writable but unsearchable scripts' subdirectory" "${REAL}/unsearchable" 'cannot be written'
     expect "a read-only parent of a writable scripts' subdirectory" \
         "$(run_helper "CLANG_MODULE_CACHE_PATH=${REAL}/ro-parent-ok")" "$(accepted "${REAL}/ro-parent-ok")"
-    /bin/chmod 755 "${REAL}/ro-parent" "$(scripts_cache "${REAL}/ro-subdir")" "${REAL}/ro-parent-ok"
-    [ -z "$(/usr/bin/find "${REAL}" -name '.write-probe.*' -print)" ] || fail "the write probe left a file behind"
+    /bin/chmod 755 "${REAL}/ro-parent" "$(scripts_cache "${REAL}/ro-subdir")" "${REAL}/ro-parent-ok" \
+        "$(scripts_cache "${REAL}/unsearchable")"
+fi
+# A sandbox that denies writes the permission bits allow, as the agent sandbox
+# did for the default cache, is rejected too, without a probe file.
+if /usr/bin/sandbox-exec -p '(version 1)(allow default)' /usr/bin/true 2>/dev/null; then
+    /bin/mkdir -p "$(scripts_cache "${REAL}/sandboxed")"
+    actual="$(/usr/bin/sandbox-exec -p "(version 1)(allow default)(deny file-write* (subpath \"${REAL}/sandboxed\"))" \
+        /bin/bash -c 'source "$1" && CLANG_MODULE_CACHE_PATH="$2" canonicalize_clang_module_cache_path 2>&1; echo "rc=$?"' \
+        _ "${HELPER}" "${REAL}/sandboxed")"
+    case "${actual}" in
+        *'cannot be written'*'rc=1') ;;
+        *) fail "a sandbox-denied cache was not rejected: ${actual}" ;;
+    esac
+else
+    echo "skipped the sandbox case: sandbox-exec is unavailable"
 fi
 
 # The macOS /tmp symlink itself resolves to /private/tmp. Skip it where /tmp
