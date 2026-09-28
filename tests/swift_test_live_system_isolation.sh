@@ -287,6 +287,18 @@ expect_edited source-root-missing "${C}" 's/public convenience init() {/public i
 T=tests/AppDelegateTests.swift
 expect_violation test-cli "${T}" '  let url = CodexClient.installedCLIExecutable()' "${T}:3:"
 expect_violation test-desktop "${T}" '  let running = CodexDesktopProcessIdentity .current() != nil' "${T}:3:"
+# A call split before a leading dot is the same call.
+expect_violation test-desktop-split "${T}" '  let running = CodexDesktopProcessIdentity'$'\n''    .current() != nil' "${T}:3:"
+expect_violation test-desktop-split-comment "${T}" \
+    '  let running = CodexDesktopProcessIdentity'$'\n''    // the live process'$'\n''    .current() != nil' "${T}:3:"
+expect_violation test-desktop-split-trailing "${T}" \
+    '  let running = CodexDesktopProcessIdentity // live'$'\n''    .current() != nil' "${T}:3:"
+# Joining keeps line numbers: a violation after a joined call reports its own line.
+expect_violation test-line-after-split "${T}" \
+    '  let a = helper'$'\n''    .value()'$'\n''  _ = proc_pidinfo(pid, 0, 0, nil, 0)' "${T}:5:"
+expect_violation test-birth-split "${T}" '  _ = CodexRecoveryProcessIdentity'$'\n''    .birth(for: getpid())' "${T}:3:"
+expect_violation source-desktop-split Sources/AccountRowView.swift \
+    '      if CodexDesktopProcessIdentity'$'\n''        .current() == nil {' 'Sources/AccountRowView.swift:1:'
 expect_violation test-apps "${T}" '  let apps = NSWorkspace.shared.runningApplications' "${T}:3:"
 expect_violation test-proc "${T}" '  _ = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size)' "${T}:3:"
 expect_violation test-workspace "${T}" '  let app = NSWorkspace.shared.frontmostApplication' "${T}:3:"
