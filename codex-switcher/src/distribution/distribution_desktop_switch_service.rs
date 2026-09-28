@@ -105,27 +105,15 @@ impl<'a> DistributionDesktopSwitchService<'a> {
             operation_id,
             request,
         )?;
-        let checkpoint = match DistributionCheckpointService::prepare(
+        let checkpoint = DistributionCheckpointService::prepare_for_switch(
             home,
             self.lifecycle,
             &running_threads,
-            previous_id,
-            target_id,
-        ) {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                self.lifecycle.abort_recovery();
-                let _ = self.lifecycle.finish_window_tasks();
-                self.logger.log_failure(
-                    operation_id,
-                    error.phase,
-                    trigger,
-                    &request.reason,
-                    &format!("Desktop was not signalled: {}", error.message),
-                );
-                return Err(error.into());
-            }
-        };
+            (previous_id, target_id),
+            self.logger,
+            operation_id,
+            request,
+        )?;
         if let Err(error) =
             self.recovery_preflight
                 .run(home, &checkpoint, &running_threads, operation_id, request)

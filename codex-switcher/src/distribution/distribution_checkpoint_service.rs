@@ -1,6 +1,9 @@
 use super::app_lifecycle::AppLifecycle;
+use super::distribution_audit_logger::DistributionAuditLogger;
 use super::distribution_journal::DistributionJournal;
 use super::distribution_pre_signal_failure::DistributionPreSignalFailure;
+use super::distribution_request::DistributionRequest;
+use super::distribution_transaction_error::DistributionTransactionError;
 use crate::recovery::{self, RecoveryManifestSnapshot};
 use std::path::Path;
 
@@ -12,6 +15,29 @@ pub(crate) const RECOVERY_CHECKPOINT_FAILED: &str = "RECOVERY_CHECKPOINT_FAILED"
 pub struct DistributionCheckpointService;
 
 impl DistributionCheckpointService {
+    pub(crate) fn prepare_for_switch(
+        home: &Path,
+        lifecycle: &dyn AppLifecycle,
+        targets: &[String],
+        account_ids: (&str, &str),
+        logger: &DistributionAuditLogger,
+        operation_id: &str,
+        request: &DistributionRequest,
+    ) -> Result<RecoveryManifestSnapshot, DistributionTransactionError> {
+        Self::prepare(home, lifecycle, targets, account_ids.0, account_ids.1).map_err(|error| {
+            lifecycle.abort_recovery();
+            let _ = lifecycle.finish_window_tasks();
+            logger.log_failure(
+                operation_id,
+                error.phase,
+                request.trigger.as_str(),
+                &request.reason,
+                &format!("Desktop was not signalled: {}", error.message),
+            );
+            error.into()
+        })
+    }
+
     /// The first window check precedes any journal write. The second catches
     /// a window added while `save_pending` was writing; rejection restores
     /// the exact previously eligible target set under the operation lock.
