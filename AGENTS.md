@@ -437,3 +437,7 @@ An account switch is triggered when:
   - Bottom Strip (Reset Credits): Compact strip (3.2 pt of 16.5). Green when credits > 0.
   - Outer Rim: Crisp, thin dark outer stroke (`lineWidth: 0.6`, `rimAlpha: 0.85/0.80`).
 - **Contrast Shadows**: Specialized contrast shadows for brackets `[ ]` and omnidirectional soft red shadow for low-quota alerts to ensure legibility across all wallpaper luminosities.
+
+## Workflow Guidelines
+
+- **Worktree Cleanup**: Once a pull request is merged, always remove its temporary git worktree (`git worktree remove <path>`) and prune stale tracking (`git worktree prune`) to prevent disk space exhaustion.
