@@ -267,6 +267,11 @@ struct AppDelegateTestRunner {
     assertTrue(!ruStr.isEmpty, "Auto-switch localization must not be empty")
     runAppDelegateCodexHomeTests(preferences: preferences)
 
+    // ====================================================================
+    // Test 5b: Auto-Switch Settings submenu shows the registry
+    // ====================================================================
+    runAutoSwitchSettingsMenuTests(preferences: preferences)
+
     let stopCommands = CodexClient.backgroundAutomationStopCommands(
       daemonPath: "/tmp/com.codex.switcher.plist")
     assertEqual(
@@ -479,7 +484,7 @@ struct AppDelegateTestRunner {
       activeEmail: personalAccount.email, activePlan: personalAccount.planType,
       fiveHourPercentage: 0.0, weeklyPercentage: 0.0,
       resetTime: nil, resetAfterSeconds: nil, credits: 0,
-      autoSwitchEnabled: true, accounts: [personalAccount, bizAccount],
+      accounts: [personalAccount, bizAccount],
       appAccount: personalAccount, cliAccount: personalAccount
     )
     let delegateIdentityLock = NSLock()
@@ -775,6 +780,20 @@ struct AppDelegateTestRunner {
       assertTrue(
         dict?["auto_switch_on_limit"] != nil, "auto_switch_on_limit must exist for \(lang.rawValue)"
       )
+      // Every row of the Auto-Switch Settings submenu, and its failure alert, is translated:
+      // an English row inside a translated submenu reads as a missing feature.
+      for key in [
+        "auto_switch_settings", "auto_switch_on_limit", "auto_switch_business_priority",
+        "auto_switch_business_only",
+        "restart_app_on_switch", "preserve_window_bounds_on_restart", "setting_save_failed",
+      ] {
+        assertTrue(dict?[key] != nil, "\(key) must exist for \(lang.rawValue)")
+        if lang != .en {
+          assertTrue(
+            dict?[key] != LocalizationManager.translations[.en]?[key],
+            "\(key) must be translated for \(lang.rawValue)")
+        }
+      }
     }
 
     print("  ✅ Multilingual support (13 languages: JA, ZH-Hans, VI) verified")

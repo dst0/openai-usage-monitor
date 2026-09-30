@@ -40,7 +40,6 @@ struct CodexClientIdentityTests {
       accounts: accounts, appAccount: nil, cliAccount: cli)
     require(snapshot.cliAccount?.id == cli.id, "CLI identity must remain available")
     require(snapshot.appAccount == nil, "missing App identity must not fall back to CLI")
-    require(!snapshot.autoSwitchEnabled, "an unspecified snapshot must leave auto-switch off")
 
     // Every client here reads a Codex home of this run, never the live ~/.codex.
     let identityHome = TestCodexHome(purpose: "cli-identity")
@@ -205,21 +204,6 @@ struct CodexClientIdentityTests {
       [.posixPermissions: 0o644], ofItemAtPath: privateMarkerURL.path)
     require(CodexClient.readPrivateSessionMarkerData(at: privateMarkerURL) == nil,
       "a world-readable marker must not be read")
-
-    let statusHome = TestCodexHome(purpose: "status-default")
-    defer { statusHome.tearDown() }
-    let statusClient = statusHome.client()
-
-    func cachedAutoSwitch(_ value: Any?) -> Bool? {
-      var payload: [String: Any] = ["timestamp": formatter.string(from: now), "accounts": []]
-      if let value { payload["auto_switch_enabled"] = value }
-      let data = try! JSONSerialization.data(withJSONObject: payload)
-      try! data.write(to: statusClient.statusFileURL)
-      return statusClient.loadCachedSnapshot()?.autoSwitchEnabled
-    }
-    require(cachedAutoSwitch(nil) == false, "missing cache flag must leave auto-switch off")
-    require(cachedAutoSwitch("true") == false, "malformed cache flag must leave auto-switch off")
-    require(cachedAutoSwitch(true) == true, "explicit cache enablement must remain enabled")
 
     print("  ✅ App/CLI identity separation and stale-marker rejection verified")
   }

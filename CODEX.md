@@ -111,10 +111,17 @@ registry lock; quota HTTP remains outside it. A stale whole-file save can
 re-enable auto-switch or restore an old refresh token.
 Interactive setup propagates registry and active-auth errors and uses a private
 random login directory. The derived status cache copies current registry
-switch settings while holding the same lock; an absent or malformed Swift cache
-flag defaults to auto-switch off, and so does a registry without the setting
-when the menu is built. Settings sync leaves a missing cache for the
-daemon to populate with a complete quota snapshot. Status staging uses the same
+switch settings while holding the same lock. The Menu Bar's Auto-Switch
+Settings submenu reads its marks from the registry itself, never from that
+cache copy: when the menu is built, whenever it opens, after every status cache
+update, and after each of its own `cxi config` writes, which run one at a time
+in the order chosen. A missing registry or key, or a value that is not a JSON
+boolean (serde rejects it and with it the registry), shows every automation off
+and window-bounds preservation on, the Rust defaults. A write counts as saved when
+that read-back shows the requested value, not by the CLI's exit status, which can
+report a failed status cache sync after the registry was saved. The cache's copy
+of the auto-switch settings has no Menu Bar reader. Settings sync leaves a missing
+cache for the daemon to populate with a complete quota snapshot. Status staging uses the same
 unpredictable, exclusive no-follow temporary-file pattern as credential staging.
 Manual reset-credit consumption commits only the credit cache by stable account
 ID with token, route, and previous-credit checks. A conflict after the remote
@@ -616,7 +623,7 @@ Verify the exact built app signature and running process after installation.
 - `cxi restart [--restore-window-tasks]`: Restart Desktop and verify recovery without changing accounts; the flag works as for `cxi switch`.
 - `cxi window probe-tasks --allow-focus-and-clipboard` / `cxi window rehearse-task-restore --allow-focus-and-clipboard`: explicit diagnostics for the window-to-task mapping and for the restore steps; neither restarts Desktop.
 - `cxi resume [thread-id]`: Resume an eligible quota-blocked or restart-captured thread through the Desktop owner's same-user IPC channel. Accessibility is used only for recovery visibility/banner verification, not to dispatch the turn.
-- `cxi config`: Inspect and configure auto-switch modes (`--auto-switch-enabled`, `--auto-switch-business-only`, `--auto-switch-business-priority`, `--restart-app-on-switch`, `--preserve-window-bounds`).
+- `cxi config`: Inspect and configure auto-switch modes (`--auto-switch-enabled`, `--auto-switch-business-only`, `--auto-switch-business-priority`, `--restart-app-on-switch`, `--preserve-window-bounds`). The Menu Bar's `⚙️ Auto-Switch Settings` submenu runs these same flags.
 - `cxi set-multiplier <account> <val>`: Set custom quota multiplier override (e.g. 20 for Pro 20x).
 - `cxi reset-multiplier <account>`: Reset multiplier back to auto-detected default.
 - `cxi wrap exec "<prompt>"`: Run unattended command with pre-flight quota check and auto-switch.

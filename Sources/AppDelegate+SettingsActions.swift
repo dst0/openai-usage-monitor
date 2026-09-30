@@ -67,12 +67,6 @@ extension AppDelegate {
     startTimer()
   }
 
-  @objc internal func toggleRestartAppOnSwitch(_ sender: NSMenuItem) {
-    let newState = sender.state != .on
-    sender.state = newState ? .on : .off
-    client.setRestartAppOnSwitch(newState)
-  }
-
   @objc internal func handleRestartApp() {
     client.restartCodexDesktopApp()
   }

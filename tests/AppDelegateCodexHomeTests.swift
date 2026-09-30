@@ -51,11 +51,13 @@ private let enabledRegistry: [String: Any] = [
   "restart_app_on_switch": true, "auto_switch_enabled": true,
   "auto_switch_business_only": true, "auto_switch_business_priority": false,
   "auto_reset_weekly_enabled": true, "auto_reset_weekly_min_remaining_seconds": 172_800,
+  "preserve_window_bounds_on_restart": true,
 ]
 private let disabledRegistry: [String: Any] = [
   "restart_app_on_switch": false, "auto_switch_enabled": false,
   "auto_switch_business_only": false, "auto_switch_business_priority": true,
   "auto_reset_weekly_enabled": false, "auto_reset_weekly_min_remaining_seconds": 25_200,
+  "preserve_window_bounds_on_restart": false,
 ]
 
 private func checkRegistrySettingsComeFromTheClientHome(preferences: TestPreferencesSuite) {
@@ -63,36 +65,44 @@ private func checkRegistrySettingsComeFromTheClientHome(preferences: TestPrefere
   let client = home.client()
 
   // No registry, and a registry without these keys, both mean what the Rust core's defaults
-  // mean: every automation off.
+  // mean: every automation off, and window bounds kept across a restart.
   for registry in [nil, ["settings": [String: Any]()]] as [[String: Any]?] {
     if let registry { home.writeJSON("accounts.json", registry) }
     let label = registry == nil ? "without a registry" : "with no saved settings"
-    assertTrue(!client.getAutoSwitchEnabled(), "Auto-switch must be off \(label)")
-    assertTrue(!client.getRestartAppOnSwitch(), "Restart on switch must be off \(label)")
-    assertTrue(!client.getAutoSwitchBusinessOnly(), "Business-only must be off \(label)")
-    assertTrue(!client.getAutoSwitchBusinessPriority(), "Business priority must be off \(label)")
+    let settings = client.getAutoSwitchSettings()
+    assertTrue(!settings.autoSwitchEnabled, "Auto-switch must be off \(label)")
+    assertTrue(!settings.restartAppOnSwitch, "Restart on switch must be off \(label)")
+    assertTrue(!settings.businessOnly, "Business-only must be off \(label)")
+    assertTrue(!settings.businessPriority, "Business priority must be off \(label)")
+    assertTrue(settings.preserveWindowBoundsOnRestart, "Window bounds must be kept \(label)")
     let reset = client.getAutoResetWeeklyConfiguration()
     assertTrue(!reset.enabled && reset.minRemainingHours == 0, "Weekly reset must be off \(label)")
     let delegate = makeTestAppDelegate(client: client, preferences: preferences)
     _ = delegate.buildMenu()
     assertEqual(delegate.autoSwitchItem?.state, .off, "Menu must show auto-switch off \(label)")
+    assertEqual(
+      delegate.preserveWindowBoundsItem?.state, .on, "Menu must show window bounds kept \(label)")
   }
 
   for (settings, on) in [(enabledRegistry, true), (disabledRegistry, false)] {
     home.writeJSON("accounts.json", ["settings": settings])
-    assertEqual(client.getRestartAppOnSwitch(), on, "Restart on switch must come from the home")
-    assertEqual(client.getAutoSwitchEnabled(), on, "Auto-switch must come from the home")
-    assertEqual(client.getAutoSwitchBusinessOnly(), on, "Business-only must come from the home")
-    assertEqual(client.getAutoSwitchBusinessPriority(), !on, "Business priority must come from the home")
+    let saved = client.getAutoSwitchSettings()
+    assertEqual(saved.restartAppOnSwitch, on, "Restart on switch must come from the home")
+    assertEqual(saved.autoSwitchEnabled, on, "Auto-switch must come from the home")
+    assertEqual(saved.businessOnly, on, "Business-only must come from the home")
+    assertEqual(saved.businessPriority, !on, "Business priority must come from the home")
+    assertEqual(saved.preserveWindowBoundsOnRestart, on, "Window bounds must come from the home")
     let reset = client.getAutoResetWeeklyConfiguration()
     assertEqual(reset.enabled, on, "Weekly reset must come from the home")
     assertEqual(reset.minRemainingHours, on ? 48 : 7, "Weekly reset threshold must come from the home")
 
     let delegate = makeTestAppDelegate(client: client, preferences: preferences)
-    let menu = delegate.buildMenu()
+    _ = delegate.buildMenu()
     let state: (Bool) -> NSControl.StateValue = { $0 ? .on : .off }
-    let restartItem = menu.items.first(where: { $0.title == L10n.restartAppOnSwitch })
-    assertEqual(restartItem?.state, state(on), "Menu must show the home's restart setting")
+    assertEqual(
+      delegate.restartAppOnSwitchItem?.state, state(on), "Menu must show the home's restart setting")
+    assertEqual(
+      delegate.preserveWindowBoundsItem?.state, state(on), "Menu must show the home's window bounds")
     assertEqual(delegate.autoSwitchItem?.state, state(on), "Menu must show the home's auto-switch")
     assertEqual(
       delegate.autoSwitchBusinessOnlyItem?.state, state(on), "Menu must show the home's business-only")
