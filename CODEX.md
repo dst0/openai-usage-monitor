@@ -119,7 +119,14 @@ in the order chosen. A missing registry or key, or a value that is not a JSON
 boolean (serde rejects it and with it the registry), shows every automation off
 and window-bounds preservation on, the Rust defaults. A write counts as saved when
 that read-back shows the requested value, not by the CLI's exit status, which can
-report a failed status cache sync after the registry was saved. The cache's copy
+report a failed status cache sync after the registry was saved. Each `config` run
+has a 15-second deadline (`BoundedCommand`): it starts in its own process group
+with `/dev/null` as its only descriptors, and that group is killed when the run
+exits or the deadline passes, so a hung run reports failure and gives the rows
+back instead of leaving them disabled. A killed run that the kernel has not let go
+of within two seconds is reaped in the background, and no later write starts until
+it has been, so writes still land in order. The weekly reset policy also counts as
+saved when the registry, read back after a failed or stopped run, holds it. The cache's copy
 of the auto-switch settings has no Menu Bar reader. Settings sync leaves a missing
 cache for the daemon to populate with a complete quota snapshot. Status staging uses the same
 unpredictable, exclusive no-follow temporary-file pattern as credential staging.

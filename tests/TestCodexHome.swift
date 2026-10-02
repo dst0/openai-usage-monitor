@@ -59,10 +59,11 @@ final class TestCodexHome {
     distributionRunner: @escaping ([String]) -> Bool = { _ in false },
     cliExecutable: (() -> URL)? = nil,
     desktopProcess: @escaping () -> CodexDesktopProcessIdentity? = { nil },
-    desktopAppAccountIdProvider: @escaping () -> String? = { nil }
+    desktopAppAccountIdProvider: @escaping () -> String? = { nil },
+    configTimeout: TimeInterval = CodexClient.defaultConfigTimeout
   ) -> CodexClient {
     let missingCLI = file("codex-mon-not-installed")
-    return CodexClient(codexHome: url, distributionRunner: distributionRunner, cliExecutable: cliExecutable ?? { missingCLI }, desktopProcess: desktopProcess, desktopAppAccountIdProvider: desktopAppAccountIdProvider)
+    return CodexClient(codexHome: url, distributionRunner: distributionRunner, cliExecutable: cliExecutable ?? { missingCLI }, desktopProcess: desktopProcess, desktopAppAccountIdProvider: desktopAppAccountIdProvider, configTimeout: configTimeout)
   }
 
   /// Removes the home and its directory. Exit cleanup does the same after a failed assertion.

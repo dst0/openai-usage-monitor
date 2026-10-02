@@ -13,6 +13,8 @@ func runAutoSwitchSettingsMenuTests(preferences: TestPreferencesSuite) {
   checkTogglesSaveThroughTheCLI(preferences: preferences)
   checkUnsavedSettingSaysSo(preferences: preferences)
   checkConfigWritesRunInOrder()
+  checkHungConfigWriteGivesTheMenuBack(preferences: preferences)
+  checkWeeklyResetReadsBackAStoppedWrite()
   print("  ✅ Auto-Switch Settings submenu and its registry-backed marks verified")
 }
 
@@ -265,6 +267,66 @@ private func checkConfigWritesRunInOrder() {
   home.tearDown()
 }
 
+/// A `config` run that never exits is stopped at the client's deadline: the rows come back,
+/// the mark still shows the registry, the unsaved setting says so, and the next write runs.
+private func checkHungConfigWriteGivesTheMenuBack(preferences: TestPreferencesSuite) {
+  let home = TestCodexHome(purpose: "auto-switch-hung")
+  let cli = makeFakeConfigCLI(in: home)
+  let delegate = makeTestAppDelegate(
+    client: home.client(cliExecutable: { cli }, configTimeout: 1), preferences: preferences)
+  var alerts: [String] = []
+  delegate.alertOverride = { title, _, _ in alerts.append(title) }
+  _ = delegate.buildMenu()
+  home.write("hang", Data())
+  let started = Date()
+  choose(delegate.preserveWindowBoundsItem)
+  for row in rows(of: delegate) {
+    assertTrue(row?.isEnabled == false, "Every row must wait for the hung write")
+  }
+  waitForWrites(of: delegate)
+  let waited = Date().timeIntervalSince(started)
+  assertTrue(waited >= 1 && waited < 1 + BoundedCommand.reapGrace + 2, "A hung write must stop at its deadline")
+  waitUntil("A stopped write must say the setting was not saved", timeout: 10) { !alerts.isEmpty }
+  assertEqual(alerts, [L10n.preserveWindowBoundsOnRestart], "One alert must name the setting")
+  assertEqual(
+    delegate.preserveWindowBoundsItem?.state, .on, "A stopped write must leave the saved mark")
+
+  // The queue moves on: the next write saves.
+  try? FileManager.default.removeItem(at: home.file("hang"))
+  home.writeJSON("next-accounts.json", ["settings": ["preserve_window_bounds_on_restart": false]])
+  choose(delegate.preserveWindowBoundsItem)
+  waitForWrites(of: delegate)
+  assertEqual(delegate.preserveWindowBoundsItem?.state, .off, "The write after a stopped one must save")
+  assertEqual(alerts.count, 1, "A saved write must not warn")
+  assertEqual(
+    configLog(home),
+    "config --preserve-window-bounds false\nconfig --preserve-window-bounds false\n",
+    "Both writes must have run")
+  home.tearDown()
+}
+
+/// The weekly reset menu trusts the client's answer, so a run stopped at its deadline after
+/// it saved the registry must still report the policy saved, and one that saved nothing not.
+private func checkWeeklyResetReadsBackAStoppedWrite() {
+  let home = TestCodexHome(purpose: "weekly-reset-hung")
+  let cli = makeFakeConfigCLI(in: home)
+  let client = home.client(cliExecutable: { cli }, configTimeout: 1)
+  home.write("hang", Data())
+  var results: [Bool] = []
+  home.writeJSON(
+    "next-accounts.json",
+    ["settings": [
+      "auto_reset_weekly_enabled": true, "auto_reset_weekly_min_remaining_seconds": 24 * 3600,
+    ]])
+  client.setAutoResetWeekly(enabled: true, minRemainingHours: 24) { results.append($0) }
+  waitUntil("A stopped weekly reset write must report", timeout: 10) { results.count == 1 }
+  assertEqual(results, [true], "A stopped write that saved the policy must report it saved")
+  client.setAutoResetWeekly(enabled: true, minRemainingHours: 48) { results.append($0) }
+  waitUntil("A stopped unsaved weekly reset write must report", timeout: 10) { results.count == 2 }
+  assertEqual(results, [true, false], "A stopped write that saved nothing must report failure")
+  home.tearDown()
+}
+
 /// Chooses `item` the way AppKit does: its action, sent to its target with the item. AppKit
 /// sends nothing for a disabled item, so choosing one fails the test.
 private func choose(_ item: NSMenuItem?) {
@@ -303,7 +365,8 @@ private func waitForWrites(of delegate: AppDelegate) {
 /// A Monitor CLI in `home` that records each run's arguments in `cli-arguments.log`, then
 /// puts `next-accounts.json` (when a test wrote one) in place as the registry, and exits with
 /// the status in `exit-status` (0 without one). With `slow-true` present, a run whose last
-/// argument is `true` waits a second first.
+/// argument is `true` waits a second first. With `hang` present, a run never exits after
+/// saving.
 private func makeFakeConfigCLI(in home: TestCodexHome) -> URL {
   let cli = home.file("codex-mon")
   let script = """
@@ -312,6 +375,7 @@ private func makeFakeConfigCLI(in home: TestCodexHome) -> URL {
     case "$*" in *" true") if [ -f slow-true ]; then sleep 1; fi ;; esac
     printf '%s\\n' "$*" >> cli-arguments.log
     if [ -f next-accounts.json ]; then mv next-accounts.json accounts.json; fi
+    if [ -f hang ]; then exec sleep 300; fi
     if [ -f exit-status ]; then exit "$(cat exit-status)"; fi
     exit 0
     """

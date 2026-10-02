@@ -59,8 +59,10 @@ public final class CodexClient: @unchecked Sendable {
     distributionRunner: @escaping DistributionRunner,
     cliExecutable: @escaping () -> URL,
     desktopProcess: @escaping () -> CodexDesktopProcessIdentity?,
-    desktopAppAccountIdProvider: @escaping () -> String? = { nil }
+    desktopAppAccountIdProvider: @escaping () -> String? = { nil },
+    configTimeout: TimeInterval = CodexClient.defaultConfigTimeout
   ) {
+    self.configTimeout = configTimeout
     self.codexHome = codexHome
     self.distributionRunner = distributionRunner
     self.cliExecutable = cliExecutable
@@ -848,24 +850,25 @@ public final class CodexClient: @unchecked Sendable {
   /// Runs `config` writes one at a time, in the order they were asked for. Each write is its
   /// own CLI process, so on a concurrent queue two quick menu toggles could save in reverse.
   private let configQueue = DispatchQueue(label: "com.codex.monitor.config", qos: .userInitiated)
+  private let configCommand = BoundedCommand()
+  /// How long one `config` run may take before its process group is killed. A save holds the
+  /// registry lock for milliseconds; this covers waiting out another short holder and a first
+  /// launch's Gatekeeper check, and keeps a hung run from holding the menu's rows disabled.
+  internal static let defaultConfigTimeout: TimeInterval = 15
+  private let configTimeout: TimeInterval
 
   /// Runs `config` with `arguments` on the config queue and reports on the main queue whether
-  /// the CLI saved them. A missing CLI reports failure.
+  /// the CLI saved them. A missing CLI, or a run that times out, reports failure; callers read
+  /// the registry back, because a run killed after the registry write still saved it.
   private func runConfig(_ arguments: [String], completion: ((Bool) -> Void)?) {
     configQueue.async {
-      let proc = Process()
-      proc.executableURL = self.cliExecutableURL
-      proc.arguments = ["config"] + arguments
-      let success: Bool
-      do {
-        try proc.run()
-        proc.waitUntilExit()
-        success = proc.terminationStatus == 0
-      } catch {
-        success = false
+      let outcome = self.configCommand.run(
+        self.cliExecutableURL, ["config"] + arguments, timeout: self.configTimeout)
+      if outcome == .timedOut {
+        NSLog("Monitor CLI config did not finish within %.0f s and was stopped", self.configTimeout)
       }
       DispatchQueue.main.async {
-        completion?(success)
+        completion?(outcome == .exited(0))
       }
     }
   }
@@ -945,7 +948,8 @@ public final class CodexClient: @unchecked Sendable {
 
   /// Configures the weekly reset-credit policy in one CLI invocation so the
   /// daemon never observes only half of a menu change. The CLI validates the
-  /// 0...167 hour range again before saving it atomically.
+  /// 0...167 hour range again before saving it atomically. Reports success when the
+  /// CLI exits cleanly or the registry, read back, holds the requested policy.
   public func setAutoResetWeekly(
     enabled: Bool,
     minRemainingHours: Int,
@@ -956,7 +960,12 @@ public final class CodexClient: @unchecked Sendable {
       [
         "--auto-reset-weekly-enabled", enabled ? "true" : "false",
         "--auto-reset-weekly-min-hours", String(safeHours),
-      ], completion: completion)
+      ],
+      completion: { exitedCleanly in
+        // A run stopped at its deadline after the registry write still saved it.
+        completion?(
+          exitedCleanly || self.getAutoResetWeeklyConfiguration() == (enabled, safeHours))
+      })
   }
 
   public func getAutoResetWeeklyConfiguration() -> (enabled: Bool, minRemainingHours: Int) {

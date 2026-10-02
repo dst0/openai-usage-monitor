@@ -272,6 +272,11 @@ struct AppDelegateTestRunner {
     // ====================================================================
     runAutoSwitchSettingsMenuTests(preferences: preferences)
 
+    // ====================================================================
+    // Test 5c: Bounded CLI runs stop at their deadline without leaving descendants
+    // ====================================================================
+    runBoundedCommandTests()
+
     let stopCommands = CodexClient.backgroundAutomationStopCommands(
       daemonPath: "/tmp/com.codex.switcher.plist")
     assertEqual(

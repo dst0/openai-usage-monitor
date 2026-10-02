@@ -717,6 +717,7 @@ SWIFT_SOURCES=(
     "${PROJECT_DIR}/Sources/Localization.swift"
     "${PROJECT_DIR}/Sources/QuotaModels.swift"
     "${PROJECT_DIR}/Sources/StatusBarStyle.swift"
+    "${PROJECT_DIR}/Sources/BoundedCommand.swift"
     "${PROJECT_DIR}/Sources/CodexClient.swift"
     "${PROJECT_DIR}/Sources/CodexDesktopProcessIdentity.swift"
     "${PROJECT_DIR}/Sources/CodexRecoveryProcessIdentity.swift"
