@@ -28,7 +28,8 @@ protocol WindowTaskSessionSystem: WindowTaskProbeSystem {
   /// Opens `codex://threads/<taskID>` with the running ChatGPT bundle.
   func openTaskLink(_ taskID: String) -> Bool
   func closeWindow(_ window: Window) -> Bool
-  func isWindowAlive(_ window: Window) -> Bool
+  /// Throws when Accessibility cannot distinguish an open window from a closed one.
+  func isWindowAlive(_ window: Window) throws -> Bool
 }
 
 /// One window captured before a restart. Frames use Accessibility's
@@ -47,7 +48,8 @@ struct PlannedWindowTask {
 
 /// After the relaunch every planned window is rebuilt. After recovery only
 /// windows that recovery moved onto one of its own tasks are moved back:
-/// windows the user changed, closed, or opened meanwhile are left alone.
+/// windows the user changed, closed, or opened meanwhile are left alone and
+/// reported unverified when they no longer match the captured plan.
 enum WindowTaskRestoreMode {
   case relaunch
   case recheck(recoveryTaskIDs: Set<String>)
@@ -58,7 +60,8 @@ struct WindowTaskRestoreResult {
   let clipboardRestored: Bool
 }
 
-let newWindowTimeout: TimeInterval = 5
+let newWindowTimeout: TimeInterval = 10
+let newWindowPollInterval: TimeInterval = 0.2
 /// After a relaunch, Desktop adds File > New Window only once its renderer
 /// reports the multiwindow feature.
 let newWindowItemTimeout: TimeInterval = 20

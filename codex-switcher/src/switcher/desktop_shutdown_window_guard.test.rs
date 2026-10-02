@@ -79,6 +79,19 @@ fn captured_windows_allow_exactly_those_windows() {
 }
 
 #[test]
+fn verified_zero_window_capture_rejects_a_new_window() {
+    let old = identity("123:456");
+    let calls = Cell::new(0);
+    let one = Guard::snapshot_for_test(&[4242], &old, &[31], &[4242]);
+    assert!(Guard::signal_after_validation(&one, &old, Some(&[]), |_| {
+        calls.set(calls.get() + 1);
+        Ok(())
+    })
+    .is_err());
+    assert_eq!(calls.get(), 0);
+}
+
+#[test]
 fn changed_or_multiple_desktop_processes_block_shutdown() {
     let old = identity("123:456");
     let calls = Cell::new(0);

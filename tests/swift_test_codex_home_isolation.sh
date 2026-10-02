@@ -236,7 +236,7 @@ T=tests/AppDelegateTests.swift
 expect_violation test-shared-client "${T}" \
     'let delegate = makeTestAppDelegate(client: CodexClient.shared, preferences: preferences)' "${T}:6:"
 expect_violation test-shared-client-read "${T}" \
-    'let enabled = CodexClient.shared.getAutoSwitchEnabled()' 'only the wiring check names the live home'
+    'let enabled = CodexClient.shared.getAutoSwitchSettings()' 'only the wiring check names the live home'
 expect_violation test-live-home "${T}" 'let home = CodexClient.liveCodexHome' "${T}:6:"
 expect_violation test-wiring-line-with-read "${T}" \
     '  assertTrue(CodexClient.shared.codexHome == CodexClient.liveCodexHome, "x"); _ = CodexClient.shared.loadCachedSnapshot()' "${T}:6:"

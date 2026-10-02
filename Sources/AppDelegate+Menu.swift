@@ -81,42 +81,8 @@ extension AppDelegate {
     restartAppItem.target = self
     menu.addItem(restartAppItem)
 
-    // Restart Codex App on Switch Toggle
-    let restartOnSwitch = client.getRestartAppOnSwitch()
-    let restartOnSwitchItem = NSMenuItem(
-      title: L10n.restartAppOnSwitch, action: #selector(toggleRestartAppOnSwitch(_:)), keyEquivalent: ""
-    )
-    restartOnSwitchItem.target = self
-    restartOnSwitchItem.state = restartOnSwitch ? .on : .off
-    menu.addItem(restartOnSwitchItem)
-
-    // Auto-switch on Quota Depletion Toggle
-    let autoSwitch = client.getAutoSwitchEnabled()
-    let autoSwitchItem = NSMenuItem(title: L10n.autoSwitchOnLimit, action: #selector(toggleAutoSwitchOnLimit(_:)), keyEquivalent: "")
-    autoSwitchItem.target = self
-    autoSwitchItem.state = autoSwitch ? .on : .off
-    self.autoSwitchItem = autoSwitchItem
-    menu.addItem(autoSwitchItem)
-
-    // Auto-switch: Business Accounts Only Toggle
-    let autoSwitchBusinessOnly = client.getAutoSwitchBusinessOnly()
-    let autoSwitchBusinessOnlyItem = NSMenuItem(
-      title: L10n.autoSwitchBusinessOnly, action: #selector(toggleAutoSwitchBusinessOnly(_:)), keyEquivalent: ""
-    )
-    autoSwitchBusinessOnlyItem.target = self
-    autoSwitchBusinessOnlyItem.state = (autoSwitch && autoSwitchBusinessOnly) ? .on : .off
-    self.autoSwitchBusinessOnlyItem = autoSwitchBusinessOnlyItem
-    menu.addItem(autoSwitchBusinessOnlyItem)
-
-    // Auto-switch: Business Accounts Priority Toggle
-    let autoSwitchBusinessPriority = client.getAutoSwitchBusinessPriority()
-    let autoSwitchBusinessPriorityItem = NSMenuItem(
-      title: L10n.autoSwitchBusinessPriority, action: #selector(toggleAutoSwitchBusinessPriority(_:)), keyEquivalent: ""
-    )
-    autoSwitchBusinessPriorityItem.target = self
-    autoSwitchBusinessPriorityItem.state = (autoSwitch && autoSwitchBusinessPriority) ? .on : .off
-    self.autoSwitchBusinessPriorityItem = autoSwitchBusinessPriorityItem
-    menu.addItem(autoSwitchBusinessPriorityItem)
+    // Auto-Switch Settings: every switch-time setting as a checkmark in one submenu
+    menu.addItem(makeAutoSwitchSettingsItem())
 
     // Auto-distribute accounts between APP & CLI
     let autoDistributeItem = NSMenuItem(
@@ -227,8 +193,10 @@ extension AppDelegate {
     return menu
   }
 
+  /// Only the status menu has this delegate; its submenus open after this runs.
   public func menuWillOpen(_ menu: NSMenu) {
     launchAtLogin.refresh()
+    syncAutoSwitchSettingsMarks()
   }
 
   // MARK: - Factory Helpers

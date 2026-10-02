@@ -93,17 +93,21 @@ installer_line() {
 lock_line="$(installer_line 'acquire_install_lock || exit 1')"
 clone_line="$(installer_line '    TMP_DIR="$(mktemp -d -t codex-mon-install-XXXXXX)"')"
 cli_staging_line="$(installer_line 'CLI_STAGING="$(mktemp "${LOCAL_BIN}/.codex-mon.install.XXXXXX")"')"
+window_helper_staging_line="$(installer_line '    WINDOW_HELPER_STAGING="$(mktemp "${LOCAL_BIN}/.codex-window-restore.install.XXXXXX")"')"
 bundle_staging_line="$(installer_line 'prepare_app_bundle_staging "${APP_DIR}" "${INSTALL_DIR}" "${BUNDLE_NAME}"')"
 [ "${lock_line}" -lt "${clone_line}" ] ||
     fail 'installer creates its remote clone before taking the install lock'
 [ "${lock_line}" -lt "${cli_staging_line}" ] ||
     fail 'installer stages the CLI before taking the install lock'
+[ "${lock_line}" -lt "${window_helper_staging_line}" ] ||
+    fail 'installer stages the window helper before taking the install lock'
 [ "${lock_line}" -lt "${bundle_staging_line}" ] ||
     fail 'installer stages the app bundle before taking the install lock'
 
 EXPECTED_INSTALLER_MKTEMPS="$(/usr/bin/sort <<'EOF'
 TMP_DIR="$(mktemp -d -t codex-mon-install-XXXXXX)"
 CLI_STAGING="$(mktemp "${LOCAL_BIN}/.codex-mon.install.XXXXXX")"
+WINDOW_HELPER_STAGING="$(mktemp "${LOCAL_BIN}/.codex-window-restore.install.XXXXXX")"
 APP_STAGE_ROOT="$(/usr/bin/mktemp -d "${install_dir}/.codex-monitor-install.XXXXXX")" || return 1
 APP_BACKUP_ROOT="$(/usr/bin/mktemp -d "${install_dir}/.codex-monitor-backup.XXXXXX")" || return 1
 EOF
@@ -412,6 +416,9 @@ VALID_INSTALLER_TEMPS=(
     "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Ab3dE9"
     "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Zz09aQ"
     "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Zz09aQ.cstemp"
+    "${LOCAL_BIN_FIXTURE}/.codex-window-restore.install.Hh12Jk"
+    "${LOCAL_BIN_FIXTURE}/.codex-window-restore.install.Kl34Mn"
+    "${LOCAL_BIN_FIXTURE}/.codex-window-restore.install.Kl34Mn.cstemp"
     "${SYSTEM_APPS}/.codex-monitor-install.Q1w2E3"
     "${SYSTEM_APPS}/.codex-monitor-backup.R4t5Y6"
     "${USER_APPS}/.codex-monitor-install.U7i8O9"
@@ -424,6 +431,9 @@ VALID_INSTALLER_TEMPS=(
 make_file 600 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Ab3dE9"
 make_file 755 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Zz09aQ"
 make_file 755 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Zz09aQ.cstemp"
+make_file 600 "${LOCAL_BIN_FIXTURE}/.codex-window-restore.install.Hh12Jk"
+make_file 755 "${LOCAL_BIN_FIXTURE}/.codex-window-restore.install.Kl34Mn"
+make_file 755 "${LOCAL_BIN_FIXTURE}/.codex-window-restore.install.Kl34Mn.cstemp"
 # A staged new bundle, a backup holding a prior bundle (as after a kill
 # between the two renames, or a failed rollback; the uninstaller does not
 # depend on whether the installed app is present), and an empty stage root
@@ -467,6 +477,10 @@ lookalike_file 755 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.Ab3dE.cstemp"
 lookalike_root 755 "${LOCAL_BIN_FIXTURE}/.codex-mon.install.DirDir"
 lookalike_symlink "${OUTSIDE}/file-target" "${LOCAL_BIN_FIXTURE}/.codex-mon.install.LnkLnk" 600
 lookalike_symlink "${OUTSIDE}/file-target" "${LOCAL_BIN_FIXTURE}/.codex-mon.install.LnkCst.cstemp" 755
+lookalike_file 600 "${LOCAL_BIN_FIXTURE}/.codex-window-restore.install.BaD05"
+lookalike_file 644 "${LOCAL_BIN_FIXTURE}/.codex-window-restore.install.Wr0ng6"
+lookalike_file 600 "${LOCAL_BIN_FIXTURE}/.codex-window-restore.install.Ce600x.cstemp"
+lookalike_symlink "${OUTSIDE}/file-target" "${LOCAL_BIN_FIXTURE}/.codex-window-restore.install.LnkLnk" 600
 lookalike_root 700 "${SYSTEM_APPS}/.codex-monitor-install.Q1w2E"
 lookalike_root 700 "${SYSTEM_APPS}/.codex-monitor-backup.R4t5Y6Z"
 lookalike_root 700 "${SYSTEM_APPS}/.codex-monitor-backup.R4t5-6"

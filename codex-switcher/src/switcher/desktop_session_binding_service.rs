@@ -4,6 +4,7 @@ use crate::distribution::{
     WindowProcessValidationService,
 };
 use crate::models::{AccountsFile, AuthJson};
+use crate::recovery::RecoveryBanner;
 use std::path::Path;
 
 /// Keeps direct `cxi switch` Desktop restarts aligned with distribution.
@@ -100,6 +101,31 @@ impl DesktopSessionBindingService {
             Self::verified_cli_account_id,
             super::current_codex_app_pids,
             Self::inspect_current,
+        )
+    }
+
+    /// Window geometry work may allow an external Desktop writer to change
+    /// authentication after the first check. Verify again before recovery IPC.
+    pub(super) fn verify_around_window_restore(
+        mut verify: impl FnMut() -> Result<(), String>,
+        restore: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        verify()?;
+        restore()?;
+        verify()
+    }
+
+    pub(super) fn restore_banner_under_target(
+        home: &Path,
+        account_id: &str,
+        process: &WindowProcessIdentity,
+        banner: &RecoveryBanner,
+        pid: u32,
+        operation_id: &str,
+    ) -> Result<(), String> {
+        Self::verify_around_window_restore(
+            || Self::verify_target_before_recovery(home, account_id, process),
+            || banner.restore_after_relaunch(pid, operation_id, "account_switch"),
         )
     }
 

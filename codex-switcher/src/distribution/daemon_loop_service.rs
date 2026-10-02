@@ -1,3 +1,4 @@
+use super::automatic_distribution_backoff::AutomaticDistributionBackoff;
 use super::daemon_tick_service::DaemonTickService;
 use super::log_permissions_service::LogPermissionsService;
 use super::log_redaction_service::LogRedactionService;
@@ -5,26 +6,52 @@ use crate::models::AccountsFile;
 use crate::storage::{daemon_lock_path, load_accounts};
 use fs2::FileExt;
 use std::fs::OpenOptions;
+use std::sync::Arc;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 pub struct DaemonLoopService;
 
+const HELD_RESET_WATCHDOG_INTERVAL: Duration = Duration::from_secs(30);
+
 impl DaemonLoopService {
-    pub fn watchdog_needs_immediate_check() -> bool {
+    pub fn watchdog_needs_immediate_check(
+        backoff: &AutomaticDistributionBackoff,
+        last_full_tick: Instant,
+    ) -> bool {
+        let now = Instant::now();
+        if backoff.has_active_hold(now)
+            && now.saturating_duration_since(last_full_tick) < HELD_RESET_WATCHDOG_INTERVAL
+        {
+            return false;
+        }
         let Ok(accounts_file) = load_accounts() else {
             return false;
         };
-        Self::watchdog_needs_immediate_check_with(&accounts_file, || {
-            !crate::switcher::detect_quota_blocked_user_threads_since(30).is_empty()
-        })
+        Self::watchdog_needs_immediate_check_with(
+            &accounts_file,
+            backoff,
+            now,
+            last_full_tick,
+            || !crate::switcher::detect_quota_blocked_user_threads_since(30).is_empty(),
+        )
     }
 
     fn watchdog_needs_immediate_check_with(
         accounts_file: &AccountsFile,
+        backoff: &AutomaticDistributionBackoff,
+        now: Instant,
+        last_full_tick: Instant,
         recent_quota_blocked: impl FnOnce() -> bool,
     ) -> bool {
         let settings = &accounts_file.settings;
+        if backoff.has_active_hold(now) {
+            // Weekly reset is independent of switching. Keep its blocked-task
+            // probe, but bound the full quota-refresh tick to once per 30s.
+            return settings.auto_reset_weekly_enabled
+                && now.saturating_duration_since(last_full_tick) >= HELD_RESET_WATCHDOG_INTERVAL
+                && recent_quota_blocked();
+        }
         if !settings.auto_switch_enabled && !settings.auto_reset_weekly_enabled {
             return false;
         }
@@ -86,13 +113,14 @@ impl DaemonLoopService {
         }
 
         let mut deferred_recovery = crate::recovery::DeferredRecoveryService::new();
+        let automatic_backoff = Arc::new(AutomaticDistributionBackoff::default());
 
         loop {
             let _ = crate::logger::rotate_all_logs(
                 crate::logger::DEFAULT_MAX_LOG_SIZE,
                 crate::logger::DEFAULT_MAX_ARCHIVES,
             );
-            if let Err(error) = DaemonTickService::run(true) {
+            if let Err(error) = DaemonTickService::run(true, Some(&automatic_backoff)) {
                 LogRedactionService::eprint_background(&format!("Error in daemon tick: {error}"));
                 crate::logger::log("ERROR", "DAEMON", "Daemon tick failed");
             }
@@ -113,7 +141,9 @@ impl DaemonLoopService {
                 if current_auth_mtime != last_auth_mtime && current_auth_mtime.is_some() {
                     break;
                 }
-                if watchdog_ticks.is_multiple_of(2) && Self::watchdog_needs_immediate_check() {
+                if watchdog_ticks.is_multiple_of(2)
+                    && Self::watchdog_needs_immediate_check(&automatic_backoff, sleep_start)
+                {
                     crate::logger::log(
                         "INFO",
                         "WATCHDOG",

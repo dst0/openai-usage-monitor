@@ -47,15 +47,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
   internal var alertOverride: ((_ title: String, _ message: String, _ style: NSAlert.Style) -> Void)?
   internal let singleGuard: SingleInstanceGuard
   internal let autoLaunchManager: AutoLaunchManager
+  /// Every app's on-screen windows, for saving the Desktop's bounds. `AppDelegate()` reads the
+  /// live WindowServer list; tests pass their own.
+  internal let desktopWindows: () -> [[String: Any]]
   /// Shows the login-item state read back from macOS in the Launch at Login item. A failed toggle
-  /// closes the menu if it was reopened and shows its warning once the run loop is back in the
-  /// default mode, so the alert never runs inside menu tracking.
+  /// shows its warning outside menu tracking.
   internal lazy var launchAtLogin = LaunchAtLoginMenuController(manager: autoLaunchManager) {
     [weak self] failure in
-    self?.statusItem?.menu?.cancelTracking()
-    RunLoop.main.perform(inModes: [.default]) {
-      self?.showAlert(title: L10n.launchAtLogin, message: failure.message, style: .warning)
-    }
+    self?.showAlertOutsideMenuTracking(title: L10n.launchAtLogin, message: failure.message)
   }
   internal var ownsBackgroundAutomation = false
 
@@ -65,9 +64,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
   internal var lastUpdatedMenuItem: NSMenuItem?
   internal var updateCLIItem: NSMenuItem?
   internal var stackPercentagesItem: NSMenuItem?
+  /// "⚙️ Auto-Switch Settings" and the checkmark items of its submenu.
+  internal var autoSwitchSettingsItem: NSMenuItem?
   internal var autoSwitchItem: NSMenuItem?
   internal var autoSwitchBusinessOnlyItem: NSMenuItem?
   internal var autoSwitchBusinessPriorityItem: NSMenuItem?
+  internal var restartAppOnSwitchItem: NSMenuItem?
+  internal var preserveWindowBoundsItem: NSMenuItem?
+  /// Auto-Switch Settings writes not yet finished; the submenu rows stay disabled meanwhile.
+  internal var pendingAutoSwitchSettingWrites = 0
   internal var autoResetWeeklyItem: NSMenuItem?
   internal var autoResetWeeklyStatusItem: NSMenuItem?
   internal var autoResetWeeklyThresholdItems: [NSMenuItem] = []
@@ -84,13 +89,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
   public override convenience init() {
     self.init(
       client: CodexClient.shared, defaults: UserDefaults.standard,
-      autoLaunchManager: AutoLaunchManager.shared)
+      autoLaunchManager: AutoLaunchManager.shared, desktopWindows: AppDelegate.liveDesktopWindows)
   }
 
-  internal init(client: CodexClient, defaults: UserDefaults, autoLaunchManager: AutoLaunchManager) {
+  internal init(
+    client: CodexClient, defaults: UserDefaults, autoLaunchManager: AutoLaunchManager,
+    desktopWindows: @escaping () -> [[String: Any]]
+  ) {
     self.client = client
     self.defaults = defaults
     self.autoLaunchManager = autoLaunchManager
+    self.desktopWindows = desktopWindows
     self.singleGuard = SingleInstanceGuard(codexHome: client.codexHome)
     let saved = defaults.double(forKey: AppDelegate.refreshIntervalKey)
     self.refreshInterval = saved > 0 ? saved : 60.0  // 1 minute default

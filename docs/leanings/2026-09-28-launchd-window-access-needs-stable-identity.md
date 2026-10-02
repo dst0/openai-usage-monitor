@@ -1,0 +1,22 @@
+# 2026-09-28 — Launchd window access needs its own stable identity
+
+- **Status:** Partial
+- **Task/context:** Diagnosing a launchd `cxi daemon` automatic account switch that failed its pre-shutdown window guard, while preserving every selected ChatGPT window and task.
+- **Unexpected observation or failure:** The same window helper could read Accessibility interactively but returned `WINDOW_ACCESS_FAILED` under launchd. The repeated operation never signalled Desktop. Its initial failure did not distinguish a missing Accessibility grant from a missing Screen Recording grant.
+- **Evidence:** [PR #43](https://github.com/dst0/openai-usage-monitor/pull/43) records a launchd probe with `AXIsProcessTrusted()` false, `kAXWindowsAttribute` returning `kAXErrorAPIDisabled`, and `CGPreflightScreenCaptureAccess()` false. The installed LaunchAgent executes `~/.local/bin/cxi` directly; the installer signs its executable ad hoc. The installed CLI's designated requirement was a `cdhash`, which changes with rebuilt code. The window inventory needs `kCGWindowName == "ChatGPT"` before matching WindowServer and Accessibility frames. [Apple's code-signing note](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements) says an ad hoc designated requirement is tied to that version; [WWDC19](https://developer.apple.com/videos/play/wwdc2019/701/) describes Screen Recording restrictions on window names.
+- **Approaches tried:**
+  - **Attempt:** Back off repeated pre-signal failures.
+    - **Outcome:** Partial.
+    - **Why:** It reduces work and log noise but cannot grant window access or preserve selected tasks.
+  - **Attempt:** Disable window-bound preservation or use only untitled WindowServer geometry.
+    - **Outcome:** Did not work as a safety design.
+    - **Why:** The shutdown guard still checks all user windows, and losing the AX/WindowServer match can hide a second window.
+  - **Attempt:** Route the helper through the Monitor menu app.
+    - **Outcome:** Open.
+    - **Why:** A directly spawned helper may inherit the app's responsible identity, but the app can exit while an in-flight restart worker finishes. It also needs a stable TCC identity and a bounded same-user request channel.
+- **Root cause:** The launchd job has a different TCC responsibility context than an interactive Terminal invocation. Its ad hoc signed `cxi` has no stable cross-build identity for retained grants. A second Screen Recording denial can withhold the window names required by the fail-closed guard.
+- **Resolution:** Add read-only Accessibility and Screen Recording preflights to the shutdown inventory, reporting fixed `WINDOW_ACCESSIBILITY_DENIED` and `WINDOW_SCREEN_RECORDING_DENIED` codes before any Desktop signal. Accept an explicit valid code-signing identity fingerprint for the staged CLI, with a fixed identifier; leave permissions to the operator. Without a supplied identity, keep the existing ad hoc installation and warn that grants may need renewal.
+- **Verification:** Source and test changes are isolated; no installed helper, live window, TCC setting, or Desktop process was exercised. This host has no valid code-signing identity, so persistence and launchd authorization are unverified. A local self-signed identity may yield a stable designated requirement under [Apple TN2206](https://developer.apple.com/library/archive/technotes/tn2206/), but TCC acceptance of that identity requires an explicit host test.
+- **Prevention/follow-up:** Verify signing and both grants from the actual launchd client after installation, then rehearse two and three selected windows and a cold-task restart before enabling automatic switching. The subsequently merged distribution window-task session captures and restores selected tasks in code, but remains unverified on the installed Desktop.
+- **Reusable learning:** A successful interactive Accessibility probe does not authorize a launchd process; identify and test the actual TCC principal, and retain a stable designated requirement across rebuilds.
+- **References:** `scripts/install.sh`, `scripts/codex-window-restore.swift`, `codex-switcher/src/distribution/system_window_restore_backend.rs`, `com.codex.switcher.plist`, [PR #43](https://github.com/dst0/openai-usage-monitor/pull/43).

@@ -26,11 +26,13 @@ extension AppDelegate {
     }
   }
 
+  /// The live WindowServer list of on-screen windows. Only `AppDelegate()` binds it.
+  internal static func liveDesktopWindows() -> [[String: Any]] {
+    CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+  }
+
   internal func saveDesktopWindowBoundsPassive(for targetPID: pid_t) {
-    if let data = try? Data(contentsOf: client.accountsFileURL),
-      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let settings = json["settings"] as? [String: Any],
-      (settings["preserve_window_bounds_on_restart"] as? Bool) == false { return }
+    if !client.getPreserveWindowBoundsOnRestart() { return }
 
     // Do NOT overwrite saved bounds while an operation (switch, restart, recovery) is active
     let lockURL = client.homeFile("desktop-recovery.lock")
@@ -48,7 +50,7 @@ extension AppDelegate {
       if nowMs < deadlineMs { return }
     }
 
-    let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+    let list = desktopWindows()
     var best: (frame: CGRect, area: CGFloat, isTitle: Bool)?
 
     for info in list {

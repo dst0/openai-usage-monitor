@@ -92,6 +92,7 @@ fn assert_owner_wait_rejects_account_change(with_queue: bool, change_after_marke
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some(start_account.clone()),
+        auth_rotation: None,
     };
     super::manifest_store::write_manifest(std::slice::from_ref(&original)).unwrap();
     if with_queue {
@@ -214,6 +215,7 @@ fn assert_unpaused_queue_wake(gate_delay: Duration) {
         awaiting_owner: false,
         captured_restart: false,
         owner_account_id: None,
+        auth_rotation: None,
     }])
     .unwrap();
     // The router stays connected until the client hangs up, so the banner
@@ -335,6 +337,7 @@ fn dispatch_deferred_target_under(binding: Option<&str>) -> DeferredDispatchOutc
         awaiting_owner: true,
         captured_restart: true,
         owner_account_id: Some("account-a".into()),
+        auth_rotation: None,
     };
     super::manifest_store::write_manifest(std::slice::from_ref(&original)).unwrap();
     let (mut desktop, router) = TestDesktopRouter::start(move |request| {
@@ -456,6 +459,7 @@ fn assert_ineligible_queued_turn_never_contacts_owner(
         awaiting_owner: false,
         captured_restart: mode == RecoveryMode::CapturedRestart,
         owner_account_id: None,
+        auth_rotation: None,
     }])
     .unwrap();
     // No request is expected; the client's hang-up, not a timeout, ends the
@@ -586,6 +590,7 @@ fn target(home: &Path, id: &str) -> RecoveryTarget {
         mounted_by_recovery: false,
         owner_unavailable: false,
         account_mismatch: false,
+        auth_rotation_eligible: false,
         dispatched: false,
         completed: false,
         failure: None,
@@ -624,6 +629,7 @@ fn absent_panel_after_owner_keeps_original_checkpoint_for_deferred_retry() {
         awaiting_owner: false,
         captured_restart: true,
         owner_account_id: None,
+        auth_rotation: None,
     }];
     finalize_target(
         &mut manifest,
@@ -964,6 +970,7 @@ fn failed_navigation_before_dispatch_keeps_original_checkpoint() {
         awaiting_owner: false,
         captured_restart: true,
         owner_account_id: None,
+        auth_rotation: None,
     }];
     finalize_target(
         &mut manifest,

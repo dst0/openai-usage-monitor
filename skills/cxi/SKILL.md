@@ -34,7 +34,7 @@ Binary path: `~/.local/bin/cxi` (or `~/.local/bin/codex-mon`).
    cxi switch <account-id>
    ```
    Atomically swaps `~/.codex/auth.json` with POSIX `0600` permissions and cross-process file locks (`fs2` flock).
-   If the switch refuses because ChatGPT has more than one window, report that to the user. Add `--restore-window-tasks` only when the user asks for it: it focuses each of their ChatGPT windows, opens windows, and briefly uses their clipboard.
+   If the switch refuses because ChatGPT has more than one window, report that to the user. Add `--restore-window-tasks` to a direct CLI restart or switch only when the user asks for it: it focuses each ChatGPT window, opens windows, and briefly uses the clipboard. Automatic and Menu Bar distribution capture and restore selected tasks internally whenever they restart a running Desktop; they never pass this flag.
 
 4. **Desktop App Sync & Automated Thread Recovery**:
    Both Codex CLI and `/Applications/ChatGPT.app` share `~/.codex/auth.json`. When switching accounts via `cxi switch`, eligible restart-captured turns and turns paused by rate limits within the last 4 hours (`RECENT_QUOTA_WINDOW_SECS = 14400s`) across the top 30 unarchived user threads are offered to the standard Desktop owner's same-user IPC connection. A cold task is opened by URL, with a bounded native retry, but IPC is sent only after Desktop reports a real owner. Automatic switching remains disabled until installed end-to-end recovery and exact selected-task restoration across multiple windows are verified. Ambiguous active turns are not guessed at in discovery-only mode. Desktop's bundled app-server remains the only thread writer; no second/headless app-server is started.

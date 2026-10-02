@@ -73,6 +73,15 @@ extension AppDelegate {
     }
   }
 
+  /// Shows a warning once the status menu is out of the way: closes the menu if it is open and
+  /// waits for the run loop's default mode, so the modal alert never runs inside menu tracking.
+  internal func showAlertOutsideMenuTracking(title: String, message: String) {
+    statusItem?.menu?.cancelTracking()
+    RunLoop.main.perform(inModes: [.default]) { [weak self] in
+      self?.showAlert(title: title, message: message, style: .warning)
+    }
+  }
+
   internal func showAlert(title: String, message: String, style: NSAlert.Style = .informational) {
     if let alertOverride {
       alertOverride(title, message, style)

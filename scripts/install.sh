@@ -179,6 +179,7 @@ fi
 
 CLEANUP_TMP=0
 CLI_STAGING=""
+WINDOW_HELPER_STAGING=""
 PERSISTENT_SKILL_ROOT=""
 WRITERS_QUIESCED=0
 INSTALL_SUCCEEDED=0
@@ -193,6 +194,9 @@ cleanup() {
     if [ -n "${CLI_STAGING}" ]; then
         # codesign --force writes <file>.cstemp next to the file it signs.
         rm -f "${CLI_STAGING}" "${CLI_STAGING}.cstemp"
+    fi
+    if [ -n "${WINDOW_HELPER_STAGING}" ]; then
+        rm -f "${WINDOW_HELPER_STAGING}" "${WINDOW_HELPER_STAGING}.cstemp"
     fi
     if [ "${CLEANUP_TMP}" -eq 1 ] && [ -d "${TMP_DIR:-}" ]; then
         rm -rf "${TMP_DIR}"
@@ -446,6 +450,27 @@ acquire_install_lock() {
 
 acquire_install_lock || exit 1
 
+# AXIsProcessTrusted checks the helper's process, while macOS may also assign
+# responsibility to launchd's cxi. Give both executables stable identities.
+# An ad-hoc signature changes its designated requirement with the bytes.
+# Never create a certificate or modify privacy grants here.
+MONITOR_SIGNING_IDENTITY="-"
+if [ -n "${CODEX_MONITOR_SIGNING_IDENTITY_SHA1:-}" ]; then
+    if [[ ! "${CODEX_MONITOR_SIGNING_IDENTITY_SHA1}" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+        echo "❌ Refusing installation: signing identity must be a 40-character certificate fingerprint."
+        exit 1
+    fi
+    if ! /usr/bin/security find-identity -v -p codesigning 2>/dev/null |
+        /usr/bin/awk -v expected="${CODEX_MONITOR_SIGNING_IDENTITY_SHA1}" \
+            'toupper($2) == toupper(expected) { found = 1 } END { exit !found }'; then
+        echo "❌ Refusing installation: requested code-signing identity is unavailable."
+        exit 1
+    fi
+    MONITOR_SIGNING_IDENTITY="${CODEX_MONITOR_SIGNING_IDENTITY_SHA1}"
+else
+    echo "⚠️  cxi and the window helper will be signed ad hoc; macOS privacy grants may not survive a rebuild."
+fi
+
 if [ -z "${PROJECT_DIR}" ]; then
     echo "🌐 Remote installation detected. Preparing temporary build environment..."
     install_lock_still_named || exit 1
@@ -573,7 +598,7 @@ CLI_STAGING="$(mktemp "${LOCAL_BIN}/.codex-mon.install.XXXXXX")"
 cp "target/release/codex-mon" "${CLI_STAGING}"
 chmod 755 "${CLI_STAGING}"
 xattr -c "${CLI_STAGING}" 2>/dev/null || true
-codesign --sign - --force "${CLI_STAGING}"
+codesign --sign "${MONITOR_SIGNING_IDENTITY}" --identifier com.codex.monitor.cli --force "${CLI_STAGING}"
 codesign --verify --strict "${CLI_STAGING}"
 "${CLI_STAGING}" --version >/dev/null
 mv -f "${CLI_STAGING}" "${LOCAL_BIN}/codex-mon"
@@ -612,9 +637,11 @@ if [ -f "${PROJECT_DIR}/Sources/CodexRecoveryBanner.swift" ] && [ -f "${PROJECT_
 fi
 if [ -f "${PROJECT_DIR}/scripts/codex-window-restore.swift" ]; then
     echo "⚡ Compiling Codex window restore helper..."
+    install_lock_still_named || exit 1
+    WINDOW_HELPER_STAGING="$(mktemp "${LOCAL_BIN}/.codex-window-restore.install.XXXXXX")"
     swiftc -O -target "${ARCH}-apple-macosx13.0" \
         -framework AppKit -framework Foundation -framework ApplicationServices \
-        -o "${LOCAL_BIN}/codex-window-restore" \
+        -o "${WINDOW_HELPER_STAGING}" \
         "${PROJECT_DIR}/scripts/CodexWindowAXValueDecoder.swift" \
         "${PROJECT_DIR}/scripts/CodexWindowSafetyChecks.swift" \
         "${PROJECT_DIR}/scripts/CodexWindowTaskProbeValidation.swift" \
@@ -627,7 +654,13 @@ if [ -f "${PROJECT_DIR}/scripts/codex-window-restore.swift" ]; then
         "${PROJECT_DIR}/scripts/CodexWindowTaskProbe.swift" \
         "${PROJECT_DIR}/scripts/CodexWindowTaskSession.swift" \
         "${PROJECT_DIR}/scripts/codex-window-restore.swift"
-    chmod +x "${LOCAL_BIN}/codex-window-restore"
+    chmod 755 "${WINDOW_HELPER_STAGING}"
+    xattr -c "${WINDOW_HELPER_STAGING}" 2>/dev/null || true
+    codesign --sign "${MONITOR_SIGNING_IDENTITY}" --identifier com.codex.monitor.window-restore --force "${WINDOW_HELPER_STAGING}"
+    codesign --verify --strict "${WINDOW_HELPER_STAGING}"
+    install_lock_still_named || exit 1
+    mv -f "${WINDOW_HELPER_STAGING}" "${LOCAL_BIN}/codex-window-restore"
+    WINDOW_HELPER_STAGING=""
 fi
 
 # Compile and install native Codex Notifier helper

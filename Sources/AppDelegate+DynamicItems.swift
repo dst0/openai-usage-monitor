@@ -7,11 +7,9 @@ extension AppDelegate {
   public func updateUI(with snapshot: MultiAccountSnapshot) {
     updateStatusBar(with: snapshot)
 
-    autoSwitchItem?.state = snapshot.autoSwitchEnabled ? .on : .off
-    autoSwitchBusinessOnlyItem?.state =
-      (snapshot.autoSwitchEnabled && snapshot.autoSwitchBusinessOnly) ? .on : .off
-    autoSwitchBusinessPriorityItem?.state =
-      (snapshot.autoSwitchEnabled && snapshot.autoSwitchBusinessPriority) ? .on : .off
+    // A status update follows every settings change the Rust core syncs, so re-read the
+    // registry itself rather than the cache's copy of three of these settings.
+    syncAutoSwitchSettingsMarks()
     autoResetWeeklyItem?.state = snapshot.autoResetWeeklyEnabled ? .on : .off
     autoResetWeeklyStatusItem?.title = L10n.autoResetWeeklyStatus(
       autoResetMenuStatus(snapshot.autoResetState))

@@ -1,5 +1,7 @@
 use super::app_lifecycle::AppLifecycle;
+use super::distribution_account_commit_service::DistributionAccountCommitService;
 use super::distribution_audit_logger::DistributionAuditLogger;
+use super::distribution_desktop_rollback_service::DistributionDesktopRollbackService;
 use super::distribution_desktop_switch_service::DistributionDesktopSwitchService;
 use super::distribution_journal::DistributionJournal;
 use super::distribution_plan::DistributionPlan;
@@ -130,6 +132,22 @@ impl AppLifecycle for CheckpointObservingLifecycle {
     ) -> Result<(), String> {
         self.inner.restore_window_bounds(pid, operation_id, reason)
     }
+    fn capture_window_tasks(&self) -> Result<(), String> {
+        self.inner.capture_window_tasks()
+    }
+    fn captured_window_task_count(&self) -> Result<usize, String> {
+        self.inner.captured_window_task_count()
+    }
+    fn restore_window_tasks(
+        &self,
+        bound: &super::DesktopAppSession,
+        phase: super::WindowTaskRestorePhase<'_>,
+    ) {
+        self.inner.restore_window_tasks(bound, phase);
+    }
+    fn finish_window_tasks(&self) -> Result<(), String> {
+        self.inner.finish_window_tasks()
+    }
     fn rebind_banner(&self, pid: u32) -> Result<(), String> {
         self.inner.rebind_banner(pid)
     }
@@ -233,6 +251,167 @@ fn rollback_failure_fixture(
     (env, accounts, plan, journal, before_auth, checkpoint_path)
 }
 
+fn assert_previous_window_restore(
+    lifecycle: &MockAppLifecycle,
+    home: &Path,
+    previous_id: &str,
+    expected_events: &[&str],
+) {
+    assert_eq!(*lifecycle.task_events.lock().unwrap(), expected_events);
+    let restored = lifecycle.task_restore_sessions.lock().unwrap();
+    assert_eq!(restored.len(), 1);
+    let bound = super::desktop_app_session::DesktopAppSession::load_checked(
+        &home.join("desktop-app-session.json"),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(restored[0], bound);
+    assert_eq!(bound.account_id, previous_id);
+    assert_eq!(bound.cli_account_id.as_deref(), Some(previous_id));
+    assert_eq!(
+        bound.process.unwrap(),
+        lifecycle.inspect_process(9999).unwrap()
+    );
+}
+
+#[test]
+fn window_task_capture_failure_is_pre_signal_and_keeps_desktop_running() {
+    let (env, mut accounts, plan, mut journal, before_auth, _) =
+        rollback_failure_fixture("window_task_capture_failure");
+    let lifecycle = MockAppLifecycle::new(true);
+    *lifecycle.task_capture_error.lock().unwrap() = Some("synthetic capture error".into());
+    let logger = DistributionAuditLogger::default();
+    let error = DistributionDesktopSwitchService::new(&lifecycle, &logger)
+        .run(
+            env.home(),
+            &mut journal,
+            &plan,
+            &DistributionRequest::user("synthetic quota interruption"),
+            &mut accounts,
+            "op_window_task_capture_failure",
+        )
+        .err()
+        .expect("window task capture must fail");
+
+    assert_eq!(error.pre_signal_phase(), Some("WINDOW_TASK_CAPTURE_FAILED"));
+    assert!(error.to_string().contains("synthetic capture error"));
+    assert_eq!(lifecycle.stop_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(read_active_auth_json().unwrap(), before_auth);
+    assert!(!DistributionJournal::journal_path(env.home()).exists());
+    let log = env.log_content();
+    assert!(log.contains("phase=WINDOW_TASK_CAPTURE_FAILED"), "{log}");
+    assert!(log.contains("Desktop was not signalled"), "{log}");
+}
+
+#[test]
+fn post_stop_checkpoint_failure_restores_previous_window_tasks_after_relaunch() {
+    let (env, mut accounts, plan, mut journal, before_auth, checkpoint_path) =
+        rollback_failure_fixture("post_stop_window_restore");
+    let previous_id = plan.current_app_id.as_deref().unwrap();
+    let lifecycle = MockAppLifecycle::new(true);
+    lifecycle.task_window_count.store(2, Ordering::SeqCst);
+    *lifecycle.corrupt_manifest_after_stop.lock().unwrap() = Some(checkpoint_path);
+    let logger = DistributionAuditLogger::default();
+    let error = DistributionDesktopSwitchService::with_preflight(
+        &lifecycle,
+        &logger,
+        available_recovery_channel,
+    )
+    .run(
+        env.home(),
+        &mut journal,
+        &plan,
+        &DistributionRequest::user("synthetic quota interruption"),
+        &mut accounts,
+        "op_post_stop_window_restore",
+    )
+    .err()
+    .expect("post-stop checkpoint failure must roll back");
+    assert!(
+        error.to_string().contains("previous Desktop relaunched"),
+        "{error}"
+    );
+    assert_eq!(read_active_auth_json().unwrap(), before_auth);
+    assert_previous_window_restore(
+        &lifecycle,
+        env.home(),
+        previous_id,
+        &["launch", "restore", "finish"],
+    );
+}
+
+#[test]
+fn post_auth_commit_rollback_restores_previous_window_tasks_after_relaunch() {
+    let (env, accounts, plan, _, previous_auth, _) =
+        rollback_failure_fixture("post_commit_window_restore");
+    let previous_id = plan.current_app_id.as_deref().unwrap();
+    let target_id = plan.target_app_id.as_deref().unwrap();
+    let lifecycle = MockAppLifecycle::new(false);
+    let target = DistributionAccountCommitService::find_account(&accounts, target_id).unwrap();
+    let (_, committed) =
+        DistributionAccountCommitService::apply_auth_tokens(&lifecycle, &target).unwrap();
+    let error = DistributionDesktopRollbackService::new(&lifecycle).after_auth_commit(
+        env.home(),
+        &accounts,
+        previous_id,
+        &previous_auth,
+        &committed,
+        "synthetic post-commit failure".into(),
+    );
+    assert!(error.contains("Desktop switch rolled back"), "{error}");
+    assert_eq!(read_active_auth_json().unwrap(), previous_auth);
+    assert_previous_window_restore(
+        &lifecycle,
+        env.home(),
+        previous_id,
+        &["launch", "restore", "finish"],
+    );
+}
+
+#[test]
+fn target_launch_failure_restores_previous_windows_and_reports_partial_restore() {
+    let (env, mut accounts, plan, mut journal, before_auth, _) =
+        rollback_failure_fixture("target_launch_window_restore");
+    let previous_id = plan.current_app_id.as_deref().unwrap();
+    let lifecycle = MockAppLifecycle::new(true);
+    lifecycle.task_window_count.store(2, Ordering::SeqCst);
+    lifecycle.set_launch_error_on_call(1, "synthetic target launch failure");
+    *lifecycle.task_finish_error.lock().unwrap() = Some("WINDOW_TASKS_PARTIAL".into());
+    let logger = DistributionAuditLogger::default();
+    let error = DistributionDesktopSwitchService::with_preflight(
+        &lifecycle,
+        &logger,
+        available_recovery_channel,
+    )
+    .run(
+        env.home(),
+        &mut journal,
+        &plan,
+        &DistributionRequest::user("synthetic quota interruption"),
+        &mut accounts,
+        "op_target_launch_window_restore",
+    )
+    .err()
+    .expect("target launch failure must roll back");
+    assert!(
+        error
+            .to_string()
+            .contains("synthetic target launch failure"),
+        "{error}"
+    );
+    assert!(
+        error.to_string().contains("WINDOW_TASKS_PARTIAL"),
+        "{error}"
+    );
+    assert_eq!(read_active_auth_json().unwrap(), before_auth);
+    assert_previous_window_restore(
+        &lifecycle,
+        env.home(),
+        previous_id,
+        &["launch", "launch", "restore", "finish"],
+    );
+}
+
 #[test]
 fn prepare_rollback_failure_retains_distribution_journal_before_desktop_stop() {
     let (env, mut accounts, plan, mut journal, before_auth, checkpoint_path) =
@@ -250,7 +429,13 @@ fn prepare_rollback_failure_retains_distribution_journal_before_desktop_stop() {
         "op_rollback_failure",
     );
     let error = match result {
-        Err(error) => error,
+        Err(error) => {
+            assert_eq!(
+                error.pre_signal_phase(),
+                Some("SHUTDOWN_WINDOW_GUARD_FAILED")
+            );
+            error.into_message()
+        }
         Ok(_) => panic!("prepare must fail"),
     };
     assert!(error.contains("could not be restored"), "{error}");
@@ -278,7 +463,10 @@ fn before_signal_stop_rollback_failure_retains_distribution_journal() {
         "op_rollback_failure",
     );
     let error = match result {
-        Err(error) => error,
+        Err(error) => {
+            assert_eq!(error.pre_signal_phase(), Some("SHUTDOWN_FAILED"));
+            error.into_message()
+        }
         Ok(_) => panic!("stop must fail"),
     };
     assert!(error.contains("could not be restored"), "{error}");
@@ -374,6 +562,69 @@ fn before_signal_stop_rejection_clears_journal_after_checkpoint_restore() {
     assert_eq!(restored, before_checkpoint);
     assert_eq!(lifecycle.inner.stop_calls.load(Ordering::SeqCst), 1);
     assert!(lifecycle.inner.running.load(Ordering::SeqCst));
+    assert_eq!(read_active_auth_json().unwrap(), before_auth);
+}
+
+#[test]
+fn selected_window_without_recovery_targets_still_requires_ipc_preflight() {
+    let (env, mut accounts, plan, mut journal, before_auth, checkpoint_path) =
+        rollback_failure_fixture("window_only_ipc_preflight");
+    assert!(crate::switcher::detect_in_progress_threads().is_empty());
+    let old_checkpoint: Value =
+        serde_json::from_slice(&std::fs::read(&checkpoint_path).unwrap()).unwrap();
+    let lifecycle = MockAppLifecycle::new(true);
+    lifecycle.task_window_count.store(1, Ordering::SeqCst);
+    let logger = DistributionAuditLogger::default();
+    let error = DistributionDesktopSwitchService::with_preflight(
+        &lifecycle,
+        &logger,
+        unavailable_recovery_channel,
+    )
+    .run(
+        env.home(),
+        &mut journal,
+        &plan,
+        &DistributionRequest::user("synthetic quota interruption"),
+        &mut accounts,
+        "op_rollback_failure",
+    )
+    .err()
+    .expect("IPC preflight must reject the selected-window restart");
+    assert!(error.to_string().contains("preflight"), "{error}");
+    assert_eq!(lifecycle.stop_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(lifecycle.launch_calls.load(Ordering::SeqCst), 0);
+    assert!(lifecycle.running.load(Ordering::SeqCst));
+    assert!(!DistributionJournal::journal_path(env.home()).exists());
+    let restored: Value = serde_json::from_slice(&std::fs::read(checkpoint_path).unwrap()).unwrap();
+    assert_eq!(restored, old_checkpoint);
+    assert_eq!(read_active_auth_json().unwrap(), before_auth);
+}
+
+#[test]
+fn zero_windows_without_recovery_targets_skip_ipc_preflight() {
+    let (env, mut accounts, plan, mut journal, before_auth, _checkpoint_path) =
+        rollback_failure_fixture("zero_window_ipc_fast_path");
+    assert!(crate::switcher::detect_in_progress_threads().is_empty());
+    let lifecycle = MockAppLifecycle::new(true);
+    lifecycle.set_stop_error("synthetic pre-signal stop refusal");
+    let logger = DistributionAuditLogger::default();
+    let error = DistributionDesktopSwitchService::with_preflight(
+        &lifecycle,
+        &logger,
+        unavailable_recovery_channel,
+    )
+    .run(
+        env.home(),
+        &mut journal,
+        &plan,
+        &DistributionRequest::user("synthetic quota interruption"),
+        &mut accounts,
+        "op_rollback_failure",
+    )
+    .err()
+    .expect("synthetic stop refusal must be reported");
+    assert!(error.to_string().contains("stop"), "{error}");
+    assert_eq!(lifecycle.stop_calls.load(Ordering::SeqCst), 1);
     assert_eq!(read_active_auth_json().unwrap(), before_auth);
 }
 
@@ -481,7 +732,10 @@ fn failed_recovery_preflight_keeps_desktop_running_and_restores_prior_checkpoint
         "op_recovery_preflight",
     );
     let error = match result {
-        Err(error) => error,
+        Err(error) => {
+            assert_eq!(error.pre_signal_phase(), Some("RECOVERY_PREFLIGHT_FAILED"));
+            error.into_message()
+        }
         Ok(_) => panic!("failed recovery preflight must reject Desktop shutdown"),
     };
 
@@ -541,4 +795,35 @@ fn failed_preflight_retains_distribution_journal_when_checkpoint_rollback_fails(
     assert!(checkpoint_path.is_dir());
     assert!(DistributionJournal::journal_path(env.home()).exists());
     assert!(lifecycle.running.load(Ordering::SeqCst));
+}
+
+#[test]
+fn unreadable_checkpoint_clears_the_unsignalled_journal() {
+    let (env, mut accounts, plan, mut journal, before_auth, checkpoint_path) =
+        rollback_failure_fixture("checkpoint_capture_failure");
+    std::fs::remove_file(&checkpoint_path).unwrap();
+    std::fs::create_dir(&checkpoint_path).unwrap();
+    let lifecycle = MockAppLifecycle::new(true);
+    let logger = DistributionAuditLogger::default();
+    let result = DistributionDesktopSwitchService::new(&lifecycle, &logger).run(
+        env.home(),
+        &mut journal,
+        &plan,
+        &DistributionRequest::user("synthetic quota interruption"),
+        &mut accounts,
+        "op_checkpoint_capture",
+    );
+    let Err(error) = result else {
+        panic!("an unreadable checkpoint must stop the switch");
+    };
+
+    assert_eq!(error.pre_signal_phase(), Some("RECOVERY_CHECKPOINT_FAILED"));
+    assert_eq!(lifecycle.stop_calls.load(Ordering::SeqCst), 0);
+    assert!(lifecycle.running.load(Ordering::SeqCst));
+    assert!(!DistributionJournal::journal_path(env.home()).exists());
+    assert!(checkpoint_path.is_dir());
+    assert_eq!(read_active_auth_json().unwrap(), before_auth);
+    assert!(env
+        .log_content()
+        .contains("phase=RECOVERY_CHECKPOINT_FAILED trigger=user"));
 }

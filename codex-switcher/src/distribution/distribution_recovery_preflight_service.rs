@@ -45,10 +45,17 @@ impl<'a> DistributionRecoveryPreflightService<'a> {
         operation_id: &str,
         request: &DistributionRequest,
     ) -> Result<(), String> {
-        if running_threads.is_empty() {
-            return Ok(());
-        }
-        let Err(error) = (self.dispatch)() else {
+        let preflight = self
+            .lifecycle
+            .captured_window_task_count()
+            .and_then(|count| {
+                if running_threads.is_empty() && count == 0 {
+                    Ok(())
+                } else {
+                    (self.dispatch)()
+                }
+            });
+        let Err(error) = preflight else {
             return Ok(());
         };
         self.lifecycle.abort_recovery();
@@ -57,9 +64,9 @@ impl<'a> DistributionRecoveryPreflightService<'a> {
             "RECOVERY_PREFLIGHT_FAILED",
             request.trigger.as_str(),
             &request.reason,
-            "Desktop recovery channel was unavailable before shutdown",
+            "Desktop recovery or window-task channel was unavailable before shutdown",
         );
-        let message = format!("Desktop recovery channel preflight failed: {error}");
+        let message = format!("Desktop IPC preflight failed: {error}");
         Err(DistributionCheckpointService::rollback_and_clear(
             home, checkpoint, message,
         ))

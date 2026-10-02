@@ -14,6 +14,8 @@ enum WindowTaskProbeFailure: String, Error {
   case windowNotFound = "WINDOW_NOT_FOUND"
   case windowLimitExceeded = "WINDOW_LIMIT_EXCEEDED"
   case windowAccessFailed = "WINDOW_ACCESS_FAILED"
+  case accessibilityPermissionDenied = "WINDOW_ACCESSIBILITY_DENIED"
+  case screenRecordingPermissionDenied = "WINDOW_SCREEN_RECORDING_DENIED"
   case windowGeometryFailed = "WINDOW_GEOMETRY_FAILED"
   case windowInventoryMismatch = "WINDOW_INVENTORY_MISMATCH"
   case windowMinimized = "WINDOW_MINIMIZED"
@@ -26,7 +28,7 @@ enum WindowTaskProbeFailure: String, Error {
   case windowMappingChanged = "WINDOW_MAPPING_CHANGED"
   /// File > New Window is missing, disabled, or not titled in English.
   case newWindowUnavailable = "NEW_WINDOW_UNAVAILABLE"
-  /// No new, focused standard window appeared after New Window.
+  /// No unique new standard window appeared after New Window.
   case newWindowFailed = "NEW_WINDOW_FAILED"
   case windowFrameFailed = "WINDOW_FRAME_FAILED"
   case taskLinkOpenFailed = "TASK_LINK_OPEN_FAILED"
@@ -45,6 +47,16 @@ enum WindowTaskProbeFailure: String, Error {
   case windowFullScreen = "WINDOW_FULL_SCREEN"
   /// Any error that is not one of the cases above; none is expected.
   case probeFailed = "PROBE_FAILED"
+}
+
+/// Read-only authorization gate for the shutdown window inventory. The
+/// caller checks Accessibility first, then Screen Recording, without prompting.
+func windowInventoryPermissionFailure(
+  accessibilityTrusted: Bool, screenRecordingAllowed: Bool
+) -> WindowTaskProbeFailure? {
+  if !accessibilityTrusted { return .accessibilityPermissionDenied }
+  if !screenRecordingAllowed { return .screenRecordingPermissionDenied }
+  return nil
 }
 
 /// Same limit the Rust side enforces on the response.
@@ -232,11 +244,14 @@ final class WindowTaskReader<System: WindowTaskProbeSystem> {
     }
   }
 
-  func waitFor(_ timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+  func waitFor(
+    _ timeout: TimeInterval, pollInterval: TimeInterval = probePollInterval,
+    _ condition: () -> Bool
+  ) -> Bool {
     let deadline = system.now() + timeout
     while !condition() {
       guard system.now() < deadline else { return false }
-      system.pause(probePollInterval)
+      system.pause(pollInterval)
     }
     return true
   }

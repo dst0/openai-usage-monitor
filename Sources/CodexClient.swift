@@ -34,24 +34,37 @@ public final class CodexClient: @unchecked Sendable {
   /// `CodexClient.shared` uses the live one; tests pass a temporary directory.
   public let codexHome: URL
   private let distributionRunner: DistributionRunner
+  /// The Monitor CLI this client runs. `CodexClient.shared` finds the installed one.
+  private let cliExecutable: () -> URL
+  /// The running official Desktop, or nil. `CodexClient.shared` reads the live process list.
+  private let desktopProcess: () -> CodexDesktopProcessIdentity?
   private let desktopAppAccountIdProvider: () -> String?
 
-  /// The app's composition root: the live Codex home, the Rust coordinator, and the Desktop
-  /// session marker in that home.
+  /// The app's composition root: the live Codex home, the installed CLI and the Rust
+  /// coordinator it runs, the running Desktop, and the Desktop session marker in that home.
+  /// It binds the live lookups without calling them, so building it reads nothing.
   public convenience init() {
     let home = Self.liveCodexHome
+    let cli = Self.installedCLIExecutable
+    let desktop = CodexDesktopProcessIdentity.current
     self.init(
-      codexHome: home, distributionRunner: Self.runDistributionProcess,
-      desktopAppAccountIdProvider: { Self.readDesktopAppSessionAccountId(in: home) })
+      codexHome: home,
+      distributionRunner: { Self.runDistributionProcess(executable: cli(), arguments: $0) },
+      cliExecutable: cli, desktopProcess: desktop,
+      desktopAppAccountIdProvider: { Self.readDesktopAppSessionAccountId(in: home, currentProcess: desktop) })
   }
 
   internal init(
     codexHome: URL,
     distributionRunner: @escaping DistributionRunner,
+    cliExecutable: @escaping () -> URL,
+    desktopProcess: @escaping () -> CodexDesktopProcessIdentity?,
     desktopAppAccountIdProvider: @escaping () -> String? = { nil }
   ) {
     self.codexHome = codexHome
     self.distributionRunner = distributionRunner
+    self.cliExecutable = cliExecutable
+    self.desktopProcess = desktopProcess
     self.desktopAppAccountIdProvider = desktopAppAccountIdProvider
   }
 
@@ -173,14 +186,16 @@ public final class CodexClient: @unchecked Sendable {
     return accountID
   }
 
-  private static func readDesktopAppSessionAccountId(in codexHome: URL) -> String? {
+  private static func readDesktopAppSessionAccountId(
+    in codexHome: URL, currentProcess: () -> CodexDesktopProcessIdentity?
+  ) -> String? {
     let url = codexHome.appendingPathComponent("desktop-app-session.json", isDirectory: false)
-    guard let process = CodexDesktopProcessIdentity.current(),
+    guard let process = currentProcess(),
       let authFileID = Self.currentCliAuthFileID(in: codexHome),
       let data = Self.readPrivateSessionMarkerData(at: url),
       let accountID = Self.validatedDesktopAppSessionAccountId(
         from: data, currentProcess: process, currentAuthFileID: authFileID),
-      CodexDesktopProcessIdentity.current() == process,
+      currentProcess() == process,
       Self.currentCliAuthFileID(in: codexHome) == authFileID
     else { return nil }
     return accountID
@@ -306,7 +321,13 @@ public final class CodexClient: @unchecked Sendable {
 
   public var configTOMLURL: URL { homeFile("config.toml") }
 
-  public static var cliExecutableURL: URL {
+  /// The Monitor CLI this client runs.
+  public var cliExecutableURL: URL { cliExecutable() }
+
+  /// The installed Monitor CLI: `~/.local/bin/codex-mon`, else a development build under
+  /// `~/dev/openai-usage-monitor`, else `/usr/local/bin/codex-mon`. Only `init()` binds it;
+  /// `scripts/swift_live_diagnostics.sh` prints what it finds on this Mac.
+  internal static func installedCLIExecutable() -> URL {
     let localBin = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(".local/bin/codex-mon")
     if FileManager.default.fileExists(atPath: localBin.path) {
@@ -321,7 +342,7 @@ public final class CodexClient: @unchecked Sendable {
   }
 
   public func isCodexAppRunning() -> Bool {
-    CodexDesktopProcessIdentity.current() != nil
+    desktopProcess() != nil
   }
 
   public func getActiveModelName() -> String? {
@@ -388,9 +409,6 @@ public final class CodexClient: @unchecked Sendable {
     let resetTime = resetTimeStr.flatMap { Self.parseDate($0) }
     let resetAfterSec = json["reset_after_seconds"] as? Int
     let credits = json["credits"] as? Int ?? 0
-    let autoSwitch = json["auto_switch_enabled"] as? Bool ?? false
-    let autoSwitchBizOnly = json["auto_switch_business_only"] as? Bool ?? false
-    let autoSwitchBizPriority = json["auto_switch_business_priority"] as? Bool ?? false
     let autoResetWeekly = json["auto_reset_weekly_enabled"] as? Bool ?? false
     let autoResetMinRemaining = json["auto_reset_weekly_min_remaining_seconds"] as? Int ?? 0
     let autoResetState = json["auto_reset_state"] as? String ?? "disabled"
@@ -470,9 +488,6 @@ public final class CodexClient: @unchecked Sendable {
       resetTime: resetTime,
       resetAfterSeconds: resetAfterSec,
       credits: credits,
-      autoSwitchEnabled: autoSwitch,
-      autoSwitchBusinessOnly: autoSwitchBizOnly,
-      autoSwitchBusinessPriority: autoSwitchBizPriority,
       autoResetWeeklyEnabled: autoResetWeekly,
       autoResetWeeklyMinRemainingSeconds: autoResetMinRemaining,
       autoResetState: autoResetState,
@@ -489,7 +504,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func refreshQuotas(completion: @escaping (MultiAccountSnapshot?) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["status", "--refresh"]
@@ -571,9 +586,9 @@ public final class CodexClient: @unchecked Sendable {
     runner(arguments)
   }
 
-  internal static func makeDistributionProcess(arguments: [String]) -> Process {
+  internal static func makeDistributionProcess(executable: URL, arguments: [String]) -> Process {
     let process = Process()
-    process.executableURL = cliExecutableURL
+    process.executableURL = executable
     process.arguments = arguments
     let output = Pipe()
     process.standardOutput = output
@@ -597,8 +612,8 @@ public final class CodexClient: @unchecked Sendable {
     }
   }
 
-  private static func runDistributionProcess(arguments: [String]) -> Bool {
-    let process = makeDistributionProcess(arguments: arguments)
+  private static func runDistributionProcess(executable: URL, arguments: [String]) -> Bool {
+    let process = makeDistributionProcess(executable: executable, arguments: arguments)
     guard let result = runCapturedProcess(process) else {
       NSLog("Rust distribution coordinator could not be launched")
       return false
@@ -648,7 +663,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func removeAccount(id: String, completion: @escaping (Bool) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["remove", id]
@@ -673,7 +688,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func addNewAccount(id: String, completion: @escaping (Bool, String?) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["add", id]
@@ -705,7 +720,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func reloginAccount(id: String, completion: @escaping (Bool, String?) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["relogin", id]
@@ -740,7 +755,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func saveCurrentSession(id: String, completion: @escaping (Bool, String?) -> Void) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["save-current", id]
@@ -775,7 +790,7 @@ public final class CodexClient: @unchecked Sendable {
       // Share detection, restart journaling, and verified recovery with
       // automatic switching instead of terminating the app without a snapshot.
       let proc = Process()
-      proc.executableURL = Self.cliExecutableURL
+      proc.executableURL = self.cliExecutableURL
       proc.arguments = ["restart"]
       let output = Pipe()
       proc.standardOutput = output
@@ -797,7 +812,7 @@ public final class CodexClient: @unchecked Sendable {
     id: String, newName: String?, completion: @escaping (Bool, String?) -> Void
   ) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       if let name = newName, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -830,25 +845,33 @@ public final class CodexClient: @unchecked Sendable {
     }
   }
 
-  public func setRestartAppOnSwitch(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
-    DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+  /// Runs `config` writes one at a time, in the order they were asked for. Each write is its
+  /// own CLI process, so on a concurrent queue two quick menu toggles could save in reverse.
+  private let configQueue = DispatchQueue(label: "com.codex.monitor.config", qos: .userInitiated)
+
+  /// Runs `config` with `arguments` on the config queue and reports on the main queue whether
+  /// the CLI saved them. A missing CLI reports failure.
+  private func runConfig(_ arguments: [String], completion: ((Bool) -> Void)?) {
+    configQueue.async {
       let proc = Process()
-      proc.executableURL = URL(fileURLWithPath: bin)
-      proc.arguments = ["config", "--restart-app-on-switch", enabled ? "true" : "false"]
+      proc.executableURL = self.cliExecutableURL
+      proc.arguments = ["config"] + arguments
+      let success: Bool
       do {
         try proc.run()
         proc.waitUntilExit()
-        let success = proc.terminationStatus == 0
-        DispatchQueue.main.async {
-          completion?(success)
-        }
+        success = proc.terminationStatus == 0
       } catch {
-        DispatchQueue.main.async {
-          completion?(false)
-        }
+        success = false
+      }
+      DispatchQueue.main.async {
+        completion?(success)
       }
     }
+  }
+
+  public func setRestartAppOnSwitch(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
+    runConfig(["--restart-app-on-switch", enabled ? "true" : "false"], completion: completion)
   }
 
   /// The `settings` object of the account registry in this client's Codex home.
@@ -859,85 +882,65 @@ public final class CodexClient: @unchecked Sendable {
     return json["settings"] as? [String: Any]
   }
 
-  public func getRestartAppOnSwitch() -> Bool {
-    registrySettings()?["restart_app_on_switch"] as? Bool ?? false
+  /// The settings the Auto-Switch Settings submenu shows, from one read of the registry so its
+  /// marks never mix two versions of it. Each default is the Rust core's `Settings` default: a
+  /// missing registry or key leaves every automation off and window-bounds preservation on, so
+  /// the menu never shows automatic switching on while the daemon treats it as off.
+  public struct AutoSwitchSettings: Equatable {
+    public let autoSwitchEnabled: Bool
+    public let businessOnly: Bool
+    public let businessPriority: Bool
+    public let restartAppOnSwitch: Bool
+    public let preserveWindowBoundsOnRestart: Bool
+
+    init(registrySettings settings: [String: Any]?) {
+      autoSwitchEnabled = Self.flag(settings?["auto_switch_enabled"], otherwise: false)
+      businessOnly = Self.flag(settings?["auto_switch_business_only"], otherwise: false)
+      businessPriority = Self.flag(settings?["auto_switch_business_priority"], otherwise: false)
+      restartAppOnSwitch = Self.flag(settings?["restart_app_on_switch"], otherwise: false)
+      preserveWindowBoundsOnRestart =
+        Self.flag(settings?["preserve_window_bounds_on_restart"], otherwise: true)
+    }
+
+    /// A JSON `true` or `false` only. `as? Bool` also accepts the number 1, which serde rejects
+    /// for a bool, and with it the whole registry, so the daemon would not be switching.
+    private static func flag(_ value: Any?, otherwise fallback: Bool) -> Bool {
+      guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
+        return fallback
+      }
+      return number.boolValue
+    }
+  }
+
+  public func getAutoSwitchSettings() -> AutoSwitchSettings {
+    AutoSwitchSettings(registrySettings: registrySettings())
   }
 
   public func setAutoSwitchEnabled(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
-    DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
-      let proc = Process()
-      proc.executableURL = URL(fileURLWithPath: bin)
-      proc.arguments = ["config", "--auto-switch-enabled", enabled ? "true" : "false"]
-      do {
-        try proc.run()
-        proc.waitUntilExit()
-        let success = proc.terminationStatus == 0
-        DispatchQueue.main.async {
-          completion?(success)
-        }
-      } catch {
-        DispatchQueue.main.async {
-          completion?(false)
-        }
-      }
-    }
+    runConfig(["--auto-switch-enabled", enabled ? "true" : "false"], completion: completion)
   }
 
-  /// Off unless the registry turns it on, like the Rust core's `Settings` default: the menu
-  /// must not show automatic switching on while the daemon treats it as off.
-  public func getAutoSwitchEnabled() -> Bool {
-    registrySettings()?["auto_switch_enabled"] as? Bool ?? false
-  }
-
+  /// Turning it on also turns on automatic switching and turns off business priority: the
+  /// Rust core saves all three together.
   public func setAutoSwitchBusinessOnly(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
-    DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
-      let proc = Process()
-      proc.executableURL = URL(fileURLWithPath: bin)
-      proc.arguments = ["config", "--auto-switch-business-only", enabled ? "true" : "false"]
-      do {
-        try proc.run()
-        proc.waitUntilExit()
-        let success = proc.terminationStatus == 0
-        DispatchQueue.main.async {
-          completion?(success)
-        }
-      } catch {
-        DispatchQueue.main.async {
-          completion?(false)
-        }
-      }
-    }
+    runConfig(["--auto-switch-business-only", enabled ? "true" : "false"], completion: completion)
   }
 
-  public func getAutoSwitchBusinessOnly() -> Bool {
-    registrySettings()?["auto_switch_business_only"] as? Bool ?? false
-  }
-
+  /// Turning it on also turns on automatic switching and turns off business-only: the Rust
+  /// core saves all three together.
   public func setAutoSwitchBusinessPriority(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
-    DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
-      let proc = Process()
-      proc.executableURL = URL(fileURLWithPath: bin)
-      proc.arguments = ["config", "--auto-switch-business-priority", enabled ? "true" : "false"]
-      do {
-        try proc.run()
-        proc.waitUntilExit()
-        let success = proc.terminationStatus == 0
-        DispatchQueue.main.async {
-          completion?(success)
-        }
-      } catch {
-        DispatchQueue.main.async {
-          completion?(false)
-        }
-      }
-    }
+    runConfig(
+      ["--auto-switch-business-priority", enabled ? "true" : "false"], completion: completion)
   }
 
-  public func getAutoSwitchBusinessPriority() -> Bool {
-    registrySettings()?["auto_switch_business_priority"] as? Bool ?? false
+  /// Whether a Desktop restart puts its window back where it was. Turning it off skips only
+  /// that geometry: the shutdown window checks still run.
+  public func setPreserveWindowBoundsOnRestart(_ enabled: Bool, completion: ((Bool) -> Void)? = nil) {
+    runConfig(["--preserve-window-bounds", enabled ? "true" : "false"], completion: completion)
+  }
+
+  public func getPreserveWindowBoundsOnRestart() -> Bool {
+    getAutoSwitchSettings().preserveWindowBoundsOnRestart
   }
 
   /// Configures the weekly reset-credit policy in one CLI invocation so the
@@ -949,28 +952,11 @@ public final class CodexClient: @unchecked Sendable {
     completion: ((Bool) -> Void)? = nil
   ) {
     let safeHours = min(167, max(0, minRemainingHours))
-    DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
-      let proc = Process()
-      proc.executableURL = URL(fileURLWithPath: bin)
-      proc.arguments = [
-        "config",
+    runConfig(
+      [
         "--auto-reset-weekly-enabled", enabled ? "true" : "false",
         "--auto-reset-weekly-min-hours", String(safeHours),
-      ]
-      do {
-        try proc.run()
-        proc.waitUntilExit()
-        let success = proc.terminationStatus == 0
-        DispatchQueue.main.async {
-          completion?(success)
-        }
-      } catch {
-        DispatchQueue.main.async {
-          completion?(false)
-        }
-      }
-    }
+      ], completion: completion)
   }
 
   public func getAutoResetWeeklyConfiguration() -> (enabled: Bool, minRemainingHours: Int) {
@@ -985,7 +971,7 @@ public final class CodexClient: @unchecked Sendable {
 
   public func resetAccount(id: String, completion: ((Bool, String?) -> Void)? = nil) {
     DispatchQueue.global(qos: .userInitiated).async {
-      let bin = Self.cliExecutableURL.path
+      let bin = self.cliExecutableURL.path
       let proc = Process()
       proc.executableURL = URL(fileURLWithPath: bin)
       proc.arguments = ["reset-account", id]

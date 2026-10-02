@@ -3,8 +3,10 @@ use super::distribution_coordinator::DistributionCoordinator;
 use super::distribution_decision_service::DistributionDecisionService;
 use super::distribution_journal::DistributionJournal;
 use super::distribution_outcome::DistributionStatus;
+use super::distribution_recovery_audit_service::DistributionRecoveryAuditService;
 use super::distribution_request::DistributionRequest;
 use super::mock_app_lifecycle::MockAppLifecycle;
+use super::recovery_audit_context::RecoveryAuditContext;
 use super::test_account_spec::TestAccountSpec;
 use super::test_helper::TestEnv;
 use super::window_capture_mode::WindowCaptureMode;
@@ -12,8 +14,88 @@ use crate::models::{AccountsFile, Settings};
 use crate::storage::{load_accounts, read_active_auth_json, save_accounts};
 use base64::Engine;
 use std::os::unix::fs::PermissionsExt;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+#[test]
+fn automatic_task_capture_failure_keeps_desktop_and_auth_unchanged() {
+    let env = TestEnv::new("auto_task_capture_failure");
+    env.populate(
+        vec![
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                sprint_pct: 0.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                credits: 1,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+        ],
+        Some("old"),
+        Some("old"),
+    );
+    let prior_auth = read_active_auth_json().unwrap();
+    let mock = Arc::new(MockAppLifecycle::new(true));
+    *mock.task_capture_error.lock().unwrap() = Some("WINDOW_ACCESS_FAILED".into());
+
+    let error = DistributionCoordinator::with_lifecycle(mock.clone())
+        .execute(DistributionRequest::auto("quota_exhausted"))
+        .unwrap_err();
+    assert!(error.contains("WINDOW_ACCESS_FAILED"), "{error}");
+    assert_eq!(mock.task_capture_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.abort_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.stop_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(mock.launch_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(read_active_auth_json().unwrap(), prior_auth);
+    assert!(!env.home().join("distribution-journal.json").exists());
+}
+
+#[test]
+fn automatic_restore_failure_reports_partial_after_recovery() {
+    let env = TestEnv::new("auto_task_restore_failure");
+    env.populate(
+        vec![
+            TestAccountSpec {
+                id: "old",
+                email: "old@example.test",
+                plan: "plus",
+                sprint_pct: 0.0,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+            TestAccountSpec {
+                id: "next",
+                email: "next@example.test",
+                plan: "team",
+                sprint_pct: 90.0,
+                credits: 1,
+                ..TestAccountSpec::default()
+            }
+            .build(),
+        ],
+        Some("old"),
+        Some("old"),
+    );
+    let mock = Arc::new(MockAppLifecycle::new(true));
+    *mock.task_finish_error.lock().unwrap() = Some("Window tasks were not fully restored".into());
+    let outcome = DistributionCoordinator::with_lifecycle(mock.clone())
+        .execute(DistributionRequest::auto("quota_exhausted"))
+        .unwrap();
+    assert_eq!(outcome.status, DistributionStatus::PartialSuccess);
+    assert_eq!(mock.task_capture_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.task_restore_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(mock.recovery_calls.load(Ordering::SeqCst), 1);
+    assert!(outcome.recovery_error.unwrap().contains("Window tasks"));
+}
 
 #[test]
 fn test_candidate_skip_reasons() {
@@ -741,6 +823,44 @@ fn recovery_sees_new_desktop_account_marker_before_dispatch() {
 }
 
 #[test]
+fn changed_target_binding_during_geometry_restore_blocks_recovery() {
+    let env = TestEnv::new("binding_changed_during_restore");
+    let mock = MockAppLifecycle::new(true);
+    let target_binding_valid = Arc::new(AtomicBool::new(true));
+    let changed = Arc::clone(&target_binding_valid);
+    mock.observe_restore(move || changed.store(false, Ordering::SeqCst));
+    let request = DistributionRequest::auto("quota_exhausted");
+    let targets = vec!["captured-task".to_string()];
+    let logger = DistributionAuditLogger::new(env.home().join("audit.log"));
+    let bound = super::desktop_app_session::DesktopAppSession::new("target-account");
+
+    let result = DistributionRecoveryAuditService::restore_and_recover(
+        &logger,
+        &mock,
+        RecoveryAuditContext {
+            pid: 9999,
+            bound: &bound,
+            targets: &targets,
+            capture_mode: WindowCaptureMode::Captured,
+            operation_id: "binding-changed",
+            request: &request,
+        },
+        || {
+            if target_binding_valid.load(Ordering::SeqCst) {
+                Ok(())
+            } else {
+                Err("Target auth changed during geometry restore".into())
+            }
+        },
+    );
+
+    assert!(result.unwrap_err().contains("Target auth changed"));
+    assert_eq!(mock.restore_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(mock.recovery_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(mock.abort_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn failed_desktop_launch_cannot_claim_the_target_account_for_deferred_recovery() {
     let env = TestEnv::new("failed_launch_no_session_claim");
     env.populate(
@@ -820,10 +940,11 @@ fn replaced_desktop_process_cannot_claim_the_target_account() {
     let original_active_id = load_accounts().unwrap().active_account_id;
     let mock = Arc::new(MockAppLifecycle::new(true));
     mock.change_process_birth_after_launch();
-    let outcome = DistributionCoordinator::with_lifecycle(mock)
+    let outcome = DistributionCoordinator::with_lifecycle(mock.clone())
         .execute(DistributionRequest::auto("quota_exhausted"))
         .unwrap();
     assert_eq!(outcome.status, DistributionStatus::Failed);
+    assert_eq!(mock.task_restore_calls.load(Ordering::SeqCst), 0);
     assert_eq!(
         load_accounts().unwrap().active_account_id,
         original_active_id
@@ -940,7 +1061,7 @@ fn test_at_most_one_desktop_restart() {
         "SHUTDOWN",
         "RELAUNCH",
         "RECOVERY_START",
-        "RECOVERY_VERIFIED",
+        "RECOVERY_NOT_REQUESTED",
         "OUTCOME",
     ] {
         assert!(
@@ -1357,6 +1478,9 @@ fn window_access_failure_prevents_auth_change_and_restart() {
         Some("old@example.com:old")
     );
     assert!(env.log_content().contains("phase=WINDOW_CAPTURE_FAILED"));
+    assert!(env
+        .log_content()
+        .contains("status=failed code=transaction_failed pre_signal_phase=WINDOW_CAPTURE_FAILED"));
 }
 
 #[test]
@@ -1607,4 +1731,11 @@ fn failed_post_shutdown_checkpoint_keeps_old_auth_and_relaunches_desktop() {
         load_accounts().unwrap().active_account_id.as_deref(),
         Some("old@example.com:old")
     );
+    // Desktop was stopped, so this failure must not feed the automatic backoff.
+    let log = env.log_content();
+    assert!(
+        log.contains("status=failed code=transaction_failed"),
+        "{log}"
+    );
+    assert!(!log.contains("pre_signal_phase"), "{log}");
 }

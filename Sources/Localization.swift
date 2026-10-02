@@ -208,6 +208,10 @@ public final class LocalizationManager: @unchecked Sendable {
       "clear_btn": "Сбросить",
       "restart_app_on_switch": "🚀 Перезапускать Codex App при смене",
       "stack_percentages": "Компактный стек процентов (2 строки)",
+      "auto_switch_settings": "⚙️ Настройки автопереключения",
+      "preserve_window_bounds_on_restart": "🪟 Сохранять положение и размер окна при перезапуске",
+      "setting_save_failed":
+        "Настройка не сохранена и осталась прежней. Проверьте, что CLI Codex Monitor (codex-mon) установлен и работает, и попробуйте ещё раз.",
       "auto_switch_on_limit": "🔄 Автопереключение при исчерпании лимита",
       "auto_switch_business_only": "🏢 Автопереход только по бизнес-аккаунтам",
       "auto_switch_business_priority": "⚡ Автопереход с приоритетом бизнес-аккаунтов",
@@ -309,6 +313,10 @@ public final class LocalizationManager: @unchecked Sendable {
       "clear_btn": "Clear",
       "restart_app_on_switch": "🚀 Restart Codex App on Switch",
       "stack_percentages": "Stack Percentages (2-Row)",
+      "auto_switch_settings": "⚙️ Auto-Switch Settings",
+      "preserve_window_bounds_on_restart": "🪟 Preserve Window Bounds on Restart",
+      "setting_save_failed":
+        "The setting was not saved and is unchanged. Make sure the Codex Monitor CLI (codex-mon) is installed and working, then try again.",
       "auto_switch_on_limit": "🔄 Auto-Switch on Limit Depletion",
       "auto_switch_business_only": "🏢 Auto-Switch Business Accounts Only",
       "auto_switch_business_priority": "⚡ Auto-Switch with Business Account Priority",
@@ -388,6 +396,11 @@ public final class LocalizationManager: @unchecked Sendable {
       "cli_update_available": "🚀 Оновити Codex CLI (до v%@)",
       "cli_not_found": "⚠️ Codex CLI не знайдено",
       "stack_percentages": "Компактний стек відсотків (2 рядки)",
+      "restart_app_on_switch": "🚀 Перезапускати Codex App під час зміни",
+      "auto_switch_settings": "⚙️ Налаштування автоперемикання",
+      "preserve_window_bounds_on_restart": "🪟 Зберігати положення й розмір вікна під час перезапуску",
+      "setting_save_failed":
+        "Налаштування не збережено, воно залишилося без змін. Перевірте, що CLI Codex Monitor (codex-mon) встановлено й він працює, і спробуйте ще раз.",
       "auto_switch_on_limit": "🔄 Автоперемикання при вичерпанні ліміту",
       "auto_switch_business_only": "🏢 Автоперемикання тільки по бізнес-акаунтах",
       "auto_switch_business_priority": "⚡ Автоперемикання з пріоритетом бізнес-акаунтів",
@@ -435,6 +448,11 @@ public final class LocalizationManager: @unchecked Sendable {
       "cli_update_available": "🚀 Codex CLI aktualisieren (auf v%@)",
       "cli_not_found": "⚠️ Codex CLI nicht gefunden",
       "stack_percentages": "Kompakter Prozent-Stapel (2 Zeilen)",
+      "restart_app_on_switch": "🚀 Codex App beim Wechsel neu starten",
+      "auto_switch_settings": "⚙️ Einstellungen für automatischen Wechsel",
+      "preserve_window_bounds_on_restart": "🪟 Fensterposition und -größe beim Neustart beibehalten",
+      "setting_save_failed":
+        "Die Einstellung wurde nicht gespeichert und bleibt unverändert. Prüfen Sie, ob die Codex Monitor CLI (codex-mon) installiert ist und funktioniert, und versuchen Sie es erneut.",
       "auto_switch_on_limit": "🔄 Automatischer Wechsel bei Limit-Erschöpfung",
       "auto_switch_business_only": "🏢 Automatischer Wechsel nur für Business-Konten",
       "auto_switch_business_priority": "⚡ Automatischer Wechsel mit Business-Konto-Priorität",
@@ -482,6 +500,11 @@ public final class LocalizationManager: @unchecked Sendable {
       "cli_update_available": "🚀 Mettre à jour Codex CLI (vers v%@)",
       "cli_not_found": "⚠️ Codex CLI introuvable",
       "stack_percentages": "Empiler les pourcentages (2 lignes)",
+      "restart_app_on_switch": "🚀 Redémarrer Codex App lors du basculement",
+      "auto_switch_settings": "⚙️ Paramètres de basculement automatique",
+      "preserve_window_bounds_on_restart": "🪟 Conserver la position et la taille de la fenêtre au redémarrage",
+      "setting_save_failed":
+        "Le réglage n'a pas été enregistré et reste inchangé. Vérifiez que la CLI Codex Monitor (codex-mon) est installée et fonctionne, puis réessayez.",
       "auto_switch_on_limit": "🔄 Basculement automatique en cas d'épuisement",
       "auto_switch_business_only": "🏢 Basculement automatique uniquement sur comptes Business",
       "auto_switch_business_priority": "⚡ Basculement automatique prioritaire sur comptes Business",
@@ -541,6 +564,11 @@ public final class LocalizationManager: @unchecked Sendable {
       "cli_update_available": "🚀 Actualizar Codex CLI (a v%@)",
       "cli_not_found": "⚠️ Codex CLI no encontrado",
       "stack_percentages": "Apilar porcentajes (2 filas)",
+      "restart_app_on_switch": "🚀 Reiniciar Codex App al cambiar",
+      "auto_switch_settings": "⚙️ Ajustes de cambio automático",
+      "preserve_window_bounds_on_restart": "🪟 Conservar la posición y el tamaño de la ventana al reiniciar",
+      "setting_save_failed":
+        "El ajuste no se guardó y sigue sin cambios. Comprueba que la CLI de Codex Monitor (codex-mon) esté instalada y funcione, e inténtalo de nuevo.",
       "auto_switch_on_limit": "🔄 Cambio automático al agotar el límite",
       "auto_switch_business_only": "🏢 Cambio automático solo en cuentas de empresa",
       "auto_switch_business_priority": "⚡ Cambio automático con prioridad de cuentas de empresa",
@@ -588,6 +616,11 @@ public final class LocalizationManager: @unchecked Sendable {
       "cli_update_available": "🚀 Aggiorna Codex CLI (a v%@)",
       "cli_not_found": "⚠️ Codex CLI non trovato",
       "stack_percentages": "Impila percentuali (2 righe)",
+      "restart_app_on_switch": "🚀 Riavvia Codex App al cambio",
+      "auto_switch_settings": "⚙️ Impostazioni del cambio automatico",
+      "preserve_window_bounds_on_restart": "🪟 Mantieni posizione e dimensioni della finestra al riavvio",
+      "setting_save_failed":
+        "L'impostazione non è stata salvata ed è rimasta invariata. Verifica che la CLI di Codex Monitor (codex-mon) sia installata e funzioni, poi riprova.",
       "auto_switch_on_limit": "🔄 Cambio automatico all'esaurimento del limite",
       "auto_switch_business_only": "🏢 Cambio automatico solo account aziendali",
       "auto_switch_business_priority": "⚡ Cambio automatico con priorità account aziendali",
@@ -635,6 +668,11 @@ public final class LocalizationManager: @unchecked Sendable {
       "cli_update_available": "🚀 Atualizar Codex CLI (para v%@)",
       "cli_not_found": "⚠️ Codex CLI não encontrado",
       "stack_percentages": "Empilhar percentagens (2 linhas)",
+      "restart_app_on_switch": "🚀 Reiniciar o Codex App ao alternar",
+      "auto_switch_settings": "⚙️ Configurações de alternância automática",
+      "preserve_window_bounds_on_restart": "🪟 Manter a posição e o tamanho da janela ao reiniciar",
+      "setting_save_failed":
+        "A configuração não foi salva e permanece inalterada. Verifique se a CLI do Codex Monitor (codex-mon) está instalada e funcionando e tente novamente.",
       "auto_switch_on_limit": "🔄 Alternância automática ao esgotar o limite",
       "auto_switch_business_only": "🏢 Alternância automática apenas contas empresariais",
       "auto_switch_business_priority":
@@ -694,6 +732,11 @@ public final class LocalizationManager: @unchecked Sendable {
       "cli_update_available": "🚀 Zaktualizuj Codex CLI (do v%@)",
       "cli_not_found": "⚠️ Nie znaleziono Codex CLI",
       "stack_percentages": "Kompaktowy stos procentów (2 wiersze)",
+      "restart_app_on_switch": "🚀 Uruchom ponownie Codex App przy przełączaniu",
+      "auto_switch_settings": "⚙️ Ustawienia automatycznego przełączania",
+      "preserve_window_bounds_on_restart": "🪟 Zachowaj położenie i rozmiar okna po ponownym uruchomieniu",
+      "setting_save_failed":
+        "Ustawienie nie zostało zapisane i pozostaje bez zmian. Sprawdź, czy CLI Codex Monitor (codex-mon) jest zainstalowane i działa, a następnie spróbuj ponownie.",
       "auto_switch_on_limit": "🔄 Automatyczne przełączanie po wyczerpaniu limitu",
       "auto_switch_business_only": "🏢 Automatyczne przełączanie tylko na konta biznesowe",
       "auto_switch_business_priority": "⚡ Automatyczne przełączanie z priorytetem kont biznesowych",
@@ -741,6 +784,11 @@ public final class LocalizationManager: @unchecked Sendable {
       "cli_update_available": "🚀 Codex CLI bijwerken (naar v%@)",
       "cli_not_found": "⚠️ Codex CLI niet gevonden",
       "stack_percentages": "Compacte procentstapel (2 rijen)",
+      "restart_app_on_switch": "🚀 Codex App herstarten bij overschakelen",
+      "auto_switch_settings": "⚙️ Instellingen voor automatisch overschakelen",
+      "preserve_window_bounds_on_restart": "🪟 Vensterpositie en -grootte behouden bij herstart",
+      "setting_save_failed":
+        "De instelling is niet opgeslagen en blijft ongewijzigd. Controleer of de Codex Monitor-CLI (codex-mon) is geïnstalleerd en werkt, en probeer het opnieuw.",
       "auto_switch_on_limit": "🔄 Automatisch overschakelen bij limietuitputting",
       "auto_switch_business_only": "🏢 Alleen automatisch overschakelen tussen zakelijke accounts",
       "auto_switch_business_priority":
@@ -809,6 +857,10 @@ public final class LocalizationManager: @unchecked Sendable {
       "clear_btn": "クリア",
       "restart_app_on_switch": "🚀 切り替え時に Codex App を再起動",
       "stack_percentages": "パーセントの2行スタック表示",
+      "auto_switch_settings": "⚙️ 自動切り替え設定",
+      "preserve_window_bounds_on_restart": "🪟 再起動時にウィンドウの位置とサイズを保持",
+      "setting_save_failed":
+        "設定は保存されず、変更されていません。Codex Monitor CLI (codex-mon) がインストールされ動作しているか確認してから、もう一度お試しください。",
       "auto_switch_on_limit": "🔄 制限到達時の自動切り替え",
       "auto_switch_business_only": "🏢 ビジネスアカウントのみ自動切り替え",
       "auto_switch_business_priority": "⚡ ビジネスアカウント優先で自動切り替え",
@@ -875,6 +927,10 @@ public final class LocalizationManager: @unchecked Sendable {
       "clear_btn": "清除",
       "restart_app_on_switch": "🚀 切换时自动重启 Codex App",
       "stack_percentages": "百分比紧凑堆叠 (双行)",
+      "auto_switch_settings": "⚙️ 自动切换设置",
+      "preserve_window_bounds_on_restart": "🪟 重启时保留窗口位置和大小",
+      "setting_save_failed":
+        "设置未保存，保持不变。请确认 Codex Monitor CLI (codex-mon) 已安装并可正常运行，然后重试。",
       "auto_switch_on_limit": "🔄 额度耗尽时自动切换",
       "auto_switch_business_only": "🏢 仅在企业/商业账号间自动切换",
       "auto_switch_business_priority": "⚡ 优先自动切换至企业账号",
@@ -944,6 +1000,10 @@ public final class LocalizationManager: @unchecked Sendable {
       "clear_btn": "Xóa",
       "restart_app_on_switch": "🚀 Khởi động lại Codex App khi chuyển",
       "stack_percentages": "Xếp chồng phần trăm (2 dòng)",
+      "auto_switch_settings": "⚙️ Cài đặt tự động chuyển đổi",
+      "preserve_window_bounds_on_restart": "🪟 Giữ vị trí và kích thước cửa sổ khi khởi động lại",
+      "setting_save_failed":
+        "Cài đặt chưa được lưu nên vẫn giữ nguyên. Hãy kiểm tra Codex Monitor CLI (codex-mon) đã được cài đặt và hoạt động, rồi thử lại.",
       "auto_switch_on_limit": "🔄 Tự động chuyển khi hết hạn mức",
       "auto_switch_business_only": "🏢 Chỉ tự động chuyển tài khoản doanh nghiệp",
       "auto_switch_business_priority": "⚡ Tự động chuyển ưu tiên tài khoản doanh nghiệp",
@@ -1085,9 +1145,14 @@ public enum L10n {
   public static var saveBtn: String { tr("save_btn") }
   public static var clearBtn: String { tr("clear_btn") }
   public static var restartAppOnSwitch: String { tr("restart_app_on_switch") }
+  public static var autoSwitchSettings: String { tr("auto_switch_settings") }
   public static var autoSwitchOnLimit: String { tr("auto_switch_on_limit") }
   public static var autoSwitchBusinessOnly: String { tr("auto_switch_business_only") }
   public static var autoSwitchBusinessPriority: String { tr("auto_switch_business_priority") }
+  public static var preserveWindowBoundsOnRestart: String {
+    tr("preserve_window_bounds_on_restart")
+  }
+  public static var settingSaveFailed: String { tr("setting_save_failed") }
   public static var autoDistributeAppCli: String { tr("auto_distribute_app_cli") }
   public static var autoResetWeekly: String { tr("auto_reset_weekly") }
   public static var autoResetWeeklyThreshold: String { tr("auto_reset_weekly_threshold") }

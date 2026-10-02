@@ -22,7 +22,11 @@ fn window_rejection_before_save_leaves_prior_journal_untouched() {
     std::fs::write(env.home().join("desktop-recovery.json"), target.to_string()).unwrap();
     let mock = MockAppLifecycle::new(true);
     mock.set_preflight_error_on_call(1, "two windows");
-    assert!(DistributionCheckpointService::prepare(env.home(), &mock, &[]).is_err());
+    let error = DistributionCheckpointService::prepare(env.home(), &mock, &[], "old", "new")
+        .err()
+        .unwrap();
+    assert_eq!(error.message, "two windows");
+    assert_eq!(error.phase, "SHUTDOWN_WINDOW_GUARD_FAILED");
     assert_eq!(mock.preflight_calls.load(Ordering::SeqCst), 1);
     assert_eq!(read_manifest(&env), target);
 }
@@ -34,7 +38,24 @@ fn window_rejection_after_save_restores_prior_journal() {
     std::fs::write(env.home().join("desktop-recovery.json"), target.to_string()).unwrap();
     let mock = MockAppLifecycle::new(true);
     mock.set_preflight_error_on_call(2, "two windows");
-    assert!(DistributionCheckpointService::prepare(env.home(), &mock, &[]).is_err());
+    let error = DistributionCheckpointService::prepare(env.home(), &mock, &[], "old", "new")
+        .err()
+        .unwrap();
+    assert_eq!(error.message, "two windows");
+    assert_eq!(error.phase, "SHUTDOWN_WINDOW_GUARD_FAILED");
     assert_eq!(mock.preflight_calls.load(Ordering::SeqCst), 2);
     assert_eq!(read_manifest(&env), target);
+}
+
+#[test]
+fn unreadable_checkpoint_fails_as_checkpoint_phase_before_second_window_check() {
+    let env = TestEnv::new("checkpoint_phase");
+    std::fs::create_dir(env.home().join("desktop-recovery.json")).unwrap();
+    let mock = MockAppLifecycle::new(true);
+    let error = DistributionCheckpointService::prepare(env.home(), &mock, &[], "old", "new")
+        .err()
+        .unwrap();
+    assert_eq!(error.phase, "RECOVERY_CHECKPOINT_FAILED");
+    assert_eq!(mock.preflight_calls.load(Ordering::SeqCst), 1);
+    assert!(env.home().join("desktop-recovery.json").is_dir());
 }

@@ -1,3 +1,6 @@
+use super::recovery_banner_payload::{
+    WINDOW_ONLY_EXPLANATION, WINDOW_ONLY_EXPLANATION_WITHOUT_RESTORE, WINDOW_ONLY_TITLE,
+};
 use super::{
     BannerSessionStatus, ProcessIdentity, RecoveryBannerOwner, RecoveryBannerService,
     RecoverySession, SavedWindow, WindowRect, BANNER_EXPLANATION,
@@ -88,6 +91,8 @@ fn row_status_updates_are_dynamic_and_unknown_targets_fail_closed() {
     service.skip_window_restore().unwrap();
     let payload = service.read_payload().unwrap();
     assert_eq!(payload.explanation, BANNER_EXPLANATION_WITHOUT_RESTORE);
+    assert!(!payload.explanation.contains("перезапускается"));
+    assert!(!payload.explanation.contains("продолжит эти задачи"));
     assert_eq!(payload.saved_window, geometry());
     assert_eq!(
         service.read_payload().unwrap().sessions[0].status,
@@ -96,6 +101,31 @@ fn row_status_updates_are_dynamic_and_unknown_targets_fail_closed() {
     assert!(service
         .update_status("missing", BannerSessionStatus::Failed)
         .is_err());
+    service.finish().unwrap();
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn empty_task_list_shows_only_a_single_window_pending_state() {
+    let home = temp_home("window-only");
+    let service = RecoveryBannerService::begin(
+        &home,
+        "op-window-only",
+        ProcessIdentity::new(4244, "12347:000006").unwrap(),
+        geometry(),
+        Vec::new(),
+    )
+    .unwrap();
+    let payload = service.read_payload().unwrap();
+    assert_eq!(payload.title, WINDOW_ONLY_TITLE);
+    assert_eq!(payload.explanation, WINDOW_ONLY_EXPLANATION);
+    assert!(payload.sessions.is_empty());
+    assert!(!payload.explanation.contains("продолжит"));
+    service.skip_window_restore().unwrap();
+    assert_eq!(
+        service.read_payload().unwrap().explanation,
+        WINDOW_ONLY_EXPLANATION_WITHOUT_RESTORE
+    );
     service.finish().unwrap();
     fs::remove_dir_all(home).unwrap();
 }

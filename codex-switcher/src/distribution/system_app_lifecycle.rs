@@ -1,45 +1,55 @@
 use super::app_lifecycle::AppLifecycle;
 use super::app_stop_error::AppStopError;
+use super::distribution_window_task_service::DistributionWindowTaskService;
+use super::window_capture_failure_policy::{
+    classify_capture_failure, optional_banner_capture_failure,
+};
 use super::window_capture_mode::WindowCaptureMode;
-use crate::distribution::window_restore_report::RestoreReport;
+use super::window_task_restore_phase::WindowTaskRestorePhase;
 use crate::distribution::{
     RestoreOutcome, SystemWindowRestoreBackend, WindowProcessValidationService,
     WindowRestoreService,
 };
 use crate::recovery::{self, RecoveryBanner, RecoveryMode};
 use crate::switcher;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 pub struct SystemAppLifecycle {
     recovery_banner: Mutex<Option<RecoveryBanner>>,
+    window_tasks: DistributionWindowTaskService,
 }
 
 impl Default for SystemAppLifecycle {
     fn default() -> Self {
         Self {
             recovery_banner: Mutex::new(None),
+            window_tasks: DistributionWindowTaskService::default(),
         }
     }
 }
 
-fn classify_capture_failure(report: &RestoreReport) -> Result<WindowCaptureMode, String> {
-    let event = report.events.last();
-    if event.is_some_and(|event| {
-        event.phase == "CAPTURE_WINDOW_FAILED"
-            && event.detail == "Main window capture failed: WINDOW_NOT_FOUND"
-    }) {
-        return Ok(WindowCaptureMode::Absent);
+impl SystemAppLifecycle {
+    fn expected_process(&self) -> Result<super::WindowProcessIdentity, String> {
+        Ok(self
+            .recovery_banner
+            .lock()
+            .map_err(|_| "Recovery banner state lock is poisoned".to_string())?
+            .as_ref()
+            .ok_or("Desktop operation has no captured process identity")?
+            .expected_process()
+            .clone())
     }
-    Err(event
-        .map(|event| event.detail.clone())
-        .unwrap_or_else(|| "Codex window capture did not complete successfully".into()))
-}
 
-pub(crate) fn optional_banner_capture_failure(error: &str) -> bool {
-    matches!(
-        error,
-        "WINDOW_NOT_FOUND" | "WINDOW_ACCESS_FAILED" | "WINDOW_GEOMETRY_FAILED"
-    )
+    fn capture_window_tasks_with(
+        &self,
+        backend: &mut SystemWindowRestoreBackend,
+        desktop_home: Result<PathBuf, String>,
+    ) -> Result<(), String> {
+        let expected = self.expected_process()?;
+        self.window_tasks
+            .capture_with(&expected, backend, desktop_home)
+    }
 }
 
 impl AppLifecycle for SystemAppLifecycle {
@@ -48,28 +58,13 @@ impl AppLifecycle for SystemAppLifecycle {
     }
 
     fn preflight_shutdown_windows(&self) -> Result<(), String> {
-        let expected = self
-            .recovery_banner
-            .lock()
-            .map_err(|_| "Recovery banner state lock is poisoned".to_string())?
-            .as_ref()
-            .ok_or("Desktop shutdown has no captured process identity")?
-            .expected_process()
-            .clone();
-        switcher::preflight_shutdown_windows(&expected, None)
+        let expected = self.expected_process()?;
+        let captured = self.window_tasks.captured_window_ids()?;
+        switcher::preflight_shutdown_windows(&expected, captured.as_deref())
     }
 
     fn stop_app(&self) -> Result<(), AppStopError> {
-        let expected = self
-            .recovery_banner
-            .lock()
-            .map_err(|_| AppStopError::before("Recovery banner state lock is poisoned"))?
-            .as_ref()
-            .ok_or_else(|| {
-                AppStopError::before("Desktop shutdown has no captured process identity")
-            })?
-            .expected_process()
-            .clone();
+        let expected = self.expected_process().map_err(AppStopError::before)?;
         if switcher::current_codex_app_pids() != [expected.pid] {
             return Err(AppStopError::before(
                 "Desktop process set changed before shutdown",
@@ -78,7 +73,13 @@ impl AppLifecycle for SystemAppLifecycle {
         let mut backend = SystemWindowRestoreBackend::new().map_err(AppStopError::before)?;
         WindowProcessValidationService::confirm(&mut backend, &expected)
             .map_err(AppStopError::before)?;
-        switcher::stop_codex_app_gracefully(&expected, None)
+        let captured = self
+            .window_tasks
+            .captured_window_ids()
+            .map_err(AppStopError::before)?;
+        switcher::stop_codex_app_gracefully_with(&expected, captured.as_deref(), || {
+            self.window_tasks.verify_current(&expected)
+        })
     }
 
     fn launch_app(&self) -> Result<Vec<u32>, String> {
@@ -112,21 +113,13 @@ impl AppLifecycle for SystemAppLifecycle {
         let mut backend = SystemWindowRestoreBackend::new()?;
         if !preserve_window_bounds {
             let process = WindowProcessValidationService::inspect(&mut backend, pids[0])?;
-            let banner = if targets.is_empty() {
-                RecoveryBanner::without_window(process)
-            } else {
-                match backend.capture_banner_window(process.clone()) {
-                    Ok(placement) => {
-                        if placement.process != process {
-                            return Err("Banner window process identity changed".into());
-                        }
-                        WindowProcessValidationService::confirm(&mut backend, &process)?;
-                        RecoveryBanner::start_without_restore(
-                            operation_id,
-                            targets,
-                            reason,
-                            placement,
-                        )
+            let banner = match backend.capture_banner_window(process.clone()) {
+                Ok(placement) => {
+                    if placement.process != process {
+                        return Err("Banner window process identity changed".into());
+                    }
+                    WindowProcessValidationService::confirm(&mut backend, &process)?;
+                    RecoveryBanner::start_without_restore(operation_id, targets, reason, placement)
                         .unwrap_or_else(|_| {
                             crate::logger::log(
                                 "WARN",
@@ -135,19 +128,18 @@ impl AppLifecycle for SystemAppLifecycle {
                             );
                             RecoveryBanner::without_window(process)
                         })
-                    }
-                    Err(error) if optional_banner_capture_failure(&error) => {
-                        if error != "WINDOW_NOT_FOUND" {
-                            crate::logger::log(
-                                "WARN",
-                                "RECOVERY",
-                                "RECOVERY_BANNER_UNAVAILABLE: WindowServer capture failed",
-                            );
-                        }
-                        RecoveryBanner::without_window(process)
-                    }
-                    Err(error) => return Err(format!("Banner capture failed: {error}")),
                 }
+                Err(error) if optional_banner_capture_failure(&error) => {
+                    if error != "WINDOW_NOT_FOUND" {
+                        crate::logger::log(
+                            "WARN",
+                            "RECOVERY",
+                            "RECOVERY_BANNER_UNAVAILABLE: WindowServer capture failed",
+                        );
+                    }
+                    RecoveryBanner::without_window(process)
+                }
+                Err(error) => return Err(format!("Banner capture failed: {error}")),
             };
             let mut current = self
                 .recovery_banner
@@ -210,6 +202,46 @@ impl AppLifecycle for SystemAppLifecycle {
         banner.restore_after_relaunch(pid, operation_id, reason)
     }
 
+    fn capture_window_tasks(&self) -> Result<(), String> {
+        let mut backend = SystemWindowRestoreBackend::new()?;
+        let home = super::window_task_probe_service::WindowTaskProbeService::desktop_codex_home(
+            crate::storage::codex_home(),
+            super::window_task_probe_service::WindowTaskProbeService::account_home(),
+        );
+        self.capture_window_tasks_with(&mut backend, home)
+    }
+
+    fn captured_window_task_count(&self) -> Result<usize, String> {
+        self.window_tasks
+            .captured_window_ids()
+            .map(|ids| ids.unwrap_or_default().len())
+    }
+
+    fn restore_window_tasks(
+        &self,
+        bound: &super::desktop_app_session::DesktopAppSession,
+        phase: WindowTaskRestorePhase<'_>,
+    ) {
+        let verified = bound
+            .process
+            .as_ref()
+            .ok_or("Desktop session has no bound process".into())
+            .and_then(|process| {
+                self.inspect_process(process.pid).and_then(|observed| {
+                    if observed == *process {
+                        Ok(observed)
+                    } else {
+                        Err("Relaunched Desktop process changed before window task restore".into())
+                    }
+                })
+            });
+        self.window_tasks.restore(verified, bound, phase);
+    }
+
+    fn finish_window_tasks(&self) -> Result<(), String> {
+        self.window_tasks.finish()
+    }
+
     fn rebind_banner(&self, pid: u32) -> Result<(), String> {
         let current = self
             .recovery_banner
@@ -222,11 +254,7 @@ impl AppLifecycle for SystemAppLifecycle {
     }
 
     fn abort_recovery(&self) {
-        let banner = self
-            .recovery_banner
-            .lock()
-            .ok()
-            .and_then(|mut current| current.take());
+        let banner = self.recovery_banner.lock().ok().and_then(|mut b| b.take());
         drop(banner);
     }
 

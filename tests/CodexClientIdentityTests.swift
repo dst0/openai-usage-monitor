@@ -40,7 +40,6 @@ struct CodexClientIdentityTests {
       accounts: accounts, appAccount: nil, cliAccount: cli)
     require(snapshot.cliAccount?.id == cli.id, "CLI identity must remain available")
     require(snapshot.appAccount == nil, "missing App identity must not fall back to CLI")
-    require(!snapshot.autoSwitchEnabled, "an unspecified snapshot must leave auto-switch off")
 
     // Every client here reads a Codex home of this run, never the live ~/.codex.
     let identityHome = TestCodexHome(purpose: "cli-identity")
@@ -89,6 +88,30 @@ struct CodexClientIdentityTests {
     try! Data("{ }".utf8).write(to: testHome.appendingPathComponent("auth.json"), options: .atomic)
     require(client.loadCachedSnapshot()?.cliAccount == nil,
       "replacing auth after caching must invalidate the CLI quota")
+
+    // Whether ChatGPT runs comes from the client's Desktop source, never the live process list.
+    // Both answers are checked, so a client that read the real list would fail one of them on
+    // any machine, with ChatGPT open or not.
+    let appCache: [String: Any] = [
+      "accounts": [["id": app.id, "email": app.email, "plan_type": app.planType, "is_active": false]]
+    ]
+    try! JSONSerialization.data(withJSONObject: appCache)
+      .write(to: testHome.appendingPathComponent("usage-status.json"))
+    let runningDesktop = CodexDesktopProcessIdentity(pid: 4242, birthID: "1:000001")
+    let runningClient = identityHome.client(
+      desktopProcess: { runningDesktop }, desktopAppAccountIdProvider: { app.id })
+    let closedClient = identityHome.client(
+      desktopProcess: { nil }, desktopAppAccountIdProvider: { app.id })
+    require(runningClient.isCodexAppRunning(), "a running Desktop must be reported running")
+    require(runningClient.loadCachedSnapshot()?.isAppRunning == true,
+      "the snapshot must see the client's running Desktop")
+    require(runningClient.loadCachedSnapshot()?.appAccount?.id == app.id,
+      "a running Desktop must show its session's App account")
+    require(!closedClient.isCodexAppRunning(), "a closed Desktop must be reported closed")
+    require(closedClient.loadCachedSnapshot()?.isAppRunning == false,
+      "the snapshot must see the client's closed Desktop")
+    require(closedClient.loadCachedSnapshot()?.appAccount == nil,
+      "a closed Desktop must show no App account")
 
     let now = Date()
     let formatter = ISO8601DateFormatter()
@@ -181,21 +204,6 @@ struct CodexClientIdentityTests {
       [.posixPermissions: 0o644], ofItemAtPath: privateMarkerURL.path)
     require(CodexClient.readPrivateSessionMarkerData(at: privateMarkerURL) == nil,
       "a world-readable marker must not be read")
-
-    let statusHome = TestCodexHome(purpose: "status-default")
-    defer { statusHome.tearDown() }
-    let statusClient = statusHome.client()
-
-    func cachedAutoSwitch(_ value: Any?) -> Bool? {
-      var payload: [String: Any] = ["timestamp": formatter.string(from: now), "accounts": []]
-      if let value { payload["auto_switch_enabled"] = value }
-      let data = try! JSONSerialization.data(withJSONObject: payload)
-      try! data.write(to: statusClient.statusFileURL)
-      return statusClient.loadCachedSnapshot()?.autoSwitchEnabled
-    }
-    require(cachedAutoSwitch(nil) == false, "missing cache flag must leave auto-switch off")
-    require(cachedAutoSwitch("true") == false, "malformed cache flag must leave auto-switch off")
-    require(cachedAutoSwitch(true) == true, "explicit cache enablement must remain enabled")
 
     print("  ✅ App/CLI identity separation and stale-marker rejection verified")
   }

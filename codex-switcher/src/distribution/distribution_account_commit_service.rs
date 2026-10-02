@@ -128,7 +128,7 @@ impl DistributionAccountCommitService {
         expected_previous_id: &str,
         previous: &AuthJson,
         committed: &AuthJson,
-    ) -> Result<(), String> {
+    ) -> Result<DesktopAppSession, String> {
         Self::restore_when_desktop_stopped(lifecycle, previous, committed)?;
         Self::relaunch_if_auth_identity_matches(lifecycle, home, accounts, expected_previous_id)
     }
@@ -138,7 +138,7 @@ impl DistributionAccountCommitService {
         home: &Path,
         accounts: &AccountsFile,
         expected_previous_id: &str,
-    ) -> Result<(), String> {
+    ) -> Result<DesktopAppSession, String> {
         if lifecycle.is_app_running()? {
             return Err("Desktop is already running".into());
         }
@@ -205,7 +205,7 @@ impl DistributionAccountCommitService {
                 }
             });
         }
-        Ok(())
+        Ok(bound)
     }
 
     pub fn commit_latest_desktop_auth(

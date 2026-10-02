@@ -85,8 +85,11 @@ extension SystemWindowTaskProbe: WindowTaskSessionSystem {
     guard let windows = axArray(app, kAXWindowsAttribute as String) else {
       throw WindowTaskProbeFailure.windowAccessFailed
     }
-    return windows.filter {
-      (copyAXValue($0, kAXSubroleAttribute as String) as? String) == kAXStandardWindowSubrole as String
+    return try windows.filter {
+      guard let subrole = copyAXValue($0, kAXSubroleAttribute as String) as? String else {
+        throw WindowTaskProbeFailure.windowAccessFailed
+      }
+      return subrole == kAXStandardWindowSubrole as String
     }
   }
 
@@ -111,9 +114,15 @@ extension SystemWindowTaskProbe: WindowTaskSessionSystem {
     return AXUIElementPerformAction(button, kAXPressAction as CFString) == .success
   }
 
-  func isWindowAlive(_ window: AXUIElement) -> Bool {
+  /// An invalid AX element is only a cleanup hint; the rehearsal's final
+  /// WindowServer/AX inventory proves whether the window actually closed.
+  func isWindowAlive(_ window: AXUIElement) throws -> Bool {
     var role: AnyObject?
-    return AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &role) == .success
+    switch AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &role) {
+    case .success: return true
+    case .invalidUIElement: return false
+    default: throw WindowTaskProbeFailure.windowAccessFailed
+    }
   }
 
   private func onlyChild(of element: AXUIElement, titled title: String) -> AXUIElement? {

@@ -107,6 +107,14 @@ fn helper_failure_preserves_only_known_window_states() {
         "WINDOW_ACCESS_FAILED"
     );
     assert_eq!(
+        SystemWindowRestoreBackend::helper_failure(b"WINDOW_ACCESSIBILITY_DENIED\n"),
+        "WINDOW_ACCESSIBILITY_DENIED"
+    );
+    assert_eq!(
+        SystemWindowRestoreBackend::helper_failure(b"WINDOW_SCREEN_RECORDING_DENIED\n"),
+        "WINDOW_SCREEN_RECORDING_DENIED"
+    );
+    assert_eq!(
         SystemWindowRestoreBackend::helper_failure(b"PROCESS_IDENTITY_REJECTED\n"),
         "PROCESS_IDENTITY_REJECTED"
     );

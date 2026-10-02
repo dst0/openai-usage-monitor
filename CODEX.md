@@ -58,6 +58,12 @@ recovery checkpoint, and Desktop session are reconciled. Distribution loads
 only a same-user regular `0600` journal of at most 16 KiB through a
 no-follow, stable-inode read. It writes through random exclusive `0600`
 staging, atomic rename, and directory sync; unsafe existing paths fail closed.
+`auth_commit_cli` is recorded before the credential write; a dead PID or old
+timestamp does not prove rollback. An explicit repair must hold the recovery
+operation lock, recheck unique current token ownership, the marker's account
+and process binding, absent pending recovery, and the unchanged journal, then
+archive and durably clear only a superseded intent. Never infer recovery of
+selected windows or cold tasks from this journal cleanup.
 The Desktop session marker follows the same `0600`, 16 KiB, no-follow,
 stable-inode read and random exclusive staging rules. Invalid markers block
 account distribution rather than being treated as absent.
@@ -111,10 +117,25 @@ registry lock; quota HTTP remains outside it. A stale whole-file save can
 re-enable auto-switch or restore an old refresh token.
 Interactive setup propagates registry and active-auth errors and uses a private
 random login directory. The derived status cache copies current registry
-switch settings while holding the same lock; an absent or malformed Swift cache
-flag defaults to auto-switch off, and so does a registry without the setting
-when the menu is built. Settings sync leaves a missing cache for the
-daemon to populate with a complete quota snapshot. Status staging uses the same
+switch settings while holding the same lock. The Menu Bar's Auto-Switch
+Settings submenu reads its marks from the registry itself, never from that
+cache copy: when the menu is built, whenever it opens, after every status cache
+update, and after each of its own `cxi config` writes, which run one at a time
+in the order chosen. A missing registry or key, or a value that is not a JSON
+boolean (serde rejects it and with it the registry), shows every automation off
+and window-bounds preservation on, the Rust defaults. A write counts as saved when
+that read-back shows the requested value, not by the CLI's exit status, which can
+report a failed status cache sync after the registry was saved. The `config`
+command bounds its own registry lock waits at ten seconds in total, so it always
+finishes and the rows come back: a holder that keeps the switcher lock past that
+makes it fail before saving, with the registry reported busy, and a lock still
+busy only for the status cache copy after the save is left to the next status
+write (which applies the registry's settings) while the command succeeds. The
+weekly reset values it is not given are merged inside the same locked
+transaction, never read beforehand, and every flag of one call is saved in that
+one transaction, so a failure means none of them was saved. The cache's copy
+of the auto-switch settings has no Menu Bar reader. Settings sync leaves a missing
+cache for the daemon to populate with a complete quota snapshot. Status staging uses the same
 unpredictable, exclusive no-follow temporary-file pattern as credential staging.
 Manual reset-credit consumption commits only the credit cache by stable account
 ID with token, route, and previous-credit checks. A conflict after the remote
@@ -202,7 +223,14 @@ turn verification. For a deferred retry after App/CLI distribution, the saved
 Desktop account must match the target, the exact live ChatGPT PID and birth
 identity, and the expected CLI account; an old or unbound session cannot
 authorize dispatch. The initial recovery banner closes after its bounded
-owner waits; a new banner is required before any later owner-routed IPC send.
+owner waits. A deferred navigation attempt for a still eligible target under
+the exact saved Desktop account holds a new `Pending` banner through a bounded
+owner-mount wait and hands that same panel to recovery after owner proof. If no
+Desktop window is visible initially, panel creation is retried after navigation;
+no IPC is sent unless a live panel appears. Timeout, identity change, or panel
+failure retains the original checkpoint. While ownership is pending, the panel
+says that tasks are being opened and checked; it does not claim a restart or
+successful continuation before either is verified.
 An older ownerless checkpoint stays eligible across another switch until a
 new post-checkpoint turn has substantive, error-free agent work and no queued
 follow-up. Only then does a later restart record a fresh offset and clear the
@@ -212,8 +240,9 @@ Queued follow-ups require the same owner and turn-mode revalidation as an
 unqueued turn. An already-unpaused queue still receives one owner-routed
 `thread-follower-set-queued-follow-ups-state` wake after the durable dispatch
 marker; owner discovery alone sends no work. Non-quota interrupted errors are
-explicit-target only, and historical user Stop turns are not discovery-only
-recovery candidates, including when a queue exists.
+explicit-target only except for the operation-bound auth-refresh exception
+described below; historical user Stop turns are not discovery-only recovery
+candidates, including when a queue exists.
 Tail classification reads only through a captured file length, checks whether
 the seek begins on a record boundary, discards a partial first record as bytes
 before strict UTF-8 decoding, and requires a final newline. A malformed newer
@@ -234,8 +263,8 @@ selects one ownerless task with a valid ID and a SQLite row, rotating per
 entry never takes that turn, and a single-target pass (the deferred worker's
 re-prune before recovery) leaves the cursor alone so the next full pass
 continues the rotation. A selected target with a stable terminal non-quota error is dropped
-because unattended recovery cannot dispatch it; malformed or changed tails
-keep the retry. Older deferred intervals are scanned in chunks of at most 16 MiB
+unless its saved, confirmed auth-rotation evidence is bound to the target
+Desktop account; malformed or changed tails keep the retry. Older deferred intervals are scanned in chunks of at most 16 MiB
 per probe and yield no lifecycle result until the snapshot end is reached. Foreground
 recovery scans at most 16 MiB of rollout payload per pass across its targets,
 plus small boundary samples, and waits for a complete newline-terminated
@@ -257,10 +286,20 @@ that started recovery, so the changed account cannot retry it unattended. A
 hidden captured-restart banner can bind the
 relaunched process only when the exact live Desktop session marker matches;
 other modes reject a process change during the wait.
-There is no persistent banner while Desktop has not mounted the task. Unattended mounting
-after an account switch remains unverified on the current Desktop build. If the daemon is not
+The deferred banner exists during an eligible navigation attempt and its
+bounded owner wait, not between daemon probes. Unattended mounting after an
+account switch remains unverified on the current Desktop build. If the daemon is not
 running, inspect the affected task and use
 `cxi resume <id>` only if the turn remains interrupted.
+
+When a restart captures one selected window but has zero running recovery
+targets, the banner shows a generic one-window pending message and no task rows.
+The captured window and exact PID/birth identity still gate the panel. On
+relaunch, target auth and the saved Desktop session are checked before the
+panel is rebound or window geometry restored, then checked again immediately
+before recovery IPC. The panel does not claim that a
+task resumed; missing-window and optional-capture cases retain the prior
+fail-closed or best-effort behavior for their configured capture mode.
 
 An account switch records its recovery targets before shutdown and takes a
 second checkpoint after the old ChatGPT process exits. The later offset keeps
@@ -269,28 +308,62 @@ checkpoint cannot be saved, account switching stops before changing
 `auth.json` and relaunches the previous Desktop account; a successful shutdown
 alone is not permission to rotate credentials. `cxi restart` also relaunches
 the previous Desktop state if its post-shutdown checkpoint fails.
-When eligible recovery targets exist, distribution handshakes Desktop IPC after
-the first checkpoint and before stopping ChatGPT. A failed handshake aborts the
+Only a Monitor-owned A-to-B switch may mark the exact token-refresh failure
+of an active pre-stop turn as automatically recoverable. Its private recovery
+record carries the verified source and target account IDs, old turn ID,
+first-checkpoint offset, rollout file identity, and the queue database identity,
+revision, and pending count captured before that offset. The queue snapshot is
+checked during preparation, after stop, and again before deferred dispatch.
+A bounded streaming scan before
+auth replacement must find the matching terminal error in that interval and
+no Stop, new turn, or user input. The second offset remains the recovery proof
+boundary. Deferred mounting and dispatch recheck the saved rollout identity,
+length, and exact terminal interval, so replacement after confirmation cannot
+inherit the exception. The exception still requires the exact relaunched target-account
+Desktop session and a mounted IPC owner; `no-client-found` retains its
+target-bound checkpoint without sending a turn. Historical auth errors without
+this operation evidence remain explicit-only.
+The recovery manifest reader rejects symlinks, changing files, and files over
+1 MiB; serialized auth-rotation evidence must have bounded nonempty account
+and turn IDs and a valid captured-rollout identity.
+When eligible recovery targets or captured selected-window tasks exist,
+distribution handshakes Desktop IPC after the first checkpoint and before
+stopping ChatGPT. A failed handshake aborts the
 switch, restores the prior recovery checkpoint, and clears the distribution
 journal only after that restoration succeeds. The Desktop stays running.
 
 Every CLI or distribution restart checks the exact ChatGPT PID, birth identity,
-and WindowServer window inventory again immediately before SIGTERM. More than
-one user window, or an unidentified window that could be user-owned, stops the
-restart before credentials change, unless the user passed
-`--restore-window-tasks` to `cxi restart` or `cxi switch` and the window list
-is exactly the one whose tasks were captured. This guard applies even when
+and WindowServer window inventory again immediately before SIGTERM. Direct
+`cxi restart` and `cxi switch` require `--restore-window-tasks` for multiple
+windows. A running-Desktop distribution captures every eligible window's task
+in Rust, then requires exactly those window IDs at both checkpoint preflights
+and immediately before shutdown. A verified zero-window snapshot remains an
+exact empty list: a window opened afterwards blocks shutdown. A final helper
+snapshot compares task, frame, focus, and keymap just before SIGTERM. A small
+interval remains between that read and the signal, when Desktop could change
+the selected task. An
+unidentified, unreadable, changed, or duplicate window/task refuses the
+restart before credentials change. This holds when
 `preserve_window_bounds_on_restart=false`; that setting controls geometry only.
 
 Desktop gives Monitor no window-to-task interface. Inspection of ChatGPT
-26.924.22138 (read-only, from a copy of its bundle) shows that it persists
+26.924.22138 and 26.928.31416 (read-only, from their bundles) shows that it persists
 only one `electron-main-window-bounds` record, relaunches one primary window
 without a task, sends a `codex://threads/<id>` link to its most recently
 focused primary window (focus events update that choice), and opens a
-focused primary window from File > New Window when its multiwindow feature is
-on. Its IPC router has no window, route, or navigation method, and owner
+primary window from File > New Window when its multiwindow feature is
+on. The helper waits up to 10 seconds for one new standard window and explicitly
+keys it before sending a task link. Its IPC router has no window, route, or navigation method, and owner
 discovery answers per host connection in the main process, never per window.
-`--restore-window-tasks` builds on exactly those behaviors. Before shutdown
+The menu action has no result ID: a window independently opened by the user
+during that wait cannot be distinguished from the requested one. Rehearsal
+reports uncertain cleanup if no window appears before the deadline, because
+one may appear later. An incomplete restore can also leave a late window;
+inspect the actual window list before another restart. Avoid opening other ChatGPT windows during an explicit
+restore or rehearsal; automatic switching remains disabled until this path
+passes on the installed app.
+The explicit CLI flag and distribution's internal session build on exactly
+those behaviors. Before shutdown
 the helper reads each window's task with Copy deeplink and its Accessibility
 frame, refusing the restart for a window without a task, a duplicate task, a
 minimized, full-screen, or ambiguous window, a missing New Window item while
@@ -306,17 +379,38 @@ Copy deeplink returns the planned task; a later link that moved an earlier
 window is caught by a final pass. When recovery could have sent its own task
 link (a target no restored window showed, or an incomplete restore), even when
 recovery failed, a recheck moves back only a window now showing a recovery
-task instead of its own, with the same link guard and a final pass; it
+task instead of its own, with the same link guard and a final pass after
+every attempted link, including a last attempt whose target never verifies; it
 creates, moves, and closes nothing, cannot tell recovery's link from the
 user's own navigation to a recovery task, and reactivates the app that was
-frontmost before it. The plan reaches the helper on stdin
+frontmost before it. The recheck reports any unmatched frame or unreadable
+Copy deeplink as unverified, without navigating that window. A rehearsal treats an unreadable liveness
+check as an unclosed extra window and reports failure; after a new-window
+inventory error it attempts to close the known focused new window. Its final
+WindowServer/Accessibility inventory must exactly match the pre-rehearsal IDs;
+an extra window or unreadable inventory reports `REHEARSAL_WINDOW_LEFT_OPEN`.
+The plan reaches the helper on stdin
 and the snapshot returns on stdout; each task link is handed to macOS `open`,
 as recovery already does. Every window-task helper run has a deadline and is
 killed with its process group when it passes; the helper also exits once its
-parent is gone. Restore failures, including a relaunch
-that never reached the restore, are reported with the restart result and
-never block recovery. Only a command whose raw `--trigger` is `user` accepts the flag; the
-daemon, the Monitor app, distribution, and auto-switch never pass it
+parent is gone. For both distribution restore passes, task links wait for
+Desktop IPC; target authentication, session marker, PID, and birth are checked
+immediately before the helper and again after it returns. Independent Desktop
+changes can still interleave with a link. Capture and restore foreground
+Desktop windows and briefly use the clipboard. Restore failures, including a
+relaunch that never reached the restore, are reported with the restart result
+and never block recovery.
+When a post-stop distribution failure relaunches the previous account, its
+captured task session remains active until that relaunch returns a verified
+previous-account Desktop session. The same IPC, auth, session-marker, PID,
+and birth checks guard its restore; only then is the session finished. If the
+previous relaunch or restore cannot be verified, the error reports incomplete
+window restoration, while the distribution journal follows the auth rollback
+result.
+Only a command whose raw `--trigger` is `user`
+accepts the flag; the
+daemon, the Monitor app, distribution, and auto-switch never pass that CLI flag;
+distribution owns its task session inside the Rust lifecycle
 (`tests/enforce_task_probe_isolation.rs` pins every caller and the forwarded
 value). None of this has run against a live Desktop yet;
 `cxi window rehearse-task-restore --allow-focus-and-clipboard` exercises
@@ -376,18 +470,57 @@ window-roster completeness unproven.
 Automatic distribution records whether the exact Desktop process has an eligible
 standard window before shutdown. If no such window exists, it skips geometry
 restore; after task owner mounting, recovery requires a visible banner before
-IPC and retains the original checkpoint if no window appears. A launchd daemon may be denied Accessibility access even
-when the same helper succeeds from Terminal. If that happens, set
-`cxi config --preserve-window-bounds false` to explicitly disable geometry
-preservation. Distribution validates the exact Desktop process without an
-Accessibility window read, uses read-only WindowServer geometry to place the
-banner when a visible window and recovery target exist, and still performs IPC
-recovery and singleton-process verification. Explicit WindowServer visibility/geometry
-failures and panel visibility failures are logged without blocking the account
-switch. Helper protocol and unknown capture failures block the switch. Window access, geometry, and process-identity failures remain
-blocking while preservation is enabled; process-identity failures remain
-blocking in either mode. With preservation disabled, the prior window position
-and size are not restored or verified by the Monitor.
+IPC and retains the original checkpoint if no window appears. The shutdown
+window guard always checks Accessibility and Screen Recording inside the
+`codex-window-restore` process launched by `cxi`, including when
+`preserve_window_bounds_on_restart=false`.
+`WINDOW_ACCESSIBILITY_DENIED` and `WINDOW_SCREEN_RECORDING_DENIED` are fixed,
+non-sensitive pre-signal failures. Neither check prompts for a grant. The
+installer accepts an explicit `CODEX_MONITOR_SIGNING_IDENTITY_SHA1` and signs
+both the CLI and window helper with fixed identifiers; without it, both are ad
+hoc signed and a TCC grant may not survive rebuilding. Verify the installed
+launchd path and the actual TCC-attributed client rather than an
+interactive Terminal run. Disabling bounds preservation skips geometry
+restoration but cannot authorize a shutdown with unreadable window inventory.
+The legacy LaunchAgent has no `AssociatedBundleIdentifiers` key: Apple requires
+the agent executable and associated app to share a Team Identifier, while the
+installer currently signs the Monitor app ad hoc. Do not add that key as a
+privacy-grant workaround without matching signatures and live verification.
+
+On 2026-09-28, macOS 27.2 showed enabled `codex-mon` and
+`codex-window-restore` rows under Privacy & Security > Device Control and Data
+Access, and an enabled `codex-mon` row under Screen & System Audio Recording.
+The freshly installed ad hoc helper counted one current ChatGPT window from an
+interactive shell, but the same exact helper and process identity returned
+`WINDOW_ACCESSIBILITY_DENIED` from a one-shot launchd job. This proves the
+visible toggle is insufficient evidence of current background authorization.
+Screen Recording for the helper was absent in Settings; its launchd status
+cannot be inferred until Accessibility passes. No Desktop signal, account
+switch, or recovery request was sent. Automatic switching remains disabled.
+
+The multi-window shutdown guard (`count-standard-windows`) still reads
+Accessibility in both modes: it counts standard windows through Accessibility
+before cross-checking WindowServer. A launchd denial from the current helper
+returns `WINDOW_ACCESSIBILITY_DENIED` before any Desktop signal. If selected
+window task capture reaches the helper first, the switch logs
+`WINDOW_TASK_CAPTURE_FAILED`; if the later checkpoint preflight reaches it,
+the switch logs `SHUTDOWN_WINDOW_GUARD_FAILED`. The outcome carries the same
+`pre_signal_phase`. The one-shot launchd probe did not execute distribution,
+so it established the helper error but no distribution audit phase. A prior
+launchd context also
+lacked Screen Recording in a probe; WindowServer then may omit window titles,
+which the guard rejects as an inventory mismatch. The daemon's
+`AutomaticDistributionBackoff` holds back an automatic plan (cause, current and
+target accounts) after two consecutive identical pre-signal failures, for 5
+minutes doubling to 30, in memory only; manual requests never consult or
+change it. It remembers only the latest plan, ends a streak after any other
+attempt result or an hour without a failure, logs `AUTO_BACKOFF_ACTIVE` once
+per hold, and counts awake time (`Instant`).
+The watchdog suppresses its two-second depleted-account full quota-refresh wake
+during an active hold. An enabled weekly auto-reset can still wake a full tick
+for a recent blocked task, at most once every 30 seconds. Normal interval
+ticks, auth-file wakeups, and lightweight deferred recovery polling continue;
+a different plan is reconsidered at the next tick.
 
 Deferred recovery in an already running ChatGPT never restores window bounds.
 It locates its banner through the read-only WindowServer helper, so a launchd
@@ -402,12 +535,16 @@ and malformed helper output block dispatch and retain the original checkpoint.
 Automatic switching stays disabled until quota-interrupted cold tasks complete
 end-to-end recovery and exact selected-task restoration across multiple windows
 is verified in the installed app. Historical logs show URL-to-owner-to-IPC
-recovery; current live checks show that accepted URL delivery may leave the
-task ownerless at an immediate check. The installed ChatGPT 26.924.20706
-deep-link handler shows its primary window before ordinary task navigation,
-which the owner accepts. No supported background mount IPC method was evident.
-These checks dispatched no recovery turn or account switch. URL acceptance is
-not owner or recovery proof.
+recovery; checks on 2026-09-28 with ChatGPT 26.924.20706 showed that accepted
+URL delivery may leave the task ownerless at an immediate check. That version's
+deep-link handler showed its primary window before ordinary task navigation,
+which the owner accepted. No supported background mount IPC method was evident.
+Those checks dispatched no recovery turn or account switch. The app installed
+on this host on 2026-10-03 was 26.928.31416. Static inspection found that its
+deep-link handler first reads the requested thread and may stop without
+navigation when that read returns no thread. The revised window-opening path
+has passed scripted tests, but no installed multiwindow rehearsal or cold-task
+recovery has passed. URL acceptance is not owner or recovery proof.
 
 The Menu Bar's APP quota comes from `desktop-app-session.json` only when its
 saved account is bound to the exact live ChatGPT PID and process birth time.
@@ -511,7 +648,7 @@ Verify the exact built app signature and running process after installation.
 - `cxi restart [--restore-window-tasks]`: Restart Desktop and verify recovery without changing accounts; the flag works as for `cxi switch`.
 - `cxi window probe-tasks --allow-focus-and-clipboard` / `cxi window rehearse-task-restore --allow-focus-and-clipboard`: explicit diagnostics for the window-to-task mapping and for the restore steps; neither restarts Desktop.
 - `cxi resume [thread-id]`: Resume an eligible quota-blocked or restart-captured thread through the Desktop owner's same-user IPC channel. Accessibility is used only for recovery visibility/banner verification, not to dispatch the turn.
-- `cxi config`: Inspect and configure auto-switch modes (`--auto-switch-enabled`, `--auto-switch-business-only`, `--auto-switch-business-priority`, `--restart-app-on-switch`, `--preserve-window-bounds`).
+- `cxi config`: Inspect and configure auto-switch modes (`--auto-switch-enabled`, `--auto-switch-business-only`, `--auto-switch-business-priority`, `--restart-app-on-switch`, `--preserve-window-bounds`). The Menu Bar's `⚙️ Auto-Switch Settings` submenu runs these same flags.
 - `cxi set-multiplier <account> <val>`: Set custom quota multiplier override (e.g. 20 for Pro 20x).
 - `cxi reset-multiplier <account>`: Reset multiplier back to auto-detected default.
 - `cxi wrap exec "<prompt>"`: Run unattended command with pre-flight quota check and auto-switch.

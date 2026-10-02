@@ -17,7 +17,7 @@ const PROCESS_FIELDS: [&str; 2] = ["pid", "birth_id"];
 /// print. They carry no task, window, or clipboard data, so they are shown
 /// verbatim; any other stderr is replaced by the generic helper error.
 /// `COMMAND_REJECTED` means the installed helper predates the command.
-const FAILURE_CODES: [&str; 33] = [
+const FAILURE_CODES: [&str; 35] = [
     "COMMAND_REJECTED",
     "EXPLICIT_OPT_IN_REQUIRED",
     "PROBE_ACCESS_DENIED",
@@ -28,6 +28,8 @@ const FAILURE_CODES: [&str; 33] = [
     "PROCESS_IDENTITY_REJECTED",
     "WINDOW_NOT_FOUND",
     "WINDOW_ACCESS_FAILED",
+    "WINDOW_ACCESSIBILITY_DENIED",
+    "WINDOW_SCREEN_RECORDING_DENIED",
     "WINDOW_GEOMETRY_FAILED",
     "WINDOW_INVENTORY_MISMATCH",
     "WINDOW_LIMIT_EXCEEDED",

@@ -188,6 +188,26 @@ impl AppLifecycle for HookedLifecycle {
         self.inner.restore_window_bounds(pid, operation_id, reason)
     }
 
+    fn capture_window_tasks(&self) -> Result<(), String> {
+        self.inner.capture_window_tasks()
+    }
+
+    fn captured_window_task_count(&self) -> Result<usize, String> {
+        self.inner.captured_window_task_count()
+    }
+
+    fn restore_window_tasks(
+        &self,
+        bound: &super::DesktopAppSession,
+        phase: super::WindowTaskRestorePhase<'_>,
+    ) {
+        self.inner.restore_window_tasks(bound, phase);
+    }
+
+    fn finish_window_tasks(&self) -> Result<(), String> {
+        self.inner.finish_window_tasks()
+    }
+
     fn rebind_banner(&self, pid: u32) -> Result<(), String> {
         self.inner.rebind_banner(pid)
     }
@@ -818,6 +838,12 @@ fn post_stop_checkpoint_error_does_not_launch_with_changed_auth() {
         .execute(DistributionRequest::auto("quota_exhausted"));
 
     assert!(result.is_err());
+    let log = env.log_content();
+    assert!(
+        log.contains("status=failed code=transaction_failed"),
+        "{log}"
+    );
+    assert!(!log.contains("pre_signal_phase"), "{log}");
     assert_eq!(lifecycle.inner.stop_calls.load(Ordering::SeqCst), 1);
     assert_eq!(lifecycle.inner.launch_calls.load(Ordering::SeqCst), 0);
     assert!(!lifecycle.inner.running.load(Ordering::SeqCst));

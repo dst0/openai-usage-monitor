@@ -4,6 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
+use super::lock_wait_budget::{lock_file, LockMode};
 use super::{accounts_json_path, acquire_switcher_lock};
 
 /// Performs registry read/modify/write while holding one Monitor-wide lock.
@@ -54,8 +55,8 @@ impl AccountsRegistryTransactionService {
             .custom_flags(libc::O_NOFOLLOW)
             .open(path)
             .map_err(|_| "Accounts registry could not be opened safely".to_string())?;
-        file.lock_shared()
-            .map_err(|_| "Accounts registry could not be locked".to_string())?;
+        lock_file(&file, LockMode::Shared)
+            .map_err(|wait| wait.describe(|_| "Accounts registry could not be locked".into()))?;
         let mut content = String::new();
         file.read_to_string(&mut content)
             .map_err(|_| "Accounts registry could not be read".to_string())?;

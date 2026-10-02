@@ -1,4 +1,15 @@
 use crate::{setup, storage};
+use std::time::Duration;
+
+/// How long `cxi config` waits in total for other holders of the registry
+/// locks. Holds last milliseconds (network calls run outside the lock); a
+/// holder that keeps it longer is stuck, and the command reports the registry
+/// busy instead. Test builds use a short wait so the busy path runs quickly.
+pub(super) const CONFIG_LOCK_WAIT: Duration = if cfg!(test) {
+    Duration::from_millis(300)
+} else {
+    Duration::from_secs(10)
+};
 
 pub(super) struct AccountCommandService;
 
@@ -7,6 +18,11 @@ impl AccountCommandService {
         setup::rename_account(account, (!clear).then_some(new_name))
     }
 
+    /// Saves the requested settings in one registry transaction, or prints
+    /// them all when none is given. Every registry lock wait is bounded by
+    /// `CONFIG_LOCK_WAIT`, so the command always finishes: the Menu Bar keeps
+    /// its settings rows disabled until it does. Exit status 0 means the
+    /// registry holds every requested value; a failure means it holds none.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn configure(
         restart_app_on_switch: Option<bool>,
@@ -17,40 +33,22 @@ impl AccountCommandService {
         auto_reset_weekly_min_hours: Option<u64>,
         preserve_window_bounds: Option<bool>,
     ) -> Result<(), String> {
-        if let Some(value) = restart_app_on_switch {
-            setup::set_config_restart_app_on_switch(value)?;
-        }
-        if let Some(value) = auto_switch_enabled {
-            setup::set_config_auto_switch_enabled(value)?;
-        }
-        if let Some(value) = auto_switch_business_only {
-            setup::set_config_auto_switch_business_only(value)?;
-        }
-        if let Some(value) = auto_switch_business_priority {
-            setup::set_config_auto_switch_business_priority(value)?;
-        }
-        if let Some(value) = preserve_window_bounds {
-            setup::set_config_preserve_window_bounds(value)?;
-        }
-        if auto_reset_weekly_enabled.is_some() || auto_reset_weekly_min_hours.is_some() {
-            let current = storage::load_accounts().unwrap_or_default();
-            let enabled =
-                auto_reset_weekly_enabled.unwrap_or(current.settings.auto_reset_weekly_enabled);
-            let threshold_hours = auto_reset_weekly_min_hours
-                .unwrap_or(current.settings.auto_reset_weekly_min_remaining_seconds / 3600);
-            setup::set_config_auto_reset_weekly(enabled, threshold_hours * 3600)?;
-        }
-        if restart_app_on_switch.is_none()
-            && auto_switch_enabled.is_none()
-            && auto_switch_business_only.is_none()
-            && auto_switch_business_priority.is_none()
-            && auto_reset_weekly_enabled.is_none()
-            && auto_reset_weekly_min_hours.is_none()
-            && preserve_window_bounds.is_none()
-        {
-            Self::print_configuration();
-        }
-        Ok(())
+        let changes = setup::ConfigChanges {
+            restart_app_on_switch,
+            auto_switch_enabled,
+            auto_switch_business_only,
+            auto_switch_business_priority,
+            preserve_window_bounds,
+            auto_reset_weekly_enabled,
+            auto_reset_weekly_min_hours,
+        };
+        storage::with_lock_wait_budget(CONFIG_LOCK_WAIT, || {
+            if changes.is_empty() {
+                Self::print_configuration()
+            } else {
+                setup::set_config(changes)
+            }
+        })
     }
 
     pub(super) fn relogin(account: String, restart: bool, no_restart: bool) -> Result<(), String> {
@@ -72,8 +70,11 @@ impl AccountCommandService {
         setup::relogin_account(&target, restart, no_restart)
     }
 
-    fn print_configuration() {
-        let accounts = storage::load_accounts().unwrap_or_default();
+    /// Prints the saved settings. An unreadable or busy registry is an error,
+    /// never a list of defaults; with no registry at all, the defaults are
+    /// what the Rust core applies, so those print.
+    fn print_configuration() -> Result<(), String> {
+        let accounts = storage::load_accounts()?;
         println!(
             "restart_app_on_switch: {}",
             accounts.settings.restart_app_on_switch
@@ -102,5 +103,10 @@ impl AccountCommandService {
             "preserve_window_bounds_on_restart: {}",
             accounts.settings.preserve_window_bounds_on_restart
         );
+        Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "account_command_service.test.rs"]
+mod tests;

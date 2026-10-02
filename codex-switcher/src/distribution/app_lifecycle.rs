@@ -1,6 +1,8 @@
 use super::app_stop_error::AppStopError;
+use super::desktop_app_session::DesktopAppSession;
 use super::window_capture_mode::WindowCaptureMode;
 use super::window_restore_process_identity::ProcessIdentity;
+use super::window_task_restore_phase::WindowTaskRestorePhase;
 
 pub trait AppLifecycle: Send + Sync {
     fn is_app_running(&self) -> Result<bool, String>;
@@ -15,6 +17,10 @@ pub trait AppLifecycle: Send + Sync {
         reason: &str,
         preserve_window_bounds: bool,
     ) -> Result<WindowCaptureMode, String>;
+    fn capture_window_tasks(&self) -> Result<(), String>;
+    fn captured_window_task_count(&self) -> Result<usize, String>;
+    fn restore_window_tasks(&self, bound: &DesktopAppSession, phase: WindowTaskRestorePhase<'_>);
+    fn finish_window_tasks(&self) -> Result<(), String>;
     fn restore_window_bounds(
         &self,
         pid: u32,

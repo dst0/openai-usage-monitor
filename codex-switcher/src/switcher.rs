@@ -68,7 +68,7 @@ pub use codex_app_lifecycle::send_macos_notification;
 pub(crate) use codex_app_lifecycle::{
     current_codex_app_pids, current_codex_app_pids_checked, is_codex_app_running_checked,
     is_shared_auth_active_checked, launch_codex_app, preflight_shutdown_windows,
-    stop_codex_app_gracefully,
+    stop_codex_app_gracefully, stop_codex_app_gracefully_with,
 };
 #[cfg(test)]
 pub(crate) use direct_switch_journal::create_direct_switch_intent_for_test;
@@ -91,6 +91,7 @@ pub use thread_identity::{
 pub(crate) use thread_identity::{
     retry_thread_link_in_background, retry_thread_link_natively_in_background,
 };
+pub(crate) use thread_rollout_inspector::read_rollout_tail_lines;
 pub use thread_rollout_inspector::{
     find_thread_rollout_path, inspect_thread_rollout_state, RECENT_QUOTA_WINDOW_SECS,
 };

@@ -272,6 +272,11 @@ struct AppDelegateTestRunner {
     assertTrue(!ruStr.isEmpty, "Auto-switch localization must not be empty")
     runAppDelegateCodexHomeTests(preferences: preferences)
 
+    // ====================================================================
+    // Test 5b: Auto-Switch Settings submenu shows the registry
+    // ====================================================================
+    runAutoSwitchSettingsMenuTests(preferences: preferences)
+
     let stopCommands = CodexClient.backgroundAutomationStopCommands(
       daemonPath: "/tmp/com.codex.switcher.plist")
     assertEqual(
@@ -484,7 +489,7 @@ struct AppDelegateTestRunner {
       activeEmail: personalAccount.email, activePlan: personalAccount.planType,
       fiveHourPercentage: 0.0, weeklyPercentage: 0.0,
       resetTime: nil, resetAfterSeconds: nil, credits: 0,
-      autoSwitchEnabled: true, accounts: [personalAccount, bizAccount],
+      accounts: [personalAccount, bizAccount],
       appAccount: personalAccount, cliAccount: personalAccount
     )
     let delegateIdentityLock = NSLock()
@@ -573,7 +578,10 @@ struct AppDelegateTestRunner {
       recordedAutoInvocations, [autoArguments],
       "Auto-distribution must invoke the coordinator exactly once")
 
-    let configuredProcess = CodexClient.makeDistributionProcess(arguments: autoArguments)
+    let coordinatorCLI = URL(fileURLWithPath: "/nonexistent/codex-mon", isDirectory: false)
+    let configuredProcess = CodexClient.makeDistributionProcess(
+      executable: coordinatorCLI, arguments: autoArguments)
+    assertEqual(configuredProcess.executableURL, coordinatorCLI, "Process must run the client's CLI")
     assertEqual(configuredProcess.arguments, autoArguments, "Process must receive the exact plan")
     let capturedOutput = configuredProcess.standardOutput as? Pipe
     let capturedError = configuredProcess.standardError as? Pipe
@@ -581,7 +589,7 @@ struct AppDelegateTestRunner {
     assertTrue(capturedError != nil, "Coordinator stderr must be captured")
     assertTrue(capturedOutput === capturedError, "Coordinator stdout and stderr must share one capture pipe")
 
-    let captureProbe = CodexClient.makeDistributionProcess(arguments: [])
+    let captureProbe = CodexClient.makeDistributionProcess(executable: coordinatorCLI, arguments: [])
     captureProbe.executableURL = URL(fileURLWithPath: "/bin/sh")
     captureProbe.arguments = ["-c", "printf coordinator-out; printf coordinator-err >&2; exit 7"]
     let capturedProbeResult = CodexClient.runCapturedProcess(captureProbe)
@@ -591,6 +599,21 @@ struct AppDelegateTestRunner {
     } ?? ""
     assertTrue(capturedProbeText.contains("coordinator-out"), "Coordinator stdout must be consumed")
     assertTrue(capturedProbeText.contains("coordinator-err"), "Coordinator stderr must be consumed")
+
+    // A client runs its own CLI, never the installed one: refreshQuotas starts it once with
+    // `status --refresh`. This fake CLI in a test home records its arguments.
+    let cliHome = TestCodexHome(purpose: "fake-cli")
+    let fakeCLI = cliHome.file("codex-mon")
+    let cliLog = cliHome.file("cli-arguments.log")
+    try! Data("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '\(cliLog.path)'\n".utf8).write(to: fakeCLI)
+    assertEqual(chmod(fakeCLI.path, 0o700), 0, "The fake CLI must be executable")
+    var cliRefreshDone = false
+    cliHome.client(cliExecutable: { fakeCLI }).refreshQuotas { _ in cliRefreshDone = true }
+    waitUntil("refreshQuotas must finish", timeout: 10) { cliRefreshDone }
+    assertEqual(
+      (try? String(contentsOf: cliLog, encoding: .utf8)) ?? "", "status --refresh\n",
+      "refreshQuotas must run the client's CLI once, with status --refresh")
+    cliHome.tearDown()
 
     assertEqual(
       CodexClient.resolvedAccountId(
@@ -762,6 +785,20 @@ struct AppDelegateTestRunner {
       assertTrue(
         dict?["auto_switch_on_limit"] != nil, "auto_switch_on_limit must exist for \(lang.rawValue)"
       )
+      // Every row of the Auto-Switch Settings submenu, and its failure alert, is translated:
+      // an English row inside a translated submenu reads as a missing feature.
+      for key in [
+        "auto_switch_settings", "auto_switch_on_limit", "auto_switch_business_priority",
+        "auto_switch_business_only",
+        "restart_app_on_switch", "preserve_window_bounds_on_restart", "setting_save_failed",
+      ] {
+        assertTrue(dict?[key] != nil, "\(key) must exist for \(lang.rawValue)")
+        if lang != .en {
+          assertTrue(
+            dict?[key] != LocalizationManager.translations[.en]?[key],
+            "\(key) must be translated for \(lang.rawValue)")
+        }
+      }
     }
 
     print("  ✅ Multilingual support (13 languages: JA, ZH-Hans, VI) verified")
@@ -919,7 +956,8 @@ struct AppDelegateTestRunner {
     // Test Dynamic Menu Construction: Verify Reserve Accounts have "🗓️ Weekly:" progress bars
     let appDelegate = makeTestAppDelegate(client: codexHome.client(), preferences: preferences)
     let menu = appDelegate.buildMenu()
-    appDelegate.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    let reserveStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    appDelegate.statusItem = reserveStatusItem
     appDelegate.statusItem?.menu = menu
 
     let autoResetMenu = menu.items.first(where: { $0.title == L10n.autoResetWeekly })
@@ -1300,6 +1338,8 @@ struct AppDelegateTestRunner {
       $0.title.contains(L10n.reloginToAccount) && $0.action == #selector(AppDelegate.handleActiveAccountRelogin(_:))
     })
     assertTrue(activeReloginItem != nil, "Menu must display active account relogin item when active account needs relogin")
+    // The delegate's last use: take its status item out of the menu bar.
+    NSStatusBar.system.removeStatusItem(reserveStatusItem)
 
     // Regression Test 14: Active AccountRowView clicking & context menu routing when needsRelogin is true
     var activeRowRelogined = false
@@ -2236,12 +2276,14 @@ struct AppDelegateTestRunner {
 
       // Subtest 6: updateStatusBar execution with image and tooltip routing
       let appDelegateTest = makeTestAppDelegate(client: codexHome.client(), preferences: preferences)
-      appDelegateTest.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+      let routingStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+      appDelegateTest.statusItem = routingStatusItem
       appDelegateTest.updateStatusBar(with: fullSnapshot)
       assertTrue(appDelegateTest.statusItem?.button?.image != nil, "updateStatusBar must assign composite image to statusItem button")
       let toolTip = appDelegateTest.statusItem?.button?.toolTip ?? ""
       assertTrue(toolTip.contains("cli@openai.com"), "Tooltip must contain resolved CLI email: \(toolTip)")
       assertTrue(toolTip.contains("app@openai.com"), "Tooltip must contain APP email when running: \(toolTip)")
+      NSStatusBar.system.removeStatusItem(routingStatusItem)
 
       print("  ✅ Status Bar CLI Account Resolution & Quota Decoupling verified")
     }
