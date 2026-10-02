@@ -1,0 +1,22 @@
+# 2026-10-02 — `cxi config` lock waits had no bound
+
+- **Status:** Resolved
+- **Task/context:** Follow-up to the Auto-Switch Settings submenu (#51). Its rows stay disabled until each `cxi config` write reports, and the Swift client waits for the CLI to exit. #51 listed a timeout as a rejected approach.
+- **Unexpected observation or failure:** `config` takes the switcher lock (`codex.lock`) with a blocking `flock`, twice per setting (registry write, then status cache copy), and the registry reads take shared `flock`s on `accounts.json` and `auth.json`. A holder that never lets go leaves the command, and the menu rows waiting on it, stuck until the Monitor restarts.
+- **Evidence:** `storage::acquire_switcher_lock` and the shared locks in `load_accounts`, `read_unlocked`, and `read_active_auth_json` before this change; `AccountCommandService::configure` also read the weekly reset values outside the lock with `unwrap_or_default()`, so a failed read became defaults.
+- **Approaches tried:**
+  - **Attempt:** A Swift process timeout: `posix_spawn` in its own process group, a 15-second deadline, a group kill before reaping.
+    - **Outcome:** Did not work
+    - **Why:** It worked in CI, but the owner requires logic in Rust and Swift only where unavoidable. It also had to kill a CLI that might be mid-write, leaving a staging copy of the registry behind.
+  - **Attempt:** A Rust watchdog thread that `_exit`s `config` after a hard limit.
+    - **Outcome:** Did not work
+    - **Why:** Once lock waits are bounded, the only hangs left are kernel I/O stalls that `_exit` cannot end; it adds `unsafe`, an untested production branch, and can leave token-bearing staging files.
+  - **Attempt:** A thread-local lock-wait budget: inside `with_lock_wait_budget`, every registry `flock` on that thread polls until the deadline and then reports `REGISTRY_BUSY`.
+    - **Outcome:** Worked
+    - **Why:** The command fails before saving (nothing partial) or, when only the post-save status cache copy is blocked, succeeds and leaves the copy to the next status write, which applies the registry's settings. Other commands keep their blocking order.
+- **Root cause:** An interactive command that a UI waits on used the same unbounded lock waits as the background daemon.
+- **Resolution:** `configure` runs inside a 10-second budget (`CONFIG_LOCK_WAIT`); `storage/lock_wait_budget.rs` holds the polling, the busy error, and the deadline guard. The weekly reset merge happens inside the locked transaction, and printing the configuration fails instead of showing defaults. Swift is unchanged.
+- **Verification:** `storage/lock_wait_budget.test.rs` (busy at the deadline for shared and exclusive, release before the deadline, unbudgeted waits still block, budget cleared after success, error, and panic, never extended when nested, per thread) and the `busy_registry` tests in `setup/account_configuration.test.rs` (a held lock fails the write at its deadline with the registry byte-identical and no staging file; a busy post-save sync succeeds and leaves the cache untouched; other sync failures still fail; weekly reset keeps values it was not given).
+- **Prevention/follow-up:** fs2's `try_lock_shared` and std's inherent `File::try_lock_shared` share a name; call fs2's by path. `cxi status --refresh`, which the menu's refresh waits on, still blocks on the same lock without a budget.
+- **Reusable learning:** Bound lock waits in the command a UI waits on, in Rust, before any write starts; never bound it by killing the process from the UI side.
+- **References:** `codex-switcher/src/storage/lock_wait_budget.rs`, `codex-switcher/src/account_command_service.rs`, `codex-switcher/src/setup/account_configuration.rs`, `AGENTS.md` timeout table, PR #51, PR #52.

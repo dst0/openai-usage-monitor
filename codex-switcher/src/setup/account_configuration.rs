@@ -1,4 +1,6 @@
-use crate::storage::{load_accounts, sync_settings_to_status_file, update_accounts_atomically};
+use crate::storage::{
+    load_accounts, sync_settings_to_status_file, update_accounts_atomically, REGISTRY_BUSY,
+};
 
 /// Renames an account's display nickname, or clears it if new_name is None.
 /// Guarantees that nicknames are not duplicated across different accounts.
@@ -91,7 +93,7 @@ pub fn set_config_auto_switch_enabled(enabled: bool) -> Result<(), String> {
         file.settings.auto_switch_enabled = enabled;
         Ok(())
     })?;
-    sync_settings_to_status_file()?;
+    sync_status_cache_or_defer()?;
     println!("✅ Setting updated: auto_switch_enabled = {}", enabled);
     Ok(())
 }
@@ -106,7 +108,7 @@ pub fn set_config_auto_switch_business_only(enabled: bool) -> Result<(), String>
         }
         Ok(())
     })?;
-    sync_settings_to_status_file()?;
+    sync_status_cache_or_defer()?;
     println!(
         "✅ Setting updated: auto_switch_business_only = {}",
         enabled
@@ -124,7 +126,7 @@ pub fn set_config_auto_switch_business_priority(enabled: bool) -> Result<(), Str
         }
         Ok(())
     })?;
-    sync_settings_to_status_file()?;
+    sync_status_cache_or_defer()?;
     println!(
         "✅ Setting updated: auto_switch_business_priority = {}",
         enabled
@@ -134,32 +136,56 @@ pub fn set_config_auto_switch_business_priority(enabled: bool) -> Result<(), Str
 
 /// Updates the opt-in weekly reset-credit policy. A threshold of zero means
 /// that the policy may act whenever the weekly pool is exactly exhausted;
-/// non-zero thresholds require that many seconds to remain before the normal
-/// weekly reset. Keeping this as one atomic accounts.json write prevents the
-/// daemon from observing a half-updated policy when the menu changes both
-/// values together.
+/// non-zero thresholds require that many hours to remain before the normal
+/// weekly reset. A value left out keeps the saved one, merged inside the same
+/// locked transaction, so a busy or concurrently changed registry can never
+/// turn into a default here. Keeping this as one atomic accounts.json write
+/// prevents the daemon from observing a half-updated policy when the menu
+/// changes both values together.
 pub fn set_config_auto_reset_weekly(
-    enabled: bool,
-    min_remaining_seconds: u64,
+    enabled: Option<bool>,
+    min_remaining_hours: Option<u64>,
 ) -> Result<(), String> {
-    const MAX_REMAINING_SECONDS: u64 = 167 * 3600;
-    if min_remaining_seconds > MAX_REMAINING_SECONDS {
+    const MAX_REMAINING_HOURS: u64 = 167;
+    if let Some(hours) = min_remaining_hours.filter(|hours| *hours > MAX_REMAINING_HOURS) {
         return Err(format!(
             "Weekly reset threshold must be between 0 and 167 hours (got {})",
-            min_remaining_seconds / 3600
+            hours
         ));
     }
-    update_accounts_atomically(|file| {
-        file.settings.auto_reset_weekly_enabled = enabled;
-        file.settings.auto_reset_weekly_min_remaining_seconds = min_remaining_seconds;
+    let saved = update_accounts_atomically(|file| {
+        if let Some(enabled) = enabled {
+            file.settings.auto_reset_weekly_enabled = enabled;
+        }
+        if let Some(hours) = min_remaining_hours {
+            file.settings.auto_reset_weekly_min_remaining_seconds = hours * 3600;
+        }
         Ok(())
     })?;
-    sync_settings_to_status_file()?;
+    sync_status_cache_or_defer()?;
     println!(
         "✅ Setting updated: auto_reset_weekly_enabled = {}, auto_reset_weekly_min_remaining_seconds = {}",
-        enabled, min_remaining_seconds
+        saved.settings.auto_reset_weekly_enabled,
+        saved.settings.auto_reset_weekly_min_remaining_seconds
     );
     Ok(())
+}
+
+/// Copies the saved settings into the status cache. The registry is already
+/// saved, so a lock that stays busy past this command's wait budget only
+/// delays the copy: every status write applies the registry's settings, so
+/// the daemon's next one catches the cache up. Any other failure is reported.
+fn sync_status_cache_or_defer() -> Result<(), String> {
+    match sync_settings_to_status_file() {
+        Err(error) if error == REGISTRY_BUSY => {
+            eprintln!(
+                "⚠️  Setting saved; the status cache will show it after the next status update ({})",
+                REGISTRY_BUSY
+            );
+            Ok(())
+        }
+        result => result,
+    }
 }
 
 /// Manually sets a multiplier override for an account.
