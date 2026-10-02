@@ -256,6 +256,11 @@ struct AppDelegateTestRunner {
     runAppDelegatePreferencesTests()
 
     // ====================================================================
+    // Test 4c: The menu checks the install lock before uninstalling
+    // ====================================================================
+    runUninstallLockCheckTests()
+
+    // ====================================================================
     // Test 4b: Launch at Login shows the login item macOS reports
     // ====================================================================
     runLaunchAtLoginTests()

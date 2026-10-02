@@ -78,6 +78,7 @@ swiftc -parse-as-library \
     tests/TestPreferencesSuite.swift \
     tests/TestCodexHome.swift \
     tests/AppDelegatePreferencesTests.swift \
+    tests/UninstallLockCheckTests.swift \
     tests/AppDelegateCodexHomeTests.swift \
     tests/FakeLoginItems.swift \
     tests/LaunchAtLoginTests.swift \
