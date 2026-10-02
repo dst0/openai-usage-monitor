@@ -39,7 +39,7 @@ impl WindowTaskCommand {
 
     /// How long the helper may run for `windows` windows. The budgets cover
     /// the helper's own waits: focus (1 s) and each copy (1.5 s); for a
-    /// restore or rehearsal also New Window (up to 25 s), two navigations of
+    /// restore or rehearsal also New Window (up to 30 s), two navigations of
     /// up to 14 s, and, before a second link and in the final pass, one copy
     /// from every other window, so that part grows with the window count.
     pub(super) fn timeout(self, windows: usize) -> Duration {

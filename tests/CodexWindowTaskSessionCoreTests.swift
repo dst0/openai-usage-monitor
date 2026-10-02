@@ -17,7 +17,7 @@ struct CodexWindowTaskSessionCoreTests {
     snapshotRefusesWindowsItCouldNotRecreate()
     aFailedSnapshotPutsFocusAndClipboardBack()
     aReplacedProcessGetsNoFurtherWindowChanges()
-    aNewWindowWithoutKeyboardFocusIsNotALinkTarget()
+    aNewWindowWithoutKeyboardFocusIsFocusedBeforeNavigation()
     aSecondLinkIsNotSentAfterTheFirstMovedAnotherWindow()
     aLateCopyFromChatGPTIsNotKeptAsTheUsersClipboard()
     planLimitsAreInclusive()
@@ -25,7 +25,7 @@ struct CodexWindowTaskSessionCoreTests {
     restoreKeepsARelaunchedWindowThatAlreadyHasAPlannedFrame()
     restoreWaitsForNewWindowAfterARelaunch()
     mismatchedLayoutsAndInvalidPlansChangeNothing()
-    missingOrBackgroundNewWindowsFailClosed()
+    missingOrAmbiguousNewWindowsFailClosed()
     newWindowNeedsTheAnchorFocusedAndTheSameProcess()
     focusIsRetakenBeforeEveryLink()
     aWindowThatCannotBePlacedStillGetsItsTaskButIsNotVerified()
@@ -155,11 +155,14 @@ struct CodexWindowTaskSessionCoreTests {
     precondition(desktop.linksSent.isEmpty)
   }
 
-  static func aNewWindowWithoutKeyboardFocusIsNotALinkTarget() {
+  static func aNewWindowWithoutKeyboardFocusIsFocusedBeforeNavigation() {
     let desktop = relaunched()
     desktop.newWindowsFocusedWithoutKey = true
-    precondition(failure(restore(desktop, [(a, f0), (b, f1)])) == .newWindowFailed)
-    precondition(desktop.linksSent.count == 1 && desktop.tasks[1] == nil)
+    guard case .success(let result) = restore(desktop, [(a, f0), (b, f1)]) else {
+      fatalError("a unique new window was not focused before navigation")
+    }
+    precondition(result.verified == [true, true])
+    precondition(desktop.linksSent.map { $0.focused } == [0, 1])
   }
 
   static func aLateCopyFromChatGPTIsNotKeptAsTheUsersClipboard() {
@@ -262,17 +265,31 @@ struct CodexWindowTaskSessionCoreTests {
     }
   }
 
-  static func missingOrBackgroundNewWindowsFailClosed() {
+  static func missingOrAmbiguousNewWindowsFailClosed() {
     let missing = relaunched()
     missing.newWindowAvailable = false
     precondition(failure(restore(missing, [(a, f0), (b, f1)], focus: 0)) == .newWindowUnavailable)
     precondition(missing.tasks[0] == a && missing.linksSent.count == 1)
     precondition(missing.log.contains("restored") && missing.focused == 0)
-    // A window opened in the background is not Desktop's link target.
+    // A unique window opened in the background must be focused before a link.
     let background = relaunched()
     background.newWindowsAreKeyed = false
-    precondition(failure(restore(background, [(a, f0), (b, f1)])) == .newWindowFailed)
-    precondition(background.linksSent.count == 1 && background.tasks[1] == nil)
+    guard case .success(let restored) = restore(background, [(a, f0), (b, f1)]) else {
+      fatalError("background new window was not recovered")
+    }
+    precondition(restored.verified == [true, true])
+    precondition(background.linksSent.map { $0.focused } == [0, 1])
+    let delayed = relaunched()
+    delayed.newWindowOpenDelay = 7
+    guard case .success(let delayedResult) = restore(delayed, [(a, f0), (b, f1)]) else {
+      fatalError("delayed new window was not recovered")
+    }
+    precondition(delayedResult.verified == [true, true] && delayed.clock >= 7)
+    let unfocusable = relaunched()
+    unfocusable.newWindowsAreKeyed = false
+    unfocusable.newWindowsRefuseFocus = true
+    precondition(failure(restore(unfocusable, [(a, f0), (b, f1)])) == .windowFocusFailed)
+    precondition(unfocusable.linksSent.count == 1 && unfocusable.tasks[1] == nil)
     // Two new windows make the new one ambiguous.
     let doubled = relaunched()
     doubled.newWindowOpensTwo = true
@@ -499,8 +516,33 @@ struct CodexWindowTaskSessionCoreTests {
     let background = FakeDesktop()
     background.addWindow(f0, task: a)
     background.newWindowsAreKeyed = false
-    precondition(failure(rehearse(background)) == .newWindowFailed)
-    precondition(background.alive == [0] && background.linksSent.isEmpty)
+    guard case .success(let result) = rehearse(background) else {
+      fatalError("background rehearsal window was not focused")
+    }
+    precondition(result.verified == 1 && background.alive == [0])
+    // The menu action succeeded, but its asynchronous window appears only
+    // after the bounded wait. The rehearsal cannot prove cleanup complete.
+    let late = FakeDesktop()
+    late.addWindow(f0, task: a)
+    late.newWindowOpenDelay = newWindowTimeout + 1
+    precondition(failure(rehearse(late)) == .rehearsalWindowLeftOpen)
+    late.pause(2)
+    precondition(late.alive == [0, 1])
+    let secondLate = FakeDesktop()
+    secondLate.addWindow(f0, task: a)
+    secondLate.addWindow(f1, task: b)
+    secondLate.secondNewWindowOpenDelay = newWindowTimeout + 1
+    precondition(failure(rehearse(secondLate)) == .rehearsalWindowLeftOpen)
+    precondition(secondLate.alive == [0, 1])
+    secondLate.pause(2)
+    precondition(secondLate.alive == [0, 1, 3])
+    let unreadableLate = FakeDesktop()
+    unreadableLate.addWindow(f0, task: a)
+    unreadableLate.newWindowOpenDelay = newWindowTimeout + 1
+    unreadableLate.standardWindowsFailsAfterNewRequest = true
+    precondition(failure(rehearse(unreadableLate)) == .rehearsalWindowLeftOpen)
+    unreadableLate.pause(2)
+    precondition(unreadableLate.alive == [0, 1])
   }
 
   static func rehearsalDoesNotClaimUnreadableOpenWindowClosed() {

@@ -4,7 +4,7 @@ import Foundation
 /// A scripted Desktop for `WindowTaskSession`: windows with frames and
 /// selected tasks, keyboard focus, Desktop's most recently focused window
 /// (where a task link lands), File > New Window, and a pasteboard. It models
-/// the routing inspected in ChatGPT 26.924.22138, not a live app.
+/// the routing inspected in ChatGPT 26.924.22138 and 26.928.31416, not a live app.
 final class FakeDesktop: WindowTaskSessionSystem {
   typealias Window = Int
   var log: [String] = []
@@ -22,6 +22,13 @@ final class FakeDesktop: WindowTaskSessionSystem {
   /// relaunch before the renderer reports the multiwindow feature.
   var newWindowItemFrom: TimeInterval = 0
   var newWindowsAreKeyed = true
+  /// The new window is created asynchronously after the menu action returns.
+  var newWindowOpenDelay: TimeInterval = 0
+  var secondNewWindowOpenDelay: TimeInterval?
+  var newWindowRequests = 0
+  var pendingNewWindowAt: TimeInterval?
+  /// Accessibility refuses a focus request for an opened window.
+  var newWindowsRefuseFocus = false
   var closeSucceeds = true
   /// Simulates an Accessibility liveness read failing for an open window.
   var unreadableLiveness: Set<Int> = []
@@ -29,6 +36,8 @@ final class FakeDesktop: WindowTaskSessionSystem {
   var staleLiveness: Set<Int> = []
   /// A newly opened window becomes temporarily unavailable in AXWindows.
   var standardWindowsFailsAtCount: Int?
+  /// AXWindows fails after the menu accepted a delayed creation request.
+  var standardWindowsFailsAfterNewRequest = false
   var setFrameSucceeds = true
   /// Accepts a frame change without moving the window.
   var setFrameIgnored = false
@@ -91,6 +100,10 @@ final class FakeDesktop: WindowTaskSessionSystem {
   func now() -> TimeInterval { clock }
   func pause(_ seconds: TimeInterval) {
     clock += seconds
+    if let due = pendingNewWindowAt, due <= clock {
+      pendingNewWindowAt = nil
+      openNewWindow()
+    }
     deliverLinks()
   }
   func isOptedIn() -> Bool { true }
@@ -118,6 +131,7 @@ final class FakeDesktop: WindowTaskSessionSystem {
   func requestFocus(_ window: Int) {
     guard alive.contains(window) else { return }
     log.append("focus \(window)")
+    if newWindowsRefuseFocus && window > 0 { return }
     frontmost = 0
     axOnlyFocus = nil
     focus(window)
@@ -173,6 +187,18 @@ final class FakeDesktop: WindowTaskSessionSystem {
   }
   func pressNewWindow() -> Bool {
     guard newWindowItemAvailable() else { return false }
+    newWindowRequests += 1
+    let delay = newWindowRequests == 2
+      ? (secondNewWindowOpenDelay ?? newWindowOpenDelay) : newWindowOpenDelay
+    if delay > 0 {
+      log.append("new requested")
+      pendingNewWindowAt = clock + delay
+      return true
+    }
+    openNewWindow()
+    return true
+  }
+  private func openNewWindow() {
     let window = addWindow(persistedFrame, task: nil)
     log.append("new \(window) after focus \(focused.map(String.init) ?? "none")")
     if newWindowOpensTwo { addWindow(persistedFrame.offsetBy(dx: 300, dy: 0), task: nil) }
@@ -181,10 +207,12 @@ final class FakeDesktop: WindowTaskSessionSystem {
     } else if newWindowsAreKeyed {
       focus(window)
     }
-    return true
   }
   func focusedWindow() -> Int? { axOnlyFocus ?? focused }
   func standardWindows() throws -> [Int] {
+    if standardWindowsFailsAfterNewRequest && newWindowRequests > 0 {
+      throw WindowTaskProbeFailure.windowAccessFailed
+    }
     if let count = standardWindowsFailsAtCount, alive.count >= count {
       throw WindowTaskProbeFailure.windowAccessFailed
     }

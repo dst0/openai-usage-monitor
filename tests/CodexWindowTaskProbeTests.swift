@@ -113,11 +113,15 @@ struct CodexWindowTaskProbeTests {
   static func onlyTheInspectedDesktopBuildIsAccepted() {
     precondition(isVerifiedDesktopBuild(
       bundleIdentifier: "com.openai.codex", version: "26.924.22138", buildNumber: "11645"))
+    precondition(isVerifiedDesktopBuild(
+      bundleIdentifier: "com.openai.codex", version: "26.928.31416", buildNumber: "12553"))
     for (identifier, version, build) in [
       // The earlier inspected build is no longer accepted: its keymap rules
       // were not re-read for the relaxed keymap check.
       ("com.openai.codex", "26.924.20706", "11431"),
       ("com.openai.codex", "26.924.22139", "11645"), ("com.openai.codex", "26.924.2213", "11645"),
+      ("com.openai.codex", "26.928.31416", "12554"),
+      ("com.openai.codex", "26.928.31415", "12553"),
       ("com.openai.chat", "26.924.22138", "11645"), ("com.openai.codex", "26.924.22138", "11646"),
       ("com.openai.codex", nil, "11645"), (nil, "26.924.22138", "11645"),
       ("com.openai.codex", "26.924.22138", nil),

@@ -58,6 +58,12 @@ recovery checkpoint, and Desktop session are reconciled. Distribution loads
 only a same-user regular `0600` journal of at most 16 KiB through a
 no-follow, stable-inode read. It writes through random exclusive `0600`
 staging, atomic rename, and directory sync; unsafe existing paths fail closed.
+`auth_commit_cli` is recorded before the credential write; a dead PID or old
+timestamp does not prove rollback. An explicit repair must hold the recovery
+operation lock, recheck unique current token ownership, the marker's account
+and process binding, absent pending recovery, and the unchanged journal, then
+archive and durably clear only a superseded intent. Never infer recovery of
+selected windows or cold tasks from this journal cleanup.
 The Desktop session marker follows the same `0600`, 16 KiB, no-follow,
 stable-inode read and random exclusive staging rules. Invalid markers block
 account distribution rather than being treated as absent.
@@ -333,13 +339,21 @@ restart before credentials change. This holds when
 `preserve_window_bounds_on_restart=false`; that setting controls geometry only.
 
 Desktop gives Monitor no window-to-task interface. Inspection of ChatGPT
-26.924.22138 (read-only, from a copy of its bundle) shows that it persists
+26.924.22138 and 26.928.31416 (read-only, from their bundles) shows that it persists
 only one `electron-main-window-bounds` record, relaunches one primary window
 without a task, sends a `codex://threads/<id>` link to its most recently
 focused primary window (focus events update that choice), and opens a
-focused primary window from File > New Window when its multiwindow feature is
-on. Its IPC router has no window, route, or navigation method, and owner
+primary window from File > New Window when its multiwindow feature is
+on. The helper waits up to 10 seconds for one new standard window and explicitly
+keys it before sending a task link. Its IPC router has no window, route, or navigation method, and owner
 discovery answers per host connection in the main process, never per window.
+The menu action has no result ID: a window independently opened by the user
+during that wait cannot be distinguished from the requested one. Rehearsal
+reports uncertain cleanup if no window appears before the deadline, because
+one may appear later. An incomplete restore can also leave a late window;
+inspect the actual window list before another restart. Avoid opening other ChatGPT windows during an explicit
+restore or rehearsal; automatic switching remains disabled until this path
+passes on the installed app.
 The explicit CLI flag and distribution's internal session build on exactly
 those behaviors. Before shutdown
 the helper reads each window's task with Copy deeplink and its Accessibility
@@ -517,9 +531,12 @@ recovery; checks on 2026-09-28 with ChatGPT 26.924.20706 showed that accepted
 URL delivery may leave the task ownerless at an immediate check. That version's
 deep-link handler showed its primary window before ordinary task navigation,
 which the owner accepted. No supported background mount IPC method was evident.
-Those checks dispatched no recovery turn or account switch. The app currently
-installed on this host is 26.924.22138; the prior observation is not live
-proof for it. URL acceptance is not owner or recovery proof.
+Those checks dispatched no recovery turn or account switch. The app installed
+on this host on 2026-10-03 was 26.928.31416. Static inspection found that its
+deep-link handler first reads the requested thread and may stop without
+navigation when that read returns no thread. The revised window-opening path
+has passed scripted tests, but no installed multiwindow rehearsal or cold-task
+recovery has passed. URL acceptance is not owner or recovery proof.
 
 The Menu Bar's APP quota comes from `desktop-app-session.json` only when its
 saved account is bound to the exact live ChatGPT PID and process birth time.
