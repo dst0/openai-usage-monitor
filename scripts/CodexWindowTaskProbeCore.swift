@@ -28,7 +28,7 @@ enum WindowTaskProbeFailure: String, Error {
   case windowMappingChanged = "WINDOW_MAPPING_CHANGED"
   /// File > New Window is missing, disabled, or not titled in English.
   case newWindowUnavailable = "NEW_WINDOW_UNAVAILABLE"
-  /// No new, focused standard window appeared after New Window.
+  /// No unique new standard window appeared after New Window.
   case newWindowFailed = "NEW_WINDOW_FAILED"
   case windowFrameFailed = "WINDOW_FRAME_FAILED"
   case taskLinkOpenFailed = "TASK_LINK_OPEN_FAILED"
@@ -244,11 +244,14 @@ final class WindowTaskReader<System: WindowTaskProbeSystem> {
     }
   }
 
-  func waitFor(_ timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+  func waitFor(
+    _ timeout: TimeInterval, pollInterval: TimeInterval = probePollInterval,
+    _ condition: () -> Bool
+  ) -> Bool {
     let deadline = system.now() + timeout
     while !condition() {
       guard system.now() < deadline else { return false }
-      system.pause(probePollInterval)
+      system.pause(pollInterval)
     }
     return true
   }

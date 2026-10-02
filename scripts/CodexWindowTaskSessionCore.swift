@@ -3,9 +3,11 @@ import Foundation
 
 /// Snapshot, restore, and rehearsal of the task shown in each ChatGPT window.
 ///
-/// Desktop sends a task link to its most recently focused primary window and
-/// opens File > New Window focused (inspected in ChatGPT 26.924.22138), so
-/// each link is sent only while Accessibility shows the target window focused,
+/// Desktop sends a task link to its most recently focused primary window.
+/// File > New Window can create that window before it is keyed, so the helper
+/// focuses the unique new window before sending a link. The route and menu
+/// were statically inspected in ChatGPT 26.924.22138 and 26.928.31416. Each
+/// link is sent only while Accessibility shows the target window focused,
 /// and the copied link of that window must equal the task before it counts.
 final class WindowTaskSession<System: WindowTaskSessionSystem> {
   let system: System
@@ -158,6 +160,7 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
     let focused = focusedIndex(in: windows)
     reader.beginVisibleChanges()
     var created: [(window: System.Window, frame: CGRect?)] = []
+    var unresolvedNewWindowAction = false
     var occupied = frames
     var verified = 0
     var failure: Error?
@@ -166,7 +169,9 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
       for index in windows.indices {
         let frame = rehearsalFrame(for: frames[index], avoiding: occupied)
         occupied.append(frame)
-        let window = try createWindow(anchor: windows[index], frame: frame, created: &created)
+        let window = try createWindow(
+          anchor: windows[index], frame: frame, created: &created,
+          unresolvedMenuAction: &unresolvedNewWindowAction)
         guard try show(
           tasks[index], in: window, alreadyShowingIsPossible: false,
           unchanged: Array(zip(windows, tasks))) else {
@@ -195,7 +200,14 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
     guard closed && originalInventoryRestored else {
       throw WindowTaskProbeFailure.rehearsalWindowLeftOpen
     }
-    if let failure { throw failure }
+    if let failure {
+      // A successful menu action may create a window after the wait expired.
+      // An unchanged immediate inventory cannot prove that cleanup finished.
+      if unresolvedNewWindowAction {
+        throw WindowTaskProbeFailure.rehearsalWindowLeftOpen
+      }
+      throw failure
+    }
     return (ids, verified, clipboardRestored)
   }
 
@@ -237,44 +249,71 @@ final class WindowTaskSession<System: WindowTaskSessionSystem> {
 
   private func createWindow(anchor: System.Window, frame: CGRect?) throws -> System.Window {
     var created: [(window: System.Window, frame: CGRect?)] = []
-    return try createWindow(anchor: anchor, frame: frame, created: &created)
+    var unresolvedMenuAction = false
+    return try createWindow(
+      anchor: anchor, frame: frame, created: &created,
+      unresolvedMenuAction: &unresolvedMenuAction)
   }
 
-  /// An active app keys its new window, which is then Desktop's most recently
-  /// focused window; a window opened in the background might not be. Each
-  /// window that appears is recorded with the frame Desktop gave it.
+  /// A menu action can create a window asynchronously or without keying it.
+  /// Require exactly one new standard window, then key that exact window so
+  /// Desktop routes its task link there. Record every observed new window for
+  /// rehearsal cleanup, including one seen only through focused-window AX.
   private func createWindow(
-    anchor: System.Window, frame: CGRect?, created: inout [(window: System.Window, frame: CGRect?)]
+    anchor: System.Window, frame: CGRect?, created: inout [(window: System.Window, frame: CGRect?)],
+    unresolvedMenuAction: inout Bool
   ) throws -> System.Window {
+    unresolvedMenuAction = false
     // After a relaunch the item appears only once the renderer is ready.
-    guard reader.waitFor(newWindowItemTimeout, { system.newWindowItemAvailable() }) else {
+    guard reader.waitFor(newWindowItemTimeout, pollInterval: newWindowPollInterval,
+      { system.newWindowItemAvailable() }) else {
       throw WindowTaskProbeFailure.newWindowUnavailable
     }
     try reader.focus(anchor)
     let before = try system.standardWindows()
     guard system.processBirthMatches() else { throw WindowTaskProbeFailure.processIdentityRejected }
     guard system.pressNewWindow() else { throw WindowTaskProbeFailure.newWindowUnavailable }
+    unresolvedMenuAction = true
     var opened: System.Window?
-    let appeared = reader.waitFor(newWindowTimeout) {
-      guard let focused = system.focusedWindow(),
-        !before.contains(where: { system.sameWindow($0, focused) }) else { return false }
-      opened = focused
-      return system.hasKeyboardFocus(focused)
+    var ambiguous = false
+    let appeared = reader.waitFor(newWindowTimeout, pollInterval: newWindowPollInterval) {
+      guard let current = try? system.standardWindows() else {
+        if let focused = system.focusedWindow(),
+          !before.contains(where: { system.sameWindow($0, focused) }) {
+          opened = focused
+        }
+        return false
+      }
+      let fresh = current.filter { window in
+        !before.contains { system.sameWindow($0, window) }
+      }
+      if fresh.count > 1 {
+        ambiguous = true
+        return true
+      }
+      guard let window = fresh.first else { return false }
+      opened = window
+      return true
     }
-    // Remember the focused new window before the fallible full inventory read;
-    // then record any other new windows that the inventory exposes.
-    if appeared, let window = opened,
+    // Remember an observed new window before the fallible final inventory;
+    // then record any others that the inventory exposes.
+    if let window = opened,
       !created.contains(where: { system.sameWindow($0.window, window) }) {
       created.append((window, system.frame(window)))
     }
+    if opened != nil { unresolvedMenuAction = false }
     let fresh = try system.standardWindows().filter { window in
       !before.contains { system.sameWindow($0, window) }
     }
     for window in fresh where !created.contains(where: { system.sameWindow($0.window, window) }) {
       created.append((window, system.frame(window)))
     }
-    guard appeared, let window = opened, fresh.count == 1,
+    if !fresh.isEmpty { unresolvedMenuAction = false }
+    guard appeared, !ambiguous, let window = opened, fresh.count == 1,
       system.sameWindow(fresh[0], window) else { throw WindowTaskProbeFailure.newWindowFailed }
+    // A menu press can create a standard window before Desktop keys it. The
+    // link is safe only after the unique new window has keyboard focus.
+    try reader.focus(window)
     if let frame { try place(window, frame) }
     return window
   }
