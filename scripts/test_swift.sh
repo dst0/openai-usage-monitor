@@ -43,7 +43,6 @@ swiftc -parse-as-library \
     Sources/Localization.swift \
     Sources/QuotaModels.swift \
     Sources/StatusBarStyle.swift \
-    Sources/BoundedCommand.swift \
     Sources/CodexClient.swift \
     Sources/CodexDesktopProcessIdentity.swift \
     Sources/CodexRecoveryProcessIdentity.swift \
@@ -83,7 +82,6 @@ swiftc -parse-as-library \
     tests/FakeLoginItems.swift \
     tests/LaunchAtLoginTests.swift \
     tests/AutoSwitchSettingsMenuTests.swift \
-    tests/BoundedCommandTests.swift \
     tests/AppDelegateTests.swift \
     -o "${TMP_BIN_DIR}/app_delegate_test"
 "${TMP_BIN_DIR}/app_delegate_test"
@@ -122,7 +120,6 @@ echo "👉 Running App/CLI identity separation tests..."
 swiftc -parse-as-library \
     Sources/Localization.swift \
     Sources/QuotaModels.swift \
-    Sources/BoundedCommand.swift \
     Sources/CodexClient.swift \
     Sources/CodexDesktopProcessIdentity.swift \
     Sources/CodexRecoveryProcessIdentity.swift \

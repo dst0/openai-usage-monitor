@@ -43,7 +43,6 @@ cd "${REPO_DIR}"
 swiftc -parse-as-library \
     Sources/Localization.swift \
     Sources/QuotaModels.swift \
-    Sources/BoundedCommand.swift \
     Sources/CodexClient.swift \
     Sources/CodexDesktopProcessIdentity.swift \
     Sources/CodexRecoveryProcessIdentity.swift \
