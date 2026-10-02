@@ -1,3 +1,4 @@
+use crate::models::Settings;
 use crate::storage::{
     load_accounts, sync_settings_to_status_file, update_accounts_atomically, REGISTRY_BUSY,
 };
@@ -52,124 +53,152 @@ pub(crate) fn rename_account_with(
     Ok(())
 }
 
-/// Updates the restart_app_on_switch setting in accounts.json.
-pub fn set_config_restart_app_on_switch(enabled: bool) -> Result<(), String> {
-    update_accounts_atomically(|file| {
-        file.settings.restart_app_on_switch = enabled;
-        Ok(())
-    })?;
-    println!("✅ Setting updated: restart_app_on_switch = {}", enabled);
-    Ok(())
+/// The settings one `cxi config` call changes; `None` keeps the saved value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ConfigChanges {
+    pub restart_app_on_switch: Option<bool>,
+    pub auto_switch_enabled: Option<bool>,
+    pub auto_switch_business_only: Option<bool>,
+    pub auto_switch_business_priority: Option<bool>,
+    pub preserve_window_bounds: Option<bool>,
+    pub auto_reset_weekly_enabled: Option<bool>,
+    /// A threshold of zero lets the weekly policy act whenever the weekly pool
+    /// is exactly exhausted; otherwise that many hours must remain before the
+    /// normal weekly reset.
+    pub auto_reset_weekly_min_hours: Option<u64>,
 }
 
-/// Updates the preserve_window_bounds_on_restart setting in accounts.json.
-pub fn set_config_preserve_window_bounds(enabled: bool) -> Result<(), String> {
-    set_config_preserve_window_bounds_with_hook(enabled, || Ok(()))
+const MAX_WEEKLY_RESET_HOURS: u64 = 167;
+
+impl ConfigChanges {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    fn changes_weekly_reset(&self) -> bool {
+        self.auto_reset_weekly_enabled.is_some() || self.auto_reset_weekly_min_hours.is_some()
+    }
+
+    /// Whether the status cache carries any of these settings.
+    fn changes_status_cache(&self) -> bool {
+        self.auto_switch_enabled.is_some()
+            || self.auto_switch_business_only.is_some()
+            || self.auto_switch_business_priority.is_some()
+            || self.changes_weekly_reset()
+    }
+
+    /// Applies the given values in flag order. Turning business-only or
+    /// business priority on also turns automatic switching on and the other
+    /// business mode off.
+    fn apply(&self, settings: &mut Settings) {
+        if let Some(value) = self.restart_app_on_switch {
+            settings.restart_app_on_switch = value;
+        }
+        if let Some(value) = self.auto_switch_enabled {
+            settings.auto_switch_enabled = value;
+        }
+        if let Some(value) = self.auto_switch_business_only {
+            settings.auto_switch_business_only = value;
+            if value {
+                settings.auto_switch_business_priority = false;
+                settings.auto_switch_enabled = true;
+            }
+        }
+        if let Some(value) = self.auto_switch_business_priority {
+            settings.auto_switch_business_priority = value;
+            if value {
+                settings.auto_switch_business_only = false;
+                settings.auto_switch_enabled = true;
+            }
+        }
+        if let Some(value) = self.preserve_window_bounds {
+            settings.preserve_window_bounds_on_restart = value;
+        }
+        if let Some(value) = self.auto_reset_weekly_enabled {
+            settings.auto_reset_weekly_enabled = value;
+        }
+        if let Some(hours) = self.auto_reset_weekly_min_hours {
+            settings.auto_reset_weekly_min_remaining_seconds = hours * 3600;
+        }
+    }
 }
 
-fn set_config_preserve_window_bounds_with_hook(
-    enabled: bool,
+/// Saves every given setting in one locked registry transaction, merged into
+/// what the registry holds at that moment: a busy or failing registry saves
+/// none of them, and the daemon never sees half of a change. Success means
+/// the registry holds them all.
+pub fn set_config(changes: ConfigChanges) -> Result<(), String> {
+    set_config_with_hook(changes, || Ok(()))
+}
+
+fn set_config_with_hook(
+    changes: ConfigChanges,
     before_save: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
-    before_save()?;
-    update_accounts_atomically(|file| {
-        file.settings.preserve_window_bounds_on_restart = enabled;
-        Ok(())
-    })?;
-    println!(
-        "✅ Setting updated: preserve_window_bounds_on_restart = {}",
-        enabled
-    );
-    Ok(())
-}
-
-#[cfg(test)]
-#[path = "account_configuration.test.rs"]
-mod tests;
-
-/// Updates the auto_switch_enabled setting in accounts.json.
-pub fn set_config_auto_switch_enabled(enabled: bool) -> Result<(), String> {
-    update_accounts_atomically(|file| {
-        file.settings.auto_switch_enabled = enabled;
-        Ok(())
-    })?;
-    sync_status_cache_or_defer()?;
-    println!("✅ Setting updated: auto_switch_enabled = {}", enabled);
-    Ok(())
-}
-
-/// Updates the auto_switch_business_only setting in accounts.json.
-pub fn set_config_auto_switch_business_only(enabled: bool) -> Result<(), String> {
-    update_accounts_atomically(|file| {
-        file.settings.auto_switch_business_only = enabled;
-        if enabled {
-            file.settings.auto_switch_business_priority = false;
-            file.settings.auto_switch_enabled = true;
-        }
-        Ok(())
-    })?;
-    sync_status_cache_or_defer()?;
-    println!(
-        "✅ Setting updated: auto_switch_business_only = {}",
-        enabled
-    );
-    Ok(())
-}
-
-/// Updates the auto_switch_business_priority setting in accounts.json.
-pub fn set_config_auto_switch_business_priority(enabled: bool) -> Result<(), String> {
-    update_accounts_atomically(|file| {
-        file.settings.auto_switch_business_priority = enabled;
-        if enabled {
-            file.settings.auto_switch_business_only = false;
-            file.settings.auto_switch_enabled = true;
-        }
-        Ok(())
-    })?;
-    sync_status_cache_or_defer()?;
-    println!(
-        "✅ Setting updated: auto_switch_business_priority = {}",
-        enabled
-    );
-    Ok(())
-}
-
-/// Updates the opt-in weekly reset-credit policy. A threshold of zero means
-/// that the policy may act whenever the weekly pool is exactly exhausted;
-/// non-zero thresholds require that many hours to remain before the normal
-/// weekly reset. A value left out keeps the saved one, merged inside the same
-/// locked transaction, so a busy or concurrently changed registry can never
-/// turn into a default here. Keeping this as one atomic accounts.json write
-/// prevents the daemon from observing a half-updated policy when the menu
-/// changes both values together.
-pub fn set_config_auto_reset_weekly(
-    enabled: Option<bool>,
-    min_remaining_hours: Option<u64>,
-) -> Result<(), String> {
-    const MAX_REMAINING_HOURS: u64 = 167;
-    if let Some(hours) = min_remaining_hours.filter(|hours| *hours > MAX_REMAINING_HOURS) {
+    if let Some(hours) = changes
+        .auto_reset_weekly_min_hours
+        .filter(|hours| *hours > MAX_WEEKLY_RESET_HOURS)
+    {
         return Err(format!(
             "Weekly reset threshold must be between 0 and 167 hours (got {})",
             hours
         ));
     }
+    before_save()?;
     let saved = update_accounts_atomically(|file| {
-        if let Some(enabled) = enabled {
-            file.settings.auto_reset_weekly_enabled = enabled;
-        }
-        if let Some(hours) = min_remaining_hours {
-            file.settings.auto_reset_weekly_min_remaining_seconds = hours * 3600;
-        }
+        changes.apply(&mut file.settings);
         Ok(())
-    })?;
-    sync_status_cache_or_defer()?;
-    println!(
-        "✅ Setting updated: auto_reset_weekly_enabled = {}, auto_reset_weekly_min_remaining_seconds = {}",
-        saved.settings.auto_reset_weekly_enabled,
-        saved.settings.auto_reset_weekly_min_remaining_seconds
-    );
+    })?
+    .settings;
+    if changes.changes_status_cache() {
+        sync_status_cache_or_defer()?;
+    }
+    print_saved(&changes, &saved);
     Ok(())
 }
+
+fn print_saved(changes: &ConfigChanges, saved: &Settings) {
+    let flags = [
+        (
+            "restart_app_on_switch",
+            changes.restart_app_on_switch,
+            saved.restart_app_on_switch,
+        ),
+        (
+            "auto_switch_enabled",
+            changes.auto_switch_enabled,
+            saved.auto_switch_enabled,
+        ),
+        (
+            "auto_switch_business_only",
+            changes.auto_switch_business_only,
+            saved.auto_switch_business_only,
+        ),
+        (
+            "auto_switch_business_priority",
+            changes.auto_switch_business_priority,
+            saved.auto_switch_business_priority,
+        ),
+        (
+            "preserve_window_bounds_on_restart",
+            changes.preserve_window_bounds,
+            saved.preserve_window_bounds_on_restart,
+        ),
+    ];
+    for (name, _, value) in flags.iter().filter(|(_, given, _)| given.is_some()) {
+        println!("✅ Setting updated: {} = {}", name, value);
+    }
+    if changes.changes_weekly_reset() {
+        println!(
+            "✅ Setting updated: auto_reset_weekly_enabled = {}, auto_reset_weekly_min_remaining_seconds = {}",
+            saved.auto_reset_weekly_enabled, saved.auto_reset_weekly_min_remaining_seconds
+        );
+    }
+}
+
+#[cfg(test)]
+#[path = "account_configuration.test.rs"]
+mod tests;
 
 /// Copies the saved settings into the status cache. The registry is already
 /// saved, so a lock that stays busy past this command's wait budget only

@@ -1,4 +1,4 @@
-use super::set_config_preserve_window_bounds_with_hook;
+use super::{set_config_with_hook, ConfigChanges};
 use crate::distribution::test_account_spec::TestAccountSpec;
 use crate::distribution::test_helper::TestEnv;
 use crate::storage::{load_accounts, save_accounts};
@@ -19,7 +19,11 @@ fn unrelated_setting_change_keeps_newer_auto_switch_disable_and_credentials() {
         None,
     );
 
-    set_config_preserve_window_bounds_with_hook(true, || {
+    let changes = ConfigChanges {
+        preserve_window_bounds: Some(true),
+        ..ConfigChanges::default()
+    };
+    set_config_with_hook(changes, || {
         let mut newer = load_accounts()?;
         newer.settings.auto_switch_enabled = false;
         newer.accounts[0].tokens.refresh_token = Some("fresh-refresh".into());
@@ -38,9 +42,7 @@ fn unrelated_setting_change_keeps_newer_auto_switch_disable_and_credentials() {
 }
 
 mod busy_registry {
-    use super::super::{
-        set_config_auto_reset_weekly, set_config_auto_switch_enabled, sync_status_cache_or_defer,
-    };
+    use super::super::{set_config, sync_status_cache_or_defer, ConfigChanges};
     use crate::distribution::test_account_spec::TestAccountSpec;
     use crate::distribution::test_helper::TestEnv;
     use crate::storage::{
@@ -95,9 +97,13 @@ mod busy_registry {
         let holder = hold_switcher_lock();
 
         let started = Instant::now();
-        let result = with_lock_wait_budget(Duration::from_millis(200), || {
-            set_config_auto_switch_enabled(false)
-        });
+        let changes = ConfigChanges {
+            auto_switch_enabled: Some(false),
+            restart_app_on_switch: Some(true),
+            auto_reset_weekly_enabled: Some(true),
+            ..ConfigChanges::default()
+        };
+        let result = with_lock_wait_budget(Duration::from_millis(200), || set_config(changes));
         let waited = started.elapsed();
         drop(holder);
 
@@ -145,11 +151,19 @@ mod busy_registry {
         drop(env);
     }
 
+    fn weekly(enabled: Option<bool>, hours: Option<u64>) -> Result<(), String> {
+        set_config(ConfigChanges {
+            auto_reset_weekly_enabled: enabled,
+            auto_reset_weekly_min_hours: hours,
+            ..ConfigChanges::default()
+        })
+    }
+
     #[test]
     fn weekly_reset_keeps_the_saved_value_it_was_not_given() {
         let env = populated("config_weekly_merge");
-        set_config_auto_reset_weekly(Some(true), Some(24)).unwrap();
-        set_config_auto_reset_weekly(None, Some(5)).unwrap();
+        weekly(Some(true), Some(24)).unwrap();
+        weekly(None, Some(5)).unwrap();
         let settings = load_accounts().unwrap().settings;
         assert!(
             settings.auto_reset_weekly_enabled,
@@ -157,17 +171,42 @@ mod busy_registry {
         );
         assert_eq!(settings.auto_reset_weekly_min_remaining_seconds, 5 * 3600);
 
-        set_config_auto_reset_weekly(Some(false), None).unwrap();
+        weekly(Some(false), None).unwrap();
         let settings = load_accounts().unwrap().settings;
         assert!(!settings.auto_reset_weekly_enabled);
         assert_eq!(settings.auto_reset_weekly_min_remaining_seconds, 5 * 3600);
 
-        assert!(set_config_auto_reset_weekly(Some(true), Some(168)).is_err());
+        assert!(weekly(Some(true), Some(168)).is_err());
         let settings = load_accounts().unwrap().settings;
         assert!(
             !settings.auto_reset_weekly_enabled,
             "a rejected threshold saves nothing"
         );
+        drop(env);
+    }
+
+    #[test]
+    fn every_flag_of_one_call_is_saved_together_in_flag_order() {
+        let env = populated("config_one_transaction");
+        set_config(ConfigChanges {
+            restart_app_on_switch: Some(true),
+            auto_switch_enabled: Some(false),
+            auto_switch_business_only: Some(true),
+            preserve_window_bounds: Some(false),
+            auto_reset_weekly_min_hours: Some(12),
+            ..ConfigChanges::default()
+        })
+        .unwrap();
+        let settings = load_accounts().unwrap().settings;
+        assert!(settings.restart_app_on_switch);
+        assert!(
+            settings.auto_switch_enabled,
+            "business-only, applied after it, turns automatic switching back on"
+        );
+        assert!(settings.auto_switch_business_only);
+        assert!(!settings.auto_switch_business_priority);
+        assert!(!settings.preserve_window_bounds_on_restart);
+        assert_eq!(settings.auto_reset_weekly_min_remaining_seconds, 12 * 3600);
         drop(env);
     }
 }

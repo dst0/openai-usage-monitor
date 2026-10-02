@@ -1,10 +1,15 @@
 use crate::{setup, storage};
 use std::time::Duration;
 
-/// How long `cxi config` waits for another holder of the registry lock. Holds
-/// last milliseconds (network calls run outside the lock); a holder that keeps
-/// it longer is stuck, and the command reports the registry busy instead.
-pub(super) const CONFIG_LOCK_WAIT: Duration = Duration::from_secs(10);
+/// How long `cxi config` waits in total for other holders of the registry
+/// locks. Holds last milliseconds (network calls run outside the lock); a
+/// holder that keeps it longer is stuck, and the command reports the registry
+/// busy instead. Test builds use a short wait so the busy path runs quickly.
+pub(super) const CONFIG_LOCK_WAIT: Duration = if cfg!(test) {
+    Duration::from_millis(300)
+} else {
+    Duration::from_secs(10)
+};
 
 pub(super) struct AccountCommandService;
 
@@ -13,11 +18,11 @@ impl AccountCommandService {
         setup::rename_account(account, (!clear).then_some(new_name))
     }
 
-    /// Saves the requested settings, or prints them all when none is given.
-    /// Every registry lock wait is bounded by `CONFIG_LOCK_WAIT`, so the
-    /// command always finishes: the Menu Bar keeps its settings rows disabled
-    /// until it does. Exit status 0 means the registry holds the request; a
-    /// failure means it may not.
+    /// Saves the requested settings in one registry transaction, or prints
+    /// them all when none is given. Every registry lock wait is bounded by
+    /// `CONFIG_LOCK_WAIT`, so the command always finishes: the Menu Bar keeps
+    /// its settings rows disabled until it does. Exit status 0 means the
+    /// registry holds every requested value; a failure means it holds none.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn configure(
         restart_app_on_switch: Option<bool>,
@@ -28,61 +33,22 @@ impl AccountCommandService {
         auto_reset_weekly_min_hours: Option<u64>,
         preserve_window_bounds: Option<bool>,
     ) -> Result<(), String> {
+        let changes = setup::ConfigChanges {
+            restart_app_on_switch,
+            auto_switch_enabled,
+            auto_switch_business_only,
+            auto_switch_business_priority,
+            preserve_window_bounds,
+            auto_reset_weekly_enabled,
+            auto_reset_weekly_min_hours,
+        };
         storage::with_lock_wait_budget(CONFIG_LOCK_WAIT, || {
-            Self::configure_now(
-                restart_app_on_switch,
-                auto_switch_enabled,
-                auto_switch_business_only,
-                auto_switch_business_priority,
-                auto_reset_weekly_enabled,
-                auto_reset_weekly_min_hours,
-                preserve_window_bounds,
-            )
+            if changes.is_empty() {
+                Self::print_configuration()
+            } else {
+                setup::set_config(changes)
+            }
         })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn configure_now(
-        restart_app_on_switch: Option<bool>,
-        auto_switch_enabled: Option<bool>,
-        auto_switch_business_only: Option<bool>,
-        auto_switch_business_priority: Option<bool>,
-        auto_reset_weekly_enabled: Option<bool>,
-        auto_reset_weekly_min_hours: Option<u64>,
-        preserve_window_bounds: Option<bool>,
-    ) -> Result<(), String> {
-        if let Some(value) = restart_app_on_switch {
-            setup::set_config_restart_app_on_switch(value)?;
-        }
-        if let Some(value) = auto_switch_enabled {
-            setup::set_config_auto_switch_enabled(value)?;
-        }
-        if let Some(value) = auto_switch_business_only {
-            setup::set_config_auto_switch_business_only(value)?;
-        }
-        if let Some(value) = auto_switch_business_priority {
-            setup::set_config_auto_switch_business_priority(value)?;
-        }
-        if let Some(value) = preserve_window_bounds {
-            setup::set_config_preserve_window_bounds(value)?;
-        }
-        if auto_reset_weekly_enabled.is_some() || auto_reset_weekly_min_hours.is_some() {
-            setup::set_config_auto_reset_weekly(
-                auto_reset_weekly_enabled,
-                auto_reset_weekly_min_hours,
-            )?;
-        }
-        if restart_app_on_switch.is_none()
-            && auto_switch_enabled.is_none()
-            && auto_switch_business_only.is_none()
-            && auto_switch_business_priority.is_none()
-            && auto_reset_weekly_enabled.is_none()
-            && auto_reset_weekly_min_hours.is_none()
-            && preserve_window_bounds.is_none()
-        {
-            Self::print_configuration()?;
-        }
-        Ok(())
     }
 
     pub(super) fn relogin(account: String, restart: bool, no_restart: bool) -> Result<(), String> {
@@ -105,7 +71,8 @@ impl AccountCommandService {
     }
 
     /// Prints the saved settings. An unreadable or busy registry is an error,
-    /// never a list of defaults.
+    /// never a list of defaults; with no registry at all, the defaults are
+    /// what the Rust core applies, so those print.
     fn print_configuration() -> Result<(), String> {
         let accounts = storage::load_accounts()?;
         println!(
@@ -139,3 +106,7 @@ impl AccountCommandService {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "account_command_service.test.rs"]
+mod tests;
