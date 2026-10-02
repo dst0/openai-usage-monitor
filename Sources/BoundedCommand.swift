@@ -36,14 +36,19 @@ final class BoundedCommand: @unchecked Sendable {
   /// Runs `executable` with `arguments` and returns how it ended, at most `timeout` seconds
   /// plus the reap grace later. Call it from one serial queue.
   func run(_ executable: URL, _ arguments: [String], timeout: TimeInterval) -> Outcome {
-    guard lingering.wait(timeout: .now() + Self.reapGrace) == .success,
-      let pid = Self.spawn(executable, arguments)
-    else { return .failedToStart }
+    guard lingering.wait(timeout: .now() + Self.reapGrace) == .success else {
+      NSLog("A stopped CLI run has still not exited; not starting another")
+      return .failedToStart
+    }
+    guard let pid = Self.spawn(executable, arguments) else { return .failedToStart }
     let deadline = Date().addingTimeInterval(timeout)
     var timedOut = false
     while true {
       // Reaped elsewhere: `pid` may already name another process, so it must not be signalled.
-      guard let exited = Self.hasExited(pid) else { return .failedToStart }
+      guard let exited = Self.hasExited(pid) else {
+        NSLog("A CLI run was reaped elsewhere; its outcome is unknown")
+        return .failedToStart
+      }
       if exited { break }
       if Date() >= deadline {
         timedOut = true

@@ -864,8 +864,12 @@ public final class CodexClient: @unchecked Sendable {
     configQueue.async {
       let outcome = self.configCommand.run(
         self.cliExecutableURL, ["config"] + arguments, timeout: self.configTimeout)
-      if outcome == .timedOut {
+      switch outcome {
+      case .exited(0): break
+      case .timedOut:
         NSLog("Monitor CLI config did not finish within %.0f s and was stopped", self.configTimeout)
+      default:
+        NSLog("Monitor CLI config did not succeed: %@", String(describing: outcome))
       }
       DispatchQueue.main.async {
         completion?(outcome == .exited(0))
