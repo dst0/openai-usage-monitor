@@ -60,7 +60,8 @@ struct WindowTaskRestoreResult {
   let clipboardRestored: Bool
 }
 
-let newWindowTimeout: TimeInterval = 5
+let newWindowTimeout: TimeInterval = 10
+let newWindowPollInterval: TimeInterval = 0.2
 /// After a relaunch, Desktop adds File > New Window only once its renderer
 /// reports the multiwindow feature.
 let newWindowItemTimeout: TimeInterval = 20

@@ -67,19 +67,21 @@ func uniqueWindowFrameMapping(
   return mapping
 }
 
-/// The only Desktop build whose Copy deeplink binding, keymap rules, task
-/// link routing, and New Window command were inspected: ChatGPT 26.924.22138
-/// binds its hidden `copyDeeplink` command to CmdOrCtrl+Alt+L by default,
-/// sends a task link to its most recently focused primary window, and opens
-/// File > New Window focused. Another build may differ, so every window-task
-/// command refuses it until its bundle has been re-inspected.
+/// Inspected Desktop builds: both bind `copyDeeplink` to CmdOrCtrl+Alt+L,
+/// route a task link to the most recently focused primary window, and expose
+/// File > New Window when multiwindow is enabled. Another build is refused
+/// until its bundle is re-inspected. This proves static routing, not that a
+/// cold task will mount after an account change.
 let verifiedDesktopBundleIdentifier = "com.openai.codex"
-let verifiedDesktopVersion = "26.924.22138"
-let verifiedDesktopBuildNumber = "11645"
+private let inspectedDesktopBuilds = [
+  (version: "26.924.22138", build: "11645"),
+  (version: "26.928.31416", build: "12553"),
+]
 
 func isVerifiedDesktopBuild(bundleIdentifier: String?, version: String?, buildNumber: String?) -> Bool {
-  bundleIdentifier == verifiedDesktopBundleIdentifier && version == verifiedDesktopVersion
-    && buildNumber == verifiedDesktopBuildNumber
+  bundleIdentifier == verifiedDesktopBundleIdentifier && inspectedDesktopBuilds.contains {
+    $0.version == version && $0.build == buildNumber
+  }
 }
 
 /// The bundle on disk describes the running code only if it was not
