@@ -20,10 +20,7 @@ mod relogin_service;
 mod relogin_temp_home;
 
 pub use account_configuration::{
-    rename_account, reset_account_multiplier, set_account_multiplier, set_config_auto_reset_weekly,
-    set_config_auto_switch_business_only, set_config_auto_switch_business_priority,
-    set_config_auto_switch_enabled, set_config_preserve_window_bounds,
-    set_config_restart_app_on_switch,
+    rename_account, reset_account_multiplier, set_account_multiplier, set_config, ConfigChanges,
 };
 pub use account_deduplication::deduplicate_accounts_file;
 pub use account_identity::{build_predictable_account_id, find_existing_account_idx};

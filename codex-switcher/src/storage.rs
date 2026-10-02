@@ -15,7 +15,10 @@ mod active_auth_create_service;
 mod active_auth_remove_service;
 #[path = "storage/codex_home_resolver.rs"]
 mod codex_home_resolver;
+#[path = "storage/lock_wait_budget.rs"]
+mod lock_wait_budget;
 pub(crate) use active_auth_remove_service::compare_and_remove_active_auth_json;
+pub(crate) use lock_wait_budget::{with_lock_wait_budget, REGISTRY_BUSY};
 #[path = "storage/status_file_service.rs"]
 mod status_file_service;
 pub use status_file_service::{sync_settings_to_status_file, write_status_file};
@@ -60,13 +63,7 @@ fn acquire_switcher_lock(exclusive: bool) -> Result<File, String> {
         .map_err(|e| format!("Failed to open lockfile {}: {}", lock_path.display(), e))?;
     let _ = fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o600));
 
-    if exclusive {
-        file.lock_exclusive()
-            .map_err(|e| format!("Failed to acquire exclusive switcher lock: {}", e))?;
-    } else {
-        file.lock_shared()
-            .map_err(|e| format!("Failed to acquire shared switcher lock: {}", e))?;
-    }
+    lock_wait_budget::lock_switcher(&file, exclusive)?;
     Ok(file)
 }
 
@@ -87,8 +84,8 @@ fn read_active_auth_json_with_hook(after_open: impl FnOnce()) -> Result<AuthJson
     if !opened.is_file() || opened.permissions().mode() & 0o777 != 0o600 {
         return Err("Active credential file is not a private regular file".into());
     }
-    file.lock_shared()
-        .map_err(|_| "Active credential file could not be locked".to_string())?;
+    lock_wait_budget::lock_file(&file, lock_wait_budget::LockMode::Shared)
+        .map_err(|wait| wait.describe(|_| "Active credential file could not be locked".into()))?;
     after_open();
 
     let mut content = String::new();
@@ -245,8 +242,9 @@ fn load_accounts_with_hooks(
 
         let mut file =
             File::open(&path).map_err(|e| format!("Failed to open {}: {}", path.display(), e))?;
-        file.lock_shared()
-            .map_err(|e| format!("Failed to lock shared {}: {}", path.display(), e))?;
+        lock_wait_budget::lock_file(&file, lock_wait_budget::LockMode::Shared).map_err(|wait| {
+            wait.describe(|e| format!("Failed to lock shared {}: {}", path.display(), e))
+        })?;
 
         let mut content = String::new();
         file.read_to_string(&mut content)

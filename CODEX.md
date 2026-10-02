@@ -125,7 +125,15 @@ in the order chosen. A missing registry or key, or a value that is not a JSON
 boolean (serde rejects it and with it the registry), shows every automation off
 and window-bounds preservation on, the Rust defaults. A write counts as saved when
 that read-back shows the requested value, not by the CLI's exit status, which can
-report a failed status cache sync after the registry was saved. The cache's copy
+report a failed status cache sync after the registry was saved. The `config`
+command bounds its own registry lock waits at ten seconds in total, so it always
+finishes and the rows come back: a holder that keeps the switcher lock past that
+makes it fail before saving, with the registry reported busy, and a lock still
+busy only for the status cache copy after the save is left to the next status
+write (which applies the registry's settings) while the command succeeds. The
+weekly reset values it is not given are merged inside the same locked
+transaction, never read beforehand, and every flag of one call is saved in that
+one transaction, so a failure means none of them was saved. The cache's copy
 of the auto-switch settings has no Menu Bar reader. Settings sync leaves a missing
 cache for the daemon to populate with a complete quota snapshot. Status staging uses the same
 unpredictable, exclusive no-follow temporary-file pattern as credential staging.
