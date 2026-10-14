@@ -3,6 +3,8 @@ use super::daemon_tick_service::DaemonTickService;
 use super::log_permissions_service::LogPermissionsService;
 use super::log_redaction_service::LogRedactionService;
 use crate::models::AccountsFile;
+use crate::rollout_compression::scheduled_compression_launcher::spawn_scheduled_compression;
+use crate::rollout_compression::session_compression_scheduler::SessionCompressionScheduler;
 use crate::storage::{daemon_lock_path, load_accounts};
 use fs2::FileExt;
 use std::fs::OpenOptions;
@@ -114,6 +116,11 @@ impl DaemonLoopService {
 
         let mut deferred_recovery = crate::recovery::DeferredRecoveryService::new();
         let automatic_backoff = Arc::new(AutomaticDistributionBackoff::default());
+        let mut session_compression = SessionCompressionScheduler::new(
+            spawn_scheduled_compression,
+            || load_accounts().is_ok_and(|accounts| accounts.settings.session_compression_enabled),
+            Instant::now(),
+        );
 
         loop {
             let _ = crate::logger::rotate_all_logs(
@@ -125,6 +132,7 @@ impl DaemonLoopService {
                 crate::logger::log("ERROR", "DAEMON", "Daemon tick failed");
             }
             deferred_recovery.poll();
+            session_compression.poll(Instant::now());
 
             let last_auth_mtime = auth_mtime();
             let interval_secs = load_accounts()

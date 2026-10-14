@@ -3,6 +3,8 @@ use crate::commands::Commands;
 use crate::desktop_command_service::DesktopCommandService;
 use crate::help_service::HelpService;
 use crate::log_command_service::LogCommandService;
+use crate::rollout_compression::sessions_command_service::SessionsCommandService;
+use crate::sessions_action::SessionsAction;
 use crate::status_table_service::StatusTableService;
 use crate::switch_command_service::SwitchCommandService;
 use crate::{daemon, recovery, setup, shim, switcher};
@@ -61,6 +63,8 @@ impl CommandDispatcher {
                 auto_reset_weekly_enabled,
                 auto_reset_weekly_min_hours,
                 preserve_window_bounds,
+                session_compression,
+                session_compression_days,
             }) => AccountCommandService::configure(
                 restart_app_on_switch,
                 auto_switch_enabled,
@@ -69,8 +73,21 @@ impl CommandDispatcher {
                 auto_reset_weekly_enabled,
                 auto_reset_weekly_min_hours,
                 preserve_window_bounds,
+                session_compression,
+                session_compression_days,
             ),
             Some(Commands::Window { action }) => DesktopCommandService::window(action),
+            Some(Commands::Sessions { action }) => match action {
+                SessionsAction::Status => SessionsCommandService::status(),
+                SessionsAction::Compress {
+                    min_age_days,
+                    dry_run,
+                    scheduled,
+                } => SessionsCommandService::compress(min_age_days, dry_run, scheduled),
+                SessionsAction::Decompress { thread_id } => {
+                    SessionsCommandService::decompress(&thread_id)
+                }
+            },
             Some(Commands::SetMultiplier {
                 account,
                 multiplier,

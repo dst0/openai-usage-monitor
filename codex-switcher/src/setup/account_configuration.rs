@@ -1,4 +1,6 @@
 use crate::models::Settings;
+#[path = "config_saved_report.rs"]
+mod config_saved_report;
 use crate::storage::{
     load_accounts, sync_settings_to_status_file, update_accounts_atomically, REGISTRY_BUSY,
 };
@@ -66,9 +68,13 @@ pub struct ConfigChanges {
     /// is exactly exhausted; otherwise that many hours must remain before the
     /// normal weekly reset.
     pub auto_reset_weekly_min_hours: Option<u64>,
+    pub session_compression_enabled: Option<bool>,
+    /// Days a rollout must stay unchanged before the daemon compresses it.
+    pub session_compression_min_age_days: Option<u64>,
 }
 
 const MAX_WEEKLY_RESET_HOURS: u64 = 167;
+const MAX_SESSION_COMPRESSION_DAYS: u64 = 3650;
 
 impl ConfigChanges {
     pub fn is_empty(&self) -> bool {
@@ -120,6 +126,12 @@ impl ConfigChanges {
         if let Some(hours) = self.auto_reset_weekly_min_hours {
             settings.auto_reset_weekly_min_remaining_seconds = hours * 3600;
         }
+        if let Some(value) = self.session_compression_enabled {
+            settings.session_compression_enabled = value;
+        }
+        if let Some(days) = self.session_compression_min_age_days {
+            settings.session_compression_min_age_days = days;
+        }
     }
 }
 
@@ -144,6 +156,14 @@ fn set_config_with_hook(
             hours
         ));
     }
+    if let Some(days) = changes
+        .session_compression_min_age_days
+        .filter(|days| !(1..=MAX_SESSION_COMPRESSION_DAYS).contains(days))
+    {
+        return Err(format!(
+            "Session compression age must be between 1 and {MAX_SESSION_COMPRESSION_DAYS} days (got {days})"
+        ));
+    }
     before_save()?;
     let saved = update_accounts_atomically(|file| {
         changes.apply(&mut file.settings);
@@ -153,47 +173,8 @@ fn set_config_with_hook(
     if changes.changes_status_cache() {
         sync_status_cache_or_defer()?;
     }
-    print_saved(&changes, &saved);
+    config_saved_report::print_saved(&changes, &saved);
     Ok(())
-}
-
-fn print_saved(changes: &ConfigChanges, saved: &Settings) {
-    let flags = [
-        (
-            "restart_app_on_switch",
-            changes.restart_app_on_switch,
-            saved.restart_app_on_switch,
-        ),
-        (
-            "auto_switch_enabled",
-            changes.auto_switch_enabled,
-            saved.auto_switch_enabled,
-        ),
-        (
-            "auto_switch_business_only",
-            changes.auto_switch_business_only,
-            saved.auto_switch_business_only,
-        ),
-        (
-            "auto_switch_business_priority",
-            changes.auto_switch_business_priority,
-            saved.auto_switch_business_priority,
-        ),
-        (
-            "preserve_window_bounds_on_restart",
-            changes.preserve_window_bounds,
-            saved.preserve_window_bounds_on_restart,
-        ),
-    ];
-    for (name, _, value) in flags.iter().filter(|(_, given, _)| given.is_some()) {
-        println!("✅ Setting updated: {} = {}", name, value);
-    }
-    if changes.changes_weekly_reset() {
-        println!(
-            "✅ Setting updated: auto_reset_weekly_enabled = {}, auto_reset_weekly_min_remaining_seconds = {}",
-            saved.auto_reset_weekly_enabled, saved.auto_reset_weekly_min_remaining_seconds
-        );
-    }
 }
 
 #[cfg(test)]

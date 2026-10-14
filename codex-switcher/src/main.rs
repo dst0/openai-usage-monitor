@@ -16,7 +16,9 @@ mod models;
 mod oauth;
 mod quota;
 mod recovery;
+pub mod rollout_compression;
 pub mod recovery_banner;
+mod sessions_action;
 mod setup;
 mod shim;
 mod state_file;
@@ -48,11 +50,10 @@ fn main() {
         std::env::remove_var("CODEX_RESTART_OPERATION");
     }
 
-    // If invoked as "codex", directly execute shim wrapper
+    // Invoked as `codex` (by path or as a bare PATH command): run the shim.
     if raw_args
         .first()
-        .map(|s| s.ends_with("/codex"))
-        .unwrap_or(false)
+        .is_some_and(|arg0| shim::invoked_as_codex(arg0))
     {
         if let Err(e) = shim::run_codex_with_auto_switch(&raw_args[1..]) {
             eprintln!("[codex shim error] {}", e);

@@ -89,7 +89,7 @@ pub use thread_identity::{
     clean_thread_id, get_most_recent_threads, is_user_thread, open_thread_in_codex,
 };
 pub(crate) use thread_identity::{
-    retry_thread_link_in_background, retry_thread_link_natively_in_background,
+    is_valid_thread_id, retry_thread_link_in_background, retry_thread_link_natively_in_background,
 };
 pub(crate) use thread_rollout_inspector::read_rollout_tail_lines;
 pub use thread_rollout_inspector::{

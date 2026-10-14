@@ -1,3 +1,4 @@
+use super::sessions_action::SessionsAction;
 use super::window_action::WindowAction;
 use clap::Subcommand;
 
@@ -102,6 +103,12 @@ pub(super) enum Commands {
         /// Remember and restore Codex Desktop window location and size across restart/switch
         #[arg(long)]
         preserve_window_bounds: Option<bool>,
+        /// Let the daemon compress idle Codex session rollouts once a day
+        #[arg(long)]
+        session_compression: Option<bool>,
+        /// Days a rollout must stay unchanged before it is compressed
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..=3650))]
+        session_compression_days: Option<u64>,
     },
     /// Set custom multiplier override for an account (e.g. 20 for Pro 20x, 5 for Pro 5x / Business Premium)
     SetMultiplier {
@@ -180,6 +187,11 @@ pub(super) enum Commands {
     Window {
         #[command(subcommand)]
         action: Option<WindowAction>,
+    },
+    /// Inspect, compress or restore Codex session rollouts
+    Sessions {
+        #[command(subcommand)]
+        action: SessionsAction,
     },
     /// Diagnose the Desktop-owned recovery transport without changing a task
     #[command(hide = true)]

@@ -24,6 +24,12 @@ pub struct Settings {
     pub auto_reset_weekly_min_remaining_seconds: u64,
     #[serde(default = "default_true")]
     pub preserve_window_bounds_on_restart: bool,
+    /// The daemon compresses idle Codex session rollouts into the `.jsonl.zst`
+    /// form Codex reads natively.
+    #[serde(default = "default_true")]
+    pub session_compression_enabled: bool,
+    #[serde(default = "default_session_compression_min_age_days")]
+    pub session_compression_min_age_days: u64,
 }
 
 impl Default for Settings {
@@ -40,6 +46,8 @@ impl Default for Settings {
             auto_reset_weekly_enabled: false,
             auto_reset_weekly_min_remaining_seconds: 0,
             preserve_window_bounds_on_restart: true,
+            session_compression_enabled: true,
+            session_compression_min_age_days: default_session_compression_min_age_days(),
         }
     }
 }
@@ -50,6 +58,11 @@ fn default_poll_interval() -> u64 {
 
 fn default_strategy() -> String {
     "reset-first".to_string()
+}
+
+/// Matches the age at which Codex's own compressor treats a rollout as cold.
+fn default_session_compression_min_age_days() -> u64 {
+    7
 }
 
 fn default_true() -> bool {

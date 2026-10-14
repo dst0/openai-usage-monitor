@@ -9,6 +9,12 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 
+/// Whether `argv[0]` names the `codex` shim. A shell passes the bare word
+/// for a PATH lookup, so the basename decides, not a `/codex` suffix.
+pub fn invoked_as_codex(arg0: &str) -> bool {
+    std::path::Path::new(arg0).file_name() == Some(std::ffi::OsStr::new("codex"))
+}
+
 fn command_uses_account(args: &[String]) -> bool {
     !matches!(
         args.first().map(String::as_str),
@@ -117,3 +123,7 @@ pub fn install_shim() -> Result<(), String> {
 #[cfg(test)]
 #[path = "distribution/shim_automatic_preflight.test.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "shim_invocation.test.rs"]
+mod invocation_tests;

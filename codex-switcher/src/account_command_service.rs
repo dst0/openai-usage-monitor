@@ -32,8 +32,12 @@ impl AccountCommandService {
         auto_reset_weekly_enabled: Option<bool>,
         auto_reset_weekly_min_hours: Option<u64>,
         preserve_window_bounds: Option<bool>,
+        session_compression: Option<bool>,
+        session_compression_days: Option<u64>,
     ) -> Result<(), String> {
         let changes = setup::ConfigChanges {
+            session_compression_enabled: session_compression,
+            session_compression_min_age_days: session_compression_days,
             restart_app_on_switch,
             auto_switch_enabled,
             auto_switch_business_only,
@@ -102,6 +106,14 @@ impl AccountCommandService {
         println!(
             "preserve_window_bounds_on_restart: {}",
             accounts.settings.preserve_window_bounds_on_restart
+        );
+        println!(
+            "session_compression_enabled: {}",
+            accounts.settings.session_compression_enabled
+        );
+        println!(
+            "session_compression_min_age_days: {}",
+            accounts.settings.session_compression_min_age_days
         );
         Ok(())
     }

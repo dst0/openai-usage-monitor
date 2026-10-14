@@ -25,6 +25,17 @@ pub fn find_thread_rollout_path(
                 if !p_str.is_empty() && std::path::Path::new(&p_str).exists() {
                     return Some(std::path::PathBuf::from(p_str));
                 }
+                // A compressed rollout is idle by construction and has no
+                // plain bytes to read by offset. Report it as absent without
+                // walking the whole sessions tree on every watchdog tick.
+                if !p_str.is_empty()
+                    && crate::rollout_compression::rollout_file_name::RolloutFileName::compressed_path(
+                        std::path::Path::new(&p_str),
+                    )
+                    .exists()
+                {
+                    return None;
+                }
             }
         }
     }

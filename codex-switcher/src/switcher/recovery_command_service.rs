@@ -11,6 +11,18 @@ use std::time::Duration;
 /// Recovery-only entry point. Uses the same verified pipeline as account switching.
 pub fn resume_thread_interactive(thread_id: Option<&str>) -> Result<(), String> {
     let _operation = crate::recovery::operation_lock()?;
+    if let Some(tid) = thread_id {
+        let id = clean_thread_id(tid);
+        if crate::rollout_compression::compressed_rollout_materializer::is_compressed_thread(
+            &crate::storage::codex_home(),
+            &id,
+        ) {
+            return Err(format!(
+                "Thread {id} has been idle long enough to be stored compressed, so there is no \
+                 interrupted turn to resume. Codex opens it directly: codex://threads/{id}"
+            ));
+        }
+    }
     let (targets, mode) = match thread_id {
         Some(tid) => (
             vec![clean_thread_id(tid)],
