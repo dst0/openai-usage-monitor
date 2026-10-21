@@ -2,6 +2,6 @@
 # a new rustc/Clippy release change the build or lint result without a code
 # change. Bump procedure: README.md "Rust toolchain policy".
 [toolchain]
-channel = "1.98.1"
+channel = "1.99.1"
 profile = "minimal"
 components = ["clippy", "rustfmt"]
