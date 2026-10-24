@@ -32,6 +32,7 @@
 "uninstall_purge_data" = "Также удалить сохранённые аккаунты Monitor (accounts.json)";
 "uninstall_failed_title" = "UNINSTALL FAILED";
 "uninstall_failed_message" = "Не удалось запустить uninstaller. Изменения не внесены.";
+"uninstall_install_in_progress" = "Сейчас идёт установка Codex Monitor. Ничего не изменено; повторите удаление после её завершения.";
 "launch_at_login" = "Запускать при входе";
 "launch_at_login_enable_failed" = "Не удалось добавить Codex Monitor в объекты входа, поэтому он не будет запускаться при входе. Добавьте его в Системных настройках > Основные > Объекты входа.";
 "launch_at_login_disable_failed" = "Не удалось убрать Codex Monitor из объектов входа, поэтому он продолжит запускаться при входе. Уберите его в Системных настройках > Основные > Объекты входа.";

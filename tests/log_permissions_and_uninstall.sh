@@ -929,6 +929,12 @@ assert_uninstall_refused() {
         fail "dry-run did not keep the held lock file ${held_lock}"
     before="$(locked_state)"
     calls_before="$(/bin/cat "${SYSTEM_CALLS}" 2>/dev/null || true)"
+    run_locked_uninstall --check-install-lock > "${TEMP_ROOT}/check-lock.txt" 2>&1 || status=$?
+    [ "${status}" -eq 75 ] ||
+        fail "--check-install-lock exited ${status}, not 75, while ${holder} held the install lock: $(/bin/cat "${TEMP_ROOT}/check-lock.txt")"
+    /usr/bin/grep -F -x "${HELD_REASON}" "${TEMP_ROOT}/check-lock.txt" >/dev/null ||
+        fail "--check-install-lock did not name the held lock: $(/bin/cat "${TEMP_ROOT}/check-lock.txt")"
+    status=0
     run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1 || status=$?
     [ "${status}" -eq 75 ] ||
         fail "uninstall exited ${status}, not 75, while ${holder} held the install lock: $(/bin/cat "${LOCKED_OUTPUT}")"
@@ -1120,6 +1126,11 @@ make_file 600 "${LOCKED_UNINSTALL_TEMP}"
 # confirmed run keeps the leftovers and the lock file itself.
 LOCKED_UNINSTALLER="${NO_PROBE_UNINSTALLER}"
 assert_locked_temps_preserved_in_plan "${UNVERIFIED_REASON}"
+check_status=0
+run_locked_uninstall --check-install-lock > "${TEMP_ROOT}/check-unverified-lock.txt" 2>&1 || check_status=$?
+[ "${check_status}" -eq 1 ] || fail "--check-install-lock exited ${check_status}, not 1, for an unprobed lock"
+/usr/bin/grep -F -x "${UNVERIFIED_REASON}" "${TEMP_ROOT}/check-unverified-lock.txt" >/dev/null ||
+    fail "--check-install-lock did not report an unprobed lock: $(/bin/cat "${TEMP_ROOT}/check-unverified-lock.txt")"
 install_fake_helper "${LOCKED_HOME}"
 if run_locked_uninstall --yes > "${LOCKED_OUTPUT}" 2>&1; then
     fail 'uninstall reported success without a way to probe the install lock'
@@ -1147,6 +1158,10 @@ for LOCKED_UNINSTALLER in "${PERL_PROBE_UNINSTALLER}" "${UNINSTALL_COPY}"; do
             fail "dry-run did not plan to remove ${path} behind free locks"
     done
     [ "$(free_lock_state)" = "${FREE_LOCK_STATE}" ] || fail 'a dry run changed a free lock file'
+    run_locked_uninstall --check-install-lock > "${TEMP_ROOT}/check-free-lock.txt" 2>&1 ||
+        fail "--check-install-lock refused free locks: $(/bin/cat "${TEMP_ROOT}/check-free-lock.txt")"
+    [ ! -s "${TEMP_ROOT}/check-free-lock.txt" ] || fail '--check-install-lock printed output for free locks'
+    [ "$(free_lock_state)" = "${FREE_LOCK_STATE}" ] || fail '--check-install-lock changed a free lock file'
 done
 # The uninstaller removes a free lock file while it still holds its lock, so
 # an installer waiting for that file sees that the path no longer names it.
