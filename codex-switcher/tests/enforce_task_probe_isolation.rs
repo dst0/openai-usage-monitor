@@ -163,7 +163,6 @@ const RULES: [(&str, &[&str]); 32] = [
             COMMANDS_TEST,
             // Agent instructions: never add it without the user's request.
             "skills/cxi/SKILL.md",
-            "skills/codex-mon/SKILL.md",
         ],
     ),
     (

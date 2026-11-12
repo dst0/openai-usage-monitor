@@ -1,5 +1,6 @@
 use super::{
     automation_guard::operation_lock,
+    deferred_manifest_filter::DeferredManifestFilter,
     deferred_mount_banner_service::DeferredMountBannerService,
     desktop_ipc::DesktopIpc,
     ipc_call_error::IpcCallError,
@@ -130,7 +131,7 @@ impl DeferredRecoveryService {
             Err(error) => return Err(error),
         };
         let home = storage::codex_home();
-        let targets = load_manifest()?;
+        let targets = DeferredManifestFilter::prune_and_load_active(&home)?;
         if !targets.iter().any(|target| target.awaiting_owner) {
             return Ok(());
         }

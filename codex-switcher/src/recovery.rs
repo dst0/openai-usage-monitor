@@ -8,6 +8,7 @@ mod automation_guard;
 mod checkpoint_confirmation;
 mod checkpoint_scan_cache;
 mod checkpoint_scan_registry;
+mod deferred_manifest_filter;
 mod deferred_mount_banner_service;
 mod deferred_recovery_service;
 mod desktop_account_binding_service;

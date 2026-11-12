@@ -724,6 +724,7 @@ SWIFT_SOURCES=(
     "${PROJECT_DIR}/Sources/LaunchAtLoginMenuController.swift"
     "${PROJECT_DIR}/Sources/SingleInstanceGuard.swift"
     "${PROJECT_DIR}/Sources/MenuIconButton.swift"
+    "${PROJECT_DIR}/Sources/ModalInputField.swift"
     "${PROJECT_DIR}/Sources/InsetSeparatorView.swift"
     "${PROJECT_DIR}/Sources/PrimaryMenuSectionHeaderView.swift"
     "${PROJECT_DIR}/Sources/AccountSectionHeaderView.swift"
@@ -826,7 +827,7 @@ fi
 # ------------------------------------------------------------------------------
 echo ""
 echo "🧠 [4/4] Installing skills for Codex, Claude Code, and Agent Swarms..."
-for skill_name in "cxi" "codex-mon"; do
+for skill_name in "cxi"; do
     canonical_skill="${PROJECT_DIR}/skills/${skill_name}"
     if [ -d "${canonical_skill}" ]; then
         skill_target="${canonical_skill}"

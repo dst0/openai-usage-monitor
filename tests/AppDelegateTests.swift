@@ -2330,8 +2330,34 @@ struct AppDelegateTestRunner {
     assertTrue(!AppDelegate.isOfficialDesktopExecutable(
       "/Applications/Other.app/Contents/MacOS/ChatGPT"), "foreign app event must be ignored")
 
+    // 4.9. MainMenu Edit Menu & ModalInputField Command+V Key Equivalent
+    watcher.setupMainMenu()
+    let editMenu = NSApp.mainMenu?.items.first?.submenu
+    assertTrue(editMenu != nil, "NSApp.mainMenu must have an Edit submenu")
+    assertTrue(editMenu?.item(withTitle: "Paste") != nil, "Edit menu must contain Paste item")
+    assertEqual(editMenu?.item(withTitle: "Paste")?.keyEquivalent, "v", "Paste keyEquivalent must be v")
+
+    let modalField = ModalInputField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+    if let cmdVEvent = NSEvent.keyEvent(
+      with: .keyDown,
+      location: .zero,
+      modifierFlags: .command,
+      timestamp: 0,
+      windowNumber: 0,
+      context: nil,
+      characters: "v",
+      charactersIgnoringModifiers: "v",
+      isARepeat: false,
+      keyCode: 9
+    ) {
+      // In unit tests without an active window responder chain, sendAction may return false,
+      // but performKeyEquivalent handles the event branch without crashing.
+      _ = modalField.performKeyEquivalent(with: cmdVEvent)
+    }
+
     // 5. 300-Line Limit & Single Entity Invariant Verification
     let sourceFilesToCheck = [
+      "Sources/ModalInputField.swift",
       "Sources/MenuIconButton.swift",
       "Sources/InsetSeparatorView.swift",
       "Sources/PrimaryMenuSectionHeaderView.swift",

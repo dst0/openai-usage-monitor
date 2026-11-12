@@ -48,7 +48,7 @@ extension AppDelegate {
     alert.informativeText =
       "Enter whole hours from 1 to 167. A credit is used only when more than this time remains before the normal weekly reset."
     alert.alertStyle = .informational
-    let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+    let input = ModalInputField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
     input.stringValue = String(max(1, current.minRemainingHours))
     alert.accessoryView = input
     alert.addButton(withTitle: L10n.saveBtn)

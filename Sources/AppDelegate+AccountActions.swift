@@ -31,7 +31,7 @@ extension AppDelegate {
       suggestedId = "account-\(count)"
     }
 
-    let inputField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+    let inputField = ModalInputField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
     inputField.stringValue = suggestedId
     inputField.placeholderString = suggestedId
     alert.accessoryView = inputField
@@ -186,7 +186,7 @@ extension AppDelegate {
     alert.informativeText = L10n.renameAccountPrompt(email: email)
     alert.alertStyle = .informational
 
-    let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+    let input = ModalInputField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
     input.stringValue = currentName ?? ""
     input.placeholderString = email.components(separatedBy: "@").first ?? "nickname"
     alert.accessoryView = input

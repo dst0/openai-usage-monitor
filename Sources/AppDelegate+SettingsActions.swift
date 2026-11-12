@@ -87,7 +87,7 @@ extension AppDelegate {
     alert.messageText = L10n.uninstallTitle
     alert.informativeText = L10n.uninstallMessage
 
-    let confirmationField = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+    let confirmationField = ModalInputField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
     confirmationField.placeholderString = L10n.uninstallConfirm
     confirmationField.setAccessibilityLabel(L10n.uninstallConfirm)
     let purgeToggle = NSButton(

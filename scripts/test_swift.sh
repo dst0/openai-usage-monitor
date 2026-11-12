@@ -50,6 +50,7 @@ swiftc -parse-as-library \
     Sources/LaunchAtLoginMenuController.swift \
     Sources/SingleInstanceGuard.swift \
     Sources/MenuIconButton.swift \
+    Sources/ModalInputField.swift \
     Sources/InsetSeparatorView.swift \
     Sources/PrimaryMenuSectionHeaderView.swift \
     Sources/AccountSectionHeaderView.swift \

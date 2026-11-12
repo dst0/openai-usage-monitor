@@ -16,8 +16,12 @@ pub(super) fn recent_thread_updates(
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
+    let db_path = home.join("state_5.sqlite");
+    if !db_path.exists() {
+        return Ok(HashMap::new());
+    }
     let rows = query(
-        &home.join("state_5.sqlite"),
+        &db_path,
         &format!("SELECT id, updated_at FROM threads WHERE id IN ({ids}) AND archived = 0 AND (thread_source IS NULL OR thread_source != 'subagent');"),
     )?;
     let mut updates = HashMap::new();
